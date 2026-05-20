@@ -166,6 +166,148 @@ func TestLP003LeaveGroupTopicStopsLiveDeliveryAfterExit(t *testing.T) {
 	}
 }
 
+func TestBB009LeaveRemovesTopicSubscriptionForValidatorsAndPubSub(t *testing.T) {
+	alicePrivB64, alicePubB64 := generateEd25519KeyPair(t)
+	bobPrivB64, bobPubB64 := generateEd25519KeyPair(t)
+	charliePrivB64, charliePubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeACapture)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeBCapture)
+	nodeCCapture := &testEventCollector{}
+	nodeC := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeCCapture)
+
+	groupId := "bb009-leave-removes-topic-subscription"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "BB009 Leave Removes Topic Subscription",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: bobPubB64},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: charliePubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("%s JoinGroupTopic: %v", n.PeerId(), err)
+		}
+	}
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	connectLocalGroupNodes(t, nodeA, nodeC)
+	connectLocalGroupNodes(t, nodeB, nodeC)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 5*time.Second)
+	waitForGroupTopicPeerCount(t, nodeB, groupId, 2, 5*time.Second)
+
+	preLeaveFromA := "bb009-pre-leave-from-a"
+	if msgID, peerCount, err := nodeA.PublishGroupMessage(
+		groupId,
+		alicePrivB64,
+		nodeA.PeerId(),
+		alicePubB64,
+		"Alice",
+		"BB009 pre-leave message from Alice",
+		preLeaveFromA,
+		nil,
+	); err != nil {
+		t.Fatalf("pre-leave PublishGroupMessage from A: %v", err)
+	} else if msgID != preLeaveFromA || peerCount < 2 {
+		t.Fatalf("pre-leave A publish result msgID=%q peerCount=%d, want msgID=%q peerCount>=2", msgID, peerCount, preLeaveFromA)
+	}
+	waitForCollectedEventContaining(t, nodeCCapture, preLeaveFromA, 5*time.Second)
+
+	preLeaveFromB := "bb009-pre-leave-from-b"
+	if msgID, peerCount, err := nodeB.PublishGroupMessage(
+		groupId,
+		bobPrivB64,
+		nodeB.PeerId(),
+		bobPubB64,
+		"Bob",
+		"BB009 pre-leave message from Bob",
+		preLeaveFromB,
+		nil,
+	); err != nil {
+		t.Fatalf("pre-leave PublishGroupMessage from B: %v", err)
+	} else if msgID != preLeaveFromB || peerCount < 2 {
+		t.Fatalf("pre-leave B publish result msgID=%q peerCount=%d, want msgID=%q peerCount>=2", msgID, peerCount, preLeaveFromB)
+	}
+	waitForCollectedEventContaining(t, nodeCCapture, preLeaveFromB, 5*time.Second)
+
+	if err := nodeC.LeaveGroupTopic(groupId); err != nil {
+		t.Fatalf("nodeC LeaveGroupTopic: %v", err)
+	}
+	assertLP003GroupPubSubStateRemoved(t, nodeC, groupId)
+
+	time.Sleep(150 * time.Millisecond)
+	charliePostLeaveBaseline := len(nodeCCapture.snapshot())
+
+	postLeaveFromA := "bb009-post-leave-from-a"
+	if msgID, _, err := nodeA.PublishGroupMessage(
+		groupId,
+		alicePrivB64,
+		nodeA.PeerId(),
+		alicePubB64,
+		"Alice",
+		"BB009 post-leave message from Alice",
+		postLeaveFromA,
+		nil,
+	); err != nil {
+		t.Fatalf("post-leave PublishGroupMessage from A: %v", err)
+	} else if msgID != postLeaveFromA {
+		t.Fatalf("post-leave A message ID = %q, want %q", msgID, postLeaveFromA)
+	}
+	waitForCollectedEventContaining(t, nodeBCapture, postLeaveFromA, 5*time.Second)
+
+	postLeaveFromB := "bb009-post-leave-from-b"
+	if msgID, _, err := nodeB.PublishGroupMessage(
+		groupId,
+		bobPrivB64,
+		nodeB.PeerId(),
+		bobPubB64,
+		"Bob",
+		"BB009 post-leave message from Bob",
+		postLeaveFromB,
+		nil,
+	); err != nil {
+		t.Fatalf("post-leave PublishGroupMessage from B: %v", err)
+	} else if msgID != postLeaveFromB {
+		t.Fatalf("post-leave B message ID = %q, want %q", msgID, postLeaveFromB)
+	}
+	waitForCollectedEventContaining(t, nodeACapture, postLeaveFromB, 5*time.Second)
+
+	assertBB009NoPostLeaveTopicEventsAfter(t, nodeCCapture, charliePostLeaveBaseline, groupId, 900*time.Millisecond)
+
+	if _, _, err := nodeC.PublishGroupMessage(
+		groupId,
+		charliePrivB64,
+		nodeC.PeerId(),
+		charliePubB64,
+		"Charlie",
+		"BB009 left peer should not publish",
+		"",
+		nil,
+	); err == nil || !strings.Contains(err.Error(), "group not joined") {
+		t.Fatalf("left PublishGroupMessage error = %v, want group not joined", err)
+	}
+	if err := nodeC.PublishGroupReaction(
+		groupId,
+		charliePrivB64,
+		nodeC.PeerId(),
+		charliePubB64,
+		`{"messageId":"bb009-post-leave-from-a","action":"add","emoji":"+1"}`,
+	); err == nil || !strings.Contains(err.Error(), "group not joined") {
+		t.Fatalf("left PublishGroupReaction error = %v, want group not joined", err)
+	}
+}
+
 func TestGL008LeaveGroupTopicStopsDiscoveryAndInboundAfterLeave(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	leaverPrivB64, leaverPubB64 := generateEd25519KeyPair(t)
@@ -644,6 +786,45 @@ func assertGL008NoPostLeaveGroupActivity(t *testing.T, collector *testEventColle
 				step, _ := data["step"].(string)
 				if gl008DiscoveryStepRepresentsWork(step) {
 					t.Fatalf("leaver emitted disallowed post-leave discovery step %q after baseline %d: %s", step, baseline, raw)
+				}
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func assertBB009NoPostLeaveTopicEventsAfter(t *testing.T, collector *testEventCollector, baseline int, groupId string, timeout time.Duration) {
+	t.Helper()
+
+	disallowedGroupEvents := map[string]struct{}{
+		"group_message:received":     {},
+		"group_reaction:received":    {},
+		"group:payload_parse_failed": {},
+		"group:decryption_failed":    {},
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		events := collector.snapshot()
+		for _, raw := range events[baseline:] {
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				continue
+			}
+			eventName, _ := payload["event"].(string)
+			if eventName == "group:validation_rejected" {
+				t.Fatalf("left peer emitted disallowed post-leave validation event after baseline %d: %s", baseline, raw)
+			}
+			data, _ := payload["data"].(map[string]interface{})
+			if data["groupId"] != groupId {
+				continue
+			}
+			if _, disallowed := disallowedGroupEvents[eventName]; disallowed {
+				t.Fatalf("left peer received disallowed post-leave topic event %q after baseline %d: %s", eventName, baseline, raw)
+			}
+			if eventName == "group:discovery" {
+				step, _ := data["step"].(string)
+				if gl008DiscoveryStepRepresentsWork(step) {
+					t.Fatalf("left peer emitted disallowed post-leave discovery step %q after baseline %d: %s", step, baseline, raw)
 				}
 			}
 		}

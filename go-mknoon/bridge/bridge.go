@@ -25,17 +25,31 @@ import (
 )
 
 var (
-	singletonNode *node.Node
-	nodeMu        sync.Mutex
+	singletonNode            *node.Node
+	singletonCallbackAdapter *nodeCallbackAdapter
+	nodeMu                   sync.Mutex
 )
 
 // nodeCallbackAdapter adapts bridge.EventCallback to node.EventCallback.
 type nodeCallbackAdapter struct {
+	mu sync.RWMutex
 	cb EventCallback
 }
 
+func (a *nodeCallbackAdapter) SetCallback(cb EventCallback) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cb = cb
+}
+
 func (a *nodeCallbackAdapter) OnEvent(jsonString string) {
-	a.cb.OnEvent(jsonString)
+	a.mu.RLock()
+	cb := a.cb
+	a.mu.RUnlock()
+	if cb == nil {
+		return
+	}
+	cb.OnEvent(jsonString)
 }
 
 // --- Identity ---
@@ -356,8 +370,12 @@ func VerifyPayload(paramsJSON string) (result string) {
 func Initialize(cb EventCallback) {
 	nodeMu.Lock()
 	defer nodeMu.Unlock()
+	if singletonCallbackAdapter == nil {
+		singletonCallbackAdapter = &nodeCallbackAdapter{}
+	}
+	singletonCallbackAdapter.SetCallback(cb)
 	if singletonNode == nil {
-		singletonNode = node.New(&nodeCallbackAdapter{cb: cb})
+		singletonNode = node.New(singletonCallbackAdapter)
 	}
 }
 
@@ -1424,13 +1442,24 @@ func GroupCreate(paramsJSON string) (result string) {
 		CreatorPeerId         string `json:"creatorPeerId"`
 		CreatorPublicKey      string `json:"creatorPublicKey"`
 		CreatorMlKemPublicKey string `json:"creatorMlKemPublicKey"`
+		Description           string `json:"description"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
 	}
 
-	if params.Name == "" || params.GroupType == "" || params.CreatorPeerId == "" || params.CreatorPublicKey == "" {
-		return errJSON("INVALID_INPUT", "missing name, groupType, creatorPeerId, or creatorPublicKey")
+	params.Name = strings.TrimSpace(params.Name)
+	params.GroupType = strings.TrimSpace(params.GroupType)
+	params.CreatorPeerId = strings.TrimSpace(params.CreatorPeerId)
+	params.CreatorPublicKey = strings.TrimSpace(params.CreatorPublicKey)
+	params.CreatorMlKemPublicKey = strings.TrimSpace(params.CreatorMlKemPublicKey)
+
+	if params.Name == "" ||
+		params.GroupType == "" ||
+		params.CreatorPeerId == "" ||
+		params.CreatorPublicKey == "" ||
+		params.CreatorMlKemPublicKey == "" {
+		return errJSON("INVALID_INPUT", "missing required group create creator material: name, groupType, creatorPeerId, creatorPublicKey, or creatorMlKemPublicKey")
 	}
 	if !isSupportedBridgeGroupType(params.GroupType) {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("unsupported groupType: %s", params.GroupType))
@@ -1447,8 +1476,9 @@ func GroupCreate(paramsJSON string) (result string) {
 
 	// 3. Build GroupConfig with creator as admin member.
 	config := &node.GroupConfig{
-		Name:      params.Name,
-		GroupType: node.GroupType(params.GroupType),
+		Name:        params.Name,
+		GroupType:   node.GroupType(params.GroupType),
+		Description: params.Description,
 		Members: []node.GroupMember{
 			{
 				PeerId:         params.CreatorPeerId,
@@ -1479,6 +1509,9 @@ func GroupCreate(paramsJSON string) (result string) {
 		"members":   config.Members,
 		"createdBy": config.CreatedBy,
 		"createdAt": config.CreatedAt,
+	}
+	if config.Description != "" {
+		configMap["description"] = config.Description
 	}
 
 	return okJSON(map[string]interface{}{
@@ -1538,6 +1571,9 @@ func GroupJoinTopic(paramsJSON string) (result string) {
 
 	if err := n.JoinGroupTopic(params.GroupId, &params.GroupConfig, keyInfo); err != nil {
 		if strings.Contains(err.Error(), "already joined group topic:") {
+			if _, refreshErr := n.RefreshJoinedGroupStateIfNewer(params.GroupId, &params.GroupConfig, keyInfo); refreshErr != nil {
+				return errJSON("GROUP_ERROR", refreshErr.Error())
+			}
 			return okJSON(map[string]interface{}{
 				"ok":   true,
 				"note": "ALREADY_JOINED",
@@ -1619,6 +1655,7 @@ func GroupPublish(paramsJSON string) (result string) {
 		SenderDevicePublicKey string                   `json:"senderDevicePublicKey,omitempty"`
 		SenderKeyPackageId    string                   `json:"senderKeyPackageId,omitempty"`
 		MessageId             string                   `json:"messageId,omitempty"`
+		Timestamp             string                   `json:"timestamp,omitempty"`
 		QuotedMessageId       string                   `json:"quotedMessageId,omitempty"`
 		Media                 []map[string]interface{} `json:"media,omitempty"`
 	}
@@ -1649,6 +1686,9 @@ func GroupPublish(paramsJSON string) (result string) {
 	}
 	if params.SenderKeyPackageId != "" {
 		opts["senderKeyPackageId"] = params.SenderKeyPackageId
+	}
+	if params.Timestamp != "" {
+		opts["timestamp"] = params.Timestamp
 	}
 
 	msgId, topicPeers, err := n.PublishGroupMessage(
@@ -1795,9 +1835,11 @@ func GroupUpdateConfig(paramsJSON string) (result string) {
 	})
 }
 
-// GroupRotateKey generates a new group key and updates the stored key info.
+// GroupRotateKey is a legacy rotation command that is intentionally unsupported
+// because it cannot own durable key distribution before committing validator state.
 // Input JSON: { "groupId": "..." }
-// Returns JSON: { "ok": true, "groupKey": "...", "keyEpoch": N }
+// Returns JSON: { "ok": false, "errorCode": "LEGACY_ROTATE_KEY_UNSUPPORTED", ... }
+// Raw callers should use group:generateNextKey, distribute the key, then group:updateKey.
 func GroupRotateKey(paramsJSON string) (result string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1824,31 +1866,7 @@ func GroupRotateKey(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing groupId")
 	}
 
-	// Generate new key.
-	newKey, err := mcrypto.GenerateGroupKey()
-	if err != nil {
-		return errJSON("INTERNAL_ERROR", err.Error())
-	}
-
-	// Get current key info to increment epoch, start at 2 if not found.
-	currentKeyInfo := n.GetGroupKeyInfo(params.GroupId)
-	newEpoch := 2
-	if currentKeyInfo != nil {
-		newEpoch = currentKeyInfo.KeyEpoch + 1
-	}
-
-	newKeyInfo := &node.GroupKeyInfo{
-		Key:      newKey,
-		KeyEpoch: newEpoch,
-	}
-
-	n.UpdateGroupKey(params.GroupId, newKeyInfo)
-
-	return okJSON(map[string]interface{}{
-		"ok":       true,
-		"groupKey": newKey,
-		"keyEpoch": newEpoch,
-	})
+	return errJSON("LEGACY_ROTATE_KEY_UNSUPPORTED", "legacy group key rotation is unsupported; use group:generateNextKey, distribute the key, then group:updateKey")
 }
 
 // GroupGenerateNextKey generates the next key and epoch without mutating
@@ -1881,16 +1899,16 @@ func GroupGenerateNextKey(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing groupId")
 	}
 
+	currentKeyInfo := n.GetGroupKeyInfo(params.GroupId)
+	if currentKeyInfo == nil {
+		return errJSON("GROUP_KEY_NOT_FOUND", "current group key not found; restore or join the group before generating the next key")
+	}
+
 	newKey, err := mcrypto.GenerateGroupKey()
 	if err != nil {
 		return errJSON("INTERNAL_ERROR", err.Error())
 	}
-
-	currentKeyInfo := n.GetGroupKeyInfo(params.GroupId)
-	newEpoch := 2
-	if currentKeyInfo != nil {
-		newEpoch = currentKeyInfo.KeyEpoch + 1
-	}
+	newEpoch := currentKeyInfo.KeyEpoch + 1
 
 	return okJSON(map[string]interface{}{
 		"ok":       true,

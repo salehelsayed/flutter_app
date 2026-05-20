@@ -37,6 +37,23 @@ Future<GroupModel> createGroup({
   if (name.trim().isEmpty) {
     throw ArgumentError('Group name must not be empty');
   }
+  if (creatorPeerId.trim().isEmpty) {
+    throw ArgumentError('Creator peer id must not be empty');
+  }
+  if (creatorPublicKey.trim().isEmpty) {
+    throw ArgumentError('Creator public key must not be empty');
+  }
+  if (creatorMlKemPublicKey.trim().isEmpty) {
+    throw ArgumentError('Creator ML-KEM public key must not be empty');
+  }
+  final signedCreatePrivateKey = creatorPrivateKey;
+  if (appendGroupEventLogEntry != null &&
+      (signedCreatePrivateKey == null ||
+          signedCreatePrivateKey.trim().isEmpty)) {
+    throw ArgumentError(
+      'Signed group create requires creator private key material',
+    );
+  }
 
   // 1. Call bridge to create the group topic
   final result = await callGroupCreate(

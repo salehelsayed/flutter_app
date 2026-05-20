@@ -87,23 +87,32 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
 }) async {
+  final uniqueContacts = _dedupeContactsByPeerId(selectedContacts);
   emitFlowEvent(
     layer: 'FL',
     event: 'CREATE_GROUP_WITH_MEMBERS_BEGIN',
     details: {
-      'contactCount': selectedContacts.length,
+      'contactCount': uniqueContacts.length,
+      if (uniqueContacts.length != selectedContacts.length)
+        'duplicateContactCount':
+            selectedContacts.length - uniqueContacts.length,
       'type': type.toValue(),
       'hasName': name != null,
     },
   );
 
   // 1. Resolve name: use provided or auto-generate from usernames
-  final resolvedName = _resolveName(name, selectedContacts);
+  final resolvedName = _resolveName(name, uniqueContacts);
 
   ensureWithinGroupMembershipLimit(
     currentMemberCount: 1,
-    requestedAdditionalMembers: selectedContacts.length,
+    requestedAdditionalMembers: uniqueContacts.length,
   );
+
+  final creatorMlKemPublicKey = identity.mlKemPublicKey;
+  if (creatorMlKemPublicKey == null || creatorMlKemPublicKey.trim().isEmpty) {
+    throw ArgumentError('Creator ML-KEM public key must not be empty');
+  }
 
   // 2. Create the group (saves group + self as admin + key)
   final group = await createGroup(
@@ -113,7 +122,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     type: type,
     creatorPeerId: identity.peerId,
     creatorPublicKey: identity.publicKey,
-    creatorMlKemPublicKey: identity.mlKemPublicKey ?? '',
+    creatorMlKemPublicKey: creatorMlKemPublicKey,
     creatorUsername: identity.username,
     creatorPrivateKey: identity.privateKey,
     appendGroupEventLogEntry: appendGroupEventLogEntry,
@@ -126,7 +135,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
 
   // 3. Add each contact as a writer member
   final addedMembers = <GroupMember>[];
-  for (final contact in selectedContacts) {
+  for (final contact in uniqueContacts) {
     try {
       final newMember = GroupMember(
         groupId: group.id,
@@ -246,7 +255,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   var inviteDeliverySkippedMissingKey = false;
   final keyInfo = await groupRepo.getLatestKey(group.id);
   if (keyInfo != null) {
-    final recipients = selectedContacts
+    final recipients = uniqueContacts
         .where((c) => addedMembers.any((m) => m.peerId == c.peerId))
         .map(
           (c) => (
@@ -307,6 +316,15 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     inviteDeliverySkippedMissingKey: inviteDeliverySkippedMissingKey,
     membersAddedPublishFailed: membersAddedPublishFailed,
   );
+}
+
+List<ContactModel> _dedupeContactsByPeerId(List<ContactModel> contacts) {
+  final byPeerId = <String, ContactModel>{};
+  for (final contact in contacts) {
+    final key = contact.peerId.trim();
+    byPeerId.putIfAbsent(key, () => contact);
+  }
+  return byPeerId.values.toList(growable: false);
 }
 
 /// Resolves the group name: uses provided name if non-null/non-empty,

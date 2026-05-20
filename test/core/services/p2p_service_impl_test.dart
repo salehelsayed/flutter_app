@@ -1898,6 +1898,86 @@ void main() {
     );
 
     test(
+      'NW-004 relay reconnect propagates needsGroupRecovery for group topic repair',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+            'needsGroupRecovery': false,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        var statusCallCount = 0;
+        bridge.whenCommand('node:status', (_) {
+          statusCallCount++;
+          if (statusCallCount == 1) {
+            return jsonEncode({
+              'ok': true,
+              'peerId': 'test-peer',
+              'isStarted': true,
+              'listenAddresses': [],
+              'circuitAddresses': [],
+              'connections': [],
+              'relayState': 'degraded',
+              'healthyRelayCount': 0,
+              'watchdogRestartCount': 0,
+              'needsGroupRecovery': false,
+            });
+          }
+          return jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/repaired'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 1,
+            'needsGroupRecovery': true,
+          });
+        });
+        bridge.whenCommand(
+          'relay:reconnect',
+          (_) => jsonEncode({'ok': true, 'recoveryMode': 'watchdog_restart'}),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        bridge.calledCommands.clear();
+
+        final observedStates = <NodeState>[];
+        final subscription = service.stateStream.listen(observedStates.add);
+        addTearDown(subscription.cancel);
+
+        await service.performImmediateHealthCheck();
+
+        expect(bridge.calledCommands, contains('relay:reconnect'));
+        expect(service.lastRecoveryMethod, 'watchdog_restart');
+        expect(service.currentState.relayState, 'online');
+        expect(service.currentState.needsGroupRecovery, isTrue);
+        expect(
+          observedStates.any((state) => state.needsGroupRecovery == true),
+          isTrue,
+          reason:
+              'reconnect state stream must tell Flutter to repair group topics',
+        );
+      },
+    );
+
+    test(
       'relay reconnect forwards Phase 3b foreground attribution into recovery event',
       () async {
         bridge.whenCommand(

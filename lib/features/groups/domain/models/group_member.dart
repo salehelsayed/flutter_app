@@ -508,6 +508,9 @@ class GroupMember {
     bool preserveMissingPermissions = true,
   }) {
     final peerId = map['peerId'] as String? ?? existing?.peerId ?? '';
+    final configJoinedAt = DateTime.tryParse(
+      map['joinedAt'] as String? ?? '',
+    )?.toUtc();
     return GroupMember(
       groupId: groupId,
       peerId: peerId,
@@ -524,7 +527,11 @@ class GroupMember {
       devices: map.containsKey('devices')
           ? GroupMemberDeviceIdentity.listFromJson(map['devices'])
           : existing?.devices ?? const <GroupMemberDeviceIdentity>[],
-      joinedAt: existing?.joinedAt ?? joinedAt ?? DateTime.now().toUtc(),
+      joinedAt:
+          existing?.joinedAt ??
+          configJoinedAt ??
+          joinedAt ??
+          DateTime.now().toUtc(),
     );
   }
 
@@ -548,6 +555,7 @@ class GroupMember {
       'peerId': peerId,
       'username': username,
       'role': role.toValue(),
+      'joinedAt': joinedAt.toUtc().toIso8601String(),
       if (permissions.hasOverrides) 'permissions': permissions.toJson(),
       'publicKey': publicKey,
       if (mlKemPublicKey != null) 'mlKemPublicKey': mlKemPublicKey,

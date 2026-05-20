@@ -15,7 +15,9 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
+import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
@@ -34,6 +36,7 @@ import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 class GroupConversationScreen extends StatelessWidget {
   final GroupModel group;
   final List<GroupMessage> messages;
+  final Map<String, GroupMember> membersByPeerId;
   final String? ownPeerId;
   final ValueChanged<String> onSend;
   final VoidCallback onBack;
@@ -80,11 +83,14 @@ class GroupConversationScreen extends StatelessWidget {
   final GroupHistoryGapRepairNotice? historyGapRepairNotice;
   final BackgroundPreference backgroundPreference;
   final GroupSecurityStatusViewState? securityStatus;
+  final bool isRecovering;
+  final String? readOnlyBannerText;
 
   const GroupConversationScreen({
     super.key,
     required this.group,
     required this.messages,
+    this.membersByPeerId = const {},
     this.ownPeerId,
     required this.onSend,
     required this.onBack,
@@ -130,6 +136,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.historyGapRepairNotice,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.securityStatus,
+    this.isRecovering = false,
+    this.readOnlyBannerText,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -172,6 +180,7 @@ class GroupConversationScreen extends StatelessWidget {
                     context,
                     historyGapRepairNotice!,
                   ),
+                if (isRecovering) _buildRecoveryBanner(context),
                 if (uploadProgress != null)
                   UploadProgressBanner(
                     state: uploadProgress!,
@@ -310,10 +319,52 @@ class GroupConversationScreen extends StatelessWidget {
   }
 
   Widget _buildEmptyOrLoadingState(BuildContext context) {
-    if (!initialLoadDone) {
+    if (!initialLoadDone || isRecovering) {
       return const _GroupConversationLoadingShell();
     }
     return _buildEmptyState(context);
+  }
+
+  Widget _buildRecoveryBanner(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final accent = readableColors.isLightSurface
+        ? const Color(0xFF0F766E)
+        : const Color(0xFF5EEAD4);
+
+    return Container(
+      key: const ValueKey('group-recovery-banner'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: accent.withValues(
+          alpha: readableColors.isLightSurface ? 0.08 : 0.12,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: accent.withValues(
+            alpha: readableColors.isLightSurface ? 0.24 : 0.20,
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.sync_rounded, size: 18, color: accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Catching up missed messages. New messages will still appear here.',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.35,
+                color: readableColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildEmptyState(BuildContext context) {
@@ -565,7 +616,14 @@ class GroupConversationScreen extends StatelessWidget {
 
         LetterCard buildLetterCard({VoidCallback? onLongPress}) => LetterCard(
           senderPeerId: message.senderPeerId,
-          senderName: isSent ? 'You' : (message.senderUsername ?? 'Unknown'),
+          senderName: isSent
+              ? 'You'
+              : resolveGroupSenderDisplayName(
+                  senderPeerId: message.senderPeerId,
+                  wireSenderUsername: message.senderUsername,
+                  member: membersByPeerId[message.senderPeerId],
+                  preferMemberName: true,
+                ),
           text: message.text,
           time: _formatTime(message.timestamp),
           isIncoming: !isSent,
@@ -683,9 +741,10 @@ class GroupConversationScreen extends StatelessWidget {
         ),
       ),
       child: Text(
-        group.isDissolved
-            ? 'This group has been dissolved. History stays available, but new messages are disabled.'
-            : 'Only admins can send messages in this group',
+        readOnlyBannerText ??
+            (group.isDissolved
+                ? 'This group has been dissolved. History stays available, but new messages are disabled.'
+                : 'Only admins can send messages in this group'),
         textAlign: TextAlign.center,
         style: TextStyle(fontSize: 13, color: readableColors.textMuted),
       ),

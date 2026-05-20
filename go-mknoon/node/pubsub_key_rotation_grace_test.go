@@ -1257,7 +1257,148 @@ func TestGL014UpdateGroupKeyIgnoresOlderEpochAndKeepsCurrentEpochDelivery(t *tes
 	assertGL014Unchanged("nodeB after epoch 3 delivery", nodeB.GetGroupKeyInfo(groupId), beforeB)
 }
 
+func TestKE004UpdateGroupKeySameEpochSameMaterialIsIdempotentAndKeepsEpoch3Delivery(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	_, receiverPubB64 := generateEd25519KeyPair(t)
+	epoch2Key, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate epoch 2 group key: %v", err)
+	}
+	epoch3Key, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate epoch 3 group key: %v", err)
+	}
+
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "ke004-same-epoch-same-material-idempotent"
+	senderPeerId := nodeA.PeerId()
+	config := &GroupConfig{
+		Name:      "KE004 Same Epoch Same Key Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: receiverPubB64},
+		},
+		CreatedBy: senderPeerId,
+	}
+	epoch2Info := &GroupKeyInfo{Key: epoch2Key, KeyEpoch: 2}
+	epoch3Info := &GroupKeyInfo{Key: epoch3Key, KeyEpoch: 3}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, epoch2Info); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic epoch 2: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, epoch2Info); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic epoch 2: %v", err)
+	}
+	nodeA.UpdateGroupKey(groupId, epoch3Info)
+	nodeB.UpdateGroupKey(groupId, epoch3Info)
+
+	assertKE004Epoch3WithPrevEpoch2 := func(label string, got *GroupKeyInfo) {
+		t.Helper()
+		if got == nil {
+			t.Fatalf("%s GetGroupKeyInfo = nil, want epoch 3 info", label)
+		}
+		if got.Key != epoch3Key || got.KeyEpoch != 3 {
+			t.Fatalf("%s current key/epoch = %q/%d, want epoch 3 key/3", label, got.Key, got.KeyEpoch)
+		}
+		if got.PrevKey != epoch2Key || got.PrevKeyEpoch != 2 {
+			t.Fatalf("%s previous key/epoch = %q/%d, want original epoch 2 key/2", label, got.PrevKey, got.PrevKeyEpoch)
+		}
+		if got.GraceDeadline.IsZero() {
+			t.Fatalf("%s GraceDeadline is zero, want previous-key grace window", label)
+		}
+	}
+	assertKE004Unchanged := func(label string, got, before *GroupKeyInfo) {
+		t.Helper()
+		if got == nil {
+			t.Fatalf("%s GetGroupKeyInfo = nil, want preserved epoch 3 info", label)
+		}
+		if got.Key != before.Key || got.KeyEpoch != before.KeyEpoch {
+			t.Fatalf("%s current key/epoch changed from %q/%d to %q/%d", label, before.Key, before.KeyEpoch, got.Key, got.KeyEpoch)
+		}
+		if got.PrevKey != before.PrevKey || got.PrevKeyEpoch != before.PrevKeyEpoch {
+			t.Fatalf("%s previous key/epoch changed from %q/%d to %q/%d", label, before.PrevKey, before.PrevKeyEpoch, got.PrevKey, got.PrevKeyEpoch)
+		}
+		if !got.GraceDeadline.Equal(before.GraceDeadline) {
+			t.Fatalf("%s grace deadline changed from %v to %v", label, before.GraceDeadline, got.GraceDeadline)
+		}
+	}
+
+	beforeA := nodeA.GetGroupKeyInfo(groupId)
+	beforeB := nodeB.GetGroupKeyInfo(groupId)
+	assertKE004Epoch3WithPrevEpoch2("nodeA before duplicate update", beforeA)
+	assertKE004Epoch3WithPrevEpoch2("nodeB before duplicate update", beforeB)
+
+	nodeA.UpdateGroupKey(groupId, epoch3Info)
+	nodeB.UpdateGroupKey(groupId, epoch3Info)
+
+	afterDuplicateA := nodeA.GetGroupKeyInfo(groupId)
+	afterDuplicateB := nodeB.GetGroupKeyInfo(groupId)
+	assertKE004Unchanged("nodeA after duplicate update", afterDuplicateA, beforeA)
+	assertKE004Unchanged("nodeB after duplicate update", afterDuplicateB, beforeB)
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 3*time.Second)
+
+	baselineB := len(nodeBCapture.snapshot())
+	messageId := "ke004-epoch3-message"
+	text := "KE004 epoch 3 delivery after duplicate same-key update"
+	msgID, peerCount, publishErr := nodeA.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		senderPeerId,
+		senderPubB64,
+		"Alice",
+		text,
+		messageId,
+		nil,
+	)
+	if publishErr != nil {
+		t.Fatalf("PublishGroupMessage after duplicate same-key update: %v", publishErr)
+	}
+	if msgID != messageId {
+		t.Fatalf("PublishGroupMessage message id = %q, want %q", msgID, messageId)
+	}
+	if peerCount < 1 {
+		t.Fatalf("PublishGroupMessage peer count = %d, want >= 1", peerCount)
+	}
+
+	received := waitForCollectedEvent(t, nodeBCapture, "group_message:received", 5*time.Second)
+	if got, _ := received["groupId"].(string); got != groupId {
+		t.Fatalf("received groupId = %q, want %q", got, groupId)
+	}
+	if got, _ := received["senderId"].(string); got != senderPeerId {
+		t.Fatalf("received senderId = %q, want %q", got, senderPeerId)
+	}
+	if got, _ := received["messageId"].(string); got != messageId {
+		t.Fatalf("received messageId = %q, want %q", got, messageId)
+	}
+	if got, _ := received["text"].(string); got != text {
+		t.Fatalf("received text = %q, want %q", got, text)
+	}
+	if got, ok := received["keyEpoch"].(float64); !ok || int(got) != 3 {
+		t.Fatalf("received keyEpoch = %v, want 3", received["keyEpoch"])
+	}
+
+	if hasCollectedEventName(nodeBCapture.snapshot()[baselineB:], "group:decryption_failed") {
+		t.Fatal("group:decryption_failed should not be emitted for epoch 3 delivery after duplicate same-key update")
+	}
+	assertKE004Unchanged("nodeB after epoch 3 delivery", nodeB.GetGroupKeyInfo(groupId), beforeB)
+}
+
+func TestKE005UpdateGroupKeyRejectsSameEpochDifferentMaterialAndKeepsEpoch3Delivery(t *testing.T) {
+	testUpdateGroupKeyIgnoresSameEpochDifferentMaterialAndKeepsEpoch3Delivery(t, "ke005", "KE005")
+}
+
 func TestGL015UpdateGroupKeyIgnoresSameEpochDifferentMaterialAndKeepsEpoch3Delivery(t *testing.T) {
+	testUpdateGroupKeyIgnoresSameEpochDifferentMaterialAndKeepsEpoch3Delivery(t, "gl015", "GL015")
+}
+
+func testUpdateGroupKeyIgnoresSameEpochDifferentMaterialAndKeepsEpoch3Delivery(t *testing.T, testPrefix string, label string) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	_, receiverPubB64 := generateEd25519KeyPair(t)
 	epoch2Key, err := mcrypto.GenerateGroupKey()
@@ -1281,10 +1422,10 @@ func TestGL015UpdateGroupKeyIgnoresSameEpochDifferentMaterialAndKeepsEpoch3Deliv
 	nodeBCapture := &testEventCollector{}
 	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
 
-	groupId := "gl015-same-epoch-different-material-keeps-current-delivery"
+	groupId := testPrefix + "-same-epoch-different-material-keeps-current-delivery"
 	senderPeerId := nodeA.PeerId()
 	config := &GroupConfig{
-		Name:      "GL015 Same Epoch Conflict Group",
+		Name:      label + " Same Epoch Conflict Group",
 		GroupType: GroupTypeChat,
 		Members: []GroupMember{
 			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
@@ -1353,8 +1494,8 @@ func TestGL015UpdateGroupKeyIgnoresSameEpochDifferentMaterialAndKeepsEpoch3Deliv
 	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 3*time.Second)
 
 	baselineB := len(nodeBCapture.snapshot())
-	messageId := "gl015-epoch3-message"
-	text := "GL015 epoch 3 delivery after same-epoch K2 update"
+	messageId := testPrefix + "-epoch3-message"
+	text := label + " epoch 3 delivery after same-epoch K2 update"
 	msgID, peerCount, publishErr := nodeA.PublishGroupMessage(
 		groupId,
 		senderPrivB64,

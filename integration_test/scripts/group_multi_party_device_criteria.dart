@@ -25,6 +25,174 @@ const _gm001Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'gm001',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _de002Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'de002',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _de003Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'de003',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _de007Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'de007',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _de017Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'de017',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _ir001Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'ir001',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _ir015Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'ir015',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _ir016Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'ir016',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateAbcCreateRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_abc_create',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateFullMeshOnlineRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_full_mesh_online',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateRelayOnlyDeliveryRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_relay_only_delivery',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privatePartitionReaddHealRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_partition_readd_heal',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateRelayReconnectGroupRecoveryRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_relay_reconnect_group_recovery',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privatePeerDisconnectNotRemovalRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_peer_disconnect_not_removal',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateBackgroundResumeGroupDeliveryRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_background_resume_group_delivery',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateLongOfflineEpochChurnRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_long_offline_epoch_churn',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateOnlineAddRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_online_add',
+  roles: <String>['alice', 'bob', 'charlie', 'dana'],
+);
+const _privateOfflineAddRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_offline_add',
+  roles: <String>['alice', 'bob', 'charlie', 'dana'],
+);
+const _privateOnlineRemoveRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_online_remove',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateOfflineRemoveRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_offline_remove',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateOfflineReaddRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_offline_readd',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateReaddCurrentRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_readd_current',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateReaddActiveMembersRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_readd_active_members',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
+const _privateReaddAlternatingChurnRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_readd_alternating_churn',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
+const _privateLateLeaveReaddRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_late_leave_readd',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateRotatedDeviceReaddRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_rotated_device_readd',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateSameUserMultiDeviceReaddRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_same_user_multi_device_readd',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
+const _privateReaddCyclesRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_readd_cycles',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateRapidReaddRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_rapid_readd',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateConcurrentAdminMembershipEditsRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_concurrent_admin_membership_edits',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
+const _privateTimelineTruthRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_timeline_truth',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateHistoryRetentionRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_history_retention',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateInviteTerminalStatesRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_invite_terminal_states',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateStaleInviteReaddRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_stale_invite_readd',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
+const _privateStaleLowerKeyUpdateRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_stale_lower_key_update',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateSameEpochKeyConflictRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_same_epoch_key_conflict',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privatePartialKeyDistributionRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_partial_key_distribution',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateNonFriendMemberDeliveryRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_non_friend_member_delivery',
+      roles: <String>['alice', 'bob', 'dana'],
+    );
+const _privateAdminRoleTransferDeliveryRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_admin_role_transfer_delivery',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _ge001Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'ge001',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -255,6 +423,51 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'ge023': _ge023Requirement,
   'ge024': _ge024Requirement,
   'gm001': _gm001Requirement,
+  'de002': _de002Requirement,
+  'de003': _de003Requirement,
+  'de007': _de007Requirement,
+  'de017': _de017Requirement,
+  'ir001': _ir001Requirement,
+  'ir015': _ir015Requirement,
+  'ir016': _ir016Requirement,
+  'private_abc_create': _privateAbcCreateRequirement,
+  'private_full_mesh_online': _privateFullMeshOnlineRequirement,
+  'private_relay_only_delivery': _privateRelayOnlyDeliveryRequirement,
+  'private_partition_readd_heal': _privatePartitionReaddHealRequirement,
+  'private_relay_reconnect_group_recovery':
+      _privateRelayReconnectGroupRecoveryRequirement,
+  'private_peer_disconnect_not_removal':
+      _privatePeerDisconnectNotRemovalRequirement,
+  'private_background_resume_group_delivery':
+      _privateBackgroundResumeGroupDeliveryRequirement,
+  'private_long_offline_epoch_churn': _privateLongOfflineEpochChurnRequirement,
+  'private_online_add': _privateOnlineAddRequirement,
+  'private_offline_add': _privateOfflineAddRequirement,
+  'private_online_remove': _privateOnlineRemoveRequirement,
+  'private_offline_remove': _privateOfflineRemoveRequirement,
+  'private_offline_readd': _privateOfflineReaddRequirement,
+  'private_readd_current': _privateReaddCurrentRequirement,
+  'private_readd_active_members': _privateReaddActiveMembersRequirement,
+  'private_readd_alternating_churn': _privateReaddAlternatingChurnRequirement,
+  'private_late_leave_readd': _privateLateLeaveReaddRequirement,
+  'private_rotated_device_readd': _privateRotatedDeviceReaddRequirement,
+  'private_same_user_multi_device_readd':
+      _privateSameUserMultiDeviceReaddRequirement,
+  'private_readd_cycles': _privateReaddCyclesRequirement,
+  'private_rapid_readd': _privateRapidReaddRequirement,
+  'private_concurrent_admin_membership_edits':
+      _privateConcurrentAdminMembershipEditsRequirement,
+  'private_timeline_truth': _privateTimelineTruthRequirement,
+  'private_history_retention': _privateHistoryRetentionRequirement,
+  'private_invite_terminal_states': _privateInviteTerminalStatesRequirement,
+  'private_stale_invite_readd': _privateStaleInviteReaddRequirement,
+  'private_stale_lower_key_update': _privateStaleLowerKeyUpdateRequirement,
+  'private_same_epoch_key_conflict': _privateSameEpochKeyConflictRequirement,
+  'private_partial_key_distribution': _privatePartialKeyDistributionRequirement,
+  'private_non_friend_member_delivery':
+      _privateNonFriendMemberDeliveryRequirement,
+  'private_admin_role_transfer_delivery':
+      _privateAdminRoleTransferDeliveryRequirement,
   'gm002': _gm002Requirement,
   'gm003': _gm003Requirement,
   'gm004': _gm004Requirement,
@@ -470,12 +683,19 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
             requirement.scenario == 'ge003' ||
             requirement.scenario == 'gm004' ||
             requirement.scenario == 'gm005' ||
+            requirement.scenario == 'private_online_remove' ||
+            requirement.scenario == 'private_offline_remove' ||
+            requirement.scenario ==
+                'private_background_resume_group_delivery' ||
             requirement.scenario == 'gm009' ||
             requirement.scenario == 'gm011' ||
             requirement.scenario == 'gm013' ||
             requirement.scenario == 'gm016' ||
             requirement.scenario == 'gm020' ||
-            requirement.scenario == 'gm034') &&
+            requirement.scenario == 'gm034' ||
+            requirement.scenario == 'private_history_retention' ||
+            requirement.scenario == 'private_invite_terminal_states' ||
+            requirement.scenario == 'de017') &&
         role == 'charlie') {
       if (keyEpoch == null || keyEpoch < 0) {
         failures.add('$role: keyEpoch must be zero or a positive integer');
@@ -516,11 +736,17 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
         requirement.scenario == 'ge003' ||
         requirement.scenario == 'gm004' ||
         requirement.scenario == 'gm005' ||
+        requirement.scenario == 'private_online_remove' ||
+        requirement.scenario == 'private_offline_remove' ||
+        requirement.scenario == 'private_background_resume_group_delivery' ||
         requirement.scenario == 'gm009' ||
         requirement.scenario == 'gm011' ||
         requirement.scenario == 'gm013' ||
         requirement.scenario == 'gm016' ||
         requirement.scenario == 'gm017' ||
+        requirement.scenario == 'private_history_retention' ||
+        requirement.scenario == 'private_invite_terminal_states' ||
+        requirement.scenario == 'de017' ||
         requirement.scenario == 'go003' ||
         requirement.scenario == 'gm018' ||
         requirement.scenario == 'gm020' ||
@@ -533,7 +759,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
       for (final role in const <String>['alice', 'bob']) {
         final verdict = byRole[role];
         if (verdict == null) continue;
-        final members = _stringList(verdict['memberPeerIds']).toSet();
+        final members = _activeMemberPeerIds(verdict).toSet();
         final missingMembers = remainingPeerIds.difference(members);
         if (missingMembers.isNotEmpty) {
           failures.add(
@@ -545,11 +771,56 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
           failures.add('$role: post-removal membership still includes charlie');
         }
       }
+    } else if (requirement.scenario ==
+        'private_concurrent_admin_membership_edits') {
+      final remainingPeerIds = <String>{
+        peerIdByRole['alice']!,
+        peerIdByRole['bob']!,
+        peerIdByRole['dana']!,
+      };
+      final removedPeerId = peerIdByRole['charlie']!;
+      for (final role in const <String>['alice', 'bob', 'dana']) {
+        final verdict = byRole[role];
+        if (verdict == null) continue;
+        final members = _activeMemberPeerIds(verdict).toSet();
+        final missingMembers = remainingPeerIds.difference(members);
+        if (missingMembers.isNotEmpty) {
+          failures.add(
+            '$role: incomplete ML-012 membership, missing '
+            '${missingMembers.join(', ')}',
+          );
+        }
+        if (members.contains(removedPeerId)) {
+          failures.add('$role: ML-012 membership still includes charlie');
+        }
+      }
+    } else if (requirement.scenario == 'private_same_user_multi_device_readd') {
+      final accountMemberPeerIds = <String>{
+        peerIdByRole['alice']!,
+        peerIdByRole['bob']!,
+        peerIdByRole['charlie']!,
+      };
+      final danaRolePeerId = peerIdByRole['dana']!;
+      for (final role in requirement.roles) {
+        final verdict = byRole[role];
+        if (verdict == null) continue;
+        final members = _activeMemberPeerIds(verdict).toSet();
+        final missingMembers = accountMemberPeerIds.difference(members);
+        if (missingMembers.isNotEmpty) {
+          failures.add(
+            '$role: incomplete RA-013 account membership, missing '
+            '${missingMembers.join(', ')}',
+          );
+        }
+        if (members.contains(danaRolePeerId)) {
+          failures.add('$role: RA-013 membership includes Dana account');
+        }
+      }
     } else {
       for (final role in requirement.roles) {
         final verdict = byRole[role];
         if (verdict == null) continue;
-        final members = _stringList(verdict['memberPeerIds']).toSet();
+        final members = _activeMemberPeerIds(verdict).toSet();
         final missingMembers = expectedPeerIds.difference(members);
         if (missingMembers.isNotEmpty) {
           failures.add(
@@ -652,7 +923,8 @@ _SentProofMessage? _validateSentMessage({
     failures.add('${message.senderRole}: sent ${message.key} missing text');
   }
   final sentPeerId = _stringValue(sent['senderPeerId']);
-  final expectedPeerId = peerIdByRole[message.senderRole];
+  final expectedPeerId =
+      peerIdByRole[message.expectedSenderPeerRole ?? message.senderRole];
   if (sentPeerId == null || sentPeerId.isEmpty) {
     failures.add(
       '${message.senderRole}: sent ${message.key} missing senderPeerId',
@@ -728,7 +1000,8 @@ void _validateReceivedMessage({
       failures.add('$receiverRole: received ${message.key} keyEpoch mismatch');
     }
   } else {
-    final expectedSenderPeerId = peerIdByRole[message.senderRole];
+    final expectedSenderPeerId =
+        peerIdByRole[message.expectedSenderPeerRole ?? message.senderRole];
     if (expectedSenderPeerId != null &&
         _stringValue(received['senderPeerId']) != expectedSenderPeerId) {
       failures.add('$receiverRole: received ${message.key} sender mismatch');
@@ -822,6 +1095,80 @@ const _ge024AliceRemovedWindowParentKey = 'aliceGe024RemovedWindowParent';
 const _ge024BobReplyAvailableKey = 'bobGe024ReplyAvailable';
 const _ge024BobReplyUnavailableKey = 'bobGe024ReplyUnavailable';
 const _go002InboxFailureKey = 'aliceGo002InboxStoreFailure';
+
+String _ra017Key(int cycle, String phase, String senderRole) =>
+    'ra017Cycle${cycle}_${phase}_$senderRole';
+
+String _ra018Key(int cycle, String operation, String senderRole) =>
+    'ra018Cycle${cycle}_${operation}_$senderRole';
+
+List<_ExpectedProofMessage> _ra017ExpectedMessages() {
+  final messages = <_ExpectedProofMessage>[];
+  for (var cycle = 1; cycle <= 3; cycle++) {
+    messages.addAll(<_ExpectedProofMessage>[
+      _ExpectedProofMessage(
+        key: _ra017Key(cycle, 'removed', 'alice'),
+        senderRole: 'alice',
+        receiverRoles: const <String>['bob', 'dana'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra017Key(cycle, 'removed', 'bob'),
+        senderRole: 'bob',
+        receiverRoles: const <String>['alice', 'dana'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra017Key(cycle, 'removed', 'dana'),
+        senderRole: 'dana',
+        receiverRoles: const <String>['alice', 'bob'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra017Key(cycle, 'readd', 'alice'),
+        senderRole: 'alice',
+        receiverRoles: const <String>['bob', 'charlie', 'dana'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra017Key(cycle, 'readd', 'bob'),
+        senderRole: 'bob',
+        receiverRoles: const <String>['alice', 'charlie', 'dana'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra017Key(cycle, 'readd', 'dana'),
+        senderRole: 'dana',
+        receiverRoles: const <String>['alice', 'bob', 'charlie'],
+      ),
+    ]);
+  }
+  return messages;
+}
+
+List<_ExpectedProofMessage> _ra018ExpectedMessages() {
+  final messages = <_ExpectedProofMessage>[];
+  for (var cycle = 1; cycle <= 3; cycle++) {
+    messages.addAll(<_ExpectedProofMessage>[
+      _ExpectedProofMessage(
+        key: _ra018Key(cycle, 'charlieRemoved', 'alice'),
+        senderRole: 'alice',
+        receiverRoles: const <String>['bob', 'dana'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra018Key(cycle, 'charlieReadded', 'bob'),
+        senderRole: 'bob',
+        receiverRoles: const <String>['alice', 'charlie', 'dana'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra018Key(cycle, 'danaRemoved', 'charlie'),
+        senderRole: 'charlie',
+        receiverRoles: const <String>['alice', 'bob'],
+      ),
+      _ExpectedProofMessage(
+        key: _ra018Key(cycle, 'danaReadded', 'dana'),
+        senderRole: 'dana',
+        receiverRoles: const <String>['alice', 'bob', 'charlie'],
+      ),
+    ]);
+  }
+  return messages;
+}
 
 List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
   switch (scenario) {
@@ -1308,11 +1655,316 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
         ),
       ];
     case 'gm001':
+    case 'private_abc_create':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceInitial',
           senderRole: 'alice',
           receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_full_mesh_online':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceFullMesh',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobFullMesh',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieFullMesh',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
+    case 'private_relay_only_delivery':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceToRelayOnlyBob',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobRelayOnlyPublishBack',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+      ];
+    case 'private_partition_readd_heal':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceRemovedWindow',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'alicePostHeal',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobPostHeal',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charliePostHeal',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
+    case 'private_relay_reconnect_group_recovery':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceMissedDuringRelayDrop',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'alicePostReconnectLive',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobRecoveredPublishBack',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+      ];
+    case 'private_peer_disconnect_not_removal':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceMissedDuringDisconnect',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'alicePostReconnectLive',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobPublishBackAfterReconnect',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+      ];
+    case 'private_background_resume_group_delivery':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceDuringBackgroundBeforeEdit',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceDuringBackgroundAfterEdit',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'alicePostForegroundLive',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobPostForegroundPublishBack',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice'],
+        ),
+      ];
+    case 'private_long_offline_epoch_churn':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceFinalActiveOne',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobFinalActiveTwo',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charliePostReconnectLive',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
+    case 'de002':
+      return List<_ExpectedProofMessage>.generate(
+        100,
+        (index) => _ExpectedProofMessage(
+          key: _de002Key(index),
+          senderRole: 'alice',
+          receiverRoles: const <String>['bob', 'charlie'],
+        ),
+      );
+    case 'de003':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceExplicit',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'de007':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceZeroPeer',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'de017':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'charliePostAddOutOfOrder',
+          senderRole: 'charlie',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charliePreRemovalBeforeEvent',
+          senderRole: 'charlie',
+          receiverRoles: <String>['bob'],
+        ),
+      ];
+    case 'ir001':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceMissedWhileBobOffline1',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceMissedWhileBobOffline2',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceMissedWhileBobOffline3',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceLiveAfterBobDrain',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'ir015':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceIr015Text',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr015Quote',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr015Image',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr015Video',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr015File',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr015Gif',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr015Voice',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'ir016':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceIr016Expired1',
+          senderRole: 'alice',
+          receiverRoles: <String>['charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr016Expired2',
+          senderRole: 'alice',
+          receiverRoles: <String>['charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr016Expired3',
+          senderRole: 'alice',
+          receiverRoles: <String>['charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr016Expired4',
+          senderRole: 'alice',
+          receiverRoles: <String>['charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr016Retained1',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr016Retained2',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceIr016Retained3',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_online_add':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterDanaAdd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterDanaAdd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'danaAfterJoin',
+          senderRole: 'dana',
+          receiverRoles: <String>['alice', 'bob', 'charlie'],
+        ),
+      ];
+    case 'private_offline_add':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterDanaOfflineAdd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterDanaOfflineAdd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceLiveAfterDanaDrain',
+          senderRole: 'alice',
+          receiverRoles: <String>['dana'],
         ),
       ];
     case 'gm002':
@@ -1346,7 +1998,127 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['alice', 'bob', 'charlie'],
         ),
       ];
+    case 'private_non_friend_member_delivery':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceNonFriendToDana',
+          senderRole: 'alice',
+          receiverRoles: <String>['dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobNonFriendToDana',
+          senderRole: 'bob',
+          receiverRoles: <String>['dana'],
+        ),
+      ];
+    case 'private_admin_role_transfer_delivery':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceRemovedWindowAfterDemotion',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobRemovedWindowAfterAliceDemotion',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterCharlieReadd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterCharlieReadd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieAfterRoleReadd',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
+    case 'private_history_retention':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceBeforeHistoryRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'alicePostHistoryRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobPostHistoryRemoval',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice'],
+        ),
+      ];
+    case 'private_invite_terminal_states':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterInviteTerminalStates',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterInviteTerminalStates',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice'],
+        ),
+      ];
+    case 'private_stale_invite_readd':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceDuringStaleInviteRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterStaleInviteReadd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterStaleInviteReadd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieAfterStaleInviteReadd',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
+    case 'private_stale_lower_key_update':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterStaleLowerUpdate',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_same_epoch_key_conflict':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterSameEpochConflict',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_partial_key_distribution':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterPartialKeyDistributionFailure',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
     case 'gm004':
+    case 'private_online_remove':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceAfterCharlieRemove',
@@ -1377,7 +2149,22 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['bob'],
         ),
       ];
+    case 'private_offline_remove':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterCharlieOfflineRemove',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterCharlieOfflineRemove',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice'],
+        ),
+      ];
     case 'gm006':
+    case 'private_late_leave_readd':
+    case 'private_rotated_device_readd':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceDuringCharlieRemoval',
@@ -1393,6 +2180,133 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           key: 'aliceAfterImmediateReadd',
           senderRole: 'alice',
           receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_same_user_multi_device_readd':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceDuringRa013Removal',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterRa013PhoneAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterRa013TabletAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieTabletAfterRa013Accept',
+          senderRole: 'dana',
+          expectedSenderPeerRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
+    case 'private_offline_readd':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceDuringCharlieRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieAfterImmediateReadd',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterImmediateReadd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterOfflineReadd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+      ];
+    case 'private_readd_current':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceDuringCharlieRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieAfterImmediateReadd',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterImmediateReadd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterCharlieRestart',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterReaddCurrent',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+      ];
+    case 'private_readd_active_members':
+      return _ra017ExpectedMessages();
+    case 'private_readd_alternating_churn':
+      return _ra018ExpectedMessages();
+    case 'private_readd_cycles':
+      return const <_ExpectedProofMessage>[];
+    case 'private_rapid_readd':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceDuringRapidRemove',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'alicePostRapidReadd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobPostRapidReadd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+      ];
+    case 'private_timeline_truth':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceBeforeTimelineRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceDuringTimelineRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'alicePostTimelineReadd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobPostTimelineReadd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charliePostTimelineReadd',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
         ),
       ];
     case 'gm007':
@@ -1758,6 +2672,137 @@ void _validateScenarioProofFields({
   required Map<String, String> peerIdByRole,
   required List<String> failures,
 }) {
+  if (scenario == 'gm001') {
+    _validateDe001LiveDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'de002') {
+    _validateDe002OrderedDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'de003') {
+    _validateDe003MessageIdProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'de007') {
+    _validateDe007ZeroPeerDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'de017') {
+    _validateDe017MembershipOrderingProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'ir001') {
+    _validateIr001OfflineReconnectProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'ir015') {
+    _validateIr015VariantReplayProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'ir016') {
+    _validateIr016RetentionCutoffProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_abc_create') {
+    _validatePrivateAbcCreateReusableProof(byRole: byRole, failures: failures);
+    _validateMl001CreateInviteProofFields(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_full_mesh_online') {
+    _validateNw001FullMeshProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_relay_only_delivery') {
+    _validateNw002RelayOnlyDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_partition_readd_heal') {
+    _validateNw003PartitionReaddHealProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_relay_reconnect_group_recovery') {
+    _validateNw004RelayReconnectRecoveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_peer_disconnect_not_removal') {
+    _validateNw006DisconnectNotRemovalProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_background_resume_group_delivery') {
+    _validateNw010BackgroundResumeDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_long_offline_epoch_churn') {
+    _validateNw012LongOfflineEpochConvergenceProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_online_add') {
+    _validatePrivateReusableProofFields(
+      scenario: scenario,
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateMl002OnlineAddProofFields(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_offline_add') {
+    _validatePrivateReusableProofFields(
+      scenario: scenario,
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateMl003OfflineAddProofFields(byRole: byRole, failures: failures);
+    return;
+  }
   if (scenario == 'ge002') {
     _validateGe002RemovalContinuityProof(
       byRole: byRole,
@@ -1886,6 +2931,87 @@ void _validateScenarioProofFields({
     );
     return;
   }
+  if (scenario == 'private_concurrent_admin_membership_edits') {
+    _validateMl012ConcurrentAdminMembershipEditsProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_timeline_truth') {
+    _validateMl015TimelineTruthProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_non_friend_member_delivery') {
+    _validateMl016NonFriendDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_admin_role_transfer_delivery') {
+    _validateMl020AdminRoleDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_history_retention') {
+    _validateMl017HistoryRetentionProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_invite_terminal_states') {
+    _validateMl018InviteTerminalProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_stale_invite_readd') {
+    _validateMl019StaleInviteProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    _validateKe016StaleReinviteProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    _validateRa004StaleInviteBeforeReaddProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_stale_lower_key_update') {
+    _validateKe003StaleLowerKeyUpdateProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_same_epoch_key_conflict') {
+    _validateKe005SameEpochKeyConflictProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_partial_key_distribution') {
+    _validateKe015PartialKeyDistributionProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    return;
+  }
   if (scenario == 'ge020') {
     _validateGe020LongSoakChurnProof(
       byRole: byRole,
@@ -1926,6 +3052,32 @@ void _validateScenarioProofFields({
     );
     return;
   }
+  if (scenario == 'private_online_remove') {
+    _validateMl005OnlineRemovalProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    _validateKe006RemovalKeyRotationProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_offline_remove') {
+    _validateMl006OfflineRemovalProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    _validateIr004PostRemovalReplayProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
   if (scenario == 'gm005') {
     _validateGm005OfflineRemovalProof(
       byRole: byRole,
@@ -1942,12 +3094,126 @@ void _validateScenarioProofFields({
     );
     return;
   }
+  if (scenario == 'private_offline_readd') {
+    _validateRa003OfflineReaddProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_late_leave_readd') {
+    _validateRa011LateLeaveReaddProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_rotated_device_readd') {
+    _validateRa012RotatedDeviceReaddProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_same_user_multi_device_readd') {
+    _validateRa013SameUserMultiDeviceReaddProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_readd_current') {
+    _validateMl007ReaddCurrentProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    _validateRa002OnlineSubscribedReaddProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    _validateKe008ReaddActivationProof(byRole: byRole, failures: failures);
+    _validateKe010KeyBeforeConfigProof(byRole: byRole, failures: failures);
+    _validateKe011DelayedOldKeyAfterReaddProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateRa006DelayedOldKeyAfterReaddProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateRa007PartitionedObserverReaddProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateRa008PartitionedRemovedReaddProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateRa009FirstReaddPublishProof(byRole: byRole, failures: failures);
+    _validateRa010ReaddIncomingRestartProof(byRole: byRole, failures: failures);
+    _validateRa014OldKeyPublishAfterReaddProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateRa015AlreadyJoinedReaddRefreshProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateRa016RemovedIntervalReplayProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateKe012DelayedOldConfigAfterReaddProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_readd_active_members') {
+    _validateRa017ActiveMemberChurnProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_readd_alternating_churn') {
+    _validateRa018AlternatingChurnProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_readd_cycles') {
+    _validateMl008CycleProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_rapid_readd') {
+    _validateMl009RapidReaddProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
   if (scenario == 'gm007') {
     _validateGm007HistoryBoundaryProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateKe018HistoryReplayEpochWindowProof(
+      byRole: byRole,
+      failures: failures,
+    );
+    _validateIr005ReaddReplayProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'gm008') {
@@ -2198,6 +3464,1005 @@ void _validateScenarioProofFields({
       field: 'postAddMessageCaughtUp',
       failures: failures,
     );
+  }
+}
+
+void _validateDe001LiveDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['de001LiveDeliveryProof']);
+    if (proof == null) {
+      failures.add('$role: missing DE-001 live delivery proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'DE-001') {
+      failures.add('$role: de001LiveDeliveryProof.rowId must be DE-001');
+    }
+  }
+
+  final sentEntries = _mapList(byRole['alice']?['sentMessages'])
+      .where((entry) => _stringValue(entry['key']) == 'aliceInitial')
+      .toList(growable: false);
+  final sent = sentEntries.length == 1 ? sentEntries.single : null;
+  final sentGroupId = sent == null ? null : _stringValue(sent['groupId']);
+  final sentMessageId = sent == null ? null : _stringValue(sent['messageId']);
+  final sentTimestamp = sent == null ? null : _stringValue(sent['timestamp']);
+  final sentKeyEpoch = sent == null ? null : _intValue(sent['keyEpoch']);
+
+  final aliceProof = _mapValue(byRole['alice']?['de001LiveDeliveryProof']);
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'sentLiveText',
+      'bobReceiptSignalObserved',
+      'charlieReceiptSignalObserved',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: 'de001LiveDeliveryProof',
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_stringValue(aliceProof['sentGroupId']) !=
+        byRole['alice']?['groupId']) {
+      failures.add('alice: de001LiveDeliveryProof.sentGroupId mismatch');
+    }
+    if (_stringValue(aliceProof['sentMessageId']) != sentMessageId) {
+      failures.add('alice: de001LiveDeliveryProof.sentMessageId mismatch');
+    }
+    if (_stringValue(aliceProof['sentTimestamp']) != sentTimestamp) {
+      failures.add('alice: de001LiveDeliveryProof.sentTimestamp mismatch');
+    }
+    if (_intValue(aliceProof['sentKeyEpoch']) != sentKeyEpoch) {
+      failures.add('alice: de001LiveDeliveryProof.sentKeyEpoch mismatch');
+    }
+  }
+
+  if (sentGroupId == null || sentGroupId.isEmpty) {
+    failures.add('alice: sent aliceInitial missing groupId for DE-001');
+  }
+  if (sentTimestamp == null || sentTimestamp.isEmpty) {
+    failures.add('alice: sent aliceInitial missing timestamp for DE-001');
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['de001LiveDeliveryProof']);
+    if (proof != null) {
+      for (final field in const <String>[
+        'receivedVisibleMessageOnce',
+        'matchedGroupId',
+        'matchedMessageId',
+        'matchedSenderPeerId',
+        'matchedTimestamp',
+        'matchedEpoch',
+        'incomingVisible',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: 'de001LiveDeliveryProof',
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+    }
+
+    final receivedEntries = _mapList(byRole[role]?['receivedMessages'])
+        .where((entry) => _stringValue(entry['key']) == 'aliceInitial')
+        .toList(growable: false);
+    if (receivedEntries.length != 1 || sent == null) continue;
+    final received = receivedEntries.single;
+    if (_stringValue(received['groupId']) != sentGroupId) {
+      failures.add('$role: received aliceInitial groupId mismatch');
+    }
+    if (_stringValue(received['messageId']) != sentMessageId) {
+      failures.add('$role: received aliceInitial DE-001 messageId mismatch');
+    }
+    if (_stringValue(received['senderPeerId']) != peerIdByRole['alice']) {
+      failures.add('$role: received aliceInitial DE-001 sender mismatch');
+    }
+    if (_stringValue(received['timestamp']) != sentTimestamp) {
+      failures.add('$role: received aliceInitial timestamp mismatch');
+    }
+    if (_intValue(received['keyEpoch']) != sentKeyEpoch) {
+      failures.add('$role: received aliceInitial DE-001 keyEpoch mismatch');
+    }
+  }
+}
+
+String _de002Key(int index) =>
+    'aliceSeq${(index + 1).toString().padLeft(3, '0')}';
+
+List<String> _de002ExpectedKeys() =>
+    List<String>.generate(100, (index) => _de002Key(index));
+
+bool _sameStringList(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index += 1) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+bool _timestampsStrictlyIncreasing(List<Map<String, dynamic>> messages) {
+  DateTime? previous;
+  for (final message in messages) {
+    final timestamp = DateTime.tryParse(
+      _stringValue(message['timestamp']) ?? '',
+    );
+    if (timestamp == null) return false;
+    final utc = timestamp.toUtc();
+    if (previous != null && !utc.isAfter(previous)) return false;
+    previous = utc;
+  }
+  return true;
+}
+
+void _validateDe002OrderedDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  final expectedKeys = _de002ExpectedKeys();
+  final aliceSent = _mapList(byRole['alice']?['sentMessages']);
+  final aliceSentKeys = aliceSent
+      .map((entry) => _stringValue(entry['key']))
+      .whereType<String>()
+      .toList(growable: false);
+  final aliceProof = _mapValue(byRole['alice']?['de002OrderedDeliveryProof']);
+  if (aliceProof == null) {
+    failures.add('alice: missing DE-002 ordered delivery proof fields');
+  } else {
+    if (_stringValue(aliceProof['rowId']) != 'DE-002') {
+      failures.add('alice: de002OrderedDeliveryProof.rowId must be DE-002');
+    }
+    for (final field in const <String>[
+      'sentAllMessages',
+      'preservedSendOrder',
+      'timestampsStrictlyIncreasing',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: 'de002OrderedDeliveryProof',
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(aliceProof['sentCount']) != expectedKeys.length) {
+      failures.add('alice: de002OrderedDeliveryProof.sentCount must be 100');
+    }
+    if (_stringValue(aliceProof['firstKey']) != expectedKeys.first) {
+      failures.add('alice: de002OrderedDeliveryProof.firstKey mismatch');
+    }
+    if (_stringValue(aliceProof['lastKey']) != expectedKeys.last) {
+      failures.add('alice: de002OrderedDeliveryProof.lastKey mismatch');
+    }
+    if (!_sameStringList(
+      _stringList(aliceProof['orderedKeys']),
+      expectedKeys,
+    )) {
+      failures.add('alice: de002OrderedDeliveryProof.orderedKeys mismatch');
+    }
+  }
+  if (!_sameStringList(aliceSentKeys, expectedKeys)) {
+    failures.add('alice: sent DE-002 keys are not in sequence order');
+  }
+  if (!_timestampsStrictlyIncreasing(aliceSent)) {
+    failures.add('alice: sent DE-002 timestamps are not strictly increasing');
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['de002OrderedDeliveryProof']);
+    final received = _mapList(byRole[role]?['receivedMessages']);
+    final receivedKeys = received
+        .map((entry) => _stringValue(entry['key']))
+        .whereType<String>()
+        .toList(growable: false);
+    if (proof == null) {
+      failures.add('$role: missing DE-002 ordered delivery proof fields');
+    } else {
+      if (_stringValue(proof['rowId']) != 'DE-002') {
+        failures.add('$role: de002OrderedDeliveryProof.rowId must be DE-002');
+      }
+      for (final field in const <String>[
+        'receivedAllMessagesOnce',
+        'preservedPerSenderOrder',
+        'matchedSenderPeerId',
+        'timestampsStrictlyIncreasing',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: 'de002OrderedDeliveryProof',
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+      if (_intValue(proof['receivedCount']) != expectedKeys.length) {
+        failures.add(
+          '$role: de002OrderedDeliveryProof.receivedCount must be 100',
+        );
+      }
+      if (_intValue(proof['expectedCount']) != expectedKeys.length) {
+        failures.add(
+          '$role: de002OrderedDeliveryProof.expectedCount must be 100',
+        );
+      }
+      if (_stringValue(proof['firstKey']) != expectedKeys.first) {
+        failures.add('$role: de002OrderedDeliveryProof.firstKey mismatch');
+      }
+      if (_stringValue(proof['lastKey']) != expectedKeys.last) {
+        failures.add('$role: de002OrderedDeliveryProof.lastKey mismatch');
+      }
+      if (!_sameStringList(_stringList(proof['orderedKeys']), expectedKeys)) {
+        failures.add('$role: de002OrderedDeliveryProof.orderedKeys mismatch');
+      }
+    }
+    if (!_sameStringList(receivedKeys, expectedKeys)) {
+      failures.add('$role: received DE-002 keys are not in sequence order');
+    }
+    if (!_timestampsStrictlyIncreasing(received)) {
+      failures.add(
+        '$role: received DE-002 timestamps are not strictly increasing',
+      );
+    }
+    final alicePeerId = peerIdByRole['alice'];
+    if (alicePeerId != null &&
+        received.any(
+          (entry) => _stringValue(entry['senderPeerId']) != alicePeerId,
+        )) {
+      failures.add('$role: received DE-002 sender mismatch');
+    }
+  }
+}
+
+void _validateDe003MessageIdProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  final sentEntries = _mapList(byRole['alice']?['sentMessages'])
+      .where((entry) => _stringValue(entry['key']) == 'aliceExplicit')
+      .toList(growable: false);
+  final sent = sentEntries.length == 1 ? sentEntries.single : null;
+  final sentMessageId = sent == null ? null : _stringValue(sent['messageId']);
+
+  final aliceProof = _mapValue(byRole['alice']?['de003MessageIdProof']);
+  if (aliceProof == null) {
+    failures.add('alice: missing DE-003 message id proof fields');
+  } else {
+    if (_stringValue(aliceProof['rowId']) != 'DE-003') {
+      failures.add('alice: de003MessageIdProof.rowId must be DE-003');
+    }
+    for (final field in const <String>[
+      'publishPathMessageIdPreserved',
+      'replayEnvelopeCoveredByHostGate',
+      'retryPathCoveredByHostGate',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: 'de003MessageIdProof',
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final requested = _stringValue(aliceProof['requestedMessageId']);
+    final returned = _stringValue(aliceProof['returnedMessageId']);
+    if (requested == null || requested.isEmpty) {
+      failures.add('alice: de003MessageIdProof requestedMessageId missing');
+    }
+    if (requested != sentMessageId) {
+      failures.add('alice: de003MessageIdProof requestedMessageId mismatch');
+    }
+    if (returned != sentMessageId) {
+      failures.add('alice: de003MessageIdProof returnedMessageId mismatch');
+    }
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['de003MessageIdProof']);
+    if (proof == null) {
+      failures.add('$role: missing DE-003 message id proof fields');
+    } else {
+      if (_stringValue(proof['rowId']) != 'DE-003') {
+        failures.add('$role: de003MessageIdProof.rowId must be DE-003');
+      }
+      for (final field in const <String>[
+        'receivedExplicitMessageOnce',
+        'matchedRequestedMessageId',
+        'duplicateReplayDeduped',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: 'de003MessageIdProof',
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+      if (_stringValue(proof['requestedMessageId']) != sentMessageId) {
+        failures.add('$role: de003MessageIdProof requestedMessageId mismatch');
+      }
+      if (_stringValue(proof['receivedMessageId']) != sentMessageId) {
+        failures.add('$role: de003MessageIdProof receivedMessageId mismatch');
+      }
+    }
+
+    final receivedEntries = _mapList(byRole[role]?['receivedMessages'])
+        .where((entry) => _stringValue(entry['key']) == 'aliceExplicit')
+        .toList(growable: false);
+    if (receivedEntries.length != 1 || sent == null) continue;
+    final received = receivedEntries.single;
+    if (_stringValue(received['messageId']) != sentMessageId) {
+      failures.add('$role: received DE-003 messageId mismatch');
+    }
+    if (_stringValue(received['senderPeerId']) != peerIdByRole['alice']) {
+      failures.add('$role: received DE-003 sender mismatch');
+    }
+  }
+}
+
+void _validateDe007ZeroPeerDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  final sentEntries = _mapList(byRole['alice']?['sentMessages'])
+      .where((entry) => _stringValue(entry['key']) == 'aliceZeroPeer')
+      .toList(growable: false);
+  final sent = sentEntries.length == 1 ? sentEntries.single : null;
+  final sentMessageId = sent == null ? null : _stringValue(sent['messageId']);
+
+  final aliceProof = _mapValue(byRole['alice']?['de007ZeroPeerProof']);
+  if (aliceProof == null) {
+    failures.add('alice: missing DE-007 zero-peer proof fields');
+  } else {
+    if (_stringValue(aliceProof['rowId']) != 'DE-007') {
+      failures.add('alice: de007ZeroPeerProof.rowId must be DE-007');
+    }
+    for (final field in const <String>[
+      'sendResultSuccessNoPeers',
+      'inboxStored',
+      'publishedBeforeReceiversJoined',
+      'activeRecipientsCovered',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: 'de007ZeroPeerProof',
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(aliceProof['activeRecipientCount']) != 2) {
+      failures.add('alice: de007ZeroPeerProof.activeRecipientCount must be 2');
+    }
+    if (_stringValue(aliceProof['messageId']) != sentMessageId) {
+      failures.add('alice: de007ZeroPeerProof.messageId mismatch');
+    }
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['de007ZeroPeerProof']);
+    if (proof == null) {
+      failures.add('$role: missing DE-007 zero-peer proof fields');
+    } else {
+      if (_stringValue(proof['rowId']) != 'DE-007') {
+        failures.add('$role: de007ZeroPeerProof.rowId must be DE-007');
+      }
+      for (final field in const <String>[
+        'joinedAfterAliceSend',
+        'receivedViaOfflineReplay',
+        'receivedVisibleMessageOnce',
+        'matchedMessageId',
+        'matchedSenderPeerId',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: 'de007ZeroPeerProof',
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+      if (_stringValue(proof['messageId']) != sentMessageId) {
+        failures.add('$role: de007ZeroPeerProof.messageId mismatch');
+      }
+    }
+
+    final receivedEntries = _mapList(byRole[role]?['receivedMessages'])
+        .where((entry) => _stringValue(entry['key']) == 'aliceZeroPeer')
+        .toList(growable: false);
+    if (receivedEntries.length != 1) {
+      failures.add('$role: expected exactly one DE-007 received message');
+      continue;
+    }
+    final received = receivedEntries.single;
+    if (_stringValue(received['messageId']) != sentMessageId) {
+      failures.add('$role: received DE-007 message id mismatch');
+    }
+    final alicePeerId = peerIdByRole['alice'];
+    if (alicePeerId != null &&
+        _stringValue(received['senderPeerId']) != alicePeerId) {
+      failures.add('$role: received DE-007 sender mismatch');
+    }
+    if (_intValue(received['persistedCount']) != 1) {
+      failures.add('$role: DE-007 message must persist exactly once');
+    }
+  }
+}
+
+void _validateDe017MembershipOrderingProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'de017MembershipOrderingProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  final expectedCharliePeerId = peerIdByRole['charlie'];
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'DE-017') {
+      failures.add('$role: $proofName.rowId must be DE-017');
+    }
+  }
+
+  void requireRemovedPeerId(String role, Map<String, dynamic> proof) {
+    final removedPeerId = _stringValue(proof['removedPeerId']);
+    if (expectedCharliePeerId != null &&
+        removedPeerId != expectedCharliePeerId) {
+      failures.add('$role: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing DE-017 membership-ordering proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    requireRemovedPeerId('alice', aliceProof);
+    for (final field in const <String>[
+      'addedCharlieBeforePublishingMemberEvent',
+      'publishedMemberEventAfterCharlieContent',
+      'removedCharlieAfterPostRemovalContent',
+      'bobConfirmedAddRepair',
+      'bobConfirmedRemovalRepair',
+      'memberListExcludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing DE-017 membership-ordering proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    requireRemovedPeerId('bob', bobProof);
+    for (final field in const <String>[
+      'bufferedContentBeforeMemberAdd',
+      'deliveredPostAddAfterMembership',
+      'retainedPreRemovalContent',
+      'repairedPostRemovalContent',
+      'memberListExcludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(bobProof['postRemovalPersistedCountAfterRepair']) != 0) {
+      failures.add(
+        'bob: $proofName.postRemovalPersistedCountAfterRepair must be 0',
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing DE-017 membership-ordering proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    requireRemovedPeerId('charlie', charlieProof);
+    for (final field in const <String>[
+      'sentPostAddBeforeMemberEvent',
+      'sentPreRemovalBeforeRemovalEvent',
+      'sentPostRemovalBeforeRemovalEvent',
+      'postRemovalAcceptedByLocalSend',
+      'selfRemovedAfterRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final charlieSentKeys = _mapList(byRole['charlie']?['sentMessages'])
+      .map((entry) => _stringValue(entry['key']))
+      .whereType<String>()
+      .toList(growable: false);
+  for (final key in const <String>[
+    'charliePostAddOutOfOrder',
+    'charliePreRemovalBeforeEvent',
+    'charliePostRemovalBeforeEvent',
+  ]) {
+    final count = charlieSentKeys.where((entry) => entry == key).length;
+    if (count != 1) {
+      failures.add('charlie: sent $key count=$count; requires exactly one');
+    }
+  }
+}
+
+void _validateIr001OfflineReconnectProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ir001OfflineReconnectProof';
+  const missedKeys = <String>[
+    'aliceMissedWhileBobOffline1',
+    'aliceMissedWhileBobOffline2',
+    'aliceMissedWhileBobOffline3',
+  ];
+  const liveKey = 'aliceLiveAfterBobDrain';
+  final expectedAllKeys = <String>[...missedKeys, liveKey];
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'IR-001') {
+      failures.add('$role: $proofName.rowId must be IR-001');
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  if (aliceProof == null) {
+    failures.add('alice: missing IR-001 offline reconnect proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'bobWasJoinedBeforeOffline',
+      'bobOfflineBeforeMissedSendObserved',
+      'bobDrainCompletedBeforeLiveSend',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(aliceProof['missedMessageCount']) != missedKeys.length) {
+      failures.add(
+        'alice: $proofName.missedMessageCount must be ${missedKeys.length}',
+      );
+    }
+    if (!_sameStringList(_stringList(aliceProof['missedKeys']), missedKeys)) {
+      failures.add('alice: $proofName.missedKeys mismatch');
+    }
+    if (_stringValue(aliceProof['liveKey']) != liveKey) {
+      failures.add('alice: $proofName.liveKey must be $liveKey');
+    }
+  }
+
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  if (bobProof == null) {
+    failures.add('bob: missing IR-001 offline reconnect proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'restoredActiveMembershipBeforeDrain',
+      'receivedAllMissedExactlyOnce',
+      'usedOfflineDrainForMissed',
+      'liveAfterDrainReceived',
+      'liveAfterDrainWasLive',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(bobProof['drainedMissedCount']) != missedKeys.length) {
+      failures.add(
+        'bob: $proofName.drainedMissedCount must be ${missedKeys.length}',
+      );
+    }
+    if (!_sameStringList(_stringList(bobProof['missedKeys']), missedKeys)) {
+      failures.add('bob: $proofName.missedKeys mismatch');
+    }
+    if (_stringValue(bobProof['liveKey']) != liveKey) {
+      failures.add('bob: $proofName.liveKey must be $liveKey');
+    }
+  }
+
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  if (charlieProof == null) {
+    failures.add('charlie: missing IR-001 offline reconnect proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineControlReceivedMissedLive',
+      'onlineControlReceivedLiveAfterReconnect',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(charlieProof['onlineControlMissedCount']) !=
+        missedKeys.length) {
+      failures.add(
+        'charlie: $proofName.onlineControlMissedCount must be '
+        '${missedKeys.length}',
+      );
+    }
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final receivedKeys = _mapList(byRole[role]?['receivedMessages'])
+        .map((entry) => _stringValue(entry['key']))
+        .whereType<String>()
+        .toList(growable: false);
+    for (final key in expectedAllKeys) {
+      final count = receivedKeys.where((entry) => entry == key).length;
+      if (count != 1) {
+        failures.add('$role: received $key count=$count; requires exactly one');
+      }
+    }
+  }
+}
+
+void _validateIr015VariantReplayProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ir015VariantReplayProof';
+  const variantKeys = <String>[
+    'aliceIr015Text',
+    'aliceIr015Quote',
+    'aliceIr015Image',
+    'aliceIr015Video',
+    'aliceIr015File',
+    'aliceIr015Gif',
+    'aliceIr015Voice',
+  ];
+  const mediaKeys = <String>[
+    'aliceIr015Image',
+    'aliceIr015Video',
+    'aliceIr015File',
+    'aliceIr015Gif',
+    'aliceIr015Voice',
+  ];
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'IR-015') {
+      failures.add('$role: $proofName.rowId must be IR-015');
+    }
+  }
+
+  Map<String, dynamic>? receivedEntry(String role, String key) {
+    final entries = _mapList(byRole[role]?['receivedMessages'])
+        .where((entry) => _stringValue(entry['key']) == key)
+        .toList(growable: false);
+    return entries.length == 1 ? entries.single : null;
+  }
+
+  List<Map<String, dynamic>> receivedMedia(Map<String, dynamic> received) {
+    final media = _mapList(received['media']);
+    if (media.isNotEmpty) return media;
+    return _mapList(received['mediaAttachments']);
+  }
+
+  bool mediaOk(Map<String, dynamic>? received, String key) {
+    if (received == null) return false;
+    final media = receivedMedia(received);
+    if (media.length != 1) return false;
+    final attachment = media.single;
+    switch (key) {
+      case 'aliceIr015Image':
+        return _stringValue(attachment['mime']) == 'image/jpeg' &&
+            _stringValue(attachment['mediaType']) == 'image';
+      case 'aliceIr015Video':
+        return _stringValue(attachment['mime']) == 'video/mp4' &&
+            _stringValue(attachment['mediaType']) == 'video' &&
+            _intValue(attachment['durationMs']) == 4200;
+      case 'aliceIr015File':
+        return _stringValue(attachment['mime']) == 'application/octet-stream' &&
+            _stringValue(attachment['mediaType']) == 'file';
+      case 'aliceIr015Gif':
+        return _stringValue(attachment['mime']) == 'image/gif' &&
+            _stringValue(attachment['mediaType']) == 'image';
+      case 'aliceIr015Voice':
+        return _stringValue(attachment['mime']) == 'audio/mp4' &&
+            _stringValue(attachment['mediaType']) == 'audio' &&
+            _intValue(attachment['durationMs']) == 3100;
+      default:
+        return true;
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  if (aliceProof == null) {
+    failures.add('alice: missing IR-015 variant replay proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'bobWasJoinedBeforeOffline',
+      'bobOfflineBeforeVariantSendObserved',
+      'charlieOnlineReceivedAllVariants',
+      'bobDrainCompletedAfterAllVariants',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (!_sameStringList(_stringList(aliceProof['variantKeys']), variantKeys)) {
+      failures.add('alice: $proofName.variantKeys mismatch');
+    }
+    if (!_sameStringList(
+      _stringList(aliceProof['mediaVariantKeys']),
+      mediaKeys,
+    )) {
+      failures.add('alice: $proofName.mediaVariantKeys mismatch');
+    }
+    if (_stringValue(aliceProof['quoteTargetMessageId']) == null) {
+      failures.add('alice: $proofName.quoteTargetMessageId is required');
+    }
+  }
+
+  final aliceTextSent = _mapList(byRole['alice']?['sentMessages'])
+      .where((entry) => _stringValue(entry['key']) == 'aliceIr015Text')
+      .toList(growable: false);
+  final textMessageId = aliceTextSent.length == 1
+      ? _stringValue(aliceTextSent.single['messageId'])
+      : null;
+
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  if (bobProof == null) {
+    failures.add('bob: missing IR-015 variant replay proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'restoredActiveMembershipBeforeDrain',
+      'receivedAllVariantsExactlyOnce',
+      'usedOfflineDrainForAllVariants',
+      'quoteRehydrated',
+      'mediaVariantsRehydrated',
+      'matchedKeyEpochs',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(bobProof['drainedVariantCount']) != variantKeys.length) {
+      failures.add(
+        'bob: $proofName.drainedVariantCount must be ${variantKeys.length}',
+      );
+    }
+    if (!_sameStringList(_stringList(bobProof['variantKeys']), variantKeys)) {
+      failures.add('bob: $proofName.variantKeys mismatch');
+    }
+  }
+
+  final bobQuote = receivedEntry('bob', 'aliceIr015Quote');
+  if (textMessageId != null &&
+      _stringValue(bobQuote?['quotedMessageId']) != textMessageId) {
+    failures.add('bob: $proofName quote did not reference text variant');
+  }
+  for (final key in mediaKeys) {
+    if (!mediaOk(receivedEntry('bob', key), key)) {
+      failures.add('bob: $proofName $key media descriptor mismatch');
+    }
+  }
+
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  if (charlieProof == null) {
+    failures.add('charlie: missing IR-015 variant replay proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineControlReceivedAllVariantsLive',
+      'quoteRehydrated',
+      'mediaVariantsRehydrated',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(charlieProof['onlineControlVariantCount']) !=
+        variantKeys.length) {
+      failures.add(
+        'charlie: $proofName.onlineControlVariantCount must be '
+        '${variantKeys.length}',
+      );
+    }
+  }
+
+  final charlieQuote = receivedEntry('charlie', 'aliceIr015Quote');
+  if (textMessageId != null &&
+      _stringValue(charlieQuote?['quotedMessageId']) != textMessageId) {
+    failures.add('charlie: $proofName quote did not reference text variant');
+  }
+  for (final key in mediaKeys) {
+    if (!mediaOk(receivedEntry('charlie', key), key)) {
+      failures.add('charlie: $proofName $key media descriptor mismatch');
+    }
+  }
+}
+
+void _validateIr016RetentionCutoffProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ir016RetentionCutoffProof';
+  const expiredKeys = <String>[
+    'aliceIr016Expired1',
+    'aliceIr016Expired2',
+    'aliceIr016Expired3',
+    'aliceIr016Expired4',
+  ];
+  const retainedKeys = <String>[
+    'aliceIr016Retained1',
+    'aliceIr016Retained2',
+    'aliceIr016Retained3',
+  ];
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'IR-016') {
+      failures.add('$role: $proofName.rowId must be IR-016');
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  if (aliceProof == null) {
+    failures.add('alice: missing IR-016 retention cutoff proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'bobWasJoinedBeforeOffline',
+      'bobOfflineBeforeExpiredSendObserved',
+      'sentExpiredBeyondRetention',
+      'sentRetainedWithinRetention',
+      'bobDrainCompletedAfterRetained',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_stringValue(aliceProof['activeOfflineRecipientRole']) != 'bob') {
+      failures.add('alice: $proofName.activeOfflineRecipientRole must be bob');
+    }
+    if (!_sameStringList(_stringList(aliceProof['expiredKeys']), expiredKeys)) {
+      failures.add('alice: $proofName.expiredKeys mismatch');
+    }
+    if (!_sameStringList(
+      _stringList(aliceProof['retainedKeys']),
+      retainedKeys,
+    )) {
+      failures.add('alice: $proofName.retainedKeys mismatch');
+    }
+    final sentCount = _intValue(aliceProof['manyMessagesSentCount']);
+    if (sentCount != expiredKeys.length + retainedKeys.length) {
+      failures.add(
+        'alice: $proofName.manyMessagesSentCount must be '
+        '${expiredKeys.length + retainedKeys.length}',
+      );
+    }
+  }
+
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  if (bobProof == null) {
+    failures.add('bob: missing IR-016 retention cutoff proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'restoredActiveMembershipBeforeDrain',
+      'receivedRetainedExactlyOnce',
+      'usedOfflineDrainForRetained',
+      'expiredBacklogSkipped',
+      'lastBacklogExpiredAtRecorded',
+      'lastBacklogRetainedAtRecorded',
+      'explicitRetentionStateRecorded',
+      'noSilentCompleteState',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(bobProof['retentionWindowDays']) != 7) {
+      failures.add('bob: $proofName.retentionWindowDays must be 7');
+    }
+    if (_intValue(bobProof['expiredVisibleCount']) != 0) {
+      failures.add('bob: $proofName.expiredVisibleCount must be 0');
+    }
+    if (_intValue(bobProof['drainedRetainedCount']) != retainedKeys.length) {
+      failures.add(
+        'bob: $proofName.drainedRetainedCount must be ${retainedKeys.length}',
+      );
+    }
+    if (!_sameStringList(_stringList(bobProof['expiredKeys']), expiredKeys)) {
+      failures.add('bob: $proofName.expiredKeys mismatch');
+    }
+    if (!_sameStringList(_stringList(bobProof['retainedKeys']), retainedKeys)) {
+      failures.add('bob: $proofName.retainedKeys mismatch');
+    }
+  }
+
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  if (charlieProof == null) {
+    failures.add('charlie: missing IR-016 retention cutoff proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'onlineControlReceivedAllMessagesLive',
+      failures: failures,
+    );
+    if (_intValue(charlieProof['onlineControlMessageCount']) !=
+        expiredKeys.length + retainedKeys.length) {
+      failures.add(
+        'charlie: $proofName.onlineControlMessageCount must be '
+        '${expiredKeys.length + retainedKeys.length}',
+      );
+    }
+    if (_intValue(charlieProof['onlineControlExpiredCount']) !=
+        expiredKeys.length) {
+      failures.add(
+        'charlie: $proofName.onlineControlExpiredCount must be '
+        '${expiredKeys.length}',
+      );
+    }
+    if (_intValue(charlieProof['onlineControlRetainedCount']) !=
+        retainedKeys.length) {
+      failures.add(
+        'charlie: $proofName.onlineControlRetainedCount must be '
+        '${retainedKeys.length}',
+      );
+    }
   }
 }
 
@@ -3238,6 +5503,1474 @@ void _validateGe016ConcurrentAdminMutationProof({
   }
 }
 
+void _validateMl012ConcurrentAdminMembershipEditsProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml012ConcurrentAdminEditsProof';
+  final expectedActivePeerIds = <String>{
+    for (final role in const <String>['alice', 'bob', 'dana'])
+      if (peerIdByRole[role] != null) peerIdByRole[role]!,
+  };
+  final configHashes = <String>{};
+
+  bool hasSameMembers(Object? value, Set<String> expected) {
+    final actual = _stringList(value).toSet();
+    return actual.length == expected.length && actual.containsAll(expected);
+  }
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-012') {
+      failures.add('$role: $proofName.rowId must be ML-012');
+    }
+  }
+
+  void requireDeliveryOrders(String role, Map<String, dynamic> proof) {
+    final orders = _stringList(proof['deliveryOrdersTested']).toSet();
+    if (!orders.contains('add_then_remove') ||
+        !orders.contains('remove_then_add')) {
+      failures.add(
+        '$role: $proofName.deliveryOrdersTested must include '
+        'add_then_remove and remove_then_add',
+      );
+    }
+  }
+
+  void requireLiveProofMetadata(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add(
+        '$role: $proofName.appPeerPlatform must be ios_26_2_core_simulator',
+      );
+    }
+    if (_stringValue(proof['concurrentAdminProofSource']) !=
+        'app_peer_core_simulator') {
+      failures.add(
+        '$role: $proofName.concurrentAdminProofSource must be '
+        'app_peer_core_simulator',
+      );
+    }
+  }
+
+  void requireExpectedMembers(String role, Map<String, dynamic> proof) {
+    if (!hasSameMembers(proof['finalMemberPeerIds'], expectedActivePeerIds)) {
+      failures.add(
+        '$role: $proofName.finalMemberPeerIds must converge to alice/bob/dana',
+      );
+    }
+    final activeMembers = _stringList(byRole[role]?['memberPeerIds']).toSet();
+    if (activeMembers.contains(peerIdByRole['charlie'])) {
+      failures.add('$role: active members must exclude removed Charlie');
+    }
+  }
+
+  for (final role in const <String>['alice', 'bob', 'dana']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing ML-012 concurrent-admin proof fields');
+      continue;
+    }
+    requireRowId(role, proof);
+    requireDeliveryOrders(role, proof);
+    requireLiveProofMetadata(role, proof);
+    requireExpectedMembers(role, proof);
+    for (final field in const <String>[
+      'memberSetsConverged',
+      'configHashesConverged',
+      'independentAddPreserved',
+      'removedCharlieExcluded',
+      'sameTargetNewerReaddWins',
+      'sameTargetTieRemoveWins',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final hash = _stringValue(proof['finalConfigStateHash']);
+    if (hash == null || hash.isEmpty) {
+      failures.add('$role: $proofName.finalConfigStateHash is required');
+    } else {
+      configHashes.add(hash);
+    }
+  }
+
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-012 concurrent-admin proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    requireDeliveryOrders('charlie', charlieProof);
+    requireLiveProofMetadata('charlie', charlieProof);
+    for (final field in const <String>[
+      'charlieRemoved',
+      'postRemovalGroupAbsent',
+      'removedCharlieExcluded',
+      'sameTargetTieRemoveWins',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  if (configHashes.length > 1) {
+    failures.add('alice/bob/dana: ML-012 finalConfigStateHash mismatch');
+  }
+}
+
+void _validateMl015TimelineTruthProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml015TimelineTruthProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireSharedFields(String role, Map<String, dynamic>? proof) {
+    if (proof == null) {
+      failures.add('$role: missing ML-015 timeline-truth proof fields');
+      return;
+    }
+    if (_stringValue(proof['rowId']) != 'ML-015') {
+      failures.add('$role: $proofName.rowId must be ML-015');
+    }
+    for (final field in const <String>[
+      'timelineOrderMatchesMembershipIntervals',
+      'timelineContainsReadd',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  requireSharedFields('alice', aliceProof);
+  requireSharedFields('bob', bobProof);
+  requireSharedFields('charlie', charlieProof);
+
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlie',
+      'sentBeforeRemovalMessage',
+      'sentRemovedWindowBeforeReadd',
+      'sentAlicePostReaddMessage',
+      'receivedBobPostReaddMessage',
+      'receivedCharliePostReaddMessage',
+      'timelineContainsRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof != null) {
+    for (final field in const <String>[
+      'receivedBeforeRemovalMessage',
+      'receivedRemovedWindowMessage',
+      'receivedAlicePostReaddMessage',
+      'sentBobPostReaddMessage',
+      'receivedCharliePostReaddMessage',
+      'timelineContainsRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof != null) {
+    for (final field in const <String>[
+      'receivedBeforeRemovalMessage',
+      'receivedAlicePostReaddMessage',
+      'receivedBobPostReaddMessage',
+      'sentCharliePostReaddMessage',
+      'memberListIncludesAliceBob',
+      'selfRemovalCleanupObserved',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'hasStaleEpochAfterReadd',
+      failures: failures,
+    );
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: ML-015 finalEpoch mismatch');
+  }
+}
+
+void _validateMl016NonFriendDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml016NonFriendDeliveryProof';
+  final expectedMembers = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['bob'],
+    ?peerIdByRole['dana'],
+  };
+
+  for (final role in const <String>['alice', 'bob', 'dana']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ML-016') {
+      failures.add('$role: $proofName.rowId must be ML-016');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_non_friend_member_delivery') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+    if (_stringValue(proof['nonFriendProofSource']) !=
+        'app_peer_core_simulator') {
+      failures.add(
+        '$role: $proofName.nonFriendProofSource must be app_peer_core_simulator',
+      );
+    }
+    for (final field in const <String>[
+      'danaExplicitlyInvitedOrAdmitted',
+      'aliceMessageReceived',
+      'bobMessageReceived',
+      'alicePersistedExactlyOnce',
+      'bobPersistedExactlyOnce',
+      'senderLabelsNonBlank',
+      'finalMemberConvergence',
+      'finalKeyConvergence',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'danaHasSavedAliceContact',
+      'danaHasSavedBobContact',
+      'messagesHiddenByContactGate',
+    ]) {
+      _requireFalseProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    final members = _stringList(byRole[role]?['memberPeerIds']).toSet();
+    final missingMembers = expectedMembers.difference(members);
+    if (missingMembers.isNotEmpty) {
+      failures.add(
+        '$role: $proofName active members missing ${missingMembers.join(', ')}',
+      );
+    }
+  }
+
+  final danaProof = _mapValue(byRole['dana']?[proofName]);
+  if (danaProof == null) {
+    return;
+  }
+  for (final field in const <String>[
+    'aliceStableSenderLabel',
+    'bobStableSenderLabel',
+  ]) {
+    final label = _stringValue(danaProof[field]);
+    if (label == null || label.isEmpty || label == 'Unknown') {
+      failures.add('dana: $proofName.$field must be stable and non-blank');
+    }
+  }
+}
+
+void _validateMl020AdminRoleDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml020AdminRoleDeliveryProof';
+  const expectedRoleNames = <String, String>{
+    'alice': 'writer',
+    'bob': 'admin',
+    'charlie': 'writer',
+  };
+  final expectedMembers = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['bob'],
+    ?peerIdByRole['charlie'],
+  };
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ML-020') {
+      failures.add('$role: $proofName.rowId must be ML-020');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_admin_role_transfer_delivery') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+    if (_stringValue(proof['roleChangeProofSource']) !=
+        'app_peer_core_simulator') {
+      failures.add(
+        '$role: $proofName.roleChangeProofSource must be app_peer_core_simulator',
+      );
+    }
+
+    for (final field in const <String>[
+      'bobPromotedToAdmin',
+      'aliceDemotedButActive',
+      'charlieRemovedBeforeReadd',
+      'charlieReaddedAfterRemoval',
+      'removedWindowDeliveryExcludedCharlie',
+      'postReaddDeliveryToAllActiveMembers',
+      'roleStateConverged',
+      'memberStateConverged',
+      'finalKeyConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'creatorRequiredForDelivery',
+      'adminOnlyDelivery',
+      'charlieReceivedRemovedWindow',
+    ]) {
+      _requireFalseProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(proof['removedWindowPlaintextCount']) != 0) {
+      failures.add('$role: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 1) {
+      failures.add('$role: $proofName.finalEpoch must be positive');
+    }
+
+    final activeMembers = _stringList(byRole[role]?['activeMemberPeerIds']);
+    final members =
+        (activeMembers.isEmpty
+                ? _stringList(byRole[role]?['memberPeerIds'])
+                : activeMembers)
+            .toSet();
+    final missingMembers = expectedMembers.difference(members);
+    if (missingMembers.isNotEmpty) {
+      failures.add(
+        '$role: $proofName active members missing ${missingMembers.join(', ')}',
+      );
+    }
+
+    final finalRoles = _mapValue(proof['finalMemberRoles']);
+    if (finalRoles == null) {
+      failures.add('$role: $proofName.finalMemberRoles is required');
+    } else {
+      for (final expected in expectedRoleNames.entries) {
+        if (_stringValue(finalRoles[expected.key]) != expected.value) {
+          failures.add(
+            '$role: $proofName.finalMemberRoles.${expected.key} must be ${expected.value}',
+          );
+        }
+      }
+    }
+  }
+
+  final charlieReceived = _mapList(
+    byRole['charlie']?['receivedMessages'],
+  ).map((message) => _stringValue(message['key'])).whereType<String>().toSet();
+  for (final removedWindowKey in const <String>[
+    'aliceRemovedWindowAfterDemotion',
+    'bobRemovedWindowAfterAliceDemotion',
+  ]) {
+    if (charlieReceived.contains(removedWindowKey)) {
+      failures.add('charlie: ML-020 must not receive $removedWindowKey');
+    }
+  }
+}
+
+void _validateMl017HistoryRetentionProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml017HistoryRetentionProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-017') {
+      failures.add('$role: $proofName.rowId must be ML-017');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-017 history-retention proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'sentPreRemovalHistory',
+      'sentPostRemovalMessage',
+      'receivedBobPostRemovalMessage',
+      'memberListExcludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-017 history-retention proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'receivedPreRemovalHistory',
+      'receivedAlicePostRemovalMessage',
+      'sentBobPostRemovalMessage',
+      'memberListExcludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-017 history-retention proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'retainedLocalGroup',
+      'retainedPreRemovalHistory',
+      'composeDisabled',
+      'postRemovalSendRejected',
+      'selfMemberRemoved',
+      'noCurrentKey',
+      'selfRemovalCleanupObserved',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'receivedAlicePostRemovalMessage',
+      'receivedBobPostRemovalMessage',
+      'postRemovalPublishAccepted',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+    final sendOutcome = _stringValue(charlieProof['postRemovalSendOutcome']);
+    if (sendOutcome != 'unauthorized') {
+      failures.add(
+        'charlie: $proofName.postRemovalSendOutcome must be unauthorized',
+      );
+    }
+  }
+}
+
+void _validateMl018InviteTerminalProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml018InviteTerminalProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-018') {
+      failures.add('$role: $proofName.rowId must be ML-018');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-018 invite-terminal proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'sentDeclineInvite',
+      'sentExpiryInvite',
+      'sentCancellationInvite',
+      'sentCancellationRevocation',
+      'sentPostTerminalMessage',
+      'receivedBobPostTerminalMessage',
+      'memberListExcludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final terminalPeerId = _stringValue(aliceProof['terminalInviteePeerId']);
+    final expectedPeerId = peerIdByRole['charlie'];
+    if (expectedPeerId != null && terminalPeerId != expectedPeerId) {
+      failures.add('alice: $proofName.terminalInviteePeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-018 invite-terminal proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'receivedAlicePostTerminalMessage',
+      'sentBobPostTerminalMessage',
+      'memberListExcludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-018 invite-terminal proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'receivedDeclineInvite',
+      'declinedInvite',
+      'declinePendingCleared',
+      'declineTombstoneRecorded',
+      'declinedDelayedCopyRejected',
+      'receivedExpiryInvite',
+      'expiredInviteRejected',
+      'receivedCancellationInvite',
+      'cancelledInviteRejected',
+      'noLocalGroup',
+      'noUsableKey',
+      'postTerminalSendRejected',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'receivedAlicePostTerminalMessage',
+      'receivedBobPostTerminalMessage',
+      'postTerminalPublishAccepted',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['postTerminalPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postTerminalPlaintextCount must be 0');
+    }
+    final sendOutcome = _stringValue(charlieProof['postTerminalSendOutcome']);
+    if (sendOutcome != 'groupNotFound' && sendOutcome != 'unauthorized') {
+      failures.add(
+        'charlie: $proofName.postTerminalSendOutcome must be groupNotFound '
+        'or unauthorized',
+      );
+    }
+  }
+}
+
+void _validateMl019StaleInviteProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml019StaleInviteProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-019') {
+      failures.add('$role: $proofName.rowId must be ML-019');
+    }
+  }
+
+  void requireFinalEpoch(String role, Map<String, dynamic> proof) {
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-019 stale-invite proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'sentOldInvite',
+      'removedCharlieAfterOldInvite',
+      'rotatedAfterRemoval',
+      'sentRemovedWindowMessage',
+      'sentLatestInvite',
+      'sentPostReaddMessage',
+      'receivedBobPostReaddMessage',
+      'receivedCharliePostReaddMessage',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final stalePeerId = _stringValue(aliceProof['staleInviteePeerId']);
+    final expectedPeerId = peerIdByRole['charlie'];
+    if (expectedPeerId != null && stalePeerId != expectedPeerId) {
+      failures.add('alice: $proofName.staleInviteePeerId must be charlie');
+    }
+    requireFinalEpoch('alice', aliceProof);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-019 stale-invite proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedOldAdd',
+      'observedRemovalBeforeReadd',
+      'receivedRemovedWindowMessage',
+      'memberListIncludesCharlie',
+      'hasCurrentEpoch',
+      'receivedAlicePostReaddMessage',
+      'sentBobPostReaddMessage',
+      'receivedCharliePostReaddMessage',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireFinalEpoch('bob', bobProof);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-019 stale-invite proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'receivedOldInvite',
+      'receivedLatestInvite',
+      'delayedOldInviteRejected',
+      'pendingRemainedLatestBeforeAccept',
+      'acceptedLatestInvite',
+      'staleAcceptRejected',
+      'noKeyDowngradeAfterStaleAccept',
+      'memberListIncludesAliceBobCharlie',
+      'receivedAlicePostReaddMessage',
+      'receivedBobPostReaddMessage',
+      'sentCharliePostReaddMessage',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final oldEpoch = _intValue(charlieProof['oldInviteEpoch']);
+    final latestEpoch = _intValue(charlieProof['latestInviteEpoch']);
+    final acceptedEpoch = _intValue(charlieProof['acceptedEpoch']);
+    if (oldEpoch == null || oldEpoch < 1) {
+      failures.add('charlie: $proofName.oldInviteEpoch must be positive');
+    }
+    if (latestEpoch == null || latestEpoch < 2) {
+      failures.add('charlie: $proofName.latestInviteEpoch must be >= 2');
+    }
+    if (oldEpoch != null && latestEpoch != null && oldEpoch >= latestEpoch) {
+      failures.add('charlie: $proofName.oldInviteEpoch must be stale');
+    }
+    if (acceptedEpoch != null &&
+        latestEpoch != null &&
+        acceptedEpoch != latestEpoch) {
+      failures.add(
+        'charlie: $proofName.acceptedEpoch must match latestInviteEpoch',
+      );
+    }
+    final delayedStoreResult = _stringValue(charlieProof['delayedStoreResult']);
+    if (delayedStoreResult != 'invalidPayload' &&
+        delayedStoreResult != 'revoked') {
+      failures.add(
+        'charlie: $proofName.delayedStoreResult must be invalidPayload or revoked',
+      );
+    }
+    final staleAcceptResult = _stringValue(charlieProof['staleAcceptResult']);
+    if (staleAcceptResult != 'invalidPayload' &&
+        staleAcceptResult != 'revoked') {
+      failures.add(
+        'charlie: $proofName.staleAcceptResult must be invalidPayload or revoked',
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    requireFinalEpoch('charlie', charlieProof);
+  }
+}
+
+void _validateKe016StaleReinviteProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke016StaleReinviteProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-016') {
+      failures.add('$role: $proofName.rowId must be KE-016');
+    }
+  }
+
+  void requireFinalEpoch(String role, Map<String, dynamic> proof) {
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-016 stale re-invite proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'sentEpochNInvite',
+      'rotatedToNextEpochBeforeAccept',
+      'sentCurrentEpochInvite',
+      'sentPostAcceptAtCurrentEpoch',
+      'receivedBobPostAcceptAtCurrentEpoch',
+      'receivedCharliePostAcceptAtCurrentEpoch',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final stalePeerId = _stringValue(aliceProof['staleInviteePeerId']);
+    final expectedPeerId = peerIdByRole['charlie'];
+    if (expectedPeerId != null && stalePeerId != expectedPeerId) {
+      failures.add('alice: $proofName.staleInviteePeerId must be charlie');
+    }
+    requireFinalEpoch('alice', aliceProof);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-016 stale re-invite proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedEpochNInviteMemberState',
+      'observedRemovalBeforeCurrentInvite',
+      'receivedRemovedWindowMessage',
+      'memberListIncludesCharlie',
+      'hasCurrentEpoch',
+      'receivedAlicePostAcceptAtCurrentEpoch',
+      'sentBobPostAcceptAtCurrentEpoch',
+      'receivedCharliePostAcceptAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireFinalEpoch('bob', bobProof);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-016 stale re-invite proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'receivedEpochNInvite',
+      'receivedCurrentEpochInvite',
+      'delayedEpochNInviteRejected',
+      'pendingRemainedCurrentBeforeAccept',
+      'acceptedCurrentEpochInvite',
+      'staleEpochNAcceptRejected',
+      'noKeyDowngradeAfterStaleAccept',
+      'memberListIncludesAliceBobCharlie',
+      'receivedAlicePostAcceptAtCurrentEpoch',
+      'receivedBobPostAcceptAtCurrentEpoch',
+      'sentCharliePostAcceptAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final epochN = _intValue(charlieProof['epochNInviteEpoch']);
+    final currentEpoch = _intValue(charlieProof['currentInviteEpoch']);
+    final acceptedEpoch = _intValue(charlieProof['acceptedEpoch']);
+    if (epochN == null || epochN < 1) {
+      failures.add('charlie: $proofName.epochNInviteEpoch must be positive');
+    }
+    if (currentEpoch == null || currentEpoch < 2) {
+      failures.add('charlie: $proofName.currentInviteEpoch must be >= 2');
+    }
+    if (epochN != null && currentEpoch != null && epochN >= currentEpoch) {
+      failures.add('charlie: $proofName.epochNInviteEpoch must be stale');
+    }
+    if (acceptedEpoch != null &&
+        currentEpoch != null &&
+        acceptedEpoch != currentEpoch) {
+      failures.add(
+        'charlie: $proofName.acceptedEpoch must match currentInviteEpoch',
+      );
+    }
+    final delayedStoreResult = _stringValue(charlieProof['delayedStoreResult']);
+    if (delayedStoreResult != 'invalidPayload' &&
+        delayedStoreResult != 'revoked') {
+      failures.add(
+        'charlie: $proofName.delayedStoreResult must be invalidPayload or revoked',
+      );
+    }
+    final staleAcceptResult = _stringValue(charlieProof['staleAcceptResult']);
+    if (staleAcceptResult != 'invalidPayload' &&
+        staleAcceptResult != 'revoked') {
+      failures.add(
+        'charlie: $proofName.staleAcceptResult must be invalidPayload or revoked',
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    requireFinalEpoch('charlie', charlieProof);
+  }
+}
+
+void _validateRa004StaleInviteBeforeReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra004StaleInviteBeforeReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-004') {
+      failures.add('$role: $proofName.rowId must be RA-004');
+    }
+  }
+
+  void requireFinalEpoch(String role, Map<String, dynamic> proof) {
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-004 stale invite proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'sentOldInvite',
+      'removedCharlieBeforeOldAccept',
+      'rotatedAfterRemoval',
+      'revokedOldInviteBeforeCurrentInvite',
+      'sentCurrentInviteAfterOldAcceptBlocked',
+      'sentPostCurrentInviteMessage',
+      'receivedBobPostCurrentInviteMessage',
+      'receivedCharliePostCurrentInviteMessage',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final stalePeerId = _stringValue(aliceProof['staleInviteePeerId']);
+    final expectedPeerId = peerIdByRole['charlie'];
+    if (expectedPeerId != null && stalePeerId != expectedPeerId) {
+      failures.add('alice: $proofName.staleInviteePeerId must be charlie');
+    }
+    if ((_stringValue(aliceProof['oldInviteId']) ?? '').isEmpty) {
+      failures.add('alice: $proofName.oldInviteId is required');
+    }
+    requireFinalEpoch('alice', aliceProof);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-004 stale invite proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedOldInviteMemberState',
+      'observedRemovalBeforeCurrentInvite',
+      'receivedRemovedWindowMessage',
+      'memberListIncludesCharlie',
+      'hasCurrentEpoch',
+      'receivedAlicePostCurrentInviteMessage',
+      'sentBobPostCurrentInviteMessage',
+      'receivedCharliePostCurrentInviteMessage',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireFinalEpoch('bob', bobProof);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-004 stale invite proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'receivedOldInvite',
+      'oldAcceptAttemptedBeforeCurrentInvite',
+      'oldAcceptBeforeCurrentRejected',
+      'noGroupAfterOldAccept',
+      'noKeyAfterOldAccept',
+      'receivedCurrentInvite',
+      'acceptedCurrentInvite',
+      'staleAcceptRejected',
+      'noKeyDowngradeAfterStaleAccept',
+      'memberListIncludesAliceBobCharlie',
+      'receivedAlicePostCurrentInviteMessage',
+      'receivedBobPostCurrentInviteMessage',
+      'sentCharliePostCurrentInviteMessage',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final oldAcceptResult = _stringValue(
+      charlieProof['oldAcceptResultBeforeCurrent'],
+    );
+    if (oldAcceptResult != 'revoked' && oldAcceptResult != 'notFound') {
+      failures.add(
+        'charlie: $proofName.oldAcceptResultBeforeCurrent must be revoked or notFound',
+      );
+    }
+    final staleAcceptResult = _stringValue(charlieProof['staleAcceptResult']);
+    if (staleAcceptResult != 'invalidPayload' &&
+        staleAcceptResult != 'revoked') {
+      failures.add(
+        'charlie: $proofName.staleAcceptResult must be invalidPayload or revoked',
+      );
+    }
+    final oldEpoch = _intValue(charlieProof['oldInviteEpoch']);
+    final currentEpoch = _intValue(charlieProof['currentInviteEpoch']);
+    final acceptedEpoch = _intValue(charlieProof['acceptedEpoch']);
+    if (oldEpoch == null || oldEpoch < 1) {
+      failures.add('charlie: $proofName.oldInviteEpoch must be positive');
+    }
+    if (currentEpoch == null || currentEpoch < 2) {
+      failures.add('charlie: $proofName.currentInviteEpoch must be >= 2');
+    }
+    if (oldEpoch != null && currentEpoch != null && oldEpoch >= currentEpoch) {
+      failures.add('charlie: $proofName.oldInviteEpoch must be stale');
+    }
+    if (acceptedEpoch != null &&
+        currentEpoch != null &&
+        acceptedEpoch != currentEpoch) {
+      failures.add(
+        'charlie: $proofName.acceptedEpoch must match currentInviteEpoch',
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    requireFinalEpoch('charlie', charlieProof);
+  }
+}
+
+void _validateKe003StaleLowerKeyUpdateProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke003StaleLowerKeyUpdateProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-003') {
+      failures.add('$role: $proofName.rowId must be KE-003');
+    }
+  }
+
+  void requireEpochs({
+    required String role,
+    required Map<String, dynamic> proof,
+    required bool requireBeforeAfter,
+  }) {
+    final staleEpoch = _intValue(proof['staleEpoch']);
+    final currentEpoch = _intValue(proof['currentEpoch']);
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (staleEpoch != 4) {
+      failures.add('$role: $proofName.staleEpoch must be 4');
+    }
+    if (currentEpoch != 5) {
+      failures.add('$role: $proofName.currentEpoch must be 5');
+    }
+    if (finalEpoch != 5) {
+      failures.add('$role: $proofName.finalEpoch must be 5');
+    }
+    if (requireBeforeAfter) {
+      if (_intValue(proof['epochBeforeStale']) != 5) {
+        failures.add('$role: $proofName.epochBeforeStale must be 5');
+      }
+      if (_intValue(proof['epochAfterStale']) != 5) {
+        failures.add('$role: $proofName.epochAfterStale must be 5');
+      }
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-003 stale lower key update proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'heldLowerEpochForBob',
+      'deliveredEpochFiveBeforeStale',
+      'deliveredStaleEpochAfterEpochFive',
+      'sentEpochFiveAfterStale',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochs(role: 'alice', proof: aliceProof, requireBeforeAfter: false);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-003 stale lower key update proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'acceptedEpochFiveBeforeStale',
+      'storedStaleEpochAsHistorical',
+      'keptEpochFiveAfterStale',
+      'receivedEpochFiveAfterStale',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochs(role: 'bob', proof: bobProof, requireBeforeAfter: true);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-003 stale lower key update proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'notTargetedByStaleUpdate',
+      'receivedEpochFiveAfterStale',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochs(
+      role: 'charlie',
+      proof: charlieProof,
+      requireBeforeAfter: false,
+    );
+  }
+}
+
+void _validateKe005SameEpochKeyConflictProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke005SameEpochKeyConflictProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-005') {
+      failures.add('$role: $proofName.rowId must be KE-005');
+    }
+  }
+
+  void requireEpochs({
+    required String role,
+    required Map<String, dynamic> proof,
+    required bool requireBeforeAfter,
+  }) {
+    final conflictEpoch = _intValue(proof['conflictEpoch']);
+    final currentEpoch = _intValue(proof['currentEpoch']);
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (conflictEpoch != 5) {
+      failures.add('$role: $proofName.conflictEpoch must be 5');
+    }
+    if (currentEpoch != 5) {
+      failures.add('$role: $proofName.currentEpoch must be 5');
+    }
+    if (finalEpoch != 5) {
+      failures.add('$role: $proofName.finalEpoch must be 5');
+    }
+    if (requireBeforeAfter) {
+      if (_intValue(proof['epochBeforeConflict']) != 5) {
+        failures.add('$role: $proofName.epochBeforeConflict must be 5');
+      }
+      if (_intValue(proof['epochAfterConflict']) != 5) {
+        failures.add('$role: $proofName.epochAfterConflict must be 5');
+      }
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-005 same epoch conflict proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'generatedOriginalEpochFive',
+      'deliveredOriginalEpochFiveToBob',
+      'deliveredSameEpochConflictToBob',
+      'sentEpochFiveAfterConflict',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochs(role: 'alice', proof: aliceProof, requireBeforeAfter: false);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-005 same epoch conflict proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'acceptedOriginalEpochFive',
+      'observedSameEpochConflict',
+      'rejectedConflictingMaterial',
+      'keptOriginalEpochFiveAfterConflict',
+      'receivedEpochFiveAfterConflict',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochs(role: 'bob', proof: bobProof, requireBeforeAfter: true);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-005 same epoch conflict proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'notTargetedByConflict',
+      'receivedEpochFiveAfterConflict',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochs(
+      role: 'charlie',
+      proof: charlieProof,
+      requireBeforeAfter: false,
+    );
+  }
+}
+
+void _validateKe015PartialKeyDistributionProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke015PartialKeyDistributionProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-015') {
+      failures.add('$role: $proofName.rowId must be KE-015');
+    }
+  }
+
+  void requireFinalEpochOne(String role, Map<String, dynamic> proof) {
+    if (_intValue(proof['finalEpoch']) != 1) {
+      failures.add('$role: $proofName.finalEpoch must remain 1');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-015 partial-key-distribution proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'attemptedMixedDistribution',
+      'bobKeyUpdateSucceeded',
+      'charlieKeyUpdateFailed',
+      'rotationBlocked',
+      'keptSenderEpochAfterFailure',
+      'blockedKeyRotatedPublish',
+      'sentPostFailureAtPreviousEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireFinalEpochOne('alice', aliceProof);
+    if (_intValue(aliceProof['attemptedEpoch']) != 2) {
+      failures.add('alice: $proofName.attemptedEpoch must be 2');
+    }
+    if (_intValue(aliceProof['postFailureMessageEpoch']) != 1) {
+      failures.add('alice: $proofName.postFailureMessageEpoch must be 1');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-015 partial-key-distribution proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'receivedSuccessfulKeyUpdate',
+      'successfulRecipientStillReceivesPostFailure',
+      'receivedPostFailureAtPreviousEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final finalEpoch = _intValue(bobProof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 1) {
+      failures.add('bob: $proofName.finalEpoch must be >= 1');
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add(
+      'charlie: missing KE-015 partial-key-distribution proof fields',
+    );
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'failedRecipientDidNotAdvance',
+      'receivedPostFailureAtPreviousEpoch',
+      'notDeafAfterFailedKeyUpdate',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireFinalEpochOne('charlie', charlieProof);
+  }
+}
+
 void _validateGe020LongSoakChurnProof({
   required Map<String, Map<String, dynamic>> byRole,
   required Map<String, String> peerIdByRole,
@@ -4153,6 +7886,1423 @@ void _validateGe024QuotedReplyProof({
   }
 }
 
+void _validateNw001FullMeshProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw001FullMeshProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+  const keysBySender = <String, String>{
+    'alice': 'aliceFullMesh',
+    'bob': 'bobFullMesh',
+    'charlie': 'charlieFullMesh',
+  };
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing NW-001 full-mesh proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-001') {
+      failures.add('$role: $proofName.rowId must be NW-001');
+    }
+    if (!_sameStringList(_stringList(proof['activeRoles']), roles)) {
+      failures.add('$role: $proofName.activeRoles mismatch');
+    }
+    if (!_sameStringList(_stringList(proof['senderRoles']), roles)) {
+      failures.add('$role: $proofName.senderRoles mismatch');
+    }
+    if (_intValue(proof['expectedReceiversPerMessage']) != 2) {
+      failures.add('$role: $proofName.expectedReceiversPerMessage must be 2');
+    }
+    for (final field in const <String>[
+      'allRolePublishesCovered',
+      'allActiveReceiversCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'duplicateVisibleMessageCount',
+      'successNoPeersCount',
+      'partialPeerPublishCount',
+    ]) {
+      final count = _intValue(proof[field]);
+      if (count != 0) {
+        failures.add('$role: $proofName.$field must be 0');
+      }
+    }
+
+    final topicPeerCounts = _intMap(proof['topicPeerCountsBySender']);
+    for (final senderRole in roles) {
+      final count = topicPeerCounts[senderRole];
+      if (count == null || count < 2) {
+        failures.add(
+          '$role: $proofName.topicPeerCountsBySender.$senderRole must be >= 2',
+        );
+      }
+    }
+  }
+
+  for (final entry in keysBySender.entries) {
+    final senderRole = entry.key;
+    final key = entry.value;
+    final sentEntries = _mapList(
+      byRole[senderRole]?['sentMessages'],
+    ).where((sent) => _stringValue(sent['key']) == key).toList(growable: false);
+    if (sentEntries.length != 1) {
+      continue;
+    }
+    final sent = sentEntries.single;
+    if (_stringValue(sent['outcome']) != 'success') {
+      failures.add('$senderRole: NW-001 $key must publish with success');
+    }
+    final topicPeers = _intValue(sent['topicPeers']);
+    if (topicPeers == null || topicPeers < 2) {
+      failures.add('$senderRole: NW-001 $key topicPeers must be >= 2');
+    }
+    if (_stringValue(sent['liveFanoutState']) != 'full_peers') {
+      failures.add(
+        '$senderRole: NW-001 $key liveFanoutState must be full_peers',
+      );
+    }
+
+    final proof = _mapValue(byRole[senderRole]?[proofName]);
+    final topicPeerCounts = proof == null
+        ? const <String, int>{}
+        : _intMap(proof['topicPeerCountsBySender']);
+    if (topicPeers != null && topicPeerCounts[senderRole] != topicPeers) {
+      failures.add(
+        '$senderRole: NW-001 proof topic peer count does not match sent proof',
+      );
+    }
+  }
+
+  for (final role in roles) {
+    for (final message in _expectedMessagesForScenario(
+      'private_full_mesh_online',
+    )) {
+      if (!message.receiverRoles.contains(role)) continue;
+      final receivedEntries = _mapList(byRole[role]?['receivedMessages'])
+          .where((received) => _stringValue(received['key']) == message.key)
+          .toList(growable: false);
+      if (receivedEntries.length != 1) continue;
+      final received = receivedEntries.single;
+      if (received['liveOnly'] != true) {
+        failures.add('$role: NW-001 ${message.key} must be marked liveOnly');
+      }
+      if (received['usedOfflineDrain'] != false) {
+        failures.add('$role: NW-001 ${message.key} must not use offline drain');
+      }
+      final expectedSenderPeerId = peerIdByRole[message.senderRole];
+      if (expectedSenderPeerId != null &&
+          _stringValue(received['senderPeerId']) != expectedSenderPeerId) {
+        failures.add('$role: NW-001 ${message.key} sender mismatch');
+      }
+    }
+  }
+}
+
+void _validateNw002RelayOnlyDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw002RelayOnlyDeliveryProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+  var totalSuccessNoPeers = 0;
+  var anyReplayCovered = false;
+  var anyCircuitOrRelayRouteProven = false;
+  var anyDirectPathSuppressed = false;
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing NW-002 relay-only delivery proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-002') {
+      failures.add('$role: $proofName.rowId must be NW-002');
+    }
+    final relayOnlyRoles = _stringList(proof['relayOnlyRoles']);
+    if (!relayOnlyRoles.contains('bob')) {
+      failures.add('$role: $proofName.relayOnlyRoles must include bob');
+    }
+    final routeDiagnostics = _mapList(proof['routeDiagnostics']);
+    final circuitOrRelayBacked = routeDiagnostics.any(
+      (diagnostic) => _nw002DiagnosticBacksCircuitOrRelayRoute(
+        diagnostic,
+        peerIdByRole['bob'],
+      ),
+    );
+    final directSuppressedBacked = routeDiagnostics.any(
+      (diagnostic) => _nw002DiagnosticBacksDirectPathSuppression(
+        diagnostic,
+        peerIdByRole['bob'],
+      ),
+    );
+    if (proof['circuitOrRelayRouteProven'] == true) {
+      if (!circuitOrRelayBacked) {
+        failures.add(
+          '$role: $proofName.circuitOrRelayRouteProven must be backed by '
+          'a Bob route diagnostic',
+        );
+      }
+      anyCircuitOrRelayRouteProven =
+          anyCircuitOrRelayRouteProven || circuitOrRelayBacked;
+    }
+    if (proof['directPathSuppressed'] == true) {
+      if (!directSuppressedBacked) {
+        failures.add(
+          '$role: $proofName.directPathSuppressed must be backed by a Bob '
+          'route diagnostic with relay path, attemptedDirect=false, and '
+          'directAddrCount=0',
+        );
+      }
+      anyDirectPathSuppressed =
+          anyDirectPathSuppressed || directSuppressedBacked;
+    }
+    for (final field in const <String>[
+      'activeMembershipPreserved',
+      'allRoutedReceiversCovered',
+      'routedSenderPublishBackCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'duplicateVisibleMessageCount',
+      'membershipMutationCount',
+    ]) {
+      final count = _intValue(proof[field]);
+      if (count != 0) {
+        failures.add('$role: $proofName.$field must be 0');
+      }
+    }
+
+    final successNoPeers = _intValue(proof['successNoPeersCount']) ?? 0;
+    if (successNoPeers < 0) {
+      failures.add('$role: $proofName.successNoPeersCount must be >= 0');
+    } else {
+      totalSuccessNoPeers += successNoPeers;
+    }
+    anyReplayCovered =
+        anyReplayCovered || proof['replayDeliveryCovered'] == true;
+
+    final deliveryModeByMessage = _mapValue(proof['deliveryModeByMessage']);
+    if (deliveryModeByMessage == null) {
+      failures.add('$role: $proofName.deliveryModeByMessage is required');
+    } else {
+      _validateNw002DeliveryMode(
+        role: role,
+        proofName: proofName,
+        deliveryModeByMessage: deliveryModeByMessage,
+        key: 'aliceToRelayOnlyBob',
+        senderRole: 'alice',
+        routedReceiverRoles: const <String>['bob'],
+        failures: failures,
+      );
+      _validateNw002DeliveryMode(
+        role: role,
+        proofName: proofName,
+        deliveryModeByMessage: deliveryModeByMessage,
+        key: 'bobRelayOnlyPublishBack',
+        senderRole: 'bob',
+        routedReceiverRoles: const <String>['alice', 'charlie'],
+        failures: failures,
+      );
+    }
+  }
+
+  if (totalSuccessNoPeers > 0 && !anyReplayCovered) {
+    failures.add(
+      'NW-002 successNoPeers proof requires replayDeliveryCovered=true',
+    );
+  }
+  if (!anyCircuitOrRelayRouteProven) {
+    failures.add(
+      'NW-002 circuitOrRelayRouteProven must be true for at least one role',
+    );
+  }
+  if (!anyDirectPathSuppressed) {
+    failures.add(
+      'NW-002 directPathSuppressed must be true for at least one role',
+    );
+  }
+
+  for (final entry in const <String, String>{
+    'alice': 'aliceToRelayOnlyBob',
+    'bob': 'bobRelayOnlyPublishBack',
+  }.entries) {
+    final senderRole = entry.key;
+    final key = entry.value;
+    final sentEntries = _mapList(
+      byRole[senderRole]?['sentMessages'],
+    ).where((sent) => _stringValue(sent['key']) == key).toList(growable: false);
+    if (sentEntries.length != 1) {
+      continue;
+    }
+    final sent = sentEntries.single;
+    final outcome = _stringValue(sent['outcome']);
+    if (outcome != 'success' && outcome != 'successNoPeers') {
+      failures.add('$senderRole: NW-002 $key must publish successfully');
+    }
+    if (outcome == 'successNoPeers' && !anyReplayCovered) {
+      failures.add(
+        '$senderRole: NW-002 $key successNoPeers needs replay proof',
+      );
+    }
+  }
+
+  for (final role in roles) {
+    for (final message in _expectedMessagesForScenario(
+      'private_relay_only_delivery',
+    )) {
+      if (!message.receiverRoles.contains(role)) continue;
+      final receivedEntries = _mapList(byRole[role]?['receivedMessages'])
+          .where((received) => _stringValue(received['key']) == message.key)
+          .toList(growable: false);
+      if (receivedEntries.length != 1) continue;
+      final received = receivedEntries.single;
+      final expectedSenderPeerId = peerIdByRole[message.senderRole];
+      if (expectedSenderPeerId != null &&
+          _stringValue(received['senderPeerId']) != expectedSenderPeerId) {
+        failures.add('$role: NW-002 ${message.key} sender mismatch');
+      }
+      if (received['usedOfflineDrain'] == true) {
+        final proof = _mapValue(byRole[role]?[proofName]);
+        if (proof?['replayDeliveryCovered'] != true) {
+          failures.add(
+            '$role: NW-002 ${message.key} used offline drain without replay proof',
+          );
+        }
+      }
+    }
+  }
+}
+
+void _validateNw002DeliveryMode({
+  required String role,
+  required String proofName,
+  required Map<String, dynamic> deliveryModeByMessage,
+  required String key,
+  required String senderRole,
+  required List<String> routedReceiverRoles,
+  required List<String> failures,
+}) {
+  final mode = _mapValue(deliveryModeByMessage[key]);
+  if (mode == null) {
+    failures.add('$role: $proofName.deliveryModeByMessage.$key is required');
+    return;
+  }
+  if (_stringValue(mode['senderRole']) != senderRole) {
+    failures.add(
+      '$role: $proofName.deliveryModeByMessage.$key senderRole mismatch',
+    );
+  }
+  final receivers = _stringList(mode['routedReceiverRoles']);
+  for (final receiverRole in routedReceiverRoles) {
+    if (!receivers.contains(receiverRole)) {
+      failures.add(
+        '$role: $proofName.deliveryModeByMessage.$key missing routed receiver $receiverRole',
+      );
+    }
+  }
+  final deliveryMode = _stringValue(mode['deliveryMode']);
+  if (deliveryMode != 'live_pubsub' && deliveryMode != 'durable_replay') {
+    failures.add(
+      '$role: $proofName.deliveryModeByMessage.$key deliveryMode must be live_pubsub or durable_replay',
+    );
+  }
+}
+
+bool _nw002DiagnosticBacksCircuitOrRelayRoute(
+  Map<String, dynamic> diagnostic,
+  String? bobPeerId,
+) {
+  if (!_nw002DiagnosticTargetsBob(diagnostic, bobPeerId)) return false;
+  final path = _stringValue(diagnostic['path']);
+  return path == 'relay' ||
+      path == 'relay_fallback' ||
+      diagnostic['usedRelayFallback'] == true;
+}
+
+bool _nw002DiagnosticBacksDirectPathSuppression(
+  Map<String, dynamic> diagnostic,
+  String? bobPeerId,
+) {
+  if (!_nw002DiagnosticTargetsBob(diagnostic, bobPeerId)) return false;
+  return _stringValue(diagnostic['path']) == 'relay' &&
+      diagnostic['attemptedDirect'] == false &&
+      _intValue(diagnostic['directAddrCount']) == 0;
+}
+
+bool _nw002DiagnosticTargetsBob(
+  Map<String, dynamic> diagnostic,
+  String? bobPeerId,
+) {
+  if (bobPeerId == null || bobPeerId.isEmpty) return false;
+  final prefix =
+      _stringValue(diagnostic['peerIdPrefix']) ??
+      _stringValue(diagnostic['targetPeerPrefix']);
+  if (prefix == null || prefix.isEmpty || prefix.length > 12) return false;
+  if (prefix.contains('/')) return false;
+  return bobPeerId.startsWith(prefix);
+}
+
+void _validateNw003PartitionReaddHealProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw003PartitionReaddHealProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing NW-003 partition re-add proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-003') {
+      failures.add('$role: $proofName.rowId must be NW-003');
+    }
+    if (_stringValue(proof['scenario']) != 'private_partition_readd_heal') {
+      failures.add(
+        '$role: $proofName.scenario must be private_partition_readd_heal',
+      );
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add(
+        '$role: $proofName.appPeerPlatform must be ios_26_2_core_simulator',
+      );
+    }
+    if (_stringValue(proof['partitionProofSource']) !=
+        'app_peer_core_simulator') {
+      failures.add(
+        '$role: $proofName.partitionProofSource must be app_peer_core_simulator',
+      );
+    }
+    _requireFalseProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'fakeNetworkOnly',
+      failures: failures,
+    );
+    for (final field in const <String>[
+      'alicePartitionedFromBob',
+      'alicePartitionedFromCharlie',
+      'bobAndCharliePartitionedFromAlice',
+      'removedWindowSentWhileCharlieRemoved',
+      'removedWindowLiveDeliveryBlockedDuringPartition',
+      'bobReceivedRemovedWindowAfterHeal',
+      'charlieDidNotReceiveRemovedWindow',
+      'finalMembershipConvergedForAliceBobCharlie',
+      'finalKeyEpochConvergedForAliceBobCharlie',
+      'postHealAliceToBobCharlieDelivery',
+      'postHealBobToAliceCharlieDelivery',
+      'postHealCharlieToAliceBobDelivery',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    final routeDiagnostics = _mapList(proof['routeDiagnostics']);
+    if (routeDiagnostics.isEmpty) {
+      failures.add('$role: $proofName.routeDiagnostics is required');
+    }
+    for (final diagnostic in routeDiagnostics) {
+      for (final peerId in peerIdByRole.values) {
+        if (peerId.isEmpty) continue;
+        final containsFullPeerId = diagnostic.values.any((value) {
+          return value is String && value.contains(peerId);
+        });
+        if (containsFullPeerId) {
+          failures.add(
+            '$role: $proofName.routeDiagnostics must not contain full peer IDs',
+          );
+        }
+      }
+    }
+  }
+
+  final aliceSent = _mapList(byRole['alice']?['sentMessages']);
+  final removedWindow = aliceSent.where(
+    (sent) => _stringValue(sent['key']) == 'aliceRemovedWindow',
+  );
+  if (removedWindow.length == 1) {
+    final sent = removedWindow.single;
+    final outcome = _stringValue(sent['outcome']);
+    if (outcome != 'success' && outcome != 'successNoPeers') {
+      failures.add('alice: NW-003 removed-window send must be durable success');
+    }
+    final recipientPeerIds = _stringList(sent['recipientPeerIds']).toSet();
+    final bobPeerId = peerIdByRole['bob'];
+    final charliePeerId = peerIdByRole['charlie'];
+    if (bobPeerId != null && !recipientPeerIds.contains(bobPeerId)) {
+      failures.add('alice: NW-003 removed-window recipients must include Bob');
+    }
+    if (charliePeerId != null && recipientPeerIds.contains(charliePeerId)) {
+      failures.add(
+        'alice: NW-003 removed-window recipients must exclude Charlie',
+      );
+    }
+  }
+
+  final charlieReceivedKeys = _mapList(byRole['charlie']?['receivedMessages'])
+      .map((received) => _stringValue(received['key']))
+      .whereType<String>()
+      .toSet();
+  if (charlieReceivedKeys.contains('aliceRemovedWindow')) {
+    failures.add('charlie: NW-003 must not receive aliceRemovedWindow');
+  }
+}
+
+void _validateNw004RelayReconnectRecoveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw004RelayReconnectRecoveryProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+  var anyRejoinOrPreserved = false;
+  var anyReplayRecovered = false;
+  var anyNeedsGroupRecoveryObserved = false;
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add(
+        '$role: missing NW-004 relay reconnect recovery proof fields',
+      );
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-004') {
+      failures.add('$role: $proofName.rowId must be NW-004');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_relay_reconnect_group_recovery') {
+      failures.add(
+        '$role: $proofName.scenario must be private_relay_reconnect_group_recovery',
+      );
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add(
+        '$role: $proofName.appPeerPlatform must be ios_26_2_core_simulator',
+      );
+    }
+    if (_stringValue(proof['recoveryMode']) == null ||
+        _stringValue(proof['recoveryMode'])!.isEmpty) {
+      failures.add('$role: $proofName.recoveryMode is required');
+    }
+
+    for (final field in const <String>[
+      'relayDropForced',
+      'relayReconnectCalled',
+      'groupReplayDrainCompleted',
+      'missedDuringDropRecoveredByReplay',
+      'postReconnectLiveDeliveryToRecoveredPeer',
+      'recoveredPeerPublishBackLive',
+      'membershipUnchangedByReconnect',
+      'finalMembershipConvergedForAliceBobCharlie',
+      'finalKeyEpochConvergedForAliceBobCharlie',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    final groupTopicsRejoined =
+        proof['groupTopicsRejoinedAfterReconnect'] == true;
+    final topicsPreserved = proof['topicsPreservedInPlace'] == true;
+    if (!groupTopicsRejoined && !topicsPreserved) {
+      failures.add(
+        '$role: $proofName requires group topic rejoin or preserved topics',
+      );
+    }
+    anyRejoinOrPreserved =
+        anyRejoinOrPreserved || groupTopicsRejoined || topicsPreserved;
+    anyReplayRecovered =
+        anyReplayRecovered ||
+        proof['missedDuringDropRecoveredByReplay'] == true;
+    anyNeedsGroupRecoveryObserved =
+        anyNeedsGroupRecoveryObserved ||
+        proof['needsGroupRecoveryObserved'] == true;
+
+    if (proof['needsGroupRecoveryObserved'] == true &&
+        proof['recoveryAckSentAfterRejoinAndDrain'] != true) {
+      failures.add(
+        '$role: $proofName.recoveryAckSentAfterRejoinAndDrain must be true when needsGroupRecoveryObserved is true',
+      );
+    }
+
+    final duplicateCount = _intValue(proof['duplicateVisibleMessageCount']);
+    if (duplicateCount != 0) {
+      failures.add('$role: $proofName.duplicateVisibleMessageCount must be 0');
+    }
+
+    final routeDiagnostics = _mapList(proof['routeDiagnostics']);
+    final reconnectDiagnostics = _mapList(proof['reconnectDiagnostics']);
+    if (routeDiagnostics.isEmpty && reconnectDiagnostics.isEmpty) {
+      failures.add(
+        '$role: $proofName routeDiagnostics or reconnectDiagnostics is required',
+      );
+    }
+    for (final diagnostic in <Map<String, dynamic>>[
+      ...routeDiagnostics,
+      ...reconnectDiagnostics,
+    ]) {
+      for (final peerId in peerIdByRole.values) {
+        if (peerId.isEmpty) continue;
+        final containsFullPeerId = diagnostic.values.any((value) {
+          return value is String && value.contains(peerId);
+        });
+        if (containsFullPeerId) {
+          failures.add(
+            '$role: $proofName diagnostics must not contain full peer IDs',
+          );
+        }
+      }
+    }
+  }
+
+  if (!anyRejoinOrPreserved) {
+    failures.add(
+      'NW-004 requires at least one topic rejoin or preservation proof',
+    );
+  }
+  if (!anyReplayRecovered) {
+    failures.add('NW-004 requires replay recovery for the dropped publish');
+  }
+  if (!anyNeedsGroupRecoveryObserved) {
+    failures.add('NW-004 requires needsGroupRecovery observability');
+  }
+
+  final bobReceived = _mapList(byRole['bob']?['receivedMessages']);
+  final bobMissed = bobReceived.where(
+    (entry) => _stringValue(entry['key']) == 'aliceMissedDuringRelayDrop',
+  );
+  if (bobMissed.length == 1 && bobMissed.single['usedOfflineDrain'] != true) {
+    failures.add(
+      'bob: NW-004 aliceMissedDuringRelayDrop must be recovered by offline drain',
+    );
+  }
+
+  for (final expected in const <(String, String)>[
+    ('bob', 'alicePostReconnectLive'),
+    ('charlie', 'alicePostReconnectLive'),
+    ('alice', 'bobRecoveredPublishBack'),
+    ('charlie', 'bobRecoveredPublishBack'),
+  ]) {
+    final received = _mapList(
+      byRole[expected.$1]?['receivedMessages'],
+    ).where((message) => _stringValue(message['key']) == expected.$2);
+    if (received.length == 1 && received.single['usedOfflineDrain'] != false) {
+      failures.add(
+        '${expected.$1}: NW-004 ${expected.$2} must be live after reconnect',
+      );
+    }
+  }
+
+  final charlieReceivedKeys = _mapList(byRole['charlie']?['receivedMessages'])
+      .map((received) => _stringValue(received['key']))
+      .whereType<String>()
+      .toSet();
+  if (charlieReceivedKeys.contains('aliceMissedDuringRelayDrop')) {
+    failures.add(
+      'charlie: NW-004 must not receive the Bob-only relay-drop replay',
+    );
+  }
+}
+
+void _validateNw006DisconnectNotRemovalProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw006DisconnectNotRemovalProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing NW-006 disconnect-not-removal proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-006') {
+      failures.add('$role: $proofName.rowId must be NW-006');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_peer_disconnect_not_removal') {
+      failures.add(
+        '$role: $proofName.scenario must be private_peer_disconnect_not_removal',
+      );
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add(
+        '$role: $proofName.appPeerPlatform must be ios_26_2_core_simulator',
+      );
+    }
+    if (_stringValue(proof['disconnectProofSource']) !=
+        'app_peer_core_simulator') {
+      failures.add(
+        '$role: $proofName.disconnectProofSource must be app_peer_core_simulator',
+      );
+    }
+    for (final field in const <String>[
+      'bobDisconnected',
+      'bobGroupPresentDuringDisconnect',
+      'bobSelfMemberActiveDuringDisconnect',
+      'durableRecipientIncludedDisconnectedBob',
+      'missedDuringDisconnectRecoveredByReplay',
+      'postReconnectLiveDeliveryToBob',
+      'bobPublishBackAfterReconnect',
+      'finalMembershipConvergedForAliceBobCharlie',
+      'finalKeyEpochConvergedForAliceBobCharlie',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'bobRemovedSignalCount',
+      'membershipMutationCount',
+      'duplicateVisibleMessageCount',
+    ]) {
+      final count = _intValue(proof[field]);
+      if (count != 0) {
+        failures.add('$role: $proofName.$field must be 0');
+      }
+    }
+
+    final diagnostics = _mapList(proof['disconnectDiagnostics']);
+    if (diagnostics.isEmpty) {
+      failures.add('$role: $proofName.disconnectDiagnostics is required');
+    }
+    for (final diagnostic in diagnostics) {
+      for (final peerId in peerIdByRole.values) {
+        if (peerId.isEmpty) continue;
+        final containsFullPeerId = diagnostic.values.any((value) {
+          return value is String && value.contains(peerId);
+        });
+        if (containsFullPeerId) {
+          failures.add(
+            '$role: $proofName.disconnectDiagnostics must not contain full peer IDs',
+          );
+        }
+      }
+    }
+  }
+
+  final aliceMissedSent = _mapList(
+    byRole['alice']?['sentMessages'],
+  ).where((sent) => _stringValue(sent['key']) == 'aliceMissedDuringDisconnect');
+  if (aliceMissedSent.length == 1) {
+    final recipientPeerIds = _stringList(
+      aliceMissedSent.single['recipientPeerIds'],
+    ).toSet();
+    final bobPeerId = peerIdByRole['bob'];
+    if (bobPeerId != null && !recipientPeerIds.contains(bobPeerId)) {
+      failures.add(
+        'alice: NW-006 disconnected Bob must remain in durable recipients',
+      );
+    }
+  }
+
+  final bobMissed = _mapList(byRole['bob']?['receivedMessages']).where(
+    (entry) => _stringValue(entry['key']) == 'aliceMissedDuringDisconnect',
+  );
+  if (bobMissed.length == 1 && bobMissed.single['usedOfflineDrain'] != true) {
+    failures.add(
+      'bob: NW-006 aliceMissedDuringDisconnect must be recovered by offline drain',
+    );
+  }
+
+  final charlieMissed = _mapList(byRole['charlie']?['receivedMessages']).where(
+    (entry) => _stringValue(entry['key']) == 'aliceMissedDuringDisconnect',
+  );
+  if (charlieMissed.length == 1 &&
+      charlieMissed.single['usedOfflineDrain'] != false) {
+    failures.add(
+      'charlie: NW-006 aliceMissedDuringDisconnect must remain live while Bob is disconnected',
+    );
+  }
+
+  for (final expected in const <(String, String)>[
+    ('bob', 'alicePostReconnectLive'),
+    ('charlie', 'alicePostReconnectLive'),
+    ('alice', 'bobPublishBackAfterReconnect'),
+    ('charlie', 'bobPublishBackAfterReconnect'),
+  ]) {
+    final received = _mapList(
+      byRole[expected.$1]?['receivedMessages'],
+    ).where((message) => _stringValue(message['key']) == expected.$2);
+    if (received.length == 1 && received.single['usedOfflineDrain'] != false) {
+      failures.add(
+        '${expected.$1}: NW-006 ${expected.$2} must be live after reconnect',
+      );
+    }
+  }
+}
+
+void _validateNw010BackgroundResumeDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw010BackgroundResumeDeliveryProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing NW-010 background resume proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-010') {
+      failures.add('$role: $proofName.rowId must be NW-010');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_background_resume_group_delivery') {
+      failures.add(
+        '$role: $proofName.scenario must be private_background_resume_group_delivery',
+      );
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add(
+        '$role: $proofName.appPeerPlatform must be ios_26_2_core_simulator',
+      );
+    }
+    if (_stringValue(proof['backgroundProofSource']) !=
+        'app_peer_core_simulator_lifecycle_pause_resume') {
+      failures.add(
+        '$role: $proofName.backgroundProofSource must be app_peer_core_simulator_lifecycle_pause_resume',
+      );
+    }
+    for (final field in const <String>[
+      'bobBackgroundedDuringAliceActivity',
+      'bobForegroundedAfterMembershipEdit',
+      'bobReceivedNoLiveCopyWhileBackgrounded',
+      'groupTopicsRejoinedAfterForeground',
+      'groupReplayDrainCompleted',
+      'recoveryAckSentAfterRejoinAndDrain',
+      'orderedDrainIncludesContentAndMembership',
+      'entitlementFilteringPreserved',
+      'postForegroundLiveDeliveryToBob',
+      'bobPublishBackAfterForeground',
+      'finalMembershipConvergedForAliceBob',
+      'finalKeyEpochConvergedForAliceBob',
+      'charlieRemovedBeforeSecondBackgroundMessage',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final duplicateCount = _intValue(proof['duplicateVisibleMessageCount']);
+    if (duplicateCount != 0) {
+      failures.add('$role: $proofName.duplicateVisibleMessageCount must be 0');
+    }
+    final orderedDrainKeys = _stringList(proof['orderedDrainKeys']);
+    var cursor = -1;
+    for (final expectedKey in const <String>[
+      'aliceDuringBackgroundBeforeEdit',
+      'memberRemovedCharlie',
+      'aliceDuringBackgroundAfterEdit',
+    ]) {
+      final next = orderedDrainKeys.indexWhere(
+        (key) => key == expectedKey,
+        cursor + 1,
+      );
+      if (next == -1) {
+        failures.add('$role: $proofName.orderedDrainKeys missing $expectedKey');
+        break;
+      }
+      cursor = next;
+    }
+    final diagnostics = _mapList(proof['lifecycleDiagnostics']);
+    if (diagnostics.isEmpty) {
+      failures.add('$role: $proofName.lifecycleDiagnostics is required');
+    }
+    for (final diagnostic in diagnostics) {
+      for (final peerId in peerIdByRole.values) {
+        if (peerId.isEmpty) continue;
+        final containsFullPeerId = diagnostic.values.any((value) {
+          return value is String && value.contains(peerId);
+        });
+        if (containsFullPeerId) {
+          failures.add(
+            '$role: $proofName.lifecycleDiagnostics must not contain full peer IDs',
+          );
+        }
+      }
+    }
+  }
+
+  final aliceSentBefore = _mapList(byRole['alice']?['sentMessages']).where(
+    (sent) => _stringValue(sent['key']) == 'aliceDuringBackgroundBeforeEdit',
+  );
+  if (aliceSentBefore.length == 1) {
+    final recipientPeerIds = _stringList(
+      aliceSentBefore.single['recipientPeerIds'],
+    ).toSet();
+    final bobPeerId = peerIdByRole['bob'];
+    final charliePeerId = peerIdByRole['charlie'];
+    if (bobPeerId != null && !recipientPeerIds.contains(bobPeerId)) {
+      failures.add('alice: NW-010 first background send must include Bob');
+    }
+    if (charliePeerId != null && !recipientPeerIds.contains(charliePeerId)) {
+      failures.add('alice: NW-010 first background send must include Charlie');
+    }
+  }
+
+  final aliceSentAfter = _mapList(byRole['alice']?['sentMessages']).where(
+    (sent) => _stringValue(sent['key']) == 'aliceDuringBackgroundAfterEdit',
+  );
+  if (aliceSentAfter.length == 1) {
+    final recipientPeerIds = _stringList(
+      aliceSentAfter.single['recipientPeerIds'],
+    ).toSet();
+    final bobPeerId = peerIdByRole['bob'];
+    final charliePeerId = peerIdByRole['charlie'];
+    if (bobPeerId != null && !recipientPeerIds.contains(bobPeerId)) {
+      failures.add('alice: NW-010 second background send must include Bob');
+    }
+    if (charliePeerId != null && recipientPeerIds.contains(charliePeerId)) {
+      failures.add(
+        'alice: NW-010 second background send must exclude removed Charlie',
+      );
+    }
+  }
+
+  for (final expected in const <(String, String, bool)>[
+    ('bob', 'aliceDuringBackgroundBeforeEdit', true),
+    ('bob', 'aliceDuringBackgroundAfterEdit', true),
+    ('bob', 'alicePostForegroundLive', false),
+    ('alice', 'bobPostForegroundPublishBack', false),
+    ('charlie', 'aliceDuringBackgroundBeforeEdit', false),
+  ]) {
+    final received = _mapList(
+      byRole[expected.$1]?['receivedMessages'],
+    ).where((message) => _stringValue(message['key']) == expected.$2);
+    if (received.length == 1 &&
+        received.single['usedOfflineDrain'] != expected.$3) {
+      failures.add(
+        '${expected.$1}: NW-010 ${expected.$2} drain/live classification mismatch',
+      );
+    }
+  }
+
+  final charlieAfterEdit = _mapList(byRole['charlie']?['receivedMessages'])
+      .where(
+        (message) =>
+            _stringValue(message['key']) == 'aliceDuringBackgroundAfterEdit',
+      );
+  if (charlieAfterEdit.isNotEmpty) {
+    failures.add(
+      'charlie: NW-010 removed member must not receive post-removal background send',
+    );
+  }
+}
+
+void _validateNw012LongOfflineEpochConvergenceProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw012LongOfflineEpochConvergenceProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add(
+        '$role: missing NW-012 long-offline epoch convergence proof fields',
+      );
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-012') {
+      failures.add('$role: $proofName.rowId must be NW-012');
+    }
+    if (_stringValue(proof['scenario']) != 'private_long_offline_epoch_churn') {
+      failures.add(
+        '$role: $proofName.scenario must be private_long_offline_epoch_churn',
+      );
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add(
+        '$role: $proofName.appPeerPlatform must be ios_26_2_core_simulator',
+      );
+    }
+    if (_stringValue(proof['offlineProofSource']) !=
+        'app_peer_core_simulator_long_offline_reconnect') {
+      failures.add(
+        '$role: $proofName.offlineProofSource must be app_peer_core_simulator_long_offline_reconnect',
+      );
+    }
+    for (final field in const <String>[
+      'charlieOfflineThroughEpochChurn',
+      'groupTopicsRejoinedAfterReconnect',
+      'groupReplayDrainCompleted',
+      'entitlementFilteringPreserved',
+      'finalActiveMessagesDelivered',
+      'charlieReceivedOnlyFinalActiveInterval',
+      'postReconnectLiveDelivery',
+      'finalMembershipConverged',
+      'finalKeyEpochConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 4) {
+      failures.add('$role: $proofName.finalEpoch must be at least 4');
+    }
+    final finalRoles = _stringList(proof['finalMemberRoles']).toSet();
+    if (!finalRoles.containsAll(const <String>['alice', 'bob', 'charlie']) ||
+        finalRoles.length != 3) {
+      failures.add(
+        '$role: $proofName.finalMemberRoles must converge to alice,bob,charlie',
+      );
+    }
+    for (final counter in const <String>[
+      'duplicateVisibleMessageCount',
+      'removedWindowPlaintextCount',
+      'staleFirstIntervalPlaintextCount',
+      'staleEpochPlaintextCount',
+    ]) {
+      if (_intValue(proof[counter]) != 0) {
+        failures.add('$role: $proofName.$counter must be 0');
+      }
+    }
+
+    final finalKeys = _stringList(proof['finalActiveMessageKeys']).toSet();
+    if (!finalKeys.containsAll(const <String>[
+      'aliceFinalActiveOne',
+      'bobFinalActiveTwo',
+    ])) {
+      failures.add(
+        '$role: $proofName.finalActiveMessageKeys missing final active messages',
+      );
+    }
+
+    final orderedDrainKeys = _stringList(proof['orderedDrainKeys']);
+    var cursor = -1;
+    for (final expectedKey in const <String>[
+      'memberRemovedCharlie',
+      'memberReaddedCharlie',
+      'aliceFinalActiveOne',
+      'bobFinalActiveTwo',
+    ]) {
+      final next = orderedDrainKeys.indexWhere(
+        (key) => key == expectedKey,
+        cursor + 1,
+      );
+      if (next == -1) {
+        failures.add('$role: $proofName.orderedDrainKeys missing $expectedKey');
+        break;
+      }
+      cursor = next;
+    }
+  }
+
+  final aliceRemovedWindow = _mapList(
+    byRole['alice']?['sentMessages'],
+  ).where((sent) => _stringValue(sent['key']) == 'aliceRemovedWindow');
+  if (aliceRemovedWindow.length != 1) {
+    failures.add(
+      'alice: sent aliceRemovedWindow count=${aliceRemovedWindow.length}',
+    );
+  } else {
+    final recipientPeerIds = _stringList(
+      aliceRemovedWindow.single['recipientPeerIds'],
+    ).toSet();
+    final bobPeerId = peerIdByRole['bob'];
+    final charliePeerId = peerIdByRole['charlie'];
+    if (bobPeerId != null && !recipientPeerIds.contains(bobPeerId)) {
+      failures.add('alice: NW-012 removed-window send must include Bob');
+    }
+    if (charliePeerId != null && recipientPeerIds.contains(charliePeerId)) {
+      failures.add('alice: NW-012 removed-window send must exclude Charlie');
+    }
+  }
+
+  for (final unexpectedKey in const <String>[
+    'aliceRemovedWindow',
+    'aliceStaleFirstInterval',
+    'aliceStaleEpochAfterReadd',
+  ]) {
+    final charlieReceived = _mapList(
+      byRole['charlie']?['receivedMessages'],
+    ).where((message) => _stringValue(message['key']) == unexpectedKey);
+    if (charlieReceived.isNotEmpty) {
+      failures.add('charlie: NW-012 must not receive $unexpectedKey');
+    }
+  }
+
+  for (final expected in const <(String, String, bool)>[
+    ('bob', 'aliceFinalActiveOne', false),
+    ('charlie', 'aliceFinalActiveOne', true),
+    ('alice', 'bobFinalActiveTwo', false),
+    ('charlie', 'bobFinalActiveTwo', true),
+    ('alice', 'charliePostReconnectLive', false),
+    ('bob', 'charliePostReconnectLive', false),
+  ]) {
+    final received = _mapList(
+      byRole[expected.$1]?['receivedMessages'],
+    ).where((message) => _stringValue(message['key']) == expected.$2);
+    if (received.length == 1 &&
+        received.single['usedOfflineDrain'] != expected.$3) {
+      failures.add(
+        '${expected.$1}: NW-012 ${expected.$2} drain/live classification mismatch',
+      );
+    }
+  }
+}
+
+void _validatePrivateAbcCreateReusableProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  final topicNames = <String>{};
+  final groupConfigStateHashes = <String>{};
+  final keyEpochs = <int>{};
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final verdict = byRole[role];
+    if (verdict == null) continue;
+
+    final deviceId = _stringValue(verdict['deviceId']);
+    if (deviceId == null || deviceId.isEmpty) {
+      failures.add('$role: deviceId is required for private_abc_create');
+    }
+
+    final topicName = _stringValue(verdict['topicName']);
+    if (topicName == null || topicName.isEmpty) {
+      failures.add('$role: topicName is required for private_abc_create');
+    } else {
+      topicNames.add(topicName);
+    }
+
+    final groupConfigStateHash = _stringValue(verdict['groupConfigStateHash']);
+    if (groupConfigStateHash == null || groupConfigStateHash.isEmpty) {
+      failures.add(
+        '$role: groupConfigStateHash is required for private_abc_create',
+      );
+    } else {
+      groupConfigStateHashes.add(groupConfigStateHash);
+    }
+
+    final keyEpoch = _intValue(verdict['keyEpoch']);
+    if (keyEpoch == null || keyEpoch != 1) {
+      failures.add(
+        '$role: keyEpoch must be exactly 1 for KE-001 initial epoch proof',
+      );
+    } else {
+      keyEpochs.add(keyEpoch);
+    }
+
+    final activeMemberPeerIds = _stringList(verdict['activeMemberPeerIds']);
+    if (activeMemberPeerIds.isEmpty) {
+      failures.add(
+        '$role: activeMemberPeerIds is required for private_abc_create',
+      );
+    }
+
+    for (final sent in _mapList(verdict['sentMessages'])) {
+      final sentKey = _stringValue(sent['key']) ?? 'unknown';
+      final sentEpoch = _intValue(sent['keyEpoch']);
+      if (sentEpoch != null && sentEpoch != 1) {
+        failures.add(
+          '$role: sent $sentKey keyEpoch must be exactly 1 for KE-001',
+        );
+      }
+    }
+    for (final received in _mapList(verdict['receivedMessages'])) {
+      final receivedKey = _stringValue(received['key']) ?? 'unknown';
+      final receivedEpoch = _intValue(received['keyEpoch']);
+      if (receivedEpoch != null && receivedEpoch != 1) {
+        failures.add(
+          '$role: received $receivedKey keyEpoch must be exactly 1 for KE-001',
+        );
+      }
+    }
+  }
+
+  if (topicNames.length > 1) {
+    failures.add(
+      'role verdicts disagree on topicName: ${topicNames.join(', ')}',
+    );
+  }
+  if (groupConfigStateHashes.length > 1) {
+    failures.add(
+      'role verdicts disagree on groupConfigStateHash: '
+      '${groupConfigStateHashes.join(', ')}',
+    );
+  }
+  if (keyEpochs.length > 1) {
+    failures.add('role verdicts disagree on keyEpoch: ${keyEpochs.join(', ')}');
+  }
+}
+
+void _validatePrivateReusableProofFields({
+  required String scenario,
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  final topicNames = <String>{};
+  final groupConfigStateHashes = <String>{};
+  final keyEpochs = <int>{};
+
+  for (final entry in byRole.entries) {
+    final role = entry.key;
+    final verdict = entry.value;
+
+    final deviceId = _stringValue(verdict['deviceId']);
+    if (deviceId == null || deviceId.isEmpty) {
+      failures.add('$role: deviceId is required for $scenario');
+    }
+
+    final topicName = _stringValue(verdict['topicName']);
+    if (topicName == null || topicName.isEmpty) {
+      failures.add('$role: topicName is required for $scenario');
+    } else {
+      topicNames.add(topicName);
+    }
+
+    final groupConfigStateHash = _stringValue(verdict['groupConfigStateHash']);
+    if (groupConfigStateHash == null || groupConfigStateHash.isEmpty) {
+      failures.add('$role: groupConfigStateHash is required for $scenario');
+    } else {
+      groupConfigStateHashes.add(groupConfigStateHash);
+    }
+
+    final keyEpoch = _intValue(verdict['keyEpoch']);
+    if (keyEpoch == null || keyEpoch < 1) {
+      failures.add('$role: keyEpoch must be a positive integer for $scenario');
+    } else {
+      keyEpochs.add(keyEpoch);
+    }
+
+    final activeMemberPeerIds = _stringList(verdict['activeMemberPeerIds']);
+    if (activeMemberPeerIds.isEmpty) {
+      failures.add('$role: activeMemberPeerIds is required for $scenario');
+    }
+  }
+
+  if (topicNames.length > 1) {
+    failures.add(
+      'role verdicts disagree on topicName: ${topicNames.join(', ')}',
+    );
+  }
+  if (groupConfigStateHashes.length > 1) {
+    failures.add(
+      'role verdicts disagree on groupConfigStateHash: '
+      '${groupConfigStateHashes.join(', ')}',
+    );
+  }
+  if (keyEpochs.length > 1) {
+    failures.add('role verdicts disagree on keyEpoch: ${keyEpochs.join(', ')}');
+  }
+}
+
+void _validateMl001CreateInviteProofFields({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['ml001CreateInviteProof']);
+    if (proof == null) {
+      failures.add('$role: missing ML-001 create/invite proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ML-001') {
+      failures.add('$role: ml001CreateInviteProof.rowId must be ML-001');
+    }
+    if (_stringValue(proof['invitePath']) != 'supported_pending_invite') {
+      failures.add(
+        '$role: ml001CreateInviteProof.invitePath must be supported_pending_invite',
+      );
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?['ml001CreateInviteProof']);
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'createdViaCreateGroupWithMembers',
+      'bobInviteSent',
+      'charlieInviteSent',
+      'bobAcceptedSignal',
+      'charlieAcceptedSignal',
+      'readableJoinTimelineObserved',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: 'ml001CreateInviteProof',
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['ml001CreateInviteProof']);
+    if (proof == null) continue;
+    for (final field in const <String>[
+      'storedPendingInvite',
+      'acceptedPendingInvite',
+      'joinedViaGroupJoin',
+      'readableSelfJoinTimeline',
+      'receivedAliceInitialAfterInviteAccept',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: 'ml001CreateInviteProof',
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+}
+
+void _validateMl002OnlineAddProofFields({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  for (final role in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    final proof = _mapValue(byRole[role]?['ml002OnlineAddProof']);
+    if (proof == null) {
+      failures.add('$role: missing ML-002 online-add proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ML-002') {
+      failures.add('$role: ml002OnlineAddProof.rowId must be ML-002');
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?['ml002OnlineAddProof']);
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'danaOnlineBeforeAdd',
+      'danaNotActiveBeforeAdd',
+      'aliceAddedDana',
+      'danaJoinedAfterAdd',
+      'allRolesSeeDanaActiveAfterJoin',
+      'aliceSentPostJoin',
+      'bobSentPostJoin',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: 'ml002OnlineAddProof',
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final bobProof = _mapValue(byRole['bob']?['ml002OnlineAddProof']);
+  if (bobProof != null) {
+    for (final field in const <String>[
+      'danaActiveAfterJoin',
+      'bobSentPostJoin',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: 'ml002OnlineAddProof',
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final charlieProof = _mapValue(byRole['charlie']?['ml002OnlineAddProof']);
+  if (charlieProof != null) {
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: 'ml002OnlineAddProof',
+      proof: charlieProof,
+      field: 'danaActiveAfterJoin',
+      failures: failures,
+    );
+  }
+
+  final danaProof = _mapValue(byRole['dana']?['ml002OnlineAddProof']);
+  if (danaProof != null) {
+    for (final field in const <String>[
+      'danaOnlineBeforeAdd',
+      'danaNotActiveBeforeAdd',
+      'joinedViaGroupJoinWithConfig',
+      'currentKeyEpochInstalledBeforeLiveReceive',
+      'receivedAlicePostJoinLiveNoDrain',
+      'receivedBobPostJoinLiveNoDrain',
+      'noOfflineDrainBeforeLiveReceipts',
+    ]) {
+      _requireTrueProof(
+        role: 'dana',
+        proofName: 'ml002OnlineAddProof',
+        proof: danaProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final danaVerdict = byRole['dana'];
+  if (danaVerdict == null) return;
+  for (final key in const <String>['aliceAfterDanaAdd', 'bobAfterDanaAdd']) {
+    final entries = _mapList(danaVerdict['receivedMessages'])
+        .where((entry) => _stringValue(entry['key']) == key)
+        .toList(growable: false);
+    if (entries.length != 1) continue;
+    final entry = entries.single;
+    if (entry['liveOnly'] != true) {
+      failures.add('dana: received $key liveOnly must be true');
+    }
+    if (entry['usedOfflineDrain'] != false) {
+      failures.add('dana: received $key usedOfflineDrain must be false');
+    }
+  }
+}
+
 void _validateGe002RemovalContinuityProof({
   required Map<String, Map<String, dynamic>> byRole,
   required Map<String, String> peerIdByRole,
@@ -4929,6 +10079,529 @@ void _validateGm004RemovalProof({
       aliceEpoch != null &&
       charlieEpoch >= aliceEpoch) {
     failures.add('charlie: gm004RemovalProof must not hold rotated epoch');
+  }
+}
+
+void _validateMl005OnlineRemovalProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml005OnlineRemovalProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-005') {
+      failures.add('$role: $proofName.rowId must be ML-005');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-005 online-removal proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'charlieOnlineBeforeRemoval',
+      'removedCharlie',
+      'memberListExcludesCharlie',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-005 online-removal proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListExcludesCharlie',
+      'hasRotatedEpoch',
+      'receivedAliceAfterRemoval',
+      'sentPostRemovalAccepted',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-005 online-removal proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineBeforeRemoval',
+      'currentMemberBeforeRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'groupPresentAfterRemoval',
+      'hasRotatedEpoch',
+      'postRemovalPublishAccepted',
+      'receivedAliceAfterRemoval',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final sendOutcome = _stringValue(charlieProof['postRemovalSendOutcome']);
+    if (sendOutcome != 'groupNotFound' && sendOutcome != 'unauthorized') {
+      failures.add(
+        'charlie: $proofName.postRemovalSendOutcome must reject send',
+      );
+    }
+    final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['rotatedEpoch']);
+  final bobEpoch = _intValue(bobProof?['rotatedEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['rotatedEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.rotatedEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.rotatedEpoch must be >= 2');
+  }
+  if (aliceEpoch != null && bobEpoch != null && aliceEpoch != bobEpoch) {
+    failures.add('alice/bob: ML-005 rotatedEpoch mismatch');
+  }
+  if (charlieEpoch != null &&
+      aliceEpoch != null &&
+      charlieEpoch >= aliceEpoch) {
+    failures.add('charlie: $proofName must not hold rotated epoch');
+  }
+}
+
+void _validateKe006RemovalKeyRotationProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke006RemovalKeyRotationProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  final expectedRotatedEpoch = _intValue(byRole['alice']?['keyEpoch']);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-006') {
+      failures.add('$role: $proofName.rowId must be KE-006');
+    }
+  }
+
+  void requireRotatedEpoch(
+    String role,
+    Map<String, dynamic> proof, {
+    required String field,
+  }) {
+    final value = _intValue(proof[field]);
+    if (value == null || value <= 1) {
+      failures.add('$role: $proofName.$field must be a rotated epoch > 1');
+    }
+    if (expectedRotatedEpoch != null && value != expectedRotatedEpoch) {
+      failures.add('$role: $proofName.$field must match Alice rotated epoch');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-006 removal-key proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'memberListExcludesCharlie',
+      'rotatedKeyGenerated',
+      'distributedRotatedKeyToBob',
+      'sentPostRemovalAtRotatedEpoch',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+    requireRotatedEpoch('alice', aliceProof, field: 'rotatedEpoch');
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-006 removal-key proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListExcludesCharlie',
+      'receivedRotatedKey',
+      'hasRotatedEpoch',
+      'receivedAliceAfterRemoval',
+      'sentPostRemovalAtRotatedEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireRotatedEpoch('bob', bobProof, field: 'rotatedEpoch');
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-006 removal-key proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineBeforeRemoval',
+      'currentMemberBeforeRemoval',
+      'excludedFromRotatedKeyDistribution',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'hasRotatedEpoch',
+      'postRemovalPublishAccepted',
+      'receivedAliceAfterRemoval',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final excludedEpoch = _intValue(charlieProof['excludedRotatedEpoch']);
+    final retainedEpoch = _intValue(charlieProof['retainedEpochAfterRemoval']);
+    if (excludedEpoch == null || excludedEpoch <= 1) {
+      failures.add(
+        'charlie: $proofName.excludedRotatedEpoch must be a rotated epoch > 1',
+      );
+    }
+    if (expectedRotatedEpoch != null && excludedEpoch != expectedRotatedEpoch) {
+      failures.add(
+        'charlie: $proofName.excludedRotatedEpoch must match Alice rotated epoch',
+      );
+    }
+    if (retainedEpoch == null ||
+        (excludedEpoch != null && retainedEpoch >= excludedEpoch)) {
+      failures.add(
+        'charlie: $proofName.retainedEpochAfterRemoval must stay below rotated epoch',
+      );
+    }
+    final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+  }
+}
+
+void _validateMl006OfflineRemovalProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml006OfflineRemovalProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-006') {
+      failures.add('$role: $proofName.rowId must be ML-006');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-006 offline removal proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'charlieOfflineBeforeRemoval',
+      'removedCharlie',
+      'memberListExcludesCharlie',
+      'sentPostRemovalAccepted',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-006 offline removal proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListExcludesCharlie',
+      'hasRotatedEpoch',
+      'receivedAliceAfterRemoval',
+      'sentPostRemovalAccepted',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-006 offline removal proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'hadOldConfigBeforeOffline',
+      'hadOldKeyBeforeOffline',
+      'offlineDuringRemoval',
+      'reconnectedWithStaleState',
+      'retrievedInboxAfterReconnect',
+      'convergedRemoved',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'groupPresentAfterCatchUp',
+      'hasRotatedEpoch',
+      'postRemovalPublishAccepted',
+      'receivedAliceAfterRemoval',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final sendOutcome = _stringValue(charlieProof['postRemovalSendOutcome']);
+    if (sendOutcome != 'groupNotFound' && sendOutcome != 'unauthorized') {
+      failures.add(
+        'charlie: $proofName.postRemovalSendOutcome must reject send',
+      );
+    }
+    final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['rotatedEpoch']);
+  final bobEpoch = _intValue(bobProof?['rotatedEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['rotatedEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.rotatedEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.rotatedEpoch must be >= 2');
+  }
+  if (aliceEpoch != null && bobEpoch != null && aliceEpoch != bobEpoch) {
+    failures.add('alice/bob: ML-006 rotatedEpoch mismatch');
+  }
+  if (charlieEpoch != null &&
+      aliceEpoch != null &&
+      charlieEpoch >= aliceEpoch) {
+    failures.add('charlie: $proofName must not hold rotated epoch');
+  }
+}
+
+void _validateIr004PostRemovalReplayProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ir004PostRemovalReplayProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'IR-004') {
+      failures.add('$role: $proofName.rowId must be IR-004');
+    }
+  }
+
+  void requireRotatedEpoch(String role, Map<String, dynamic> proof) {
+    final epoch = _intValue(proof['rotatedEpoch']);
+    if (epoch == null || epoch < 2) {
+      failures.add('$role: $proofName.rotatedEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing IR-004 post-removal replay proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'charlieOfflineBeforeRemoval',
+      'removedCharlie',
+      'memberListExcludesCharlie',
+      'sentAlicePostRemoval',
+      'receivedBobPostRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+    requireRotatedEpoch('alice', aliceProof);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing IR-004 post-removal replay proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListExcludesCharlie',
+      'hasRotatedEpoch',
+      'receivedAlicePostRemoval',
+      'sentBobPostRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireRotatedEpoch('bob', bobProof);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing IR-004 post-removal replay proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'hadOldConfigBeforeOffline',
+      'hadOldKeyBeforeOffline',
+      'offlineDuringRemoval',
+      'reconnectedWithStaleState',
+      'retrievedInboxAfterReconnect',
+      'convergedRemoved',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'groupPresentAfterCatchUp',
+      'retainedRotatedEpoch',
+      'postRemovalPublishAccepted',
+      'receivedAlicePostRemoval',
+      'receivedBobPostRemoval',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final sendOutcome = _stringValue(charlieProof['postRemovalSendOutcome']);
+    if (sendOutcome != 'groupNotFound' && sendOutcome != 'unauthorized') {
+      failures.add(
+        'charlie: $proofName.postRemovalSendOutcome must reject send',
+      );
+    }
+    final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+    final staleEpoch = _intValue(charlieProof['staleKeyEpochBeforeDrain']);
+    if (staleEpoch == null || staleEpoch < 1) {
+      failures.add(
+        'charlie: $proofName.staleKeyEpochBeforeDrain must be present',
+      );
+    }
+    final rotatedAfterDrain = _intValue(charlieProof['rotatedEpochAfterDrain']);
+    if (rotatedAfterDrain != null && rotatedAfterDrain >= 2) {
+      failures.add(
+        'charlie: $proofName.rotatedEpochAfterDrain must stay below removal epoch',
+      );
+    }
   }
 }
 
@@ -6821,6 +12494,2751 @@ void _validateGm006ImmediateReaddProof({
   }
 }
 
+void _validateMl007ReaddCurrentProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml007ReaddCurrentProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-007') {
+      failures.add('$role: $proofName.rowId must be ML-007');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-007 re-add current proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlie',
+      'memberListIncludesCharlie',
+      'sentRemovedWindowBeforeReadd',
+      'sentAlicePostReaddMessage',
+      'receivedBobPostReaddMessage',
+      'receivedCharliePostReaddMessage',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-007 re-add current proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListIncludesCharlie',
+      'receivedRemovedWindowMessage',
+      'sentBobPostReaddMessage',
+      'receivedAlicePostReaddMessage',
+      'receivedCharliePostReaddMessage',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-007 re-add current proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+      'postReaddPublishAccepted',
+      'receivedAlicePostReaddMessage',
+      'receivedBobPostReaddMessage',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'hasStaleEpochAfterReadd',
+      failures: failures,
+    );
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: ML-007 finalEpoch mismatch');
+  }
+}
+
+void _validateRa002OnlineSubscribedReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra002OnlineSubscribedReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-002') {
+      failures.add('$role: $proofName.rowId must be RA-002');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-002 online re-add proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlieWhileOnline',
+      'sentRemovedWindowWhileCharlieOnline',
+      'readdedCharlieWithoutRestart',
+      'sentPostReaddWithoutCharlieRestart',
+      'receivedCharliePostReaddWithoutRestart',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-002 online re-add proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieRemovedWhileOnline',
+      'receivedRemovedWindowWhileCharlieOnline',
+      'observedCharlieReaddedWithoutRestart',
+      'receivedAlicePostReaddWithoutCharlieRestart',
+      'sentBobPostReaddWithoutCharlieRestart',
+      'receivedCharliePostReaddWithoutRestart',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-002 online re-add proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineBeforeRemoval',
+      'remainedProcessAliveDuringRemoval',
+      'staleSubscriptionWindowCovered',
+      'rejoinedWithoutRestart',
+      'receivedAlicePostReaddWithoutRestart',
+      'receivedBobPostReaddWithoutRestart',
+      'postReaddPublishAccepted',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-002 finalEpoch mismatch');
+  }
+}
+
+void _validateRa003OfflineReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra003OfflineReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-003') {
+      failures.add('$role: $proofName.rowId must be RA-003');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-003 offline re-add proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlieWhileOffline',
+      'sentRemovedWindowWhileCharlieOffline',
+      'waitedForCharlieRemovalResolutionBeforeReadd',
+      'readdedCharlieAfterReconnect',
+      'sentPostReaddAfterOfflineReconnect',
+      'receivedCharliePostReaddAfterOfflineReconnect',
+      'receivedBobPostReaddAfterOfflineReconnect',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-003 offline re-add proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieRemovedWhileOffline',
+      'receivedRemovedWindowWhileCharlieOffline',
+      'observedCharlieReaddedAfterReconnect',
+      'receivedAlicePostReaddAfterOfflineReconnect',
+      'sentBobPostReaddAfterOfflineReconnect',
+      'receivedCharliePostReaddAfterOfflineReconnect',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-003 offline re-add proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'offlineDuringRemoval',
+      'reconnectedBeforeReadd',
+      'resolvedRemovalBeforeReadd',
+      'rejoinedAfterOfflineRemoval',
+      'receivedAlicePostReaddAfterOfflineReconnect',
+      'receivedBobPostReaddAfterOfflineReconnect',
+      'postReaddPublishAccepted',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-003 finalEpoch mismatch');
+  }
+}
+
+void _validateRa017ActiveMemberChurnProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra017ActiveMemberChurnProof';
+  final expectedActiveRoles = const <String>{'alice', 'bob', 'dana'};
+  final expectedFinalRoles = const <String>{'alice', 'bob', 'charlie', 'dana'};
+  final finalEpochs = <int>{};
+
+  for (final role in expectedFinalRoles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing RA-017 active-member churn proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'RA-017') {
+      failures.add('$role: $proofName.rowId must be RA-017');
+    }
+    final churnCycles = _intValue(proof['churnCycles']);
+    if (churnCycles == null || churnCycles < 3) {
+      failures.add('$role: $proofName.churnCycles must be >= 3');
+    }
+    for (final field in const <String>[
+      'danaActiveMemberCovered',
+      'finalMemberListConverged',
+      'finalEpochConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final activeSenders = _stringList(proof['activeSenders']).toSet();
+    final activeReceivers = _stringList(proof['activeReceivers']).toSet();
+    if (!activeSenders.containsAll(expectedActiveRoles)) {
+      failures.add(
+        '$role: $proofName.activeSenders must include alice, bob, dana',
+      );
+    }
+    if (!activeReceivers.containsAll(expectedActiveRoles)) {
+      failures.add(
+        '$role: $proofName.activeReceivers must include alice, bob, dana',
+      );
+    }
+    if (activeSenders.contains('charlie')) {
+      failures.add('$role: $proofName.activeSenders must not use RA-018 churn');
+    }
+    final removedLeak = _intValue(proof['charlieRemovedWindowPlaintextCount']);
+    if (removedLeak != 0) {
+      failures.add(
+        '$role: $proofName.charlieRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final finalMembers = _stringList(proof['finalRoles']).toSet();
+    if (!finalMembers.containsAll(expectedFinalRoles)) {
+      failures.add(
+        '$role: $proofName.finalRoles must include alice, bob, charlie, dana',
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 7) {
+      failures.add('$role: $proofName.finalEpoch must be >= 7');
+    } else {
+      finalEpochs.add(finalEpoch);
+    }
+  }
+
+  if (finalEpochs.length > 1) {
+    failures.add('alice/bob/charlie/dana: RA-017 finalEpoch mismatch');
+  }
+
+  final danaVerdict = byRole['dana'];
+  if (danaVerdict != null) {
+    final danaSentKeys = _mapList(
+      danaVerdict['sentMessages'],
+    ).map((entry) => _stringValue(entry['key'])).whereType<String>().toSet();
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      for (final phase in const <String>['removed', 'readd']) {
+        final key = _ra017Key(cycle, phase, 'dana');
+        if (!danaSentKeys.contains(key)) {
+          failures.add('dana: sent $key missing from RA-017 proof');
+        }
+      }
+    }
+  }
+
+  final charlieVerdict = byRole['charlie'];
+  if (charlieVerdict != null) {
+    final charlieReceivedKeys = _mapList(
+      charlieVerdict['receivedMessages'],
+    ).map((entry) => _stringValue(entry['key'])).whereType<String>().toSet();
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      for (final sender in const <String>['alice', 'bob', 'dana']) {
+        final removedKey = _ra017Key(cycle, 'removed', sender);
+        if (charlieReceivedKeys.contains(removedKey)) {
+          failures.add('charlie: removed-window RA-017 plaintext leaked');
+        }
+      }
+    }
+  }
+
+  final expectedDanaPeerId = peerIdByRole['dana'];
+  if (expectedDanaPeerId == null || expectedDanaPeerId.isEmpty) {
+    failures.add('dana: RA-017 requires explicit D/Dana peer id coverage');
+  }
+}
+
+void _validateRa018AlternatingChurnProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra018AlternatingChurnProof';
+  final expectedRoles = const <String>{'alice', 'bob', 'charlie', 'dana'};
+  final expectedTargets = const <String>{'charlie', 'dana'};
+  final finalEpochs = <int>{};
+
+  for (final role in expectedRoles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing RA-018 alternating churn proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'RA-018') {
+      failures.add('$role: $proofName.rowId must be RA-018');
+    }
+    final churnCycles = _intValue(proof['churnCycles']);
+    if (churnCycles == null || churnCycles < 3) {
+      failures.add('$role: $proofName.churnCycles must be >= 3');
+    }
+    final churnTargets = _stringList(proof['churnTargets']).toSet();
+    if (!churnTargets.containsAll(expectedTargets)) {
+      failures.add('$role: $proofName.churnTargets must include charlie, dana');
+    }
+    final activeSenders = _stringList(proof['activeSenders']).toSet();
+    if (!activeSenders.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeSenders must include alice, bob, charlie, dana',
+      );
+    }
+    final activeReceivers = _stringList(proof['activeReceivers']).toSet();
+    if (!activeReceivers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeReceivers must include alice, bob, charlie, dana',
+      );
+    }
+    for (final field in const <String>[
+      'finalMemberListConverged',
+      'finalEpochConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final charlieLeak = _intValue(proof['charlieRemovedWindowPlaintextCount']);
+    if (charlieLeak != 0) {
+      failures.add(
+        '$role: $proofName.charlieRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final danaLeak = _intValue(proof['danaRemovedWindowPlaintextCount']);
+    if (danaLeak != 0) {
+      failures.add(
+        '$role: $proofName.danaRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final duplicateCount = _intValue(proof['duplicateVisibleMessageCount']);
+    if (duplicateCount != 0) {
+      failures.add('$role: $proofName.duplicateVisibleMessageCount must be 0');
+    }
+    final inactiveSenderAttempts = _intValue(
+      proof['inactiveSenderAttemptCount'],
+    );
+    if (inactiveSenderAttempts != 0) {
+      failures.add('$role: $proofName.inactiveSenderAttemptCount must be 0');
+    }
+    final finalMembers = _stringList(proof['finalRoles']).toSet();
+    if (!finalMembers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.finalRoles must include alice, bob, charlie, dana',
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 13) {
+      failures.add('$role: $proofName.finalEpoch must be >= 13');
+    } else {
+      finalEpochs.add(finalEpoch);
+    }
+    _validateRa018ProofIntervals(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      failures: failures,
+    );
+  }
+
+  if (finalEpochs.length > 1) {
+    failures.add('alice/bob/charlie/dana: RA-018 finalEpoch mismatch');
+  }
+
+  final expectedPeerIds = <String>{
+    for (final role in const <String>['alice', 'bob', 'charlie', 'dana'])
+      ?peerIdByRole[role],
+  };
+  if (expectedPeerIds.length != 4) {
+    failures.add('alice/bob/charlie/dana: RA-018 requires four peer ids');
+  }
+
+  final charlieVerdict = byRole['charlie'];
+  if (charlieVerdict != null) {
+    final charlieReceivedKeys = _mapList(
+      charlieVerdict['receivedMessages'],
+    ).map((entry) => _stringValue(entry['key'])).whereType<String>().toSet();
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      final removedKey = _ra018Key(cycle, 'charlieRemoved', 'alice');
+      if (charlieReceivedKeys.contains(removedKey)) {
+        failures.add('charlie: removed-window RA-018 plaintext leaked');
+      }
+      final sentWhileActive = _mapList(charlieVerdict['sentMessages']).any(
+        (entry) =>
+            _stringValue(entry['key']) ==
+            _ra018Key(cycle, 'danaRemoved', 'charlie'),
+      );
+      if (!sentWhileActive) {
+        failures.add(
+          'charlie: sent ${_ra018Key(cycle, 'danaRemoved', 'charlie')} missing from RA-018 proof',
+        );
+      }
+    }
+  }
+
+  final danaVerdict = byRole['dana'];
+  if (danaVerdict != null) {
+    final danaReceivedKeys = _mapList(
+      danaVerdict['receivedMessages'],
+    ).map((entry) => _stringValue(entry['key'])).whereType<String>().toSet();
+    final danaSentKeys = _mapList(
+      danaVerdict['sentMessages'],
+    ).map((entry) => _stringValue(entry['key'])).whereType<String>().toSet();
+    for (var cycle = 1; cycle <= 3; cycle++) {
+      final removedKey = _ra018Key(cycle, 'danaRemoved', 'charlie');
+      if (danaReceivedKeys.contains(removedKey)) {
+        failures.add('dana: removed-window RA-018 plaintext leaked');
+      }
+      final readdKey = _ra018Key(cycle, 'danaReadded', 'dana');
+      if (!danaSentKeys.contains(readdKey)) {
+        failures.add('dana: sent $readdKey missing from RA-018 proof');
+      }
+    }
+  }
+}
+
+void _validateRa018ProofIntervals({
+  required String role,
+  required String proofName,
+  required Map<String, dynamic> proof,
+  required List<String> failures,
+}) {
+  final intervals = _mapList(proof['activeIntervals']);
+  for (var cycle = 1; cycle <= 3; cycle++) {
+    for (final expected in _ra018ExpectedIntervalsForCycle(cycle)) {
+      final matches = intervals
+          .where((interval) {
+            return _intValue(interval['cycle']) == cycle &&
+                _stringValue(interval['operation']) == expected['operation'] &&
+                _stringValue(interval['churnTarget']) ==
+                    expected['churnTarget'] &&
+                _stringValue(interval['sender']) == expected['sender'];
+          })
+          .toList(growable: false);
+      if (matches.length != 1) {
+        failures.add(
+          '$role: $proofName.activeIntervals missing cycle $cycle '
+          '${expected['operation']}',
+        );
+        continue;
+      }
+      final interval = matches.single;
+      final activeRoles = _stringList(interval['activeRoles']).toSet();
+      final receiverRoles = _stringList(interval['receiverRoles']).toSet();
+      if (!activeRoles.containsAll(expected['activeRoles'] as Set<String>)) {
+        failures.add(
+          '$role: $proofName.activeIntervals cycle $cycle '
+          '${expected['operation']} activeRoles mismatch',
+        );
+      }
+      if (!receiverRoles.containsAll(
+        expected['receiverRoles'] as Set<String>,
+      )) {
+        failures.add(
+          '$role: $proofName.activeIntervals cycle $cycle '
+          '${expected['operation']} receiverRoles mismatch',
+        );
+      }
+    }
+  }
+}
+
+List<Map<String, Object>> _ra018ExpectedIntervalsForCycle(int cycle) {
+  return <Map<String, Object>>[
+    <String, Object>{
+      'cycle': cycle,
+      'operation': 'charlieRemoved',
+      'churnTarget': 'charlie',
+      'sender': 'alice',
+      'activeRoles': const <String>{'alice', 'bob', 'dana'},
+      'receiverRoles': const <String>{'bob', 'dana'},
+    },
+    <String, Object>{
+      'cycle': cycle,
+      'operation': 'charlieReadded',
+      'churnTarget': 'charlie',
+      'sender': 'bob',
+      'activeRoles': const <String>{'alice', 'bob', 'charlie', 'dana'},
+      'receiverRoles': const <String>{'alice', 'charlie', 'dana'},
+    },
+    <String, Object>{
+      'cycle': cycle,
+      'operation': 'danaRemoved',
+      'churnTarget': 'dana',
+      'sender': 'charlie',
+      'activeRoles': const <String>{'alice', 'bob', 'charlie'},
+      'receiverRoles': const <String>{'alice', 'bob'},
+    },
+    <String, Object>{
+      'cycle': cycle,
+      'operation': 'danaReadded',
+      'churnTarget': 'dana',
+      'sender': 'dana',
+      'activeRoles': const <String>{'alice', 'bob', 'charlie', 'dana'},
+      'receiverRoles': const <String>{'alice', 'bob', 'charlie'},
+    },
+  ];
+}
+
+void _validateMl008CycleProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml008CycleProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-008') {
+      failures.add('$role: $proofName.rowId must be ML-008');
+    }
+  }
+
+  void requireCycleCount(String role, Map<String, dynamic> proof) {
+    final count = _intValue(proof['cycleCount']);
+    if (count != 20) {
+      failures.add('$role: $proofName.cycleCount must be 20');
+    }
+  }
+
+  void requireMinCount(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+    int minimum,
+  ) {
+    final count = _intValue(proof[field]);
+    if (count == null || count < minimum) {
+      failures.add('$role: $proofName.$field must be >= $minimum');
+    }
+  }
+
+  void requireFinalConvergence(String role, Map<String, dynamic> proof) {
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'finalMemberListIncludesAliceBobCharlie',
+      failures: failures,
+    );
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-008 cycle proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    requireCycleCount('alice', aliceProof);
+    requireFinalConvergence('alice', aliceProof);
+    requireMinCount('alice', aliceProof, 'removedWindowSendCount', 20);
+    requireMinCount('alice', aliceProof, 'sentPostReaddCount', 20);
+    requireMinCount('alice', aliceProof, 'receivedCharliePostReaddCount', 20);
+    requireMinCount('alice', aliceProof, 'restartMarkersObserved', 4);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-008 cycle proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    requireCycleCount('bob', bobProof);
+    requireFinalConvergence('bob', bobProof);
+    requireMinCount('bob', bobProof, 'receivedRemovedWindowCount', 20);
+    requireMinCount('bob', bobProof, 'receivedAlicePostReaddCount', 20);
+    requireMinCount('bob', bobProof, 'receivedCharliePostReaddCount', 20);
+    requireMinCount('bob', bobProof, 'bobCharlieExactMemberRowCountProofs', 20);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-008 cycle proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    requireCycleCount('charlie', charlieProof);
+    requireFinalConvergence('charlie', charlieProof);
+    requireMinCount('charlie', charlieProof, 'selfRemovalCount', 20);
+    requireMinCount('charlie', charlieProof, 'receivedAlicePostReaddCount', 20);
+    requireMinCount('charlie', charlieProof, 'postReaddSendCount', 20);
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final restartTotal =
+      (_intValue(bobProof?['restartMarkersPerformed']) ?? 0) +
+      (_intValue(charlieProof?['restartMarkersPerformed']) ?? 0);
+  if (restartTotal < 4) {
+    failures.add(
+      'bob/charlie: ML-008 restartMarkersPerformed total must be >= 4',
+    );
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 20) {
+    failures.add('alice: $proofName.finalEpoch must be >= 20');
+  }
+  if (bobEpoch == null || bobEpoch < 20) {
+    failures.add('bob: $proofName.finalEpoch must be >= 20');
+  }
+  if (charlieEpoch == null || charlieEpoch < 20) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 20');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: ML-008 finalEpoch mismatch');
+  }
+}
+
+void _validateMl009RapidReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ml009RapidReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ML-009') {
+      failures.add('$role: $proofName.rowId must be ML-009');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ML-009 rapid re-add proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlie',
+      'readdIssuedBeforeRemovalAcks',
+      'sentRemovedWindowBeforeReadd',
+      'sentAlicePostReaddMessage',
+      'receivedBobPostReaddMessage',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ML-009 rapid re-add proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListIncludesCharlie',
+      'receivedRemovedWindowMessage',
+      'receivedAlicePostReaddMessage',
+      'sentBobPostReaddMessage',
+      'staleRemoveIgnored',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ML-009 rapid re-add proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+      'receivedAlicePostReaddMessage',
+      'receivedBobPostReaddMessage',
+      'staleRemoveIgnored',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'hasStaleEpochAfterReadd',
+      failures: failures,
+    );
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: ML-009 finalEpoch mismatch');
+  }
+}
+
+void _validateKe008ReaddActivationProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke008ReaddActivationProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-008') {
+      failures.add('$role: $proofName.rowId must be KE-008');
+    }
+  }
+
+  void requireEpochAtLeastTwo(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+  ) {
+    final epoch = _intValue(proof[field]);
+    if (epoch == null || epoch < 2) {
+      failures.add('$role: $proofName.$field must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-008 re-add activation proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'readdCurrentKeyAvailableBeforeFixture',
+      'wroteReaddFixtureWithCurrentKey',
+      'waitedForCharlieCurrentKeyRejoinBeforePostReaddSends',
+      'charlieAcknowledgedRejoinAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochAtLeastTwo('alice', aliceProof, 'readdEpoch');
+    requireEpochAtLeastTwo('alice', aliceProof, 'finalEpoch');
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-008 re-add activation proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieReadded',
+      'receivedCharliePostReaddAtCurrentEpoch',
+      'sentBobPostReaddAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochAtLeastTwo('bob', bobProof, 'finalEpoch');
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-008 re-add activation proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'importedCurrentEpochBeforeRejoinAck',
+      'rejoinAcknowledgedAfterCurrentKey',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+      'hasCurrentEpochBeforePostReaddPublish',
+      'postReaddPublishAccepted',
+      'receivedAlicePostReaddAtCurrentEpoch',
+      'receivedBobPostReaddAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'hasStaleEpochAfterReadd',
+      failures: failures,
+    );
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    requireEpochAtLeastTwo('charlie', charlieProof, 'epochBeforeRejoinAck');
+    requireEpochAtLeastTwo('charlie', charlieProof, 'postReaddPublishEpoch');
+    requireEpochAtLeastTwo('charlie', charlieProof, 'finalEpoch');
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: KE-008 finalEpoch mismatch');
+  }
+}
+
+void _validateKe010KeyBeforeConfigProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke010KeyBeforeConfigProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-010') {
+      failures.add('$role: $proofName.rowId must be KE-010');
+    }
+  }
+
+  void requireEpochAtLeastTwo(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+  ) {
+    final epoch = _intValue(proof[field]);
+    if (epoch == null || epoch < 2) {
+      failures.add('$role: $proofName.$field must be >= 2');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'keyBeforeConfigOrderingCoveredByFakeNetwork',
+      'liveAuthorizedDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochAtLeastTwo(role, proof, 'finalEpoch');
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-010 key-before-config proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    _requireTrueProof(
+      role: 'alice',
+      proofName: proofName,
+      proof: aliceProof,
+      field: 'sentPostConfigAuthorizedAtCurrentEpoch',
+      failures: failures,
+    );
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-010 key-before-config proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieAuthorized',
+      'receivedCharliePostConfigAtCurrentEpoch',
+      'sentBobPostConfigAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-010 key-before-config proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'noPreConfigPlaintextDespiteKey',
+      'receivedAlicePostConfigAtCurrentEpoch',
+      'receivedBobPostConfigAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: KE-010 finalEpoch mismatch');
+  }
+}
+
+void _validateKe011DelayedOldKeyAfterReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  _validateDelayedOldKeyAfterReaddProof(
+    byRole: byRole,
+    failures: failures,
+    proofName: 'ke011DelayedOldKeyAfterReaddProof',
+    rowId: 'KE-011',
+    label: 'KE-011',
+  );
+}
+
+void _validateRa006DelayedOldKeyAfterReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  _validateDelayedOldKeyAfterReaddProof(
+    byRole: byRole,
+    failures: failures,
+    proofName: 'ra006DelayedOldKeyAfterReaddProof',
+    rowId: 'RA-006',
+    label: 'RA-006',
+  );
+}
+
+void _validateDelayedOldKeyAfterReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+  required String proofName,
+  required String rowId,
+  required String label,
+}) {
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != rowId) {
+      failures.add('$role: $proofName.rowId must be $rowId');
+    }
+  }
+
+  void requireEpochAtLeastTwo(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+  ) {
+    final epoch = _intValue(proof[field]);
+    if (epoch == null || epoch < 2) {
+      failures.add('$role: $proofName.$field must be >= 2');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'delayedOldKeyOrderingCoveredByFakeNetwork',
+      'livePostStaleDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final staleEpoch = _intValue(proof['staleEpoch']);
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (staleEpoch == null || staleEpoch >= 2) {
+      failures.add('$role: $proofName.staleEpoch must be lower than 2');
+    }
+    requireEpochAtLeastTwo(role, proof, 'finalEpoch');
+    if (staleEpoch != null && finalEpoch != null && staleEpoch >= finalEpoch) {
+      failures.add(
+        '$role: $proofName.staleEpoch must be lower than finalEpoch',
+      );
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing $label delayed old key proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'deliveredDelayedOldKeyAfterReadd',
+      'sentAlicePostStaleAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing $label delayed old key proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieReadded',
+      'receivedCharliePostStaleAtCurrentEpoch',
+      'sentBobPostStaleAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing $label delayed old key proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'keptCurrentEpochAfterDelayedOldKey',
+      'storedDelayedOldKeyAsHistorical',
+      'postStalePublishAccepted',
+      'receivedAlicePostStaleAtCurrentEpoch',
+      'receivedBobPostStaleAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final before = _intValue(charlieProof['epochBeforeDelayedOldKey']);
+    final after = _intValue(charlieProof['epochAfterDelayedOldKey']);
+    if (before == null || before < 2) {
+      failures.add('charlie: $proofName.epochBeforeDelayedOldKey must be >= 2');
+    }
+    if (after == null || after < 2) {
+      failures.add('charlie: $proofName.epochAfterDelayedOldKey must be >= 2');
+    }
+    if (before != null && after != null && before != after) {
+      failures.add(
+        'charlie: $proofName epochAfterDelayedOldKey must equal epochBeforeDelayedOldKey',
+      );
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: $label finalEpoch mismatch');
+  }
+}
+
+void _validateRa007PartitionedObserverReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra007PartitionedObserverReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-007') {
+      failures.add('$role: $proofName.rowId must be RA-007');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'partitionedObserverOrderingCoveredByFakeNetwork',
+      'livePostHealDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-007 partitioned observer proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlie',
+      'sentRemovedWindowWhileBobPartitionedCoveredByFakeNetwork',
+      'sentAlicePostHealAtCurrentEpoch',
+      'receivedBobPostHealAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-007 partitioned observer proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'activeObserverPartitionCoveredByFakeNetwork',
+      'retainedEntitledRemovedWindowCoveredByFakeNetwork',
+      'observedCharlieReadded',
+      'receivedAlicePostHealAtCurrentEpoch',
+      'receivedCharliePostHealAtCurrentEpoch',
+      'sentBobPostHealAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-007 partitioned observer proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'bobPartitionDoesNotLeakRemovedWindowCoveredByFakeNetwork',
+      'postHealPublishAccepted',
+      'receivedAlicePostHealAtCurrentEpoch',
+      'receivedBobPostHealAtCurrentEpoch',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-007 finalEpoch mismatch');
+  }
+}
+
+void _validateRa008PartitionedRemovedReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra008PartitionedRemovedReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-008') {
+      failures.add('$role: $proofName.rowId must be RA-008');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'removedPeerPartitionOrderingCoveredByFakeNetwork',
+      'livePostHealDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-008 removed peer partition proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlie',
+      'sentRemovedWindowWhileCharliePartitionedCoveredByFakeNetwork',
+      'sentAlicePostHealAtCurrentEpoch',
+      'receivedBobPostHealAtCurrentEpoch',
+      'receivedCharliePostHealAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-008 removed peer partition proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieRemoved',
+      'receivedRemovedWindowWhileCharliePartitionedCoveredByFakeNetwork',
+      'observedCharlieReadded',
+      'receivedAlicePostHealAtCurrentEpoch',
+      'receivedCharliePostHealAtCurrentEpoch',
+      'sentBobPostHealAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-008 removed peer partition proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'missedRemovalBeforeReaddCoveredByFakeNetwork',
+      'postHealPublishAccepted',
+      'receivedAlicePostHealAtCurrentEpoch',
+      'receivedBobPostHealAtCurrentEpoch',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-008 finalEpoch mismatch');
+  }
+}
+
+void _validateRa009FirstReaddPublishProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra009FirstReaddPublishProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-009') {
+      failures.add('$role: $proofName.rowId must be RA-009');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'firstReaddPublishOrderingCoveredByFakeNetwork',
+      'liveFirstReaddPublishCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  void requireMessageKey(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+  ) {
+    if (_stringValue(proof[field]) != 'charlieAfterImmediateReadd') {
+      failures.add(
+        '$role: $proofName.$field must be charlieAfterImmediateReadd',
+      );
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-009 first re-add publish proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'readdedCharlie',
+      'receivedCharlieFirstPostReaddAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireMessageKey('alice', aliceProof, 'firstCharliePostReaddMessageKey');
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-009 first re-add publish proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieReadded',
+      'receivedCharlieFirstPostReaddAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireMessageKey('bob', bobProof, 'firstCharliePostReaddMessageKey');
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-009 first re-add publish proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'sentFirstPostReaddAtCurrentEpoch',
+      'firstPostReaddPublishAccepted',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireMessageKey('charlie', charlieProof, 'firstPostReaddMessageKey');
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-009 finalEpoch mismatch');
+  }
+}
+
+void _validateRa010ReaddIncomingRestartProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra010ReaddIncomingRestartProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-010') {
+      failures.add('$role: $proofName.rowId must be RA-010');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'liveIncomingBeforeAndAfterRestartCovered',
+      failures: failures,
+    );
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  void requireMessageKey(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+    String expected,
+  ) {
+    if (_stringValue(proof[field]) != expected) {
+      failures.add('$role: $proofName.$field must be $expected');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-010 incoming restart proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'readdedCharlie',
+      'sentFirstIncomingBeforeCharlieRestartAtCurrentEpoch',
+      'sentSecondIncomingAfterCharlieRestartAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireMessageKey(
+      'alice',
+      aliceProof,
+      'firstIncomingMessageKey',
+      'aliceAfterImmediateReadd',
+    );
+    requireMessageKey(
+      'alice',
+      aliceProof,
+      'postRestartIncomingMessageKey',
+      'aliceAfterCharlieRestart',
+    );
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-010 incoming restart proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieReadded',
+      'receivedAlicePostRestartAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireMessageKey(
+      'bob',
+      bobProof,
+      'postRestartIncomingMessageKey',
+      'aliceAfterCharlieRestart',
+    );
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-010 incoming restart proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'receivedFirstIncomingBeforeRestartAtCurrentEpoch',
+      'restartPreservedCurrentGroupKeyConfig',
+      'receivedSecondIncomingAfterRestartAtCurrentEpoch',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireMessageKey(
+      'charlie',
+      charlieProof,
+      'firstIncomingMessageKey',
+      'aliceAfterImmediateReadd',
+    );
+    requireMessageKey(
+      'charlie',
+      charlieProof,
+      'postRestartIncomingMessageKey',
+      'aliceAfterCharlieRestart',
+    );
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-010 finalEpoch mismatch');
+  }
+}
+
+void _validateRa014OldKeyPublishAfterReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra014OldKeyPublishAfterReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-014') {
+      failures.add('$role: $proofName.rowId must be RA-014');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'staleOldPublishRejectionCoveredByFakeNetwork',
+      'nativeOldKeyPublishRejectionCovered',
+      'livePostRejectDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final staleEpoch = _intValue(proof['staleEpoch']);
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (staleEpoch == null || staleEpoch >= 2) {
+      failures.add('$role: $proofName.staleEpoch must be lower than 2');
+    }
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+    if (staleEpoch != null && finalEpoch != null && staleEpoch >= finalEpoch) {
+      failures.add(
+        '$role: $proofName.staleEpoch must be lower than finalEpoch',
+      );
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-014 old-key publish proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'rejectedCharlieOldKeyPublish',
+      'sentAliceCurrentAfterReject',
+      'receivedCharlieCurrentAfterReject',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-014 old-key publish proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'rejectedCharlieOldKeyPublish',
+      'receivedAliceCurrentAfterReject',
+      'receivedCharlieCurrentAfterReject',
+      'sentBobCurrentAfterReject',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-014 old-key publish proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'oldKeyPublishRejected',
+      'postRejectPublishAccepted',
+      'receivedAlicePostRejectAtCurrentEpoch',
+      'receivedBobPostRejectAtCurrentEpoch',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-014 finalEpoch mismatch');
+  }
+}
+
+void _validateRa015AlreadyJoinedReaddRefreshProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra015AlreadyJoinedReaddRefreshProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-015') {
+      failures.add('$role: $proofName.rowId must be RA-015');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'flutterAlreadyJoinedPayloadCoveredByHost',
+      'nativeAlreadyJoinedRefreshCovered',
+      'fakeNetworkAlreadyJoinedReaddCovered',
+      'livePostRefreshDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-015 already-joined re-add proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'readdedCharlie',
+      'sentAliceCurrentAfterRefresh',
+      'receivedCharlieCurrentAfterRefresh',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-015 already-joined re-add proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieReadded',
+      'receivedAliceCurrentAfterRefresh',
+      'receivedCharlieCurrentAfterRefresh',
+      'sentBobCurrentAfterRefresh',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-015 already-joined re-add proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'alreadyJoinedReaddRefreshAccepted',
+      'importedCurrentConfigBeforeRejoinAck',
+      'postRefreshPublishAccepted',
+      'receivedAlicePostRefreshAtCurrentEpoch',
+      'receivedBobPostRefreshAtCurrentEpoch',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-015 finalEpoch mismatch');
+  }
+}
+
+void _validateRa016RemovedIntervalReplayProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra016RemovedIntervalReplayProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-016') {
+      failures.add('$role: $proofName.rowId must be RA-016');
+    }
+    for (final field in const <String>[
+      'hostDirectRemovedIntervalReplayCovered',
+      'hostFakeNetworkRemovedIntervalReplayCovered',
+      'removedIntervalReplayRejectedByRecipientInterval',
+      'livePostReaddCurrentDeliveryCovered',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-016 removed-interval replay proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'sentAlicePostReaddCurrent',
+      'receivedBobPostReaddCurrent',
+      'receivedCharliePostReaddCurrent',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-016 removed-interval replay proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'receivedAlicePostReaddCurrent',
+      'sentBobPostReaddCurrent',
+      'receivedCharliePostReaddCurrent',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add(
+      'charlie: missing RA-016 removed-interval replay proof fields',
+    );
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'postReaddPublishAccepted',
+      'receivedAlicePostReaddCurrent',
+      'receivedBobPostReaddCurrent',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedWindowPlaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (removedWindowPlaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-016 finalEpoch mismatch');
+  }
+}
+
+void _validateRa011LateLeaveReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra011LateLeaveReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-011') {
+      failures.add('$role: $proofName.rowId must be RA-011');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-011 late leave re-add proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'observedCharlieLeaveStartedBeforeReadd',
+      'readdedCharlieBeforeLateLeaveCompleted',
+      'receivedCharliePostLateLeaveRepair',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-011 late leave re-add proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieRemoved',
+      'observedCharlieReadded',
+      'receivedAlicePostLateLeaveRepair',
+      'receivedCharliePostLateLeaveRepair',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-011 late leave re-add proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'leaveStartedBeforeReadd',
+      'importedReaddBeforeLateLeaveCompleted',
+      'lateLeaveRepairJoinCompleted',
+      'postReaddPublishAccepted',
+      'receivedAlicePostLateLeaveRepair',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-011 finalEpoch mismatch');
+  }
+}
+
+void _validateRa012RotatedDeviceReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra012RotatedDeviceReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireCommonMaterial(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-012') {
+      failures.add('$role: $proofName.rowId must be RA-012');
+    }
+    for (final field in const <String>[
+      'samePeerIdReadded',
+      'memberConfigUsesRotatedDeviceMaterial',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'oldDeviceMaterialRetained',
+      failures: failures,
+    );
+
+    final oldMlKem = _stringValue(proof['oldMlKemPublicKey']);
+    final rotatedMlKem = _stringValue(proof['rotatedMlKemPublicKey']);
+    final oldKeyPackage = _stringValue(proof['oldKeyPackageId']);
+    final rotatedKeyPackage = _stringValue(proof['rotatedKeyPackageId']);
+    if (oldMlKem == null || oldMlKem.isEmpty) {
+      failures.add('$role: $proofName.oldMlKemPublicKey is required');
+    }
+    if (rotatedMlKem == null || rotatedMlKem.isEmpty) {
+      failures.add('$role: $proofName.rotatedMlKemPublicKey is required');
+    }
+    if (oldMlKem != null && rotatedMlKem != null && oldMlKem == rotatedMlKem) {
+      failures.add('$role: RA-012 ML-KEM material must rotate');
+    }
+    if (oldKeyPackage == null || oldKeyPackage.isEmpty) {
+      failures.add('$role: $proofName.oldKeyPackageId is required');
+    }
+    if (rotatedKeyPackage == null || rotatedKeyPackage.isEmpty) {
+      failures.add('$role: $proofName.rotatedKeyPackageId is required');
+    }
+    if (oldKeyPackage != null &&
+        rotatedKeyPackage != null &&
+        oldKeyPackage == rotatedKeyPackage) {
+      failures.add('$role: RA-012 key package must rotate');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing RA-012 rotated device re-add proof fields');
+  } else {
+    requireCommonMaterial('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlieWithRotatedMaterial',
+      'receivedCharliePostRotatedReadd',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing RA-012 rotated device re-add proof fields');
+  } else {
+    requireCommonMaterial('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieRemoved',
+      'observedCharlieReaddedWithRotatedMaterial',
+      'receivedAlicePostRotatedReadd',
+      'receivedCharliePostRotatedReadd',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing RA-012 rotated device re-add proof fields');
+  } else {
+    requireCommonMaterial('charlie', charlieProof);
+    for (final field in const <String>[
+      'importedRotatedMaterial',
+      'postRotatedReaddPublishAccepted',
+      'receivedAlicePostRotatedReadd',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: RA-012 finalEpoch mismatch');
+  }
+
+  final rotatedMlKems = <String>{};
+  final rotatedKeyPackages = <String>{};
+  for (final proof in <Map<String, dynamic>?>[
+    aliceProof,
+    bobProof,
+    charlieProof,
+  ]) {
+    final mlKem = _stringValue(proof?['rotatedMlKemPublicKey']);
+    final keyPackage = _stringValue(proof?['rotatedKeyPackageId']);
+    if (mlKem != null && mlKem.isNotEmpty) rotatedMlKems.add(mlKem);
+    if (keyPackage != null && keyPackage.isNotEmpty) {
+      rotatedKeyPackages.add(keyPackage);
+    }
+  }
+  if (rotatedMlKems.length > 1) {
+    failures.add('alice/bob/charlie: RA-012 rotated ML-KEM mismatch');
+  }
+  if (rotatedKeyPackages.length > 1) {
+    failures.add('alice/bob/charlie: RA-012 rotated key package mismatch');
+  }
+}
+
+void _validateRa013SameUserMultiDeviceReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ra013SameUserMultiDeviceReaddProof';
+  final proofs = <String, Map<String, dynamic>?>{
+    for (final role in const <String>['alice', 'bob', 'charlie', 'dana'])
+      role: _mapValue(byRole[role]?[proofName]),
+  };
+  final charliePeerId = peerIdByRole['charlie'];
+  final danaPeerId = peerIdByRole['dana'];
+
+  void requireCommon(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'RA-013') {
+      failures.add('$role: $proofName.rowId must be RA-013');
+    }
+    if (charliePeerId != null &&
+        _stringValue(proof['sameAccountPeerId']) != charliePeerId) {
+      failures.add('$role: $proofName.sameAccountPeerId must be charlie');
+    }
+    final phoneDeviceId = _stringValue(proof['phoneDeviceId']);
+    final tabletDeviceId = _stringValue(proof['tabletDeviceId']);
+    if (phoneDeviceId == null || phoneDeviceId.isEmpty) {
+      failures.add('$role: $proofName.phoneDeviceId is required');
+    }
+    if (tabletDeviceId == null || tabletDeviceId.isEmpty) {
+      failures.add('$role: $proofName.tabletDeviceId is required');
+    }
+    if (phoneDeviceId != null &&
+        tabletDeviceId != null &&
+        phoneDeviceId == tabletDeviceId) {
+      failures.add('$role: RA-013 phone/tablet device ids must differ');
+    }
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'distinctDeviceIds',
+      failures: failures,
+    );
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  for (final entry in proofs.entries) {
+    final proof = entry.value;
+    if (proof == null) {
+      failures.add(
+        '${entry.key}: missing RA-013 same-user device proof fields',
+      );
+    } else {
+      requireCommon(entry.key, proof);
+    }
+  }
+
+  final aliceProof = proofs['alice'];
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlieWithTwoDevices',
+      'phoneAcceptedBeforeTablet',
+      'tabletPendingWhilePhoneJoined',
+      'sentRemovedWindowMessage',
+      'sentPostPhoneAcceptMessage',
+      'sentPostTabletAcceptMessage',
+      'receivedTabletPostAcceptMessage',
+      'removedWindowRecipientExcludedTablet',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final bobProof = proofs['bob'];
+  if (bobProof != null) {
+    for (final field in const <String>[
+      'observedCharlieRemoved',
+      'observedCharlieReaddedWithTwoDevices',
+      'receivedRemovedWindowAsActiveMember',
+      'receivedPostPhoneAccept',
+      'receivedPostTabletAccept',
+      'receivedTabletDevicePostAccept',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: 'bob',
+      proofName: proofName,
+      proof: bobProof,
+      field: 'memberListIncludesDanaAccount',
+      failures: failures,
+    );
+  }
+
+  final charlieProof = proofs['charlie'];
+  if (charlieProof != null) {
+    for (final field in const <String>[
+      'phoneAcceptedOwnInvite',
+      'tabletDeviceInMemberConfig',
+      'receivedPostPhoneAccept',
+      'receivedPostTabletAccept',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedWindowCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (removedWindowCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final danaProof = proofs['dana'];
+  if (danaProof != null) {
+    for (final field in const <String>[
+      'tabletPendingBeforeOwnAccept',
+      'groupAbsentBeforeOwnAccept',
+      'tabletAcceptedAfterPhone',
+      'receivedPostTabletAccept',
+      'sentTabletDevicePostAccept',
+      'tabletDeviceInMemberConfig',
+    ]) {
+      _requireTrueProof(
+        role: 'dana',
+        proofName: proofName,
+        proof: danaProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: 'dana',
+      proofName: proofName,
+      proof: danaProof,
+      field: 'memberListIncludesDanaAccount',
+      failures: failures,
+    );
+    if (danaPeerId != null &&
+        _stringValue(danaProof['actualRolePeerId']) != danaPeerId) {
+      failures.add('dana: $proofName.actualRolePeerId must be dana');
+    }
+    final preAcceptPlaintextCount = _intValue(
+      danaProof['preAcceptPlaintextCount'],
+    );
+    if (preAcceptPlaintextCount != 0) {
+      failures.add('dana: $proofName.preAcceptPlaintextCount must be 0');
+    }
+  }
+}
+
+void _validateKe012DelayedOldConfigAfterReaddProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke012DelayedOldConfigAfterReaddProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-012') {
+      failures.add('$role: $proofName.rowId must be KE-012');
+    }
+  }
+
+  void requireEpochAtLeastTwo(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+  ) {
+    final epoch = _intValue(proof[field]);
+    if (epoch == null || epoch < 2) {
+      failures.add('$role: $proofName.$field must be >= 2');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'delayedOldConfigOrderingCoveredByFakeNetwork',
+      'livePostStaleConfigDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochAtLeastTwo(role, proof, 'finalEpoch');
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-012 delayed old config proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    for (final field in const <String>[
+      'deliveredDelayedOldConfigAfterReadd',
+      'sentAlicePostStaleConfigAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-012 delayed old config proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'keptActiveAfterDelayedOldConfig',
+      'observedCharlieReadded',
+      'receivedCharliePostStaleConfigAtCurrentEpoch',
+      'sentBobPostStaleConfigAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-012 delayed old config proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'keptFinalMembersAfterDelayedOldConfig',
+      'keptCurrentEpochAfterDelayedOldConfig',
+      'postStaleConfigPublishAccepted',
+      'receivedAlicePostStaleConfigAtCurrentEpoch',
+      'receivedBobPostStaleConfigAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final before = _intValue(charlieProof['epochBeforeDelayedOldConfig']);
+    final after = _intValue(charlieProof['epochAfterDelayedOldConfig']);
+    if (before == null || before < 2) {
+      failures.add(
+        'charlie: $proofName.epochBeforeDelayedOldConfig must be >= 2',
+      );
+    }
+    if (after == null || after < 2) {
+      failures.add(
+        'charlie: $proofName.epochAfterDelayedOldConfig must be >= 2',
+      );
+    }
+    if (before != null && after != null && before != after) {
+      failures.add(
+        'charlie: $proofName epochAfterDelayedOldConfig must equal epochBeforeDelayedOldConfig',
+      );
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: KE-012 finalEpoch mismatch');
+  }
+}
+
 void _validateGm007HistoryBoundaryProof({
   required Map<String, Map<String, dynamic>> byRole,
   required Map<String, String> peerIdByRole,
@@ -7188,6 +15606,226 @@ void _validateGm008RestartReaddProof({
   if (charlieEpoch != null) epochs.add(charlieEpoch);
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: GM-008 finalEpoch mismatch');
+  }
+}
+
+void _validateKe018HistoryReplayEpochWindowProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke018HistoryReplayEpochWindowProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-018') {
+      failures.add('$role: $proofName.rowId must be KE-018');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-018 history replay epoch-window proof');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in <String>[
+      'sentPreRemovalReplayWindow',
+      'sentRemovedWindowWhileCharlieRemoved',
+      'sentPostReaddReplayWindow',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(aliceProof['sentRemovedWindowCount']) != 3) {
+      failures.add('alice: $proofName.sentRemovedWindowCount must be 3');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-018 history replay epoch-window proof');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in <String>[
+      'receivedPreRemovalReplayWindow',
+      'receivedRemovedWindowWhileCharlieRemoved',
+      'receivedPostReaddReplayWindow',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(bobProof['receivedRemovedWindowCount']) != 3) {
+      failures.add('bob: $proofName.receivedRemovedWindowCount must be 3');
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-018 history replay epoch-window proof');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in <String>[
+      'receivedPreRemovalReplayWindow',
+      'postReaddMissingBeforeDrain',
+      'drainedPostReaddReplayAtCurrentEpoch',
+      'noRemovedWindowReplayAfterDrain',
+      'memberListIncludesAliceBobCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(charlieProof['removedWindowPlaintextCount']) != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    if (_intValue(charlieProof['preRemovalReplayEpoch']) != 1) {
+      failures.add('charlie: $proofName.preRemovalReplayEpoch must be 1');
+    }
+    final postReaddEpoch = _intValue(charlieProof['postReaddReplayEpoch']);
+    if (postReaddEpoch == null || postReaddEpoch < 2) {
+      failures.add('charlie: $proofName.postReaddReplayEpoch must be >= 2');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+}
+
+void _validateIr005ReaddReplayProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ir005ReaddReplayProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'IR-005') {
+      failures.add('$role: $proofName.rowId must be IR-005');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing IR-005 re-add replay proof');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in <String>[
+      'sentPreRemovalReplayWindow',
+      'sentRemovedWindowWhileCharlieRemoved',
+      'sentPostReaddReplayWindow',
+      'readdedCharlie',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(aliceProof['sentRemovedWindowCount']) != 3) {
+      failures.add('alice: $proofName.sentRemovedWindowCount must be 3');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing IR-005 re-add replay proof');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in <String>[
+      'receivedPreRemovalReplayWindow',
+      'receivedRemovedWindowWhileCharlieRemoved',
+      'receivedPostReaddReplayWindow',
+      'memberListIncludesCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(bobProof['receivedRemovedWindowCount']) != 3) {
+      failures.add('bob: $proofName.receivedRemovedWindowCount must be 3');
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing IR-005 re-add replay proof');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in <String>[
+      'receivedAllowedPreRemovalHistory',
+      'postReaddMissingBeforeDrain',
+      'receivedPostReaddReplayAfterDrain',
+      'noRemovedWindowReplayAfterDrain',
+      'memberListIncludesAliceBobCharlie',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(charlieProof['removedWindowPlaintextCount']) != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    if (_intValue(charlieProof['preRemovalReplayEpoch']) != 1) {
+      failures.add('charlie: $proofName.preRemovalReplayEpoch must be 1');
+    }
+    final postReaddEpoch = _intValue(charlieProof['postReaddReplayEpoch']);
+    if (postReaddEpoch == null || postReaddEpoch < 2) {
+      failures.add('charlie: $proofName.postReaddReplayEpoch must be >= 2');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: IR-005 finalEpoch mismatch');
   }
 }
 
@@ -11544,6 +20182,129 @@ void _requireGm022PeerList({
   }
 }
 
+void _validateMl003OfflineAddProofFields({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  for (final role in const <String>['alice', 'bob', 'dana']) {
+    final proof = _mapValue(byRole[role]?['ml003OfflineAddProof']);
+    if (proof == null) {
+      failures.add('$role: missing ML-003 offline-add proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ML-003') {
+      failures.add('$role: ml003OfflineAddProof.rowId must be ML-003');
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?['ml003OfflineAddProof']);
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'danaOfflineDuringAdd',
+      'danaNotSubscribedDuringAdd',
+      'danaNotActiveBeforeAccept',
+      'aliceAddedDana',
+      'aliceSentPostAddBeforeDanaAccept',
+      'bobSentPostAddBeforeDanaAccept',
+      'liveSentAfterDanaDrain',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: 'ml003OfflineAddProof',
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_stringValue(aliceProof['invitePath']) != 'supported_pending_invite') {
+      failures.add(
+        'alice: ml003OfflineAddProof.invitePath must be supported_pending_invite',
+      );
+    }
+  }
+
+  final bobProof = _mapValue(byRole['bob']?['ml003OfflineAddProof']);
+  if (bobProof != null) {
+    for (final field in const <String>[
+      'danaActiveInConfigBeforeBobSend',
+      'bobSentPostAddBeforeDanaAccept',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: 'ml003OfflineAddProof',
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final danaProof = _mapValue(byRole['dana']?['ml003OfflineAddProof']);
+  if (danaProof != null) {
+    for (final field in const <String>[
+      'startedAfterPostAddSends',
+      'storedPendingInvite',
+      'acceptedPendingInvite',
+      'joinedViaGroupJoinWithConfig',
+      'drainedOfflineInbox',
+      'preAddMessageAbsent',
+      'receivedAlicePostAddReplay',
+      'receivedBobPostAddReplay',
+      'replayPersistedExactlyOnce',
+      'liveAfterDrainWithoutRestart',
+    ]) {
+      _requireTrueProof(
+        role: 'dana',
+        proofName: 'ml003OfflineAddProof',
+        proof: danaProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_stringValue(danaProof['invitePath']) != 'supported_pending_invite') {
+      failures.add(
+        'dana: ml003OfflineAddProof.invitePath must be supported_pending_invite',
+      );
+    }
+  }
+
+  final danaVerdict = byRole['dana'];
+  if (danaVerdict == null) return;
+  for (final key in const <String>[
+    'aliceAfterDanaOfflineAdd',
+    'bobAfterDanaOfflineAdd',
+  ]) {
+    final entries = _mapList(danaVerdict['receivedMessages'])
+        .where((entry) => _stringValue(entry['key']) == key)
+        .toList(growable: false);
+    if (entries.length != 1) continue;
+    final entry = entries.single;
+    if (entry['usedOfflineDrain'] != true) {
+      failures.add('dana: received $key usedOfflineDrain must be true');
+    }
+    if (entry['liveOnly'] == true) {
+      failures.add('dana: received $key liveOnly must be false');
+    }
+  }
+
+  final liveEntries = _mapList(danaVerdict['receivedMessages'])
+      .where((entry) => _stringValue(entry['key']) == 'aliceLiveAfterDanaDrain')
+      .toList(growable: false);
+  if (liveEntries.length == 1) {
+    final liveEntry = liveEntries.single;
+    if (liveEntry['liveOnly'] != true) {
+      failures.add(
+        'dana: received aliceLiveAfterDanaDrain liveOnly must be true',
+      );
+    }
+    if (liveEntry['usedOfflineDrain'] != false) {
+      failures.add(
+        'dana: received aliceLiveAfterDanaDrain usedOfflineDrain must be false',
+      );
+    }
+  }
+}
+
 void _requireTrueProof({
   required String role,
   required String proofName,
@@ -11733,11 +20494,13 @@ class _ExpectedProofMessage {
     required this.key,
     required this.senderRole,
     required this.receiverRoles,
+    this.expectedSenderPeerRole,
   });
 
   final String key;
   final String senderRole;
   final List<String> receiverRoles;
+  final String? expectedSenderPeerRole;
 }
 
 class _SentProofMessage {
@@ -11786,6 +20549,12 @@ List<String> _stringList(Object? value) {
       .whereType<String>()
       .where((entry) => entry.isNotEmpty)
       .toList(growable: false);
+}
+
+List<String> _activeMemberPeerIds(Map<String, dynamic> verdict) {
+  final activeMemberPeerIds = _stringList(verdict['activeMemberPeerIds']);
+  if (activeMemberPeerIds.isNotEmpty) return activeMemberPeerIds;
+  return _stringList(verdict['memberPeerIds']);
 }
 
 List<Map<String, dynamic>> _mapList(Object? value) {

@@ -194,7 +194,10 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	if msgId == "" {
 		msgId = uuid.New().String()
 	}
-	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	timestamp, err := resolveGroupPublishTimestamp(opts)
+	if err != nil {
+		return "", 0, err
+	}
 
 	extra := buildGroupMessageExtra(msgId, opts)
 	extra["publishedAtNano"] = strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -282,11 +285,13 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	}
 
 	n.emitEvent("group:publish_debug", map[string]interface{}{
-		"groupId":    groupId,
-		"messageId":  msgId,
-		"topicPeers": peerCount,
-		"encryptMs":  encryptMs,
-		"signMs":     signMs,
+		"groupId":                    groupId,
+		"messageId":                  msgId,
+		"topicPeers":                 peerCount,
+		"encryptMs":                  encryptMs,
+		"signMs":                     signMs,
+		"requestedTimestampProvided": groupPublishStringOpt(opts, "timestamp") != "",
+		"payloadTimestamp":           timestamp,
 	})
 
 	return msgId, peerCount, nil
@@ -390,6 +395,43 @@ func (n *Node) UpdateGroupConfig(groupId string, config *GroupConfig) {
 	}
 
 	n.groupConfigs[groupId] = cloneGroupConfig(config)
+}
+
+// RefreshJoinedGroupStateIfNewer atomically replaces config and key for an
+// already joined group when the supplied key epoch is newer than the stored one.
+func (n *Node) RefreshJoinedGroupStateIfNewer(groupId string, config *GroupConfig, keyInfo *GroupKeyInfo) (bool, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if _, exists := n.groupTopics[groupId]; !exists {
+		return false, fmt.Errorf("group not joined: %s", groupId)
+	}
+	if config == nil {
+		return false, fmt.Errorf("missing group config for group %s", groupId)
+	}
+	if keyInfo == nil {
+		return false, fmt.Errorf("missing group key info for group %s", groupId)
+	}
+
+	current := n.groupKeys[groupId]
+	if current != nil && keyInfo.KeyEpoch <= current.KeyEpoch {
+		return false, nil
+	}
+
+	n.groupConfigs[groupId] = cloneGroupConfig(config)
+	if current == nil {
+		n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
+		return true, nil
+	}
+
+	n.groupKeys[groupId] = &GroupKeyInfo{
+		Key:           keyInfo.Key,
+		KeyEpoch:      keyInfo.KeyEpoch,
+		PrevKey:       current.Key,
+		PrevKeyEpoch:  current.KeyEpoch,
+		GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
+	}
+	return true, nil
 }
 
 // UpdateGroupKey updates the stored group encryption key.
@@ -1152,10 +1194,25 @@ func buildGroupMessageExtra(messageId string, opts map[string]interface{}) map[s
 
 	extra := make(map[string]interface{}, len(opts)+1)
 	for key, value := range opts {
+		if key == "timestamp" {
+			continue
+		}
 		extra[key] = value
 	}
 	extra["messageId"] = messageId
 	return extra
+}
+
+func resolveGroupPublishTimestamp(opts map[string]interface{}) (string, error) {
+	raw := groupPublishStringOpt(opts, "timestamp")
+	if raw == "" {
+		return time.Now().UTC().Format(time.RFC3339Nano), nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid message timestamp: %w", err)
+	}
+	return parsed.UTC().Format(time.RFC3339Nano), nil
 }
 
 func groupPublishStringOpt(opts map[string]interface{}, key string) string {
@@ -1656,6 +1713,7 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 					"groupId":           groupId,
 					"step":              "dial_connected_but_topic_missing",
 					"peerId":            pidShort,
+					"peerIdPrefix":      peerIDDiagnosticPrefix(pidStr),
 					"path":              connectResult.Path,
 					"attemptedDirect":   connectResult.AttemptedDirect,
 					"directAddrCount":   connectResult.DirectAddrCount,
@@ -1671,6 +1729,7 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 				"groupId":           groupId,
 				"step":              "dial_success",
 				"peerId":            pidShort,
+				"peerIdPrefix":      peerIDDiagnosticPrefix(pidStr),
 				"path":              connectResult.Path,
 				"attemptedDirect":   connectResult.AttemptedDirect,
 				"directAddrCount":   connectResult.DirectAddrCount,
@@ -1795,6 +1854,7 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 					"groupId":           groupId,
 					"step":              "known_member_topic_missing",
 					"peerId":            pidShort,
+					"peerIdPrefix":      peerIDDiagnosticPrefix(target.PeerId),
 					"path":              connectResult.Path,
 					"attemptedDirect":   connectResult.AttemptedDirect,
 					"directAddrCount":   connectResult.DirectAddrCount,
@@ -1820,6 +1880,7 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 				"groupId":           groupId,
 				"step":              "known_member_dial_success",
 				"peerId":            pidShort,
+				"peerIdPrefix":      peerIDDiagnosticPrefix(target.PeerId),
 				"path":              connectResult.Path,
 				"attemptedDirect":   connectResult.AttemptedDirect,
 				"directAddrCount":   connectResult.DirectAddrCount,
@@ -1984,6 +2045,13 @@ func topicHasPeer(topic *pubsub.Topic, peerId string) bool {
 		}
 	}
 	return false
+}
+
+func peerIDDiagnosticPrefix(peerId string) string {
+	if len(peerId) <= 12 {
+		return peerId
+	}
+	return peerId[:12]
 }
 
 func waitForTopicPeer(topic *pubsub.Topic, peerId string, timeout time.Duration) bool {

@@ -196,6 +196,23 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     }
   }
 
+  if (await _isStaleAgainstLocalGroupState(
+    groupRepo: groupRepo,
+    payload: payload,
+    ownPeerId: expectedRecipientPeerId,
+  )) {
+    await pendingInviteRepo.deletePendingInvite(groupId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_STALE_REJECTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'keyEpoch': payload.keyEpoch,
+      },
+    );
+    return (AcceptPendingGroupInviteResult.invalidPayload, null);
+  }
+
   final isSingleUse =
       payload.invitePolicy.reusePolicy == GroupInviteReusePolicy.singleUse;
   if (isSingleUse) {
@@ -236,6 +253,7 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     contactRepo: contactRepo,
     bridge: bridge,
     validationTime: effectiveNow,
+    allowMemberSnapshotBootstrap: true,
   );
   if (authResult != GroupInviteAuthResult.authorized) {
     await pendingInviteRepo.deletePendingInvite(groupId);
@@ -280,6 +298,7 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         mediaAttachmentRepo: mediaAttachmentRepo,
         reactionRepo: reactionRepo,
         groupMessageListener: groupMessageListener,
+        selfPeerId: senderPeerId,
         drainAllPages: drainAcceptedInboxAllPages,
         pageSize: acceptedInboxPageSize,
       );
@@ -369,6 +388,47 @@ Future<bool> _hasActiveWelcomeKeyPackageTombstone({
   return tombstone != null && tombstone.isActiveAt(now);
 }
 
+Future<bool> _isStaleAgainstLocalGroupState({
+  required GroupRepository groupRepo,
+  required GroupInvitePayload payload,
+  required String? ownPeerId,
+}) async {
+  final localGroup = await groupRepo.getGroup(payload.groupId);
+  if (localGroup == null) {
+    return false;
+  }
+
+  final latestKey = await groupRepo.getLatestKey(payload.groupId);
+  if (latestKey != null && payload.keyEpoch < latestKey.keyGeneration) {
+    return true;
+  }
+
+  final recipientPeerId = ownPeerId?.trim().isNotEmpty == true
+      ? ownPeerId!.trim()
+      : payload.recipientPeerId?.trim();
+  if (recipientPeerId == null || recipientPeerId.isEmpty) {
+    return false;
+  }
+
+  final localMember = await groupRepo.getMember(
+    payload.groupId,
+    recipientPeerId,
+  );
+  if (localMember != null) {
+    return false;
+  }
+
+  final lastMembershipEventAt = localGroup.lastMembershipEventAt?.toUtc();
+  if (lastMembershipEventAt == null) {
+    return true;
+  }
+  final inviteFreshnessAt =
+      payload.membershipFreshnessProof?.issuedAt.toUtc() ??
+      DateTime.tryParse(payload.timestamp)?.toUtc();
+  return inviteFreshnessAt == null ||
+      !inviteFreshnessAt.isAfter(lastMembershipEventAt);
+}
+
 Future<void> _recordWelcomeKeyPackageTombstone({
   required PendingGroupInviteRepository pendingInviteRepo,
   required GroupInvitePayload payload,
@@ -423,6 +483,7 @@ Future<bool> _drainAcceptedGroupInboxBestEffort({
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
   GroupMessageListener? groupMessageListener,
+  String? selfPeerId,
   required bool drainAllPages,
   required int pageSize,
 }) async {
@@ -435,6 +496,7 @@ Future<bool> _drainAcceptedGroupInboxBestEffort({
       mediaAttachmentRepo: mediaAttachmentRepo,
       reactionRepo: reactionRepo,
       groupMessageListener: groupMessageListener,
+      selfPeerId: selfPeerId,
       drainAllPages: drainAllPages,
       pageSize: pageSize,
     );

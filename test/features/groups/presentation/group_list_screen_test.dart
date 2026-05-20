@@ -173,7 +173,7 @@ void main() {
     expect(find.byIcon(Icons.add), findsNothing);
   });
 
-  testWidgets('shows expired backlog summary on the group card', (
+  testWidgets('IR-016 shows expired backlog summary on the group card', (
     tester,
   ) async {
     final expiredGroup = testGroups.first.copyWith(
@@ -186,35 +186,36 @@ void main() {
     expect(find.text('No messages yet'), findsNothing);
   });
 
-  testWidgets('shows mixed-window backlog summary alongside latest message', (
-    tester,
-  ) async {
-    final mixedGroup = testGroups.first.copyWith(
-      lastBacklogExpiredAt: DateTime.utc(2026, 4, 5, 12),
-      lastBacklogRetainedAt: DateTime.utc(2026, 4, 6, 12),
-    );
-    final retainedMessage = GroupMessage(
-      id: 'msg-retained',
-      groupId: mixedGroup.id,
-      senderPeerId: 'peer-2',
-      senderUsername: 'Alice',
-      text: 'Recent backlog survived',
-      timestamp: DateTime.utc(2026, 4, 6, 12, 30),
-      createdAt: DateTime.utc(2026, 4, 6, 12, 30),
-      isIncoming: true,
-    );
+  testWidgets(
+    'IR-016 shows mixed-window backlog summary alongside latest message',
+    (tester) async {
+      final mixedGroup = testGroups.first.copyWith(
+        lastBacklogExpiredAt: DateTime.utc(2026, 4, 5, 12),
+        lastBacklogRetainedAt: DateTime.utc(2026, 4, 6, 12),
+      );
+      final retainedMessage = GroupMessage(
+        id: 'msg-retained',
+        groupId: mixedGroup.id,
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Recent backlog survived',
+        timestamp: DateTime.utc(2026, 4, 6, 12, 30),
+        createdAt: DateTime.utc(2026, 4, 6, 12, 30),
+        isIncoming: true,
+      );
 
-    await tester.pumpWidget(
-      buildTestWidget(
-        groups: [mixedGroup],
-        latestMessages: {mixedGroup.id: retainedMessage},
-      ),
-    );
+      await tester.pumpWidget(
+        buildTestWidget(
+          groups: [mixedGroup],
+          latestMessages: {mixedGroup.id: retainedMessage},
+        ),
+      );
 
-    expect(find.text('Older backlog expired after 7 days'), findsOneWidget);
-    expect(find.text('Alice'), findsOneWidget);
-    expect(find.text('Recent backlog survived'), findsOneWidget);
-  });
+      expect(find.text('Older backlog expired after 7 days'), findsOneWidget);
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Recent backlog survived'), findsOneWidget);
+    },
+  );
 
   testWidgets('daylight lagoon keeps list and invite content readable', (
     tester,

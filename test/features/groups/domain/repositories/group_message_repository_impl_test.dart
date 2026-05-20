@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id
 import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
 import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
+import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -29,6 +30,7 @@ void main() {
     await runGroupMessageReliabilityColumnsMigration(db);
     await runGroupMessageTransportPeerIdMigration(db);
     await runGroupSyncReceiptsMigration(db);
+    await runGroupMessageLocalDeletionsMigration(db);
 
     GroupMessageRepositoryImpl buildRepo(
       dynamic executor, {
@@ -671,6 +673,40 @@ void main() {
       expect(await repo.getMessage('msg-1'), isNull);
       expect(await repo.getMessage('msg-2'), isNotNull);
     });
+
+    test(
+      'IR-020 tombstone prevents replay save and unread resurrection',
+      () async {
+        await repo.saveMessage(
+          makeMessage(id: 'msg-ir020', isIncoming: true, readAt: null),
+        );
+        expect(await repo.getUnreadCount('group-1'), 1);
+
+        await repo.deleteMessage('msg-ir020');
+
+        expect(await repo.getMessage('msg-ir020'), isNull);
+        expect(await repo.getUnreadCount('group-1'), 0);
+        final tombstones = await db.query(
+          'group_message_local_deletions',
+          where: 'message_id = ?',
+          whereArgs: ['msg-ir020'],
+        );
+        expect(tombstones, hasLength(1));
+
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-ir020',
+            text: 'Replay should stay hidden',
+            isIncoming: true,
+            readAt: null,
+          ),
+        );
+
+        expect(await repo.getMessage('msg-ir020'), isNull);
+        expect(await repo.getMessageCount('group-1'), 0);
+        expect(await repo.getUnreadCount('group-1'), 0);
+      },
+    );
   });
 
   group('existsByContent', () {

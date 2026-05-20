@@ -29,6 +29,7 @@ class GroupKeyUpdateListener {
   final Future<String?> Function()? _getOwnDeviceId;
   final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
   final RetryPendingGroupKeyRepairs? _retryPendingGroupKeyRepairs;
+  final RequestGroupKeyRepair? _requestGroupKeyRepair;
   final Map<String, String> _acceptedSignedTransitionAuditHashesBySourceId = {};
 
   StreamSubscription<ChatMessage>? _subscription;
@@ -43,6 +44,7 @@ class GroupKeyUpdateListener {
     Future<String?> Function()? getOwnDeviceId,
     AppendGroupEventLogEntry? appendGroupEventLogEntry,
     RetryPendingGroupKeyRepairs? retryPendingGroupKeyRepairs,
+    RequestGroupKeyRepair? requestGroupKeyRepair,
   }) : _stream = groupKeyUpdateStream,
        _groupRepo = groupRepo,
        _bridge = bridge,
@@ -50,7 +52,8 @@ class GroupKeyUpdateListener {
        _getOwnPeerId = getOwnPeerId,
        _getOwnDeviceId = getOwnDeviceId,
        _appendGroupEventLogEntry = appendGroupEventLogEntry,
-       _retryPendingGroupKeyRepairs = retryPendingGroupKeyRepairs;
+       _retryPendingGroupKeyRepairs = retryPendingGroupKeyRepairs,
+       _requestGroupKeyRepair = requestGroupKeyRepair;
 
   void start() {
     if (_subscription != null) return;
@@ -253,15 +256,15 @@ class GroupKeyUpdateListener {
         encryptedKey: encryptedKey,
       );
       final senderPublicKey = sourceDevice.deviceSigningPublicKey;
-      final hasValidSignatureEnvelope =
-          signatureAlgorithm == groupKeyUpdateSignatureAlgorithm &&
-          signedPayload != null &&
-          signature != null &&
-          signature.isNotEmpty &&
-          signedPayload == expectedSignedPayload &&
-          senderPublicKey.trim().isNotEmpty;
+      final signatureEnvelopeFailureReason = _signatureEnvelopeFailureReason(
+        signatureAlgorithm: signatureAlgorithm,
+        signedPayload: signedPayload,
+        signature: signature,
+        expectedSignedPayload: expectedSignedPayload,
+        senderPublicKey: senderPublicKey,
+      );
 
-      if (!hasValidSignatureEnvelope) {
+      if (signatureEnvelopeFailureReason != null) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_KEY_UPDATE_LISTENER_INVALID_SIGNATURE',
@@ -271,14 +274,15 @@ class GroupKeyUpdateListener {
                 ? sourcePeerId.substring(0, 8)
                 : sourcePeerId,
             'keyGeneration': keyGeneration,
+            'reason': signatureEnvelopeFailureReason,
           },
         );
         return;
       }
 
       final verifiedSenderPublicKey = senderPublicKey;
-      final verifiedSignedPayload = signedPayload;
-      final verifiedSignature = signature;
+      final verifiedSignedPayload = signedPayload!;
+      final verifiedSignature = signature!;
       final signatureValid = await callVerifyPayload(
         bridge: _bridge,
         publicKey: verifiedSenderPublicKey,
@@ -456,9 +460,8 @@ class GroupKeyUpdateListener {
             'sourcePeerId': sourcePeerId,
             'sourceDeviceId': sourceDevice.deviceId,
             'sourceTransportPeerId': sourceDevice.transportPeerId,
-            if (recipientPeerId != null) 'recipientPeerId': recipientPeerId,
-            if (recipientDeviceId != null)
-              'recipientDeviceId': recipientDeviceId,
+            'recipientPeerId': ?recipientPeerId,
+            'recipientDeviceId': ?recipientDeviceId,
             'keyGeneration': keyGeneration,
             'transitionSubject': transitionSubject,
             'encryptedKeyHash': transitionSubject['encryptedKeyHash'],
@@ -491,6 +494,11 @@ class GroupKeyUpdateListener {
             'keyGeneration': keyGeneration,
             'error': e.toString(),
           },
+        );
+        await _requestRepairAfterUpdateKeyFailure(
+          groupId: groupId,
+          keyGeneration: keyGeneration,
+          error: e.toString(),
         );
         return;
       }
@@ -527,6 +535,46 @@ class GroupKeyUpdateListener {
 
   void dispose() {
     stop();
+  }
+
+  Future<void> _requestRepairAfterUpdateKeyFailure({
+    required String groupId,
+    required int keyGeneration,
+    required String error,
+  }) async {
+    final request = _requestGroupKeyRepair;
+    if (request == null) return;
+
+    try {
+      await request(
+        GroupKeyRepairRequest(
+          groupId: groupId,
+          keyEpoch: keyGeneration,
+          reason: groupKeyRepairReasonKeyUpdateApplyFailed,
+        ),
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_UPDATE_LISTENER_RECOVERY_REQUESTED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'keyGeneration': keyGeneration,
+          'reason': groupKeyRepairReasonKeyUpdateApplyFailed,
+        },
+      );
+    } catch (repairError) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_UPDATE_LISTENER_RECOVERY_REQUEST_FAILED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'keyGeneration': keyGeneration,
+          'reason': groupKeyRepairReasonKeyUpdateApplyFailed,
+          'updateKeyError': error,
+          'repairError': repairError.toString(),
+        },
+      );
+    }
   }
 
   GroupMemberDeviceIdentity? _resolveSourceDevice({
@@ -649,6 +697,32 @@ class GroupKeyUpdateListener {
   DateTime? _parseUtcTimestamp(Object? value) {
     final text = _readNonEmptyString(value);
     return text == null ? null : DateTime.tryParse(text)?.toUtc();
+  }
+
+  String? _signatureEnvelopeFailureReason({
+    required String? signatureAlgorithm,
+    required String? signedPayload,
+    required String? signature,
+    required String? expectedSignedPayload,
+    required String senderPublicKey,
+  }) {
+    if (signedPayload == null || signedPayload.isEmpty) {
+      return 'missing_signed_payload';
+    }
+    if (signature == null || signature.isEmpty) {
+      return 'missing_signature';
+    }
+    if (signatureAlgorithm != groupKeyUpdateSignatureAlgorithm) {
+      return 'unsupported_signature_algorithm';
+    }
+    if (expectedSignedPayload == null ||
+        signedPayload != expectedSignedPayload) {
+      return 'signed_payload_mismatch';
+    }
+    if (senderPublicKey.trim().isEmpty) {
+      return 'missing_sender_public_key';
+    }
+    return null;
   }
 
   String _hashText(String value) {

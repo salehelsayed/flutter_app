@@ -34,6 +34,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -43,6 +44,7 @@ import 'package:flutter_app/features/groups/application/retry_failed_group_messa
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
@@ -155,6 +157,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   late GroupModel _group;
   List<GroupMessage> _messages = [];
+  Map<String, GroupMember> _membersByPeerId = const {};
   String? _ownPeerId;
   String _senderUsername = '';
   String _senderPublicKey = '';
@@ -168,6 +171,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   String _draftText = '';
   GroupSecurityStatusViewState? _securityStatus;
   GroupHistoryGapRepair? _historyGapRepair;
+  bool _isCurrentUserActiveMember = true;
+  bool _hasCurrentSendKey = true;
 
   // Media state
   List<PendingComposerMedia> _pendingAttachments = [];
@@ -739,6 +744,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       final ownPeerId = _ownPeerId ?? identity?.peerId;
       final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
+      final isCurrentUserActiveMember =
+          ownPeerId == null ||
+          members.isEmpty ||
+          members.any((member) => member.peerId == ownPeerId);
       final memberSafety = <GroupMemberIdentitySafety>[];
       for (final member in members) {
         if (member.peerId == ownPeerId) {
@@ -781,7 +790,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (_ownPeerId == null && ownPeerId != null) {
           _ownPeerId = ownPeerId;
         }
+        _membersByPeerId = {
+          for (final member in members) member.peerId: member,
+        };
         _securityStatus = securityStatus;
+        _isCurrentUserActiveMember = isCurrentUserActiveMember;
+        _hasCurrentSendKey = latestKey != null;
       });
     } catch (e) {
       emitFlowEvent(
@@ -1235,6 +1249,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _onSend(String text) async {
     if (!_canWrite) return;
+    if (!await _refreshSendCapabilityAndCanWrite()) return;
     if (_ownPeerId == null) return;
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
@@ -2343,6 +2358,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _onRecordStart() async {
     if (!_canWrite) return;
+    if (!await _refreshSendCapabilityAndCanWrite()) return;
     if (_isSending) return;
     final recorder = widget.audioRecorderService;
     if (recorder == null || _composerViewState.recordingState.isActive) {
@@ -2901,11 +2917,82 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (group.isDissolved) {
       return false;
     }
+    if (!_isCurrentUserActiveMember) {
+      return false;
+    }
+    if (!_hasCurrentSendKey) {
+      return false;
+    }
     if (group.type == GroupType.announcement &&
         group.myRole != GroupRole.admin) {
       return false;
     }
     return true;
+  }
+
+  String get _readOnlyBannerText {
+    if (_group.isDissolved) {
+      return 'This group has been dissolved. History stays available, but new messages are disabled.';
+    }
+    if (!_isCurrentUserActiveMember) {
+      return "You can read this group's history, but you are not an active member.";
+    }
+    if (!_hasCurrentSendKey) {
+      return 'Waiting for the current group key before you can send.';
+    }
+    return 'Only admins can send messages in this group';
+  }
+
+  bool _canWriteForSnapshot({
+    required GroupModel group,
+    required bool isCurrentUserActiveMember,
+    required bool hasCurrentSendKey,
+  }) {
+    if (group.isDissolved) {
+      return false;
+    }
+    if (!isCurrentUserActiveMember || !hasCurrentSendKey) {
+      return false;
+    }
+    if (group.type == GroupType.announcement &&
+        group.myRole != GroupRole.admin) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<bool> _refreshSendCapabilityAndCanWrite() async {
+    final identity = _ownPeerId == null
+        ? await widget.identityRepo.loadIdentity()
+        : null;
+    final ownPeerId = _ownPeerId ?? identity?.peerId;
+    final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
+    final members = await widget.groupRepo.getMembers(widget.group.id);
+    final isCurrentUserActiveMember =
+        ownPeerId == null ||
+        members.isEmpty ||
+        members.any((member) => member.peerId == ownPeerId);
+    final hasCurrentSendKey = latestKey != null;
+
+    if (!mounted) {
+      return false;
+    }
+    if ((_ownPeerId == null && ownPeerId != null) ||
+        _isCurrentUserActiveMember != isCurrentUserActiveMember ||
+        _hasCurrentSendKey != hasCurrentSendKey) {
+      setState(() {
+        if (_ownPeerId == null && ownPeerId != null) {
+          _ownPeerId = ownPeerId;
+        }
+        _isCurrentUserActiveMember = isCurrentUserActiveMember;
+        _hasCurrentSendKey = hasCurrentSendKey;
+      });
+    }
+    return _canWriteForSnapshot(
+      group: _group,
+      isCurrentUserActiveMember: isCurrentUserActiveMember,
+      hasCurrentSendKey: hasCurrentSendKey,
+    );
   }
 
   bool _matchesGroupSnapshot(GroupModel a, GroupModel b) {
@@ -2955,6 +3042,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool get _canWrite => _canWriteForGroup(_group);
 
   bool get _canMutateReactions =>
+      _isCurrentUserActiveMember &&
       !_group.isDissolved &&
       widget.reactionRepo != null &&
       widget.groupReactionReplayOutboxRepository != null;
@@ -3246,78 +3334,88 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         ? _resolveActiveQuotePreview()
         : (null, false);
 
-    return PopScope(
-      canPop: !_isTrackingRelayUpload || _allowPopDuringActiveUpload,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop || !_isTrackingRelayUpload) return;
-        unawaited(_onBack());
+    return ValueListenableBuilder<int>(
+      valueListenable: groupRecoveryGate.activeDepthListenable,
+      builder: (context, recoveryDepth, child) {
+        return PopScope(
+          canPop: !_isTrackingRelayUpload || _allowPopDuringActiveUpload,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop || !_isTrackingRelayUpload) return;
+            unawaited(_onBack());
+          },
+          child: GroupConversationScreen(
+            group: _group,
+            messages: _messages,
+            membersByPeerId: _membersByPeerId,
+            ownPeerId: _ownPeerId,
+            onSend: _onSend,
+            onBack: _onBack,
+            onInfo: _onInfo,
+            canWrite: _canWrite,
+            readOnlyBannerText: _canWrite ? null : _readOnlyBannerText,
+            isSending: _isSending,
+            uploadProgress: _uploadProgressViewState,
+            securityStatus: _securityStatus,
+            onCancelUpload:
+                _activeAttachmentUpload == null ||
+                    _activeAttachmentUpload!.cancelRequested
+                ? null
+                : _requestCancelActiveAttachmentUpload,
+            initialLoadDone: _initialLoadDone,
+            isRecovering: recoveryDepth > 0,
+            scrollController: _scrollController,
+            highlightedMessageId: widget.initialHighlightedMessageId,
+            mediaMap: _mediaMap,
+            composerStateListenable: _composerState,
+            onRemoveAttachment: _removeAttachment,
+            onAttach: _canWrite ? _onAttach : null,
+            onRecordStart: _canWrite && _supportsDurableGroupMediaUploads
+                ? _onRecordStart
+                : null,
+            onRecordStop: _canWrite && _supportsDurableGroupMediaUploads
+                ? _onRecordStop
+                : null,
+            onRecordCancel: _canWrite && _supportsDurableGroupMediaUploads
+                ? _onRecordCancel
+                : null,
+            recordingState: _composerViewState.recordingState,
+            onMediaTap: _onMediaTap,
+            reactions: _reactions,
+            onReactionTap: _onReactionTap,
+            onReactionSelected: _canMutateReactions
+                ? _onReactionSelected
+                : null,
+            initialText: _draftText,
+            onDraftChanged: _onDraftChanged,
+            onQuoteReply: _canWrite ? _onQuoteReply : null,
+            onRetryFailedMedia:
+                _canWrite &&
+                    widget.mediaAttachmentRepo != null &&
+                    widget.mediaFileManager != null
+                ? _onRetryFailedMedia
+                : null,
+            onRetryUnavailableMedia:
+                widget.mediaAttachmentRepo != null &&
+                    widget.mediaFileManager != null
+                ? _onRetryUnavailableMedia
+                : null,
+            onDeleteFailedMedia:
+                _canWrite &&
+                    widget.mediaAttachmentRepo != null &&
+                    widget.mediaFileManager != null
+                ? _onDeleteFailedMedia
+                : null,
+            activeQuoteText: activeQuoteText,
+            isActiveQuoteUnavailable: isActiveQuoteUnavailable,
+            onClearQuote: _canWrite ? _onClearQuote : null,
+            backlogRetentionNotice: groupBacklogRetentionNoticeFor(_group),
+            historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
+              _historyGapRepair,
+            ),
+            backgroundPreference: widget.backgroundPreference,
+          ),
+        );
       },
-      child: GroupConversationScreen(
-        group: _group,
-        messages: _messages,
-        ownPeerId: _ownPeerId,
-        onSend: _onSend,
-        onBack: _onBack,
-        onInfo: _onInfo,
-        canWrite: _canWrite,
-        isSending: _isSending,
-        uploadProgress: _uploadProgressViewState,
-        securityStatus: _securityStatus,
-        onCancelUpload:
-            _activeAttachmentUpload == null ||
-                _activeAttachmentUpload!.cancelRequested
-            ? null
-            : _requestCancelActiveAttachmentUpload,
-        initialLoadDone: _initialLoadDone,
-        scrollController: _scrollController,
-        highlightedMessageId: widget.initialHighlightedMessageId,
-        mediaMap: _mediaMap,
-        composerStateListenable: _composerState,
-        onRemoveAttachment: _removeAttachment,
-        onAttach: _canWrite ? _onAttach : null,
-        onRecordStart: _canWrite && _supportsDurableGroupMediaUploads
-            ? _onRecordStart
-            : null,
-        onRecordStop: _canWrite && _supportsDurableGroupMediaUploads
-            ? _onRecordStop
-            : null,
-        onRecordCancel: _canWrite && _supportsDurableGroupMediaUploads
-            ? _onRecordCancel
-            : null,
-        recordingState: _composerViewState.recordingState,
-        onMediaTap: _onMediaTap,
-        reactions: _reactions,
-        onReactionTap: _onReactionTap,
-        onReactionSelected: _canMutateReactions ? _onReactionSelected : null,
-        initialText: _draftText,
-        onDraftChanged: _onDraftChanged,
-        onQuoteReply: _canWrite ? _onQuoteReply : null,
-        onRetryFailedMedia:
-            _canWrite &&
-                widget.mediaAttachmentRepo != null &&
-                widget.mediaFileManager != null
-            ? _onRetryFailedMedia
-            : null,
-        onRetryUnavailableMedia:
-            widget.mediaAttachmentRepo != null &&
-                widget.mediaFileManager != null
-            ? _onRetryUnavailableMedia
-            : null,
-        onDeleteFailedMedia:
-            _canWrite &&
-                widget.mediaAttachmentRepo != null &&
-                widget.mediaFileManager != null
-            ? _onDeleteFailedMedia
-            : null,
-        activeQuoteText: activeQuoteText,
-        isActiveQuoteUnavailable: isActiveQuoteUnavailable,
-        onClearQuote: _canWrite ? _onClearQuote : null,
-        backlogRetentionNotice: groupBacklogRetentionNoticeFor(_group),
-        historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
-          _historyGapRepair,
-        ),
-        backgroundPreference: widget.backgroundPreference,
-      ),
     );
   }
 }

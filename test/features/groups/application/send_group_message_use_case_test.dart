@@ -1,18 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -77,6 +81,7 @@ class _SlowPublishBridge extends FakeBridge {
 /// A bridge that blocks group:publish until [publishGate] completes.
 class _GatedPublishBridge extends FakeBridge {
   final Completer<void> publishGate = Completer<void>();
+  final Completer<void> publishStarted = Completer<void>();
 
   @override
   Future<String> send(String message) async {
@@ -84,6 +89,9 @@ class _GatedPublishBridge extends FakeBridge {
     final cmd = parsed['cmd'] as String?;
 
     if (cmd == 'group:publish') {
+      if (!publishStarted.isCompleted) {
+        publishStarted.complete();
+      }
       await publishGate.future;
     }
 
@@ -118,6 +126,80 @@ class _InboxStoreFailBridge extends FakeBridge {
   }
 }
 
+/// A bridge that fails the first N group:inboxStore commands and then succeeds.
+class _FailFirstNInboxStoreBridge extends _InboxStoreFailBridge {
+  _FailFirstNInboxStoreBridge({required int failCount})
+    : _failuresRemaining = failCount;
+
+  int _failuresRemaining;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:inboxStore') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      if (_failuresRemaining > 0) {
+        _failuresRemaining--;
+        throw Exception('Relay inbox store failed');
+      }
+      return jsonEncode({'ok': true});
+    }
+
+    return super.send(message);
+  }
+}
+
+class _SlowPublishInboxStoreFailBridge extends _InboxStoreFailBridge {
+  static const _publishDelay = Duration(milliseconds: 20);
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:publish') {
+      await Future<void>.delayed(_publishDelay);
+    }
+    return super.send(message);
+  }
+}
+
+String _opaqueReplayCiphertext(String plaintext) =>
+    'sealed:${sha256.convert(utf8.encode(plaintext))}';
+
+/// A bridge that keeps group replay encryption opaque while allowing durable
+/// inbox custody to succeed so relay-visible payloads can be inspected.
+class _OpaqueReplayBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group.encrypt') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final plaintext = payload['plaintext'] as String? ?? '';
+      return jsonEncode({
+        'ok': true,
+        'ciphertext': _opaqueReplayCiphertext(plaintext),
+        'nonce': 'opaque-replay-nonce',
+      });
+    }
+
+    return super.send(message);
+  }
+}
+
 /// A bridge that keeps group replay encryption opaque while forcing durable
 /// inbox custody to fail so the retry payload remains persisted for inspection.
 class _OpaqueReplayInboxStoreFailBridge extends _InboxStoreFailBridge {
@@ -137,7 +219,7 @@ class _OpaqueReplayInboxStoreFailBridge extends _InboxStoreFailBridge {
       final plaintext = payload['plaintext'] as String? ?? '';
       return jsonEncode({
         'ok': true,
-        'ciphertext': 'sealed:${base64Url.encode(utf8.encode(plaintext))}',
+        'ciphertext': _opaqueReplayCiphertext(plaintext),
         'nonce': 'opaque-replay-nonce',
       });
     }
@@ -251,9 +333,45 @@ Map<String, dynamic> _decodedGroupInboxReplayPayload(FakeBridge bridge) {
   return envelope;
 }
 
+List<String> _groupInboxStoreReplayMessageIds(FakeBridge bridge) {
+  return bridge.sentMessages
+      .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == 'group:inboxStore')
+      .map((message) {
+        final payload = (message['payload'] as Map).cast<String, dynamic>();
+        final envelope =
+            jsonDecode(payload['message'] as String) as Map<String, dynamic>;
+        final ciphertext = envelope['ciphertext'];
+        if (ciphertext is String &&
+            envelope['kind'] == 'group_offline_replay') {
+          final replay = jsonDecode(ciphertext) as Map<String, dynamic>;
+          return replay['messageId'] as String;
+        }
+        return envelope['messageId'] as String;
+      })
+      .toList(growable: false);
+}
+
 Map<String, dynamic> _lastGroupOfflineReplayEnvelope(FakeBridge bridge) {
   final inboxPayload = _lastGroupInboxStorePayload(bridge);
   return jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+}
+
+int _bridgeCommandIndex(FakeBridge bridge, String command, {int? keyEpoch}) {
+  for (var i = 0; i < bridge.sentMessages.length; i++) {
+    final parsed = jsonDecode(bridge.sentMessages[i]) as Map<String, dynamic>;
+    if (parsed['cmd'] != command) {
+      continue;
+    }
+    if (keyEpoch == null) {
+      return i;
+    }
+    final payload = parsed['payload'];
+    if (payload is Map<String, dynamic> && payload['keyEpoch'] == keyEpoch) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 Map<String, dynamic> _offlineReplayEnvelopeFromRetryPayload(
@@ -882,6 +1000,64 @@ void main() {
     );
   });
 
+  test('ML-003 B post-add send stores durable replay for offline D', () async {
+    final joinedAt = DateTime.utc(2026, 5, 11, 9);
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-2',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'pk-2',
+        joinedAt: joinedAt,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-3',
+        username: 'Charlie',
+        role: MemberRole.writer,
+        publicKey: 'pk-3',
+        joinedAt: joinedAt,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-4',
+        username: 'Dana',
+        role: MemberRole.writer,
+        publicKey: 'pk-4',
+        joinedAt: joinedAt.add(const Duration(minutes: 1)),
+      ),
+    );
+
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'ML-003 Bob post-add while Dana is offline',
+      senderPeerId: 'peer-2',
+      senderPublicKey: 'pk-2',
+      senderPrivateKey: 'sk-2',
+      senderUsername: 'Bob',
+      messageId: 'ml003-b-post-add',
+      timestamp: joinedAt.add(const Duration(minutes: 2)),
+    );
+
+    expect(result, SendGroupMessageResult.success);
+    expect(message, isNotNull);
+    final inboxPayload = _lastGroupInboxStorePayload(bridge);
+    expect(
+      inboxPayload['recipientPeerIds'],
+      unorderedEquals(['peer-1', 'peer-3', 'peer-4']),
+    );
+    expect(message!.inboxStored, isTrue);
+    expect(message.inboxRetryPayload, isNull);
+  });
+
   test(
     'group send loads members and excludes sender from push recipients',
     () async {
@@ -1319,6 +1495,77 @@ void main() {
   );
 
   test(
+    'IR-006 group inbox store targets exact active recipients at send time',
+    () async {
+      final joinedAt = DateTime.utc(2026, 5, 12, 9);
+      const activePeerId = 'peer-2';
+      const removedPeerId = 'peer-3';
+      const declinedPeerId = 'peer-declined';
+      const expiredPeerId = 'peer-expired';
+      const neverJoinedPeerId = 'peer-never-joined';
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: activePeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: removedPeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-3',
+          joinedAt: joinedAt.add(const Duration(minutes: 2)),
+        ),
+      );
+      await groupRepo.removeMember('group-1', removedPeerId);
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'IR-006 active recipient only',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'ir006-active-recipient-only',
+        timestamp: joinedAt.add(const Duration(minutes: 3)),
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.inboxStored, isTrue);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      final recipientPeerIds =
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>();
+      expect(recipientPeerIds, <String>[activePeerId]);
+      expect(recipientPeerIds, isNot(contains('peer-1')));
+      expect(recipientPeerIds, isNot(contains(removedPeerId)));
+      expect(recipientPeerIds, isNot(contains(declinedPeerId)));
+      expect(recipientPeerIds, isNot(contains(expiredPeerId)));
+      expect(recipientPeerIds, isNot(contains(neverJoinedPeerId)));
+
+      final replay = _decodedGroupInboxReplayPayload(bridge);
+      expect(replay['messageId'], 'ir006-active-recipient-only');
+      expect(replay['senderId'], 'peer-1');
+    },
+  );
+
+  test(
     'GM-020 immediate post-removal durable recipients stay Bob-only for every send',
     () async {
       final failBridge = _InboxStoreFailBridge();
@@ -1589,6 +1836,43 @@ void main() {
     expect(message!.status, 'failed');
   });
 
+  test(
+    'BB-002 group:publish NOT_INITIALIZED does not leave a pending send',
+    () async {
+      bridge.responses['group:publish'] = {
+        'ok': false,
+        'errorCode': 'NOT_INITIALIZED',
+        'errorMessage': 'native node not initialized',
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Before native init',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'bb002-not-initialized-message',
+      );
+
+      expect(result, SendGroupMessageResult.error);
+      expect(message, isNotNull);
+      expect(message!.status, 'failed');
+      expect(bridge.commandLog, contains('group:publish'));
+
+      final saved = await msgRepo.getMessage('bb002-not-initialized-message');
+      expect(saved, isNotNull);
+      expect(saved!.status, 'failed');
+
+      final page = await msgRepo.getMessagesPage('group-1');
+      expect(page.map((message) => message.status), isNot(contains('sending')));
+      expect(page.map((message) => message.status), isNot(contains('pending')));
+    },
+  );
+
   test('returns error when publish throws exception', () async {
     bridge.throwOnSend = true;
 
@@ -1748,6 +2032,328 @@ void main() {
     expect(failBridge.commandLog, contains('group:publish'));
     expect(failBridge.commandLog, contains('group:inboxStore'));
   });
+
+  test(
+    'RA-017 repeated Charlie churn keeps durable recipient targeting for Bob and Dana',
+    () async {
+      final joinedAt = DateTime.utc(2026, 5, 13, 8);
+      const alicePeerId = 'peer-1';
+      const bobPeerId = 'peer-2';
+      const charliePeerId = 'peer-3';
+      const danaPeerId = 'peer-4';
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: bobPeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-3',
+          joinedAt: joinedAt.add(const Duration(minutes: 2)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: danaPeerId,
+          username: 'Dana',
+          role: MemberRole.writer,
+          publicKey: 'pk-4',
+          joinedAt: joinedAt.add(const Duration(minutes: 3)),
+        ),
+      );
+
+      Future<void> expectRecipients({
+        required int cycle,
+        required String phase,
+        required String senderPeerId,
+        required String senderPublicKey,
+        required String senderPrivateKey,
+        required String senderUsername,
+        required List<String> expectedRecipients,
+      }) async {
+        bridge.sentMessages.clear();
+        bridge.commandLog.clear();
+        final messageId = 'ra017-$phase-c$cycle-$senderPeerId';
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'RA-017 $phase cycle $cycle from $senderUsername',
+          senderPeerId: senderPeerId,
+          senderPublicKey: senderPublicKey,
+          senderPrivateKey: senderPrivateKey,
+          senderUsername: senderUsername,
+          messageId: messageId,
+          timestamp: joinedAt.add(
+            Duration(hours: cycle, minutes: phase == 'removed' ? 1 : 2),
+          ),
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.inboxStored, isTrue);
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          unorderedEquals(expectedRecipients),
+          reason:
+              'RA-017 $phase cycle $cycle $senderUsername send must target '
+              'the active recipients exactly',
+        );
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          isNot(contains(senderPeerId)),
+        );
+        final replay = _decodedGroupInboxReplayPayload(bridge);
+        expect(replay['messageId'], messageId);
+        expect(replay['senderId'], senderPeerId);
+      }
+
+      for (var cycle = 1; cycle <= 3; cycle++) {
+        await groupRepo.removeMember('group-1', charliePeerId);
+        await expectRecipients(
+          cycle: cycle,
+          phase: 'removed',
+          senderPeerId: alicePeerId,
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          expectedRecipients: const [bobPeerId, danaPeerId],
+        );
+        await expectRecipients(
+          cycle: cycle,
+          phase: 'removed',
+          senderPeerId: bobPeerId,
+          senderPublicKey: 'pk-2',
+          senderPrivateKey: 'sk-2',
+          senderUsername: 'Bob',
+          expectedRecipients: const [alicePeerId, danaPeerId],
+        );
+        await expectRecipients(
+          cycle: cycle,
+          phase: 'removed',
+          senderPeerId: danaPeerId,
+          senderPublicKey: 'pk-4',
+          senderPrivateKey: 'sk-4',
+          senderUsername: 'Dana',
+          expectedRecipients: const [alicePeerId, bobPeerId],
+        );
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: charliePeerId,
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: joinedAt.add(Duration(hours: cycle)),
+          ),
+        );
+        await expectRecipients(
+          cycle: cycle,
+          phase: 'readd',
+          senderPeerId: alicePeerId,
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          expectedRecipients: const [bobPeerId, charliePeerId, danaPeerId],
+        );
+        await expectRecipients(
+          cycle: cycle,
+          phase: 'readd',
+          senderPeerId: bobPeerId,
+          senderPublicKey: 'pk-2',
+          senderPrivateKey: 'sk-2',
+          senderUsername: 'Bob',
+          expectedRecipients: const [alicePeerId, charliePeerId, danaPeerId],
+        );
+        await expectRecipients(
+          cycle: cycle,
+          phase: 'readd',
+          senderPeerId: danaPeerId,
+          senderPublicKey: 'pk-4',
+          senderPrivateKey: 'sk-4',
+          senderUsername: 'Dana',
+          expectedRecipients: const [alicePeerId, bobPeerId, charliePeerId],
+        );
+      }
+    },
+  );
+
+  test(
+    'RA-018 alternating churn durable recipients match active interval for every sender',
+    () async {
+      final joinedAt = DateTime.utc(2026, 5, 13, 8);
+      const alicePeerId = 'peer-1';
+      const bobPeerId = 'peer-2';
+      const charliePeerId = 'peer-3';
+      const danaPeerId = 'peer-4';
+      const publicKeysByPeerId = <String, String>{
+        alicePeerId: 'pk-1',
+        bobPeerId: 'pk-2',
+        charliePeerId: 'pk-3',
+        danaPeerId: 'pk-4',
+      };
+      const privateKeysByPeerId = <String, String>{
+        alicePeerId: 'sk-1',
+        bobPeerId: 'sk-2',
+        charliePeerId: 'sk-3',
+        danaPeerId: 'sk-4',
+      };
+      const usernamesByPeerId = <String, String>{
+        alicePeerId: 'Alice',
+        bobPeerId: 'Bob',
+        charliePeerId: 'Charlie',
+        danaPeerId: 'Dana',
+      };
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: bobPeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-3',
+          joinedAt: joinedAt.add(const Duration(minutes: 2)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: danaPeerId,
+          username: 'Dana',
+          role: MemberRole.writer,
+          publicKey: 'pk-4',
+          joinedAt: joinedAt.add(const Duration(minutes: 3)),
+        ),
+      );
+
+      Future<void> readdMember({
+        required String peerId,
+        required int cycle,
+        required int operationIndex,
+      }) async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: peerId,
+            username: usernamesByPeerId[peerId]!,
+            role: MemberRole.writer,
+            publicKey: publicKeysByPeerId[peerId]!,
+            joinedAt: joinedAt.add(
+              Duration(hours: cycle, minutes: operationIndex),
+            ),
+          ),
+        );
+      }
+
+      Future<void> expectRecipients({
+        required int cycle,
+        required String operation,
+        required String senderPeerId,
+        required List<String> expectedRecipients,
+      }) async {
+        bridge.sentMessages.clear();
+        bridge.commandLog.clear();
+        final messageId = 'ra018-c$cycle-$operation-$senderPeerId';
+        final senderUsername = usernamesByPeerId[senderPeerId]!;
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'RA-018 cycle $cycle $operation from $senderUsername',
+          senderPeerId: senderPeerId,
+          senderPublicKey: publicKeysByPeerId[senderPeerId]!,
+          senderPrivateKey: privateKeysByPeerId[senderPeerId]!,
+          senderUsername: senderUsername,
+          messageId: messageId,
+          timestamp: joinedAt.add(
+            Duration(hours: cycle, minutes: expectedRecipients.length),
+          ),
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.inboxStored, isTrue);
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        final recipientPeerIds =
+            (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>();
+        expect(
+          recipientPeerIds,
+          unorderedEquals(expectedRecipients),
+          reason:
+              'RA-018 $operation cycle $cycle $senderUsername send must target '
+              'the active interval recipients exactly',
+        );
+        expect(recipientPeerIds, hasLength(recipientPeerIds.toSet().length));
+        expect(recipientPeerIds, isNot(contains(senderPeerId)));
+        final replay = _decodedGroupInboxReplayPayload(bridge);
+        expect(replay['messageId'], messageId);
+        expect(replay['senderId'], senderPeerId);
+      }
+
+      for (var cycle = 1; cycle <= 3; cycle++) {
+        await groupRepo.removeMember('group-1', charliePeerId);
+        await expectRecipients(
+          cycle: cycle,
+          operation: 'charlie-removed',
+          senderPeerId: alicePeerId,
+          expectedRecipients: const [bobPeerId, danaPeerId],
+        );
+
+        await readdMember(
+          peerId: charliePeerId,
+          cycle: cycle,
+          operationIndex: 2,
+        );
+        await expectRecipients(
+          cycle: cycle,
+          operation: 'charlie-readded',
+          senderPeerId: bobPeerId,
+          expectedRecipients: const [alicePeerId, charliePeerId, danaPeerId],
+        );
+
+        await groupRepo.removeMember('group-1', danaPeerId);
+        await expectRecipients(
+          cycle: cycle,
+          operation: 'dana-removed',
+          senderPeerId: charliePeerId,
+          expectedRecipients: const [alicePeerId, bobPeerId],
+        );
+
+        await readdMember(peerId: danaPeerId, cycle: cycle, operationIndex: 4);
+        await expectRecipients(
+          cycle: cycle,
+          operation: 'dana-readded',
+          senderPeerId: danaPeerId,
+          expectedRecipients: const [alicePeerId, bobPeerId, charliePeerId],
+        );
+      }
+    },
+  );
 
   // ---------------------------------------------------------------------------
   // Media attachment tests
@@ -2182,6 +2788,69 @@ void main() {
       expect(saved, isNotNull);
     });
 
+    test(
+      'DE-003 preserves caller messageId in publish, replay, and retry payloads',
+      () async {
+        const explicitId = 'de003-explicit-message-id';
+        const text = 'DE-003 explicit id proof';
+        final proofBridge = _InboxStoreFailBridge()
+          ..responses['group:publish'] = {
+            'ok': true,
+            'messageId': explicitId,
+            'topicPeers': 1,
+          };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: proofBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: text,
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: explicitId,
+          timestamp: DateTime.utc(2026, 5, 12, 3),
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, explicitId);
+        expect(message.status, 'pending');
+
+        final saved = await msgRepo.getMessage(explicitId);
+        expect(saved, isNotNull);
+        expect(saved!.id, explicitId);
+        expect(saved.text, text);
+        expect(saved.inboxRetryPayload, isNotNull);
+
+        final publishRaw = proofBridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(publishPayload['messageId'], explicitId);
+
+        final inboxStorePayload = _lastGroupInboxStorePayload(proofBridge);
+        final replayEnvelope =
+            jsonDecode(inboxStorePayload['message'] as String)
+                as Map<String, dynamic>;
+        expect(replayEnvelope['messageId'], explicitId);
+
+        final retryPayload =
+            jsonDecode(saved.inboxRetryPayload!) as Map<String, dynamic>;
+        expect(retryPayload['message'], inboxStorePayload['message']);
+        final retryEnvelope =
+            jsonDecode(retryPayload['message'] as String)
+                as Map<String, dynamic>;
+        expect(retryEnvelope['messageId'], explicitId);
+      },
+    );
+
     test('uses provided timestamp when given', () async {
       final fixedTime = DateTime.utc(2026, 1, 15, 12, 0, 0);
 
@@ -2449,6 +3118,90 @@ void main() {
       // Verify attachment saved with resolved messageId
       expect(mediaRepo.count, 1);
     });
+
+    test(
+      'ML-017 retained removed history rejects send before bootstrap-key checks',
+      () async {
+        await groupRepo.removeMember('group-1', 'peer-1');
+        await groupRepo.removeAllKeys('group-1');
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 1, 2),
+          ),
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Removed history should stay read-only',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+        );
+
+        expect(result, SendGroupMessageResult.unauthorized);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(bridge.commandLog, isEmpty);
+      },
+    );
+
+    test(
+      'ML-017 retained removed admin with empty active members is unauthorized',
+      () async {
+        await groupRepo.removeAllMembers('group-1');
+        await groupRepo.removeAllKeys('group-1');
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Removed admin history should stay read-only',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+        );
+
+        expect(result, SendGroupMessageResult.unauthorized);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(bridge.commandLog, isEmpty);
+      },
+    );
+
+    test(
+      'ML-017 missing retained key stops stale local member sends before publish',
+      () async {
+        await groupRepo.removeAllKeys('group-1');
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Stale member row should not publish without a key',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(bridge.commandLog, isEmpty);
+      },
+    );
 
     test(
       'announcement voice-only send accepts empty text and writes exact voice push body',
@@ -2889,7 +3642,7 @@ void main() {
         expect(latestDuringRotation, isNotNull);
         expect(latestDuringRotation!.keyGeneration, 1);
         expect(await groupRepo.getKeyByGeneration('group-1', 2), isNull);
-        expect(bridge.commandLog, isNot(contains('group:updateKey')));
+        expect(_bridgeCommandIndex(bridge, 'group:updateKey', keyEpoch: 2), -1);
 
         final (duringResult, duringMessage) = await sendGroupMessage(
           bridge: bridge,
@@ -3007,6 +3760,124 @@ void main() {
       },
     );
 
+    test(
+      'NW-011 send pre-persist survives lifecycle cancellation window',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 13, 1),
+          ),
+        );
+
+        final gatedBridge = _GatedPublishBridge();
+        gatedBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw011-prepersist-send',
+          'topicPeers': 1,
+        };
+        final trackingRepo = _SaveTrackingGroupMessageRepository();
+        final sendFuture = sendGroupMessage(
+          bridge: gatedBridge,
+          groupRepo: groupRepo,
+          msgRepo: trackingRepo,
+          groupId: 'group-1',
+          text: 'NW-011 pre-persist send',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'nw011-prepersist-send',
+          timestamp: DateTime.utc(2026, 5, 13, 1, 1),
+        );
+
+        final firstSaved = await trackingRepo.firstSave.future;
+        expect(firstSaved.id, 'nw011-prepersist-send');
+        expect(firstSaved.status, 'sending');
+        expect(firstSaved.wireEnvelope, isNotNull);
+        expect(firstSaved.inboxRetryPayload, isNotNull);
+        expect(gatedBridge.commandLog, isNot(contains('group:publish')));
+
+        final transitioned = await trackingRepo.transitionSendingToFailed();
+        expect(transitioned, 1);
+        final failedDuringPause = await trackingRepo.getMessage(
+          'nw011-prepersist-send',
+        );
+        expect(failedDuringPause, isNotNull);
+        expect(failedDuringPause!.status, 'failed');
+        expect(failedDuringPause.wireEnvelope, firstSaved.wireEnvelope);
+        expect(
+          failedDuringPause.inboxRetryPayload,
+          firstSaved.inboxRetryPayload,
+        );
+
+        await gatedBridge.publishStarted.future;
+
+        gatedBridge.publishGate.complete();
+        final (result, message) = await sendFuture;
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        final finalRows = await trackingRepo.getMessagesPage('group-1');
+        final finalMatches = finalRows
+            .where((row) => row.id == 'nw011-prepersist-send')
+            .toList(growable: false);
+        expect(finalMatches, hasLength(1));
+        expect(finalMatches.single.status, anyOf('sent', 'pending'));
+
+        final retryBridge = _FailFirstNInboxStoreBridge(failCount: 1);
+        retryBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw011-pending-inbox-retry',
+          'topicPeers': 1,
+        };
+        final retryRepo = InMemoryGroupMessageRepository();
+        final (pendingResult, pendingMessage) = await sendGroupMessage(
+          bridge: retryBridge,
+          groupRepo: groupRepo,
+          msgRepo: retryRepo,
+          groupId: 'group-1',
+          text: 'NW-011 pending inbox retry',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'nw011-pending-inbox-retry',
+          timestamp: DateTime.utc(2026, 5, 13, 1, 2),
+        );
+
+        expect(pendingResult, SendGroupMessageResult.success);
+        expect(pendingMessage, isNotNull);
+        expect(pendingMessage!.status, 'pending');
+        expect(pendingMessage.inboxRetryPayload, isNotNull);
+        final pendingRows = await retryRepo.getMessagesWithFailedInboxStore();
+        expect(pendingRows.map((row) => row.id), ['nw011-pending-inbox-retry']);
+
+        final retried = await retryFailedGroupInboxStores(
+          bridge: retryBridge,
+          msgRepo: retryRepo,
+        );
+        expect(retried, 1);
+        final recovered = await retryRepo.getMessage(
+          'nw011-pending-inbox-retry',
+        );
+        expect(recovered, isNotNull);
+        expect(recovered!.status, 'sent');
+        expect(recovered.inboxStored, isTrue);
+        expect(recovered.inboxRetryPayload, isNull);
+        expect(
+          (await retryRepo.getMessagesPage('group-1')).where(
+            (row) =>
+                !row.isIncoming && row.text == 'NW-011 pending inbox retry',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
     test('pre-persist: unauthorized caller does NOT persist a row', () async {
       final announcementGroup = GroupModel(
         id: 'group-no-persist',
@@ -3055,6 +3926,821 @@ void main() {
   });
 
   group('WU-3: 0-peer publish detection and 4-way matrix', () {
+    test(
+      'DE-006 topicPeers matrix reports fanout without recipient receipt claim',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 11, 8),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Carol',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: DateTime.utc(2026, 5, 11, 8, 1),
+          ),
+        );
+
+        final cases =
+            <
+              ({
+                int topicPeers,
+                SendGroupMessageResult result,
+                String fanoutState,
+                String messageId,
+              })
+            >[
+              (
+                topicPeers: 0,
+                result: SendGroupMessageResult.successNoPeers,
+                fanoutState: 'zero_peers',
+                messageId: 'de006-zero-peers',
+              ),
+              (
+                topicPeers: 1,
+                result: SendGroupMessageResult.success,
+                fanoutState: 'partial_peers',
+                messageId: 'de006-partial-peers',
+              ),
+              (
+                topicPeers: 2,
+                result: SendGroupMessageResult.success,
+                fanoutState: 'full_peers',
+                messageId: 'de006-full-peers',
+              ),
+            ];
+
+        for (final scenario in cases) {
+          bridge.responses['group:publish'] = {
+            'ok': true,
+            'messageId': scenario.messageId,
+            'topicPeers': scenario.topicPeers,
+          };
+
+          late SendGroupMessageResult result;
+          late GroupMessage? message;
+          final events = await captureFlowEvents(() async {
+            (result, message) = await sendGroupMessage(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              groupId: 'group-1',
+              text: 'DE-006 ${scenario.fanoutState}',
+              senderPeerId: 'peer-1',
+              senderPublicKey: 'pk-1',
+              senderPrivateKey: 'sk-1',
+              senderUsername: 'Alice',
+              messageId: scenario.messageId,
+            );
+          });
+
+          expect(result, scenario.result);
+          expect(message, isNotNull);
+          expect(message!.status, isNot('delivered'));
+          expect(message!.inboxStored, isTrue);
+          expect(message!.inboxRetryPayload, isNull);
+
+          final saved = await msgRepo.getMessage(scenario.messageId);
+          expect(saved, isNotNull);
+          expect(saved!.status, isNot('delivered'));
+          expect(saved.inboxStored, isTrue);
+          expect(saved.inboxRetryPayload, isNull);
+
+          expect(
+            await msgRepo.getReceiptsForMessage(
+              'group-1',
+              scenario.messageId,
+              receiptType: groupMessageReceiptTypeDelivered,
+            ),
+            isEmpty,
+          );
+          expect(
+            await msgRepo.getReceiptsForMessage(
+              'group-1',
+              scenario.messageId,
+              receiptType: groupMessageReceiptTypeRead,
+            ),
+            isEmpty,
+          );
+
+          final timing = events.lastWhere(
+            (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+          );
+          final details = timing['details'] as Map<String, dynamic>;
+          expect(details['topicPeers'], scenario.topicPeers);
+          expect(details['expectedRecipientCount'], 2);
+          expect(details['liveFanoutState'], scenario.fanoutState);
+          expect(details['recipientReceiptClaimed'], isFalse);
+          expect(details['inboxStored'], isTrue);
+          expect(details['inboxPending'], isFalse);
+        }
+      },
+    );
+
+    test(
+      'DE-006 partial topicPeers with inbox failure stays publish-only and retryable',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 11, 8),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Carol',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: DateTime.utc(2026, 5, 11, 8, 1),
+          ),
+        );
+        final failBridge = _SlowPublishInboxStoreFailBridge();
+        failBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'de006-partial-inbox-fail',
+          'topicPeers': 1,
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? message;
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendGroupMessage(
+            bridge: failBridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'DE-006 partial inbox failure',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'de006-partial-inbox-fail',
+          );
+        });
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'pending');
+        expect(message!.status, isNot('sent'));
+        expect(message!.status, isNot('delivered'));
+        expect(message!.wireEnvelope, isNull);
+        expect(message!.inboxStored, isFalse);
+        expect(message!.inboxRetryPayload, isNotNull);
+
+        final saved = await msgRepo.getMessage('de006-partial-inbox-fail');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'pending');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxStored, isFalse);
+        expect(saved.inboxRetryPayload, isNotNull);
+
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'de006-partial-inbox-fail',
+            receiptType: groupMessageReceiptTypeDelivered,
+          ),
+          isEmpty,
+        );
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'de006-partial-inbox-fail',
+            receiptType: groupMessageReceiptTypeRead,
+          ),
+          isEmpty,
+        );
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final details = timing['details'] as Map<String, dynamic>;
+        expect(details['outcome'], 'success');
+        expect(details['status'], 'pending');
+        expect(details['topicPeers'], 1);
+        expect(details['expectedRecipientCount'], 2);
+        expect(details['liveFanoutState'], 'partial_peers');
+        expect(details['recipientReceiptClaimed'], isFalse);
+        expect(details['inboxStored'], isFalse);
+        expect(details['inboxPending'], isFalse);
+      },
+    );
+
+    test(
+      'DE-007 zero-peer publish stores durable inbox for all active recipients',
+      () async {
+        final joinedAt = DateTime.utc(2026, 5, 12, 4);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: joinedAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: joinedAt.add(const Duration(seconds: 1)),
+          ),
+        );
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'de007-zero-peer-durable',
+          'topicPeers': 0,
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? message;
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'DE-007 zero-peer durable fallback',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'de007-zero-peer-durable',
+            timestamp: joinedAt.add(const Duration(minutes: 1)),
+          );
+        });
+
+        expect(result, SendGroupMessageResult.successNoPeers);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message!.wireEnvelope, isNull);
+        expect(message!.inboxStored, isTrue);
+        expect(message!.inboxRetryPayload, isNull);
+
+        final saved = await msgRepo.getMessage('de007-zero-peer-durable');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'sent');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxStored, isTrue);
+        expect(saved.inboxRetryPayload, isNull);
+
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        expect(
+          inboxPayload['recipientPeerIds'],
+          unorderedEquals(['peer-2', 'peer-3']),
+        );
+        final replay = _decodedGroupInboxReplayPayload(bridge);
+        expect(replay['messageId'], 'de007-zero-peer-durable');
+        expect(replay['senderId'], 'peer-1');
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final details = timing['details'] as Map<String, dynamic>;
+        expect(details['outcome'], 'success_no_peers');
+        expect(details['status'], 'sent');
+        expect(details['topicPeers'], 0);
+        expect(details['expectedRecipientCount'], 2);
+        expect(details['liveFanoutState'], 'zero_peers');
+        expect(details['inboxStored'], isTrue);
+        expect(details['inboxPending'], isFalse);
+        expect(details['recipientReceiptClaimed'], isFalse);
+      },
+    );
+
+    test(
+      'NW-007 topic peer count zero keeps active member recipients and no receipt claims',
+      () async {
+        final joinedAt = DateTime.utc(2026, 5, 13, 11);
+        const bobPeerId = 'peer-nw007-bob';
+        const charliePeerId = 'peer-nw007-charlie';
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: bobPeerId,
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw007-bob',
+            joinedAt: joinedAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: charliePeerId,
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw007-charlie',
+            joinedAt: joinedAt.add(const Duration(minutes: 2)),
+          ),
+        );
+        final membersBefore = (await groupRepo.getMembers(
+          'group-1',
+        )).map((member) => member.peerId).toSet();
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw007-zero-topic-peer-membership',
+          'topicPeers': 0,
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? message;
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'NW-007 zero topic peers keep members active',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'nw007-zero-topic-peer-membership',
+            timestamp: joinedAt.add(const Duration(minutes: 3)),
+          );
+        });
+
+        expect(result, SendGroupMessageResult.successNoPeers);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message!.inboxStored, isTrue);
+        expect(message!.inboxRetryPayload, isNull);
+
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        final recipientPeerIds =
+            (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>();
+        expect(recipientPeerIds, unorderedEquals([bobPeerId, charliePeerId]));
+        expect(recipientPeerIds, isNot(contains('peer-1')));
+
+        final replay = _decodedGroupInboxReplayPayload(bridge);
+        expect(replay['messageId'], 'nw007-zero-topic-peer-membership');
+        expect(replay['senderId'], 'peer-1');
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final details = timing['details'] as Map<String, dynamic>;
+        expect(details['outcome'], 'success_no_peers');
+        expect(details['topicPeers'], 0);
+        expect(details['expectedRecipientCount'], 2);
+        expect(details['liveFanoutState'], 'zero_peers');
+        expect(details['inboxStored'], isTrue);
+        expect(details['inboxPending'], isFalse);
+        expect(details['recipientReceiptClaimed'], isFalse);
+
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'nw007-zero-topic-peer-membership',
+            receiptType: groupMessageReceiptTypeDelivered,
+          ),
+          isEmpty,
+        );
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'nw007-zero-topic-peer-membership',
+            receiptType: groupMessageReceiptTypeRead,
+          ),
+          isEmpty,
+        );
+        expect(
+          (await groupRepo.getMembers(
+            'group-1',
+          )).map((member) => member.peerId).toSet(),
+          membersBefore,
+        );
+      },
+    );
+
+    test(
+      'NW-003 zero-peer removed-window durable send targets Bob but excludes Charlie during partitioned churn',
+      () async {
+        final joinedAt = DateTime.utc(2026, 5, 13, 8);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: joinedAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: joinedAt.add(const Duration(seconds: 1)),
+          ),
+        );
+        await groupRepo.removeMember('group-1', 'peer-3');
+        await _saveGroupKey(groupRepo, 'group-1', generation: 2);
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw003-removed-window',
+          'topicPeers': 0,
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? message;
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'NW-003 removed-window durable fallback',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'nw003-removed-window',
+            timestamp: joinedAt.add(const Duration(minutes: 1)),
+          );
+        });
+
+        expect(result, SendGroupMessageResult.successNoPeers);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message!.keyGeneration, 2);
+        expect(message!.inboxStored, isTrue);
+        expect(message!.inboxRetryPayload, isNull);
+
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        expect(inboxPayload['recipientPeerIds'], ['peer-2']);
+        expect(inboxPayload['recipientPeerIds'], isNot(contains('peer-3')));
+        expect(
+          bridge.sentMessages.where((raw) => raw.contains('peer-3')),
+          isEmpty,
+          reason: 'Charlie must not appear in publish or inbox-store claims',
+        );
+
+        final replay = _decodedGroupInboxReplayPayload(bridge);
+        expect(replay['messageId'], 'nw003-removed-window');
+        expect(replay['senderId'], 'peer-1');
+
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'nw003-removed-window',
+            receiptType: groupMessageReceiptTypeDelivered,
+          ),
+          isEmpty,
+        );
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final details = timing['details'] as Map<String, dynamic>;
+        expect(details['outcome'], 'success_no_peers');
+        expect(details['topicPeers'], 0);
+        expect(details['expectedRecipientCount'], 1);
+        expect(details['liveFanoutState'], 'zero_peers');
+        expect(details['recipientReceiptClaimed'], isFalse);
+        expect(details['inboxStored'], isTrue);
+      },
+    );
+
+    test(
+      'NW-012 long offline epoch churn sends only to recipients active in each interval',
+      () async {
+        final baseAt = DateTime.utc(2026, 5, 13, 9);
+        const bobPeerId = 'peer-nw012-bob';
+        const charliePeerId = 'peer-nw012-charlie';
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: bobPeerId,
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw012-bob',
+            joinedAt: baseAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: charliePeerId,
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw012-charlie',
+            joinedAt: baseAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw012-first-active',
+          'topicPeers': 0,
+        };
+
+        Future<List<String>> sendAndRecipients({
+          required String messageId,
+          required String text,
+          required DateTime timestamp,
+        }) async {
+          bridge.sentMessages.clear();
+          bridge.commandLog.clear();
+          bridge.responses['group:publish'] = {
+            'ok': true,
+            'messageId': messageId,
+            'topicPeers': 0,
+          };
+          final (result, message) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: text,
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: messageId,
+            timestamp: timestamp,
+          );
+          expect(result, SendGroupMessageResult.successNoPeers);
+          expect(message, isNotNull);
+          expect(message!.inboxStored, isTrue);
+          final inboxPayload = _lastGroupInboxStorePayload(bridge);
+          return (inboxPayload['recipientPeerIds'] as List<dynamic>)
+              .cast<String>();
+        }
+
+        final firstRecipients = await sendAndRecipients(
+          messageId: 'nw012-first-active',
+          text: 'NW-012 first active interval',
+          timestamp: baseAt.add(const Duration(minutes: 2)),
+        );
+        expect(firstRecipients, unorderedEquals([bobPeerId, charliePeerId]));
+        expect(firstRecipients.toSet(), hasLength(firstRecipients.length));
+
+        await groupRepo.removeMember('group-1', charliePeerId);
+        await _saveGroupKey(groupRepo, 'group-1', generation: 2);
+        final removedRecipients = await sendAndRecipients(
+          messageId: 'nw012-removed-window',
+          text: 'NW-012 removed interval',
+          timestamp: baseAt.add(const Duration(minutes: 20)),
+        );
+        expect(removedRecipients, [bobPeerId]);
+        expect(removedRecipients, isNot(contains(charliePeerId)));
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: charliePeerId,
+            username: 'Charlie re-added',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw012-charlie-readd',
+            joinedAt: baseAt.add(const Duration(minutes: 40)),
+          ),
+        );
+        await _saveGroupKey(groupRepo, 'group-1', generation: 4);
+        final finalRecipients = await sendAndRecipients(
+          messageId: 'nw012-final-active',
+          text: 'NW-012 final active interval',
+          timestamp: baseAt.add(const Duration(minutes: 42)),
+        );
+        expect(finalRecipients, unorderedEquals([bobPeerId, charliePeerId]));
+        expect(finalRecipients.toSet(), hasLength(finalRecipients.length));
+      },
+    );
+
+    test(
+      'NW-006 disconnected active member remains a durable recipient without delivery receipt claims',
+      () async {
+        final joinedAt = DateTime.utc(2026, 5, 13, 10);
+        const disconnectedPeerId = 'peer-bob-disconnected';
+        const onlinePeerId = 'peer-charlie-online';
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: disconnectedPeerId,
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            joinedAt: joinedAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: onlinePeerId,
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            joinedAt: joinedAt.add(const Duration(minutes: 2)),
+          ),
+        );
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw006-disconnect-not-removal',
+          'topicPeers': 1,
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? sent;
+        final events = await captureFlowEvents(() async {
+          final sendResult = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'NW-006 Bob is disconnected but still active',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'nw006-disconnect-not-removal',
+            timestamp: joinedAt.add(const Duration(minutes: 3)),
+          );
+          result = sendResult.$1;
+          sent = sendResult.$2;
+        });
+
+        expect(result, SendGroupMessageResult.success);
+        expect(sent, isNotNull);
+        expect(sent!.status, 'sent');
+        expect(sent!.inboxStored, isTrue);
+
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        final recipientPeerIds =
+            (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>();
+        expect(recipientPeerIds, contains(disconnectedPeerId));
+        expect(recipientPeerIds, contains(onlinePeerId));
+        expect(recipientPeerIds, isNot(contains('peer-1')));
+
+        final replay = _decodedGroupInboxReplayPayload(bridge);
+        expect(replay['messageId'], 'nw006-disconnect-not-removal');
+        expect(replay['senderId'], 'peer-1');
+
+        final successEvent = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+        );
+        final details = successEvent['details'] as Map<String, dynamic>;
+        expect(details['topicPeers'], 1);
+        expect(details['expectedRecipientCount'], 2);
+        expect(details['liveFanoutState'], 'partial_peers');
+        expect(details['recipientReceiptClaimed'], isFalse);
+
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'nw006-disconnect-not-removal',
+            receiptType: groupMessageReceiptTypeDelivered,
+          ),
+          isEmpty,
+        );
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'nw006-disconnect-not-removal',
+            receiptType: groupMessageReceiptTypeRead,
+          ),
+          isEmpty,
+        );
+        expect(
+          (await groupRepo.getMembers(
+            'group-1',
+          )).map((member) => member.peerId),
+          containsAll(<String>['peer-1', disconnectedPeerId, onlinePeerId]),
+        );
+      },
+    );
+
+    test(
+      'NW-009 relay probe failure keeps active members as durable recipients',
+      () async {
+        final joinedAt = DateTime.utc(2026, 5, 13, 12);
+        const probedPeerId = 'peer-nw009-bob';
+        const onlinePeerId = 'peer-nw009-charlie';
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: probedPeerId,
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw009-bob',
+            joinedAt: joinedAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: onlinePeerId,
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw009-charlie',
+            joinedAt: joinedAt.add(const Duration(minutes: 2)),
+          ),
+        );
+        final membersBefore = (await groupRepo.getMembers(
+          'group-1',
+        )).map((member) => member.peerId).toSet();
+
+        bridge.responses['relay:probe'] = {
+          'ok': false,
+          'errorCode': 'NO_RESERVATION',
+          'errorMessage': 'simulated relay probe failure',
+        };
+        final probeResult = await callP2PRelayProbe(
+          bridge,
+          peerId: probedPeerId,
+        );
+        expect(probeResult['ok'], isFalse);
+        expect(probeResult['errorCode'], 'NO_RESERVATION');
+
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw009-relay-probe-failure',
+          'topicPeers': 1,
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? message;
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'NW-009 relay probe failure keeps Bob active',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'nw009-relay-probe-failure',
+            timestamp: joinedAt.add(const Duration(minutes: 3)),
+          );
+        });
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message!.inboxStored, isTrue);
+
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        final recipientPeerIds =
+            (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>();
+        expect(recipientPeerIds, unorderedEquals([probedPeerId, onlinePeerId]));
+        expect(recipientPeerIds, isNot(contains('peer-1')));
+
+        final replay = _decodedGroupInboxReplayPayload(bridge);
+        expect(replay['messageId'], 'nw009-relay-probe-failure');
+        expect(replay['senderId'], 'peer-1');
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final details = timing['details'] as Map<String, dynamic>;
+        expect(details['outcome'], 'success');
+        expect(details['topicPeers'], 1);
+        expect(details['expectedRecipientCount'], 2);
+        expect(details['liveFanoutState'], 'partial_peers');
+        expect(details['recipientReceiptClaimed'], isFalse);
+
+        expect(
+          await msgRepo.getReceiptsForMessage(
+            'group-1',
+            'nw009-relay-probe-failure',
+            receiptType: groupMessageReceiptTypeDelivered,
+          ),
+          isEmpty,
+        );
+        expect(
+          (await groupRepo.getMembers(
+            'group-1',
+          )).map((member) => member.peerId).toSet(),
+          membersBefore,
+        );
+      },
+    );
+
     test('GP-005 zero topic peers records durable fallback custody', () async {
       await groupRepo.saveMember(
         GroupMember(
@@ -3699,6 +5385,173 @@ void main() {
     );
 
     test(
+      'IR-007 publish success plus inbox failure is pending and inbox retry closes same id',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 5, 13, 0, 2),
+          ),
+        );
+        final retryBridge = _FailFirstNInboxStoreBridge(failCount: 1);
+        retryBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'ir007-pending-inbox-retry',
+          'topicPeers': 1,
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: retryBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'IR-007 pending inbox retry',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'ir007-pending-inbox-retry',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, 'ir007-pending-inbox-retry');
+        expect(message.status, 'pending');
+        expect(message.wireEnvelope, isNull);
+        expect(message.inboxStored, isFalse);
+        expect(message.inboxRetryPayload, isNotNull);
+
+        final saved = await msgRepo.getMessage('ir007-pending-inbox-retry');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'pending');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxStored, isFalse);
+        expect(saved.inboxRetryPayload, isNotNull);
+        final persistedRetryEnvelope = _offlineReplayEnvelopeFromRetryPayload(
+          saved.inboxRetryPayload!,
+        );
+        expect(
+          persistedRetryEnvelope['messageId'],
+          'ir007-pending-inbox-retry',
+        );
+
+        final inboxRetryRows = await msgRepo.getMessagesWithFailedInboxStore();
+        expect(inboxRetryRows.map((row) => row.id), [
+          'ir007-pending-inbox-retry',
+        ]);
+
+        final retried = await retryFailedGroupInboxStores(
+          bridge: retryBridge,
+          msgRepo: msgRepo,
+        );
+
+        expect(retried, 1);
+        final recovered = await msgRepo.getMessage('ir007-pending-inbox-retry');
+        expect(recovered, isNotNull);
+        expect(recovered!.id, 'ir007-pending-inbox-retry');
+        expect(recovered.status, 'sent');
+        expect(recovered.inboxStored, isTrue);
+        expect(recovered.inboxRetryPayload, isNull);
+        expect(_groupInboxStoreReplayMessageIds(retryBridge), [
+          'ir007-pending-inbox-retry',
+          'ir007-pending-inbox-retry',
+        ]);
+        expect(
+          retryBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          hasLength(1),
+        );
+        expect(
+          retryBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+          hasLength(2),
+        );
+
+        final page = await msgRepo.getMessagesPage('group-1');
+        expect(
+          page.where(
+            (row) =>
+                !row.isIncoming && row.text == 'IR-007 pending inbox retry',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'IR-007 publish failure plus inbox failure is failed and owned by message retry',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 5, 13, 0, 3),
+          ),
+        );
+        final failBridge = _InboxStoreFailBridge();
+        failBridge.responses['group:publish'] = {
+          'ok': false,
+          'errorCode': 'PUBLISH_FAILED',
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: failBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'IR-007 failed message retry',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'ir007-failed-message-retry',
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNotNull);
+        expect(message!.id, 'ir007-failed-message-retry');
+        expect(message.status, 'failed');
+        expect(message.wireEnvelope, isNotNull);
+        expect(message.inboxStored, isFalse);
+        expect(message.inboxRetryPayload, isNotNull);
+
+        final saved = await msgRepo.getMessage('ir007-failed-message-retry');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'failed');
+        expect(saved.wireEnvelope, isNotNull);
+        expect(saved.inboxStored, isFalse);
+        expect(saved.inboxRetryPayload, isNotNull);
+        final inboxOnlyRows = await msgRepo.getMessagesWithFailedInboxStore();
+        expect(
+          inboxOnlyRows.map((row) => row.id),
+          isNot(contains('ir007-failed-message-retry')),
+        );
+        final failedRows = await msgRepo.getFailedOutgoingMessages();
+        expect(failedRows.map((row) => row.id), ['ir007-failed-message-retry']);
+        expect(
+          failBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          hasLength(1),
+        );
+        expect(
+          failBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+          hasLength(1),
+        );
+
+        final page = await msgRepo.getMessagesPage('group-1');
+        expect(
+          page.where(
+            (row) =>
+                !row.isIncoming && row.text == 'IR-007 failed message retry',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
       'GI-006 inbox failure leaves message pending with retry payload and no durable mark',
       () async {
         final failBridge = _InboxStoreFailBridge();
@@ -3945,6 +5798,89 @@ void main() {
     );
 
     test(
+      'IR-014 group inbox store relay payload omits plaintext and secrets',
+      () async {
+        final privacyBridge = _OpaqueReplayBridge();
+        privacyBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-ir014-opaque',
+          'topicPeers': 1,
+        };
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 1, 2),
+          ),
+        );
+
+        const protectedText = 'IR014 private relay body alpha';
+        const protectedUsername = 'Alice IR014 Secret Name';
+        const inviteSecret = 'invite-token-ir014-beta';
+        const memberSecret = 'member-secret-ir014-gamma';
+        const groupKey = 'test-group-key-1';
+        final protectedFragments = [
+          protectedText,
+          protectedUsername,
+          inviteSecret,
+          memberSecret,
+          groupKey,
+        ];
+
+        final (result, message) = await sendGroupMessage(
+          bridge: privacyBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: '$protectedText $inviteSecret $memberSecret',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: protectedUsername,
+          messageId: 'msg-ir014-opaque',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        final inboxStoreCommand = privacyBridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        _expectNoProtectedFragments(inboxStoreCommand, protectedFragments);
+
+        final inboxPayload = _lastGroupInboxStorePayload(privacyBridge);
+        expect(inboxPayload.keys.toSet(), {
+          'groupId',
+          'message',
+          'recipientPeerIds',
+        });
+        expect(inboxPayload['groupId'], 'group-1');
+        expect(inboxPayload['recipientPeerIds'], ['peer-2']);
+        expect(inboxPayload.containsKey('pushTitle'), isFalse);
+        expect(inboxPayload.containsKey('pushBody'), isFalse);
+
+        final replayEnvelope =
+            jsonDecode(inboxPayload['message'] as String)
+                as Map<String, dynamic>;
+        expect(replayEnvelope['kind'], 'group_offline_replay');
+        expect(replayEnvelope['payloadType'], 'group_message');
+        expect(replayEnvelope['messageId'], 'msg-ir014-opaque');
+        expect(replayEnvelope['ciphertext'], startsWith('sealed:'));
+        expect(replayEnvelope['nonce'], 'opaque-replay-nonce');
+        expect(replayEnvelope.containsKey('text'), isFalse);
+        expect(replayEnvelope.containsKey('senderUsername'), isFalse);
+        _expectNoProtectedFragments(
+          replayEnvelope['signedPayload'] as String,
+          protectedFragments,
+        );
+      },
+    );
+
+    test(
       'peers > 0 returns pending before inbox store finishes and promotes to sent in background',
       () async {
         final gatedBridge = _GatedInboxStoreBridge();
@@ -4136,7 +6072,7 @@ void main() {
     );
 
     test(
-      'publish timeout + inbox OK surfaces durable success instead of failed',
+      'DE-008 publish timeout with durable inbox custody is visible sent success (publish timeout + inbox OK surfaces durable success instead of failed)',
       () async {
         final timeoutPublishBridge = FakeBridge(
           initialResponses: {
@@ -4164,12 +6100,209 @@ void main() {
         expect(message.wireEnvelope, isNull);
         expect(message.inboxRetryPayload, isNull);
 
+        final page = await msgRepo.getMessagesPage('group-1');
+        expect(page, hasLength(1));
+        expect(page.single.id, 'msg-publish-timeout-inbox-ok');
+        expect(page.single.isIncoming, isFalse);
+        expect(page.single.status, 'sent');
+
         final saved = await msgRepo.getMessage('msg-publish-timeout-inbox-ok');
         expect(saved, isNotNull);
         expect(saved!.status, 'sent');
         expect(saved.inboxStored, isTrue);
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNull);
+      },
+    );
+
+    test(
+      'DE-008 publish timeout without durable inbox custody leaves one visible failed retryable row',
+      () async {
+        final timeoutNoCustodyBridge = _InboxStoreOkFalseBridge();
+        timeoutNoCustodyBridge.responses['group:publish'] = {
+          'ok': false,
+          'errorCode': 'BRIDGE_TIMEOUT',
+          'errorMessage': 'publish timed out',
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: timeoutNoCustodyBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Publish timed out without custody',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-de008-publish-timeout-no-custody',
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNotNull);
+        expect(message!.id, 'msg-de008-publish-timeout-no-custody');
+        expect(message.status, 'failed');
+        expect(message.wireEnvelope, isNotNull);
+        expect(message.inboxRetryPayload, isNotNull);
+        expect(message.inboxStored, isFalse);
+        expect(timeoutNoCustodyBridge.commandLog, contains('group:publish'));
+        expect(timeoutNoCustodyBridge.commandLog, contains('group:inboxStore'));
+
+        final page = await msgRepo.getMessagesPage('group-1');
+        expect(page, hasLength(1));
+        final visible = page.single;
+        expect(visible.id, 'msg-de008-publish-timeout-no-custody');
+        expect(visible.isIncoming, isFalse);
+        expect(visible.status, 'failed');
+        expect(visible.wireEnvelope, isNotNull);
+        expect(visible.inboxRetryPayload, isNotNull);
+        expect(visible.inboxStored, isFalse);
+
+        final failedOutgoing = await msgRepo.getFailedOutgoingMessages();
+        expect(failedOutgoing.map((row) => row.id), [
+          'msg-de008-publish-timeout-no-custody',
+        ]);
+
+        final failedInboxStores = await msgRepo
+            .getMessagesWithFailedInboxStore();
+        expect(
+          failedInboxStores.map((row) => row.id),
+          isNot(contains('msg-de008-publish-timeout-no-custody')),
+        );
+      },
+    );
+
+    test(
+      'BB-013 group:publish timeout without durable inbox custody leaves failed retryable state',
+      () async {
+        final timeoutNoCustodyBridge = _InboxStoreOkFalseBridge();
+        timeoutNoCustodyBridge.responses['group:publish'] = {
+          'ok': false,
+          'errorCode': 'BRIDGE_TIMEOUT',
+          'errorMessage': 'publish timed out',
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: timeoutNoCustodyBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Publish timed out, inbox did not store',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-bb013-publish-timeout-no-custody',
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
+        expect(message.inboxStored, isFalse);
+        expect(message.inboxRetryPayload, isNotNull);
+        expect(message.wireEnvelope, isNotNull);
+        expect(timeoutNoCustodyBridge.commandLog, contains('group:publish'));
+        expect(timeoutNoCustodyBridge.commandLog, contains('group:inboxStore'));
+
+        final saved = await msgRepo.getMessage(
+          'msg-bb013-publish-timeout-no-custody',
+        );
+        expect(saved, isNotNull);
+        expect(saved!.status, 'failed');
+        expect(saved.inboxStored, isFalse);
+        expect(saved.inboxRetryPayload, isNotNull);
+        expect(saved.wireEnvelope, isNotNull);
+      },
+    );
+
+    test(
+      'BB-015 native publish failures leave one visible failed retryable row',
+      () async {
+        final failures = <String, Map<String, String>>{
+          'NULL_RESPONSE': {
+            'errorCode': 'NULL_RESPONSE',
+            'errorMessage': 'Native bridge returned null',
+          },
+          'MISSING_PLUGIN': {
+            'errorCode': 'MISSING_PLUGIN',
+            'errorMessage': 'Rebuild the app with the updated native bridge.',
+          },
+          'PLATFORM_ERROR': {
+            'errorCode': 'PLATFORM_ERROR',
+            'errorMessage': 'Platform channel error',
+          },
+          'MALFORMED_RESPONSE': {
+            'errorCode': 'MALFORMED_RESPONSE',
+            'errorMessage': 'Native bridge returned malformed JSON',
+          },
+        };
+
+        for (final failure in failures.entries) {
+          final failureBridge = _InboxStoreOkFalseBridge();
+          failureBridge.responses['group:publish'] = {
+            'ok': false,
+            ...failure.value,
+          };
+          final suffix = failure.key.toLowerCase().replaceAll('_', '-');
+          final messageId = 'msg-bb015-$suffix';
+
+          final (result, message) = await sendGroupMessage(
+            bridge: failureBridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'BB-015 ${failure.key}',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: messageId,
+          );
+
+          expect(result, SendGroupMessageResult.error, reason: failure.key);
+          expect(message, isNotNull, reason: failure.key);
+          expect(message!.id, messageId, reason: failure.key);
+          expect(message.status, 'failed', reason: failure.key);
+          expect(message.wireEnvelope, isNotNull, reason: failure.key);
+          expect(message.inboxRetryPayload, isNotNull, reason: failure.key);
+          expect(message.inboxStored, isFalse, reason: failure.key);
+          expect(
+            failureBridge.commandLog,
+            contains('group:publish'),
+            reason: failure.key,
+          );
+          expect(
+            failureBridge.commandLog,
+            contains('group:inboxStore'),
+            reason: failure.key,
+          );
+
+          final saved = await msgRepo.getMessage(messageId);
+          expect(saved, isNotNull, reason: failure.key);
+          expect(saved!.status, 'failed', reason: failure.key);
+          expect(saved.wireEnvelope, isNotNull, reason: failure.key);
+          expect(saved.inboxRetryPayload, isNotNull, reason: failure.key);
+          expect(saved.inboxStored, isFalse, reason: failure.key);
+
+          final visibleRows = (await msgRepo.getMessagesPage(
+            'group-1',
+          )).where((row) => row.id == messageId).toList();
+          expect(visibleRows, hasLength(1), reason: failure.key);
+          expect(
+            visibleRows.where(
+              (row) => row.status == 'sending' || row.status == 'pending',
+            ),
+            isEmpty,
+            reason: failure.key,
+          );
+
+          final failedOutgoing = await msgRepo.getFailedOutgoingMessages();
+          expect(
+            failedOutgoing.map((row) => row.id),
+            contains(messageId),
+            reason: failure.key,
+          );
+        }
       },
     );
 

@@ -90,6 +90,7 @@ import 'package:flutter_app/core/database/migrations/065_group_history_gap_repai
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -305,7 +306,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 68,
+    version: 69,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -375,6 +376,7 @@ void main() async {
       await runGroupSyncReceiptsMigration(db);
       await runGroupInviteDeliveryAttemptsMigration(db);
       await runRemovedGroupMemberSnapshotsMigration(db);
+      await runGroupMessageLocalDeletionsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -575,6 +577,9 @@ void main() async {
       }
       if (oldVersion < 68) {
         await runRemovedGroupMemberSnapshotsMigration(db);
+      }
+      if (oldVersion < 69) {
+        await runGroupMessageLocalDeletionsMigration(db);
       }
     },
   );
@@ -1604,7 +1609,8 @@ void main() async {
   );
 
   // Create group message listener and wire bridge callback to stream
-  final groupMessageListener = GroupMessageListener(
+  late final GroupMessageListener groupMessageListener;
+  groupMessageListener = GroupMessageListener(
     groupRepo: groupRepository,
     msgRepo: groupMessageRepository,
     bridge: bridge,
@@ -1623,6 +1629,21 @@ void main() async {
     groupDiagnosticEvents: groupDiagnosticEventStream,
     pendingKeyRepairRepo: groupPendingKeyRepairRepository,
     requestGroupKeyRepair: emitGroupKeyRepairRequest,
+    recoverFromDispatcherOverflow: (_) async {
+      final identity = await repository.loadIdentity();
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        reactionRepo: reactionRepository,
+        pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+        historyGapRepairRepo: groupHistoryGapRepairRepository,
+        requestGroupKeyRepair: emitGroupKeyRepairRequest,
+        selfPeerId: identity?.peerId,
+      );
+    },
     appendGroupEventLogEntry:
         ({
           required groupId,
@@ -1716,6 +1737,7 @@ void main() async {
     getOwnDeviceId: groupIdentityCallbacks.getOwnDeviceId,
     retryPendingGroupKeyRepairs:
         groupPendingKeyRepairRunner.retryPendingRepairsForRequest,
+    requestGroupKeyRepair: emitGroupKeyRepairRequest,
     appendGroupEventLogEntry:
         ({
           required groupId,

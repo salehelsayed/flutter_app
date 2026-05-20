@@ -45,12 +45,17 @@ type GroupMember struct {
 
 // GroupConfig holds the configuration of a group.
 type GroupConfig struct {
-	Name        string        `json:"name"`
-	GroupType   GroupType     `json:"groupType"`
-	Description string        `json:"description,omitempty"`
-	Members     []GroupMember `json:"members"`
-	CreatedBy   string        `json:"createdBy"`
-	CreatedAt   string        `json:"createdAt"`
+	Name              string        `json:"name"`
+	GroupType         GroupType     `json:"groupType"`
+	Description       string        `json:"description,omitempty"`
+	AvatarBlobId      string        `json:"avatarBlobId,omitempty"`
+	AvatarMime        string        `json:"avatarMime,omitempty"`
+	MetadataUpdatedAt string        `json:"metadataUpdatedAt,omitempty"`
+	ConfigVersion     string        `json:"configVersion,omitempty"`
+	StateHash         string        `json:"stateHash,omitempty"`
+	Members           []GroupMember `json:"members"`
+	CreatedBy         string        `json:"createdBy"`
+	CreatedAt         string        `json:"createdAt"`
 }
 
 // GroupKeyInfo holds the symmetric encryption key for a group.

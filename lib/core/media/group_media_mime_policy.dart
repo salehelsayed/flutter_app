@@ -24,6 +24,7 @@ class GroupMediaMimePolicy {
     'audio/aac': 'audio',
     'audio/mpeg': 'audio',
     'audio/ogg': 'audio',
+    'application/octet-stream': 'file',
   };
 
   static String? normalizeMime(String? mime) {

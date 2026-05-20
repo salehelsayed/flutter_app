@@ -3,13 +3,18 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+const groupInboxSyntheticSinceCursorPrefix = "mknoon-since-ms:"
 
 // groupInboxRequest is the JSON envelope sent to the relay server
 // for group inbox operations.
@@ -248,7 +253,7 @@ func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]Inbox
 	result, err := n.groupInboxRetrieve(groupInboxRequest{
 		Action:         "group_retrieve",
 		GroupId:        groupId,
-		SinceTimestamp: sinceTimestamp,
+		SinceTimestamp: inclusiveGroupInboxSinceTimestamp(sinceTimestamp),
 		Limit:          50,
 	})
 	if err != nil {
@@ -275,6 +280,26 @@ func (n *Node) GroupInboxRetrieveWithCursorResult(groupId, cursor string, limit 
 		limit = 50
 	}
 
+	if sinceTimestamp, ok, err := parseGroupInboxSyntheticSinceCursor(cursor); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		result, err := n.groupInboxRetrieve(groupInboxRequest{
+			Action:         "group_retrieve",
+			GroupId:        groupId,
+			SinceTimestamp: inclusiveGroupInboxSinceTimestamp(sinceTimestamp),
+			Limit:          limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &GroupInboxCursorResult{
+			Messages:    result.Messages,
+			NextCursor:  result.NextCursor,
+			HistoryGaps: result.HistoryGaps,
+		}, nil
+	}
+
 	result, err := n.groupInboxRetrieve(groupInboxRequest{
 		Action:  "group_retrieve_cursor",
 		GroupId: groupId,
@@ -289,6 +314,25 @@ func (n *Node) GroupInboxRetrieveWithCursorResult(groupId, cursor string, limit 
 		NextCursor:  result.NextCursor,
 		HistoryGaps: result.HistoryGaps,
 	}, nil
+}
+
+func parseGroupInboxSyntheticSinceCursor(cursor string) (int64, bool, error) {
+	if !strings.HasPrefix(cursor, groupInboxSyntheticSinceCursorPrefix) {
+		return 0, false, nil
+	}
+	raw := strings.TrimPrefix(cursor, groupInboxSyntheticSinceCursorPrefix)
+	sinceTimestamp, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || sinceTimestamp <= 0 {
+		return 0, true, fmt.Errorf("invalid synthetic group inbox cursor")
+	}
+	return sinceTimestamp, true, nil
+}
+
+func inclusiveGroupInboxSinceTimestamp(sinceTimestamp int64) int64 {
+	if sinceTimestamp <= 0 {
+		return sinceTimestamp
+	}
+	return sinceTimestamp - 1
 }
 
 // GroupHistoryRepairRange requests a bounded encrypted replay-envelope range
@@ -343,6 +387,44 @@ func (n *Node) GroupHistoryRepairRange(req GroupHistoryRepairRangeRequest) (*Gro
 }
 
 func (n *Node) groupInboxRetrieve(req groupInboxRequest) (*groupInboxResponse, error) {
+	result, err := n.groupInboxRetrieveOnce(req)
+	if err == nil || !isTransientGroupInboxRelayStreamError(err) {
+		return result, err
+	}
+
+	log.Printf("[GROUP_INBOX] Retrieve %s hit transient relay stream error, reconnecting relays before retry: %v", req.Action, err)
+	if recoverErr := n.recoverGroupInboxRelayStream(err); recoverErr != nil {
+		log.Printf("[GROUP_INBOX] Relay reconnect after group inbox stream error failed: %v", recoverErr)
+		return nil, err
+	}
+
+	return n.groupInboxRetrieveOnce(req)
+}
+
+func (n *Node) recoverGroupInboxRelayStream(err error) error {
+	if n.groupInboxRecoverHook != nil {
+		return n.groupInboxRecoverHook(err)
+	}
+	_, recoverErr := n.ReconnectRelays()
+	return recoverErr
+}
+
+func isTransientGroupInboxRelayStreamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "read response") &&
+		(strings.Contains(msg, "eof") ||
+			strings.Contains(msg, "reset") ||
+			strings.Contains(msg, "timeout") ||
+			strings.Contains(msg, "deadline"))
+}
+
+func (n *Node) groupInboxRetrieveOnce(req groupInboxRequest) (*groupInboxResponse, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()

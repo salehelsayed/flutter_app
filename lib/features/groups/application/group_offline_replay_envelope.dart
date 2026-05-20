@@ -89,7 +89,13 @@ Future<String> buildGroupOfflineReplayEnvelope({
   final normalizedTransportPeerId =
       _trimToNull(senderTransportPeerId) ?? normalizedDeviceId;
   final normalizedMessageId = _trimToNull(messageId);
-  final recipientSetHash = _recipientSetHash(recipientPeerIds);
+  final normalizedRecipientPeerIds = _normalizedRecipientPeerIds(
+    recipientPeerIds,
+  );
+  final recipientSetHash = _recipientSetHashFromNormalized(
+    normalizedRecipientPeerIds,
+  );
+  final normalizedSenderKeyPackageId = _trimToNull(senderKeyPackageId);
   final signedPayload = _buildReplaySignedPayload(
     groupId: groupId,
     payloadType: payloadType,
@@ -102,7 +108,7 @@ Future<String> buildGroupOfflineReplayEnvelope({
     senderDeviceId: normalizedDeviceId,
     senderTransportPeerId: normalizedTransportPeerId,
     senderPublicKey: resolvedSenderPublicKey,
-    senderKeyPackageId: _trimToNull(senderKeyPackageId),
+    senderKeyPackageId: normalizedSenderKeyPackageId,
     recipientSetHash: recipientSetHash,
   );
   final signResult = await callSignPayload(
@@ -121,13 +127,14 @@ Future<String> buildGroupOfflineReplayEnvelope({
     'groupId': groupId,
     'payloadType': payloadType,
     'keyEpoch': resolvedKey.keyGeneration,
-    if (normalizedMessageId != null) 'messageId': normalizedMessageId,
+    'messageId': ?normalizedMessageId,
     'senderPeerId': resolvedSenderPeerId,
     'senderDeviceId': normalizedDeviceId,
     'senderTransportPeerId': normalizedTransportPeerId,
     'senderPublicKey': resolvedSenderPublicKey,
-    if (_trimToNull(senderKeyPackageId) != null)
-      'senderKeyPackageId': _trimToNull(senderKeyPackageId),
+    'senderKeyPackageId': ?normalizedSenderKeyPackageId,
+    if (normalizedRecipientPeerIds.isNotEmpty)
+      'recipientPeerIds': normalizedRecipientPeerIds,
     'recipientSetHash': recipientSetHash,
     'ciphertext': ciphertext,
     'nonce': nonce,
@@ -261,6 +268,7 @@ Future<String> decryptGroupOfflineReplayEnvelope({
   required String groupId,
   required Map<String, dynamic> envelope,
   String? expectedRelayPeerId,
+  String? expectedRecipientPeerId,
 }) async {
   final verification = await _verifyReplaySignature(
     bridge: bridge,
@@ -268,6 +276,7 @@ Future<String> decryptGroupOfflineReplayEnvelope({
     fallbackGroupId: groupId,
     envelope: envelope,
     expectedRelayPeerId: expectedRelayPeerId,
+    expectedRecipientPeerId: expectedRecipientPeerId,
   );
   final keyEpoch = envelope['keyEpoch'] as int;
   final keyInfo = await groupRepo.getKeyByGeneration(groupId, keyEpoch);
@@ -294,6 +303,7 @@ Future<_ReplaySignatureVerification> _verifyReplaySignature({
   required String fallbackGroupId,
   required Map<String, dynamic> envelope,
   String? expectedRelayPeerId,
+  String? expectedRecipientPeerId,
 }) async {
   final groupId = _readRequiredString(
     envelope,
@@ -341,6 +351,19 @@ Future<_ReplaySignatureVerification> _verifyReplaySignature({
     'recipientSetHash',
     reason: 'missing_recipient_hash',
   );
+  final recipientPeerIds = _readOptionalRecipientPeerIds(
+    envelope['recipientPeerIds'],
+  );
+  if (recipientPeerIds != null &&
+      _recipientSetHashFromNormalized(recipientPeerIds) != recipientSetHash) {
+    throw GroupOfflineReplaySignatureException('recipient_hash_mismatch');
+  }
+  final expectedRecipient = _trimToNull(expectedRecipientPeerId);
+  if (expectedRecipient != null &&
+      recipientPeerIds != null &&
+      !recipientPeerIds.contains(expectedRecipient)) {
+    throw GroupOfflineReplaySignatureException('recipient_not_entitled');
+  }
 
   if (envelope['signatureAlgorithm'] != groupOfflineReplaySignatureAlgorithm) {
     throw GroupOfflineReplaySignatureException('signature_algorithm_invalid');
@@ -623,13 +646,12 @@ String _buildReplaySignedPayloadFromHashes({
     'groupId': groupId,
     'payloadType': payloadType,
     'keyEpoch': keyEpoch,
-    if (messageId != null) 'messageId': messageId,
+    'messageId': ?messageId,
     'senderPeerId': senderPeerId,
-    if (senderDeviceId != null) 'senderDeviceId': senderDeviceId,
-    if (senderTransportPeerId != null)
-      'senderTransportPeerId': senderTransportPeerId,
+    'senderDeviceId': ?senderDeviceId,
+    'senderTransportPeerId': ?senderTransportPeerId,
     'senderSigningPublicKey': senderPublicKey,
-    if (senderKeyPackageId != null) 'senderKeyPackageId': senderKeyPackageId,
+    'senderKeyPackageId': ?senderKeyPackageId,
     'ciphertextHash': ciphertextHash,
     'nonceHash': nonceHash,
     'plaintextHash': plaintextHash,
@@ -637,7 +659,7 @@ String _buildReplaySignedPayloadFromHashes({
   });
 }
 
-String _recipientSetHash(List<String>? recipientPeerIds) {
+List<String> _normalizedRecipientPeerIds(List<String>? recipientPeerIds) {
   final normalized =
       (recipientPeerIds ?? const <String>[])
           .map((peerId) => peerId.trim())
@@ -645,8 +667,11 @@ String _recipientSetHash(List<String>? recipientPeerIds) {
           .toSet()
           .toList()
         ..sort();
-  return _hashString(jsonEncode(normalized));
+  return normalized;
 }
+
+String _recipientSetHashFromNormalized(List<String> recipientPeerIds) =>
+    _hashString(jsonEncode(recipientPeerIds));
 
 String _hashString(String value) =>
     sha256.convert(utf8.encode(value)).toString();
@@ -669,6 +694,21 @@ String _readRequiredString(
     throw GroupOfflineReplaySignatureException(reason);
   }
   return value.trim();
+}
+
+List<String>? _readOptionalRecipientPeerIds(Object? value) {
+  if (value == null) return null;
+  if (value is! List) {
+    throw GroupOfflineReplaySignatureException('recipient_list_malformed');
+  }
+  final recipientPeerIds = <String>[];
+  for (final entry in value) {
+    if (entry is! String || entry.trim().isEmpty) {
+      throw GroupOfflineReplaySignatureException('recipient_list_malformed');
+    }
+    recipientPeerIds.add(entry.trim());
+  }
+  return _normalizedRecipientPeerIds(recipientPeerIds);
 }
 
 Map<String, Object?>? _decodeStringMap(String value) {

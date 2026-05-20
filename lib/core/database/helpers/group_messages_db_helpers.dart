@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import 'group_message_local_deletions_db_helpers.dart';
 
 const _groupRemovalCutoffMessageIdLike = 'sys-member_removed_cutoff:%';
 
@@ -18,6 +19,15 @@ Future<void> dbInsertGroupMessage(
   );
 
   try {
+    if (await dbIsGroupMessageLocallyDeleted(db, id)) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'GROUP_MESSAGES_DB_INSERT_SKIPPED_LOCAL_DELETION',
+        details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+      );
+      return;
+    }
+
     await db.insert(
       'group_messages',
       row,
@@ -460,6 +470,23 @@ Future<int> dbDeleteGroupMessagesForGroup(
   );
 
   try {
+    final existingRows = await db.query(
+      'group_messages',
+      columns: ['id', 'group_id'],
+      where: 'group_id = ?',
+      whereArgs: [groupId],
+    );
+    for (final row in existingRows) {
+      final messageId = row['id'] as String?;
+      final rowGroupId = row['group_id'] as String?;
+      if (messageId == null || rowGroupId == null) continue;
+      await dbUpsertGroupMessageLocalDeletion(
+        db,
+        messageId: messageId,
+        groupId: rowGroupId,
+      );
+    }
+
     final count = await db.delete(
       'group_messages',
       where: 'group_id = ?',
@@ -492,6 +519,24 @@ Future<void> dbDeleteGroupMessage(DatabaseExecutor db, String id) async {
   );
 
   try {
+    final existingRows = await db.query(
+      'group_messages',
+      columns: ['group_id'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (existingRows.isNotEmpty) {
+      final groupId = existingRows.first['group_id'] as String?;
+      if (groupId != null && groupId.isNotEmpty) {
+        await dbUpsertGroupMessageLocalDeletion(
+          db,
+          messageId: id,
+          groupId: groupId,
+        );
+      }
+    }
+
     await db.delete('group_messages', where: 'id = ?', whereArgs: [id]);
 
     emitFlowEvent(

@@ -20,7 +20,7 @@ void main() {
         'role': role,
         'public_key': publicKey,
         'ml_kem_public_key': mlKemPublicKey,
-        if (devicesJson != null) 'devices_json': devicesJson,
+        'devices_json': ?devicesJson,
         'joined_at': joinedAt,
       };
     }
@@ -50,7 +50,9 @@ void main() {
 
     test('equality based on groupId and peerId', () {
       final a = GroupMember.fromMap(makeMap(groupId: 'g1', peerId: 'p1'));
-      final b = GroupMember.fromMap(makeMap(groupId: 'g1', peerId: 'p1', username: 'Bob'));
+      final b = GroupMember.fromMap(
+        makeMap(groupId: 'g1', peerId: 'p1', username: 'Bob'),
+      );
       final c = GroupMember.fromMap(makeMap(groupId: 'g1', peerId: 'p2'));
 
       expect(a, equals(b));
@@ -101,27 +103,52 @@ void main() {
       expect(parsed.findDeviceById('bob-tablet', activeOnly: false), isNotNull);
     });
 
-    test('legacy fallback device is explicit and member equality stays scoped', () {
-      final legacy = GroupMember.fromMap(makeMap(peerId: 'member-legacy'));
-
-      expect(legacy.devices, isEmpty);
-      expect(legacy.activeDevices, isEmpty);
-      expect(legacy.activeDevicesWithLegacyFallback(), hasLength(1));
-      expect(
-        legacy.activeDevicesWithLegacyFallback().single.transportPeerId,
-        'member-legacy',
+    test('config JSON preserves joined interval for invite replay', () {
+      final joinedAt = DateTime.parse('2026-01-15T12:03:00.000Z');
+      final member = GroupMember(
+        groupId: 'group-1',
+        peerId: 'member-b',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'member-pk',
+        joinedAt: joinedAt,
       );
 
-      final sameMemberWithDevice = legacy.copyWith(
-        devices: [
-          const GroupMemberDeviceIdentity(
-            deviceId: 'new-device',
-            transportPeerId: '12D3KooWNewDevice',
-            deviceSigningPublicKey: 'device-pk',
-          ),
-        ],
+      final config = member.toConfigJson();
+      final parsed = GroupMember.fromConfigMap(
+        groupId: 'group-1',
+        map: config,
+        joinedAt: DateTime.parse('2026-01-16T12:00:00.000Z'),
       );
-      expect(legacy, equals(sameMemberWithDevice));
+
+      expect(config['joinedAt'], '2026-01-15T12:03:00.000Z');
+      expect(parsed.joinedAt, joinedAt);
     });
+
+    test(
+      'legacy fallback device is explicit and member equality stays scoped',
+      () {
+        final legacy = GroupMember.fromMap(makeMap(peerId: 'member-legacy'));
+
+        expect(legacy.devices, isEmpty);
+        expect(legacy.activeDevices, isEmpty);
+        expect(legacy.activeDevicesWithLegacyFallback(), hasLength(1));
+        expect(
+          legacy.activeDevicesWithLegacyFallback().single.transportPeerId,
+          'member-legacy',
+        );
+
+        final sameMemberWithDevice = legacy.copyWith(
+          devices: [
+            const GroupMemberDeviceIdentity(
+              deviceId: 'new-device',
+              transportPeerId: '12D3KooWNewDevice',
+              deviceSigningPublicKey: 'device-pk',
+            ),
+          ],
+        );
+        expect(legacy, equals(sameMemberWithDevice));
+      },
+    );
   });
 }

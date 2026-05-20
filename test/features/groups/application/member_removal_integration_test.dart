@@ -38,6 +38,12 @@ Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
       as Map<String, dynamic>;
 }
 
+Map<String, dynamic> _decodeDirectKeyUpdatePayload(String message) {
+  final envelope = jsonDecode(message) as Map<String, dynamic>;
+  final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+  return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+}
+
 Map<String, dynamic> _groupInboxStorePayloadForMessage(
   FakeBridge bridge,
   String messageId,
@@ -160,6 +166,15 @@ void main() {
       ),
     );
 
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'initial-key-epoch-1',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+
     bridge.responses['group:generateNextKey'] = {
       'ok': true,
       'groupKey': 'rotated-key-abc',
@@ -191,66 +206,113 @@ void main() {
       );
 
       // Verify the sequence: updateConfig first, then generate the next key,
-      // then encrypt/distribute, then updateKey, then publish key_rotated.
+      // then encrypt/distribute, then promote updateKey, then publish key_rotated.
       final updateConfigIdx = bridge.commandLog.indexOf('group:updateConfig');
-      final generateIdx = bridge.commandLog.indexOf('group:generateNextKey');
-      final firstEncryptIdx = bridge.commandLog.indexOf('message.encrypt');
-      final updateKeyIdx = bridge.commandLog.indexOf('group:updateKey');
-      final publishIdx = bridge.commandLog.indexOf('group:publish');
+      int commandIndex(String command, {int? keyEpoch}) {
+        for (var i = 0; i < bridge.sentMessages.length; i++) {
+          final parsed =
+              jsonDecode(bridge.sentMessages[i]) as Map<String, dynamic>;
+          if (parsed['cmd'] != command) {
+            continue;
+          }
+          if (keyEpoch == null) {
+            return i;
+          }
+          final payload = parsed['payload'];
+          if (payload is Map<String, dynamic> &&
+              payload['keyEpoch'] == keyEpoch) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      final resyncUpdateKeyIdx = commandIndex('group:updateKey', keyEpoch: 1);
+      final generateIdx = commandIndex('group:generateNextKey');
+      final firstEncryptIdx = commandIndex('message.encrypt');
+      final promoteUpdateKeyIdx = commandIndex('group:updateKey', keyEpoch: 2);
+      final publishIdx = commandIndex('group:publish');
 
       expect(updateConfigIdx, greaterThanOrEqualTo(0));
-      expect(generateIdx, greaterThan(updateConfigIdx));
+      expect(resyncUpdateKeyIdx, greaterThan(updateConfigIdx));
+      expect(generateIdx, greaterThan(resyncUpdateKeyIdx));
       expect(firstEncryptIdx, greaterThan(generateIdx));
-      expect(updateKeyIdx, greaterThan(firstEncryptIdx));
-      expect(publishIdx, greaterThan(updateKeyIdx));
+      expect(promoteUpdateKeyIdx, greaterThan(firstEncryptIdx));
+      expect(publishIdx, greaterThan(promoteUpdateKeyIdx));
     },
   );
 
-  test('rotated key is NOT distributed to removed member', () async {
-    // Remove Alice
-    await removeGroupMember(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      memberPeerId: 'peer-alice',
-    );
+  test(
+    'KE-006 removal rotates key and excludes removed member; rotated key is NOT distributed to removed member',
+    () async {
+      // Remove Alice
+      await removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        memberPeerId: 'peer-alice',
+      );
 
-    final remainingMembers = await groupRepo.getMembers(groupId);
-    expect(
-      remainingMembers.map((member) => member.peerId),
-      containsAll(<String>[adminPeerId, 'peer-bob']),
-    );
-    expect(
-      remainingMembers.map((member) => member.peerId),
-      isNot(contains('peer-alice')),
-    );
+      final remainingMembers = await groupRepo.getMembers(groupId);
+      expect(
+        remainingMembers.map((member) => member.peerId),
+        containsAll(<String>[adminPeerId, 'peer-bob']),
+      );
+      expect(
+        remainingMembers.map((member) => member.peerId),
+        isNot(contains('peer-alice')),
+      );
 
-    // Collect who receives the P2P key update
-    final sentMessages = <(String, String)>[];
+      // Collect who receives the P2P key update
+      final sentMessages = <(String, String)>[];
 
-    await rotateAndDistributeGroupKey(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      selfPeerId: adminPeerId,
-      senderPublicKey: 'pk-admin',
-      senderPrivateKey: 'sk-admin',
-      senderUsername: 'Admin',
-      sendP2PMessage: (peerId, message) async {
-        sentMessages.add((peerId, message));
-        return true;
-      },
-    );
+      final rotatedKey = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: adminPeerId,
+        senderPublicKey: 'pk-admin',
+        senderPrivateKey: 'sk-admin',
+        senderUsername: 'Admin',
+        sendP2PMessage: (peerId, message) async {
+          sentMessages.add((peerId, message));
+          return true;
+        },
+      );
 
-    // Only Bob should receive the key (not Alice, not self)
-    expect(sentMessages.length, 1);
-    expect(sentMessages.first.$1, 'peer-bob');
+      expect(rotatedKey, isNotNull);
+      expect(rotatedKey!.keyGeneration, 2);
+      expect(rotatedKey.encryptedKey, 'rotated-key-abc');
 
-    // Verify it's a proper group_key_update envelope
-    final envelope = jsonDecode(sentMessages.first.$2) as Map<String, dynamic>;
-    expect(envelope['type'], 'group_key_update');
-    expect(envelope['version'], '2');
-  });
+      final savedLatestKey = await groupRepo.getLatestKey(groupId);
+      expect(savedLatestKey, isNotNull);
+      expect(savedLatestKey!.keyGeneration, 2);
+      expect(savedLatestKey.encryptedKey, 'rotated-key-abc');
+
+      // Only Bob should receive the key (not Alice, not self)
+      expect(sentMessages.length, 1);
+      expect(sentMessages.first.$1, 'peer-bob');
+      expect(
+        sentMessages.map((entry) => entry.$1),
+        isNot(contains('peer-alice')),
+      );
+      expect(
+        sentMessages.map((entry) => entry.$1),
+        isNot(contains(adminPeerId)),
+      );
+
+      // Verify it's a proper group_key_update envelope
+      final envelope =
+          jsonDecode(sentMessages.first.$2) as Map<String, dynamic>;
+      expect(envelope['type'], 'group_key_update');
+      expect(envelope['version'], '2');
+      final keyPayload = _decodeDirectKeyUpdatePayload(sentMessages.first.$2);
+      expect(keyPayload['groupId'], groupId);
+      expect(keyPayload['recipientPeerId'], 'peer-bob');
+      expect(keyPayload['keyGeneration'], 2);
+      expect(keyPayload['encryptedKey'], 'rotated-key-abc');
+    },
+  );
 
   test('receiver processes key update and syncs Go validator', () async {
     // Simulate: admin rotates key and sends encrypted envelope to Bob

@@ -44,7 +44,7 @@ void main() {
     });
 
     testWidgets(
-      'Bob accepts a real encrypted invite, decrypts first-add and re-add group ciphertext',
+      'ML-007 re-add uses current group config and key while retained old key cannot decrypt',
       (tester) async {
         final alice = await _generateIdentity(
           bridge: bridge,

@@ -28,6 +28,7 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_change.
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -579,6 +580,7 @@ void main() {
       messageStreamController = StreamController<GroupMessage>.broadcast();
       wakeLockDriver = FakeUploadWakeLockDriver();
       UploadWakeLockController.debugReset(driver: wakeLockDriver);
+      groupRecoveryGate.resetForTest();
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-1',
@@ -592,6 +594,7 @@ void main() {
     tearDown(() {
       messageStreamController.close();
       UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+      groupRecoveryGate.resetForTest();
     });
 
     Widget buildWidget({
@@ -1946,6 +1949,29 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        final joinedAt = DateTime.utc(2026, 5, 13, 11);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: joinedAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-zero-topic-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-zero-topic-bob',
+            mlKemPublicKey: 'mlkem-zero-topic-bob',
+            joinedAt: joinedAt.add(const Duration(minutes: 1)),
+          ),
+        );
 
         bridge = FakeBridge(
           initialResponses: {
@@ -1975,6 +2001,145 @@ void main() {
         );
         expect(saved.status, 'sent');
         expect(saved.inboxStored, isTrue);
+      },
+    );
+
+    testWidgets(
+      'NW-007 zero topic peers keep active member UI and recovery banner',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final joinedAt = DateTime.utc(2026, 5, 13, 11);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: joinedAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-nw007-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw007-bob',
+            mlKemPublicKey: 'mlkem-nw007-bob',
+            joinedAt: joinedAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-nw007-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-nw007-charlie',
+            mlKemPublicKey: 'mlkem-nw007-charlie',
+            joinedAt: joinedAt.add(const Duration(minutes: 2)),
+          ),
+        );
+        await contactRepo.addContact(
+          ContactModel(
+            peerId: 'peer-nw007-bob',
+            publicKey: 'pk-nw007-bob',
+            rendezvous: '/ip4/127.0.0.1/tcp/4001',
+            username: 'Bob',
+            signature: 'sig-nw007-bob',
+            scannedAt: joinedAt.toIso8601String(),
+            mlKemPublicKey: 'mlkem-nw007-bob',
+          ),
+        );
+        await contactRepo.addContact(
+          ContactModel(
+            peerId: 'peer-nw007-charlie',
+            publicKey: 'pk-nw007-charlie',
+            rendezvous: '/ip4/127.0.0.1/tcp/4002',
+            username: 'Charlie',
+            signature: 'sig-nw007-charlie',
+            scannedAt: joinedAt.toIso8601String(),
+            mlKemPublicKey: 'mlkem-nw007-charlie',
+          ),
+        );
+        final membersBefore = (await groupRepo.getMembers(
+          group.id,
+        )).map((member) => member.peerId).toSet();
+        final removedStreamController = StreamController<String>.broadcast();
+        addTearDown(removedStreamController.close);
+        groupRecoveryGate.begin();
+        addTearDown(groupRecoveryGate.resetForTest);
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': true,
+              'messageId': 'nw007-zero-topic-peer-ui',
+              'topicPeers': 0,
+            },
+          },
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            removedStreamController: removedStreamController,
+          ),
+        );
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(const ValueKey('group-conversation-security-strip'))
+              .evaluate()
+              .isNotEmpty,
+        );
+
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(find.text('All 3 members verified'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-recovery-banner')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsNothing,
+        );
+        expect(find.text('You were removed from this group.'), findsNothing);
+        expect(find.byType(TextField), findsOneWidget);
+
+        await tester.enterText(
+          find.byType(TextField),
+          'NW-007 zero peers keep group active',
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(
+          find.text('NW-007 zero peers keep group active'),
+          findsOneWidget,
+        );
+        expect(find.text('All 3 members verified'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-recovery-banner')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsNothing,
+        );
+        expect(find.text('You were removed from this group.'), findsNothing);
+        expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(
+          (await groupRepo.getMembers(
+            group.id,
+          )).map((member) => member.peerId).toSet(),
+          membersBefore,
+        );
       },
     );
 
@@ -2478,6 +2643,46 @@ void main() {
       expect(find.byKey(const ValueKey('group-loading-shell')), findsNothing);
       expect(find.text('Loaded after delay'), findsOneWidget);
     });
+
+    testWidgets(
+      'IR-018 shows recovery state while restart replay is pending and live messages still arrive',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'ir018-stale-local', text: 'Local before replay'),
+        );
+        groupRecoveryGate.begin();
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          find.byKey(const ValueKey('group-recovery-banner')),
+          findsOneWidget,
+        );
+        expect(find.text('Local before replay'), findsOneWidget);
+
+        messageStreamController.add(
+          makeMessage(
+            id: 'ir018-live-during-recovery',
+            text: 'Live during replay recovery',
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Live during replay recovery'), findsOneWidget);
+
+        groupRecoveryGate.end();
+        await pumpFrames(tester, count: 5);
+
+        expect(
+          find.byKey(const ValueKey('group-recovery-banner')),
+          findsNothing,
+        );
+        expect(find.text('Live during replay recovery'), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'highlights the targeted message context when opened from a notification anchor',
@@ -3197,6 +3402,51 @@ void main() {
         );
       },
     );
+
+    testWidgets('ML-017 retained removed-member history opens read-only', (
+      tester,
+    ) async {
+      final group = makeChatGroup(role: GroupRole.member);
+      await groupRepo.saveGroup(group);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(id: 'ml017-old-history', text: 'ML-017 old history'),
+      );
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          reactionRepo: FakeReactionRepository(),
+          reactionReplayOutboxRepo: FakeGroupReactionReplayOutboxRepository(),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('ML-017 old history'), findsOneWidget);
+      expect(
+        find.text(
+          "You can read this group's history, but you are not an active member.",
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(TextField), findsNothing);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.canWrite, isFalse);
+      expect(screen.onQuoteReply, isNull);
+      expect(screen.onReactionSelected, isNull);
+    });
 
     testWidgets('sets tracker active on init', (tester) async {
       final group = makeChatGroup();

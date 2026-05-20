@@ -609,6 +609,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
         if (group != null) {
           final groupConfig = buildGroupConfigPayload(group, allMembers);
+          final removalReplayRecipientPeerIds = <String>{
+            member.peerId,
+            ...allMembers
+                .map((remainingMember) => remainingMember.peerId)
+                .where(
+                  (peerId) => peerId.isNotEmpty && peerId != identity.peerId,
+                ),
+          }.toList(growable: false);
 
           final sourceEventId =
               'member_removed:${widget.group.id}:${identity.peerId}:${removedAt.microsecondsSinceEpoch}';
@@ -672,13 +680,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPublicKey: identity.publicKey,
             senderPrivateKey: identity.privateKey,
             messageId: removalTimelineMessage.id,
-            recipientPeerIds: [member.peerId],
+            recipientPeerIds: removalReplayRecipientPeerIds,
           );
           await callGroupInboxStore(
             widget.bridge,
             widget.group.id,
             removalReplayEnvelope,
-            recipientPeerIds: [member.peerId],
+            recipientPeerIds: removalReplayRecipientPeerIds,
           );
           unawaited(
             sendGroupMembershipUpdateDirect(

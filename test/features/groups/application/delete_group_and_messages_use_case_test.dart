@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -163,6 +164,86 @@ void main() {
       expect(await groupMessageRepo.getMessage('msg-admin-only'), isNotNull);
       expect(bridge.commandLog, isNot(contains('group:leave')));
     });
+
+    test(
+      'BB-010 active delete preserves group messages when native leave fails',
+      () async {
+        final now = DateTime.now().toUtc();
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Active Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdBy: 'creator-peer',
+            myRole: GroupRole.member,
+            createdAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'creator-peer',
+            username: 'Creator',
+            role: MemberRole.admin,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-1',
+            createdAt: now,
+          ),
+        );
+        await groupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-bb010-preserved',
+            groupId: groupId,
+            senderPeerId: 'creator-peer',
+            senderUsername: 'Creator',
+            text: 'Keep this after failed leave',
+            timestamp: now,
+            createdAt: now,
+            isIncoming: true,
+            status: 'delivered',
+          ),
+        );
+        bridge.responses['group:leave'] = {
+          'ok': false,
+          'errorCode': 'GROUP_ERROR',
+          'errorMessage': 'forced leave failure',
+        };
+
+        await expectLater(
+          deleteGroupAndMessages(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupMessageRepo: groupMessageRepo,
+            groupId: groupId,
+          ),
+          throwsA(
+            isA<BridgeCommandException>()
+                .having((error) => error.command, 'command', 'group:leave')
+                .having((error) => error.errorCode, 'errorCode', 'GROUP_ERROR'),
+          ),
+        );
+
+        expect(await groupRepo.getGroup(groupId), isNotNull);
+        expect(await groupRepo.getMembers(groupId), hasLength(1));
+        expect(await groupRepo.getLatestKey(groupId), isNotNull);
+        expect(
+          await groupMessageRepo.getMessage('msg-bb010-preserved'),
+          isNotNull,
+        );
+        expect(groupMessageRepo.count, 1);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+      },
+    );
 
     test('does not delete messages for other groups', () async {
       const otherGroupId = 'other-group-id-67890';

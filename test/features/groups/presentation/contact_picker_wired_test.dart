@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
@@ -1032,6 +1033,311 @@ void main() {
       expect(popResult!.membersAdded, equals(2));
       expect(popResult!.hasWarnings, isFalse);
     });
+
+    testWidgets(
+      'ML-004 existing-group mixed B/C/D invite failure preserves truthful picker state',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactBob);
+        contactRepo.addTestContact(contactCharlie);
+        contactRepo.addTestContact(contactDave);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        final p2pService = _PeerSelectiveFailureP2PService(
+          failedPeerIds: {'peer-dave'},
+        );
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        ContactPickerInviteResult? popResult;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () async {
+                    final result = await Navigator.of(context)
+                        .push<ContactPickerInviteResult>(
+                          MaterialPageRoute(
+                            builder: (_) => ContactPickerWired(
+                              groupId: 'group-1',
+                              groupRepo: groupRepo,
+                              contactRepo: contactRepo,
+                              bridge: bridge,
+                              identityRepo: FakeIdentityRepository(
+                                identity: testIdentity,
+                              ),
+                              p2pService: p2pService,
+                              inviteDeliveryAttemptRepo: inviteStatusRepo,
+                            ),
+                          ),
+                        );
+                    popResult = result;
+                  },
+                  child: const Text('Open Picker'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Picker'));
+        await pumpFrames(tester, count: 20);
+
+        await tester.tap(find.text('Bob'));
+        await tester.pump();
+        await tester.tap(find.text('Charlie'));
+        await tester.pump();
+        await tester.tap(find.text('Dave'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 20);
+
+        expect(popResult, isNotNull);
+        expect(popResult!.membersAdded, 3);
+        expect(popResult!.invitesSent, 2);
+        expect(popResult!.hasWarnings, isTrue);
+        expect(popResult!.inviteBatchResult, isNotNull);
+        expect(popResult!.inviteBatchResult!.attempts, hasLength(3));
+        expect(popResult!.inviteBatchResult!.successCount, 2);
+        expect(popResult!.inviteBatchResult!.failures, hasLength(1));
+        expect(
+          popResult!.inviteBatchResult!.failures.single.peerId,
+          'peer-dave',
+        );
+        expect(
+          popResult!.inviteBatchResult!.failures.single.result,
+          SendGroupInviteResult.sendFailed,
+        );
+        expect(
+          popResult!.buildCompletionMessage(),
+          contains('Dave (delivery failed)'),
+        );
+
+        final members = await groupRepo.getMembers('group-1');
+        final memberPeerIds = members.map((m) => m.peerId).toSet();
+        expect(
+          memberPeerIds,
+          equals({'peer-admin', 'peer-bob', 'peer-charlie', 'peer-dave'}),
+        );
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere((msg) {
+          final parsed = jsonDecode(msg) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:updateConfig';
+        });
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final groupConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        final configPeerIds = (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .map((member) => member['peerId'])
+            .toSet();
+        expect(configPeerIds, memberPeerIds);
+
+        final publishMsg = bridge.sentMessages.firstWhere((msg) {
+          final parsed = jsonDecode(msg) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysText =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        expect(sysText['__sys'], 'members_added');
+        final publishedPeerIds = (sysText['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .map((member) => member['peerId'])
+            .toSet();
+        expect(publishedPeerIds, {'peer-bob', 'peer-charlie', 'peer-dave'});
+
+        expect(p2pService.sentMessageLog.map((entry) => entry.peerId).toSet(), {
+          'peer-bob',
+          'peer-charlie',
+          'peer-dave',
+        });
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.lastStoreInInboxPeerId, 'peer-dave');
+
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+          ),
+          GroupInviteDeliveryStatus.sent,
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+          ),
+          GroupInviteDeliveryStatus.sent,
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'group-1',
+            peerId: 'peer-dave',
+          ),
+          GroupInviteDeliveryStatus.needsResend,
+        );
+        final daveAttempt = await inviteStatusRepo.getAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-dave',
+        );
+        expect(daveAttempt, isNotNull);
+        expect(daveAttempt!.status, isNot(GroupInviteDeliveryStatus.joined));
+        expect(daveAttempt.lastError, 'send_failed');
+      },
+    );
+
+    testWidgets(
+      'ML-014 config failure rolls back picker members and creates no invite retry state',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        contactRepo.addTestContact(contactCharlie);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveMember(memberBob);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        bridge.responses['group:updateConfig'] = {
+          'ok': false,
+          'errorCode': 'CONFIG_SYNC_FAILED',
+          'errorMessage': 'bridge rejected config',
+        };
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        ContactPickerInviteResult? popResult;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () async {
+                    final result = await Navigator.of(context)
+                        .push<ContactPickerInviteResult>(
+                          MaterialPageRoute(
+                            builder: (_) => ContactPickerWired(
+                              groupId: 'group-1',
+                              groupRepo: groupRepo,
+                              contactRepo: contactRepo,
+                              bridge: bridge,
+                              identityRepo: FakeIdentityRepository(
+                                identity: testIdentity,
+                              ),
+                              p2pService: p2pService,
+                              msgRepo: msgRepo,
+                              inviteDeliveryAttemptRepo: inviteStatusRepo,
+                            ),
+                          ),
+                        );
+                    popResult = result;
+                  },
+                  child: const Text('Open Picker'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Picker'));
+        await pumpFrames(tester, count: 20);
+
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Charlie'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 20);
+
+        expect(popResult, isNull);
+        expect(find.byType(SnackBar), findsOneWidget);
+        expect(find.text('Failed to invite members'), findsOneWidget);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere((msg) {
+          final parsed = jsonDecode(msg) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:updateConfig';
+        });
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final groupConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        expect(
+          (groupConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'])
+              .toSet(),
+          {'peer-admin', 'peer-bob', 'peer-alice', 'peer-charlie'},
+        );
+
+        final activeMembers = await groupRepo.getMembers('group-1');
+        expect(activeMembers.map((member) => member.peerId).toSet(), {
+          'peer-admin',
+          'peer-bob',
+        });
+        expect(await groupRepo.getMember('group-1', 'peer-alice'), isNull);
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(await msgRepo.getMessagesPage('group-1'), isEmpty);
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'group-1',
+            peerId: 'peer-alice',
+          ),
+          GroupInviteDeliveryStatus.unknown,
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+          ),
+          GroupInviteDeliveryStatus.unknown,
+        );
+        expect(await inviteStatusRepo.getAttemptsForGroup('group-1'), isEmpty);
+      },
+    );
 
     testWidgets(
       'GM-036 batch invite reports mixed delivery after local re-add',

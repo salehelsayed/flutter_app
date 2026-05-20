@@ -11,6 +11,7 @@ class InMemoryGroupMessageRepository
   final Map<String, GroupMessage> _messages = {};
   final Map<String, String> _inboxCursors = {};
   final Map<String, GroupMessageReceipt> _receipts = {};
+  final Set<String> _localDeletionTombstones = {};
   final Set<String> failSaveMessageIds = {};
   bool failInboxPageTransaction = false;
 
@@ -22,6 +23,9 @@ class InMemoryGroupMessageRepository
   Future<void> saveMessage(GroupMessage message) async {
     if (failSaveMessageIds.contains(message.id)) {
       throw StateError('simulated save failure for ${message.id}');
+    }
+    if (_localDeletionTombstones.contains(message.id)) {
+      return;
     }
     _messages[message.id] = message;
   }
@@ -133,7 +137,10 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<void> deleteMessage(String id) async {
-    _messages.remove(id);
+    final removed = _messages.remove(id);
+    if (removed != null) {
+      _localDeletionTombstones.add(id);
+    }
   }
 
   @override
@@ -202,6 +209,7 @@ class InMemoryGroupMessageRepository
         .toList();
     for (final entry in toRemove) {
       _messages.remove(entry.key);
+      _localDeletionTombstones.add(entry.key);
     }
     return toRemove.length;
   }

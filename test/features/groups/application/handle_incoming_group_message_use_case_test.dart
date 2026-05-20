@@ -4,6 +4,7 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -135,6 +136,170 @@ void main() {
     expect(result.senderPeerId, 'peer-sender');
     expect(result.transportPeerId, 'peer-sender');
   });
+
+  test(
+    'ML-016 incoming member message falls back to group member label when sender username is empty',
+    () async {
+      final sentAt = DateTime.now().toUtc();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-dana',
+          username: 'Dana',
+          role: MemberRole.writer,
+          joinedAt: sentAt.subtract(const Duration(seconds: 1)),
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: '   ',
+        keyEpoch: 1,
+        text: 'ML-016 non-contact member delivery',
+        timestamp: sentAt.toIso8601String(),
+        selfPeerId: 'peer-dana',
+        messageId: 'ml016-member-label',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.isIncoming, isTrue);
+      expect(result.senderPeerId, 'peer-sender');
+      expect(result.senderUsername, 'Sender');
+
+      final stored = await msgRepo.getMessage('ml016-member-label');
+      expect(stored, isNotNull);
+      expect(stored!.senderUsername, 'Sender');
+      expect(stored.text, 'ML-016 non-contact member delivery');
+      expect(stored.keyGeneration, 1);
+    },
+  );
+
+  test(
+    'RA-013 accepts incoming message when local peer is an active same-account device',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final sentAt = DateTime.now().toUtc();
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-charlie-phone',
+              transportPeerId: 'device-charlie-phone',
+              deviceSigningPublicKey: 'charlie-phone-signing-key',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-charlie-tablet',
+              transportPeerId: 'device-charlie-tablet',
+              deviceSigningPublicKey: 'charlie-tablet-signing-key',
+            ),
+          ],
+          joinedAt: sentAt.subtract(const Duration(seconds: 1)),
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 2,
+        text: 'RA-013 post tablet accept',
+        timestamp: sentAt.toIso8601String(),
+        selfPeerId: 'device-charlie-tablet',
+        messageId: 'ra013-secondary-device-receive',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.senderPeerId, 'peer-sender');
+      expect(result.isIncoming, isTrue);
+      expect(result.status, 'delivered');
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_LOCAL_MEMBERSHIP_MISSING',
+        ),
+        isFalse,
+      );
+      expect(
+        (await msgRepo.getMessage('ra013-secondary-device-receive'))!.text,
+        'RA-013 post tablet accept',
+      );
+    },
+  );
+
+  test(
+    'RA-013 applies account removal window when local peer is a same-account device',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final originalAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 20),
+      );
+      final removedAt = originalAt.add(const Duration(minutes: 3));
+      final rejoinedAt = removedAt.add(const Duration(minutes: 2));
+
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-charlie',
+        removedAt: removedAt,
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-charlie-tablet',
+              transportPeerId: 'device-charlie-tablet',
+              deviceSigningPublicKey: 'charlie-tablet-signing-key',
+            ),
+          ],
+          joinedAt: rejoinedAt,
+        ),
+      );
+
+      final removedWindowReplay = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 2,
+        text: 'RA-013 removed window replay',
+        timestamp: removedAt.add(const Duration(seconds: 30)).toIso8601String(),
+        selfPeerId: 'device-charlie-tablet',
+        messageId: 'ra013-secondary-device-removed-window',
+      );
+
+      expect(removedWindowReplay, isNull);
+      expect(
+        await msgRepo.getMessage('ra013-secondary-device-removed-window'),
+        isNull,
+      );
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_LOCAL_REMOVED_INTERVAL_REPLAY_REJECTED',
+        ),
+        isNotEmpty,
+      );
+    },
+  );
 
   test(
     'MS002 rejects transport peer mismatch before persistence or event log',
@@ -271,6 +436,115 @@ void main() {
     expect(result.status, 'sent');
     expect(await msgRepo.getUnreadCount('group-1'), 0);
   });
+
+  test(
+    'DE-005 self echo reconciles pending outbound row without creating incoming duplicate',
+    () async {
+      const messageId = 'de005-self-echo';
+      final localTimestamp = DateTime.utc(2026, 5, 11, 10);
+      final createdAt = localTimestamp.subtract(const Duration(seconds: 2));
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          transportPeerId: 'peer-sender',
+          senderUsername: 'Sender',
+          text: 'Local pending text',
+          timestamp: localTimestamp,
+          keyGeneration: 1,
+          status: 'pending',
+          isIncoming: false,
+          createdAt: createdAt,
+          wireEnvelope: '{"cmd":"group:publish"}',
+          inboxStored: false,
+          inboxRetryPayload: '{"cmd":"group:inboxStore"}',
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'Local pending text',
+        timestamp: localTimestamp
+            .add(const Duration(seconds: 5))
+            .toIso8601String(),
+        selfPeerId: 'peer-sender',
+        transportPeerId: 'peer-sender',
+        messageId: messageId,
+      );
+
+      expect(result, isNotNull);
+      expect(result!.id, messageId);
+      expect(result.isIncoming, isFalse);
+      expect(result.status, 'sent');
+
+      final saved = await msgRepo.getMessage(messageId);
+      expect(saved, isNotNull);
+      expect(saved!.isIncoming, isFalse);
+      expect(saved.status, 'sent');
+      expect(saved.text, 'Local pending text');
+      expect(saved.timestamp, localTimestamp);
+      expect(saved.createdAt, createdAt);
+      expect(saved.wireEnvelope, isNull);
+      expect(saved.inboxStored, isFalse);
+      expect(saved.inboxRetryPayload, '{"cmd":"group:inboxStore"}');
+      expect(msgRepo.count, 1);
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+    },
+  );
+
+  test(
+    'DE-005 self echo ignores mismatched transport identity without promoting outbound row',
+    () async {
+      const messageId = 'de005-self-echo-transport-mismatch';
+      final localTimestamp = DateTime.utc(2026, 5, 11, 10, 1);
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          transportPeerId: 'peer-sender-device',
+          senderUsername: 'Sender',
+          text: 'Local pending text',
+          timestamp: localTimestamp,
+          keyGeneration: 1,
+          status: 'pending',
+          isIncoming: false,
+          createdAt: localTimestamp,
+          wireEnvelope: '{"cmd":"group:publish"}',
+          inboxRetryPayload: '{"cmd":"group:inboxStore"}',
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'Local pending text',
+        timestamp: localTimestamp.toIso8601String(),
+        selfPeerId: 'peer-sender',
+        transportPeerId: 'peer-attacker-device',
+        messageId: messageId,
+      );
+
+      expect(result, isNull);
+      final saved = await msgRepo.getMessage(messageId);
+      expect(saved, isNotNull);
+      expect(saved!.status, 'pending');
+      expect(saved.isIncoming, isFalse);
+      expect(saved.transportPeerId, 'peer-sender-device');
+      expect(saved.wireEnvelope, '{"cmd":"group:publish"}');
+      expect(msgRepo.count, 1);
+    },
+  );
 
   test(
     'strips dangerous bidi controls and preserves safe markers on incoming save',
@@ -605,6 +879,81 @@ void main() {
 
       expect(result, isNull);
       expect(await msgRepo.getMessage('msg-new-sender'), isNull);
+    },
+  );
+
+  test(
+    'RA-014 rejects old-key post-readd sender message and accepts later current epoch',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final removedAt = DateTime.utc(2026, 4, 5, 12, 0);
+      final readdedAt = removedAt.add(const Duration(minutes: 2));
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-sender',
+        removedAt: removedAt,
+      );
+      await groupRepo.saveMember(testMember.copyWith(joinedAt: readdedAt));
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'ra014-old-key',
+          createdAt: removedAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 3,
+          encryptedKey: 'ra014-current-key',
+          createdAt: readdedAt,
+        ),
+      );
+
+      final stale = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'RA-014 stale old-key post-readd',
+        timestamp: readdedAt.add(const Duration(seconds: 1)).toIso8601String(),
+        messageId: 'ra014-stale-old-key',
+      );
+
+      expect(stale, isNull);
+      expect(await msgRepo.getMessage('ra014-stale-old-key'), isNull);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_STALE_EPOCH_AFTER_READD_REJECTED',
+        ),
+        isTrue,
+      );
+
+      final current = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 3,
+        text: 'RA-014 current epoch after rejection',
+        timestamp: readdedAt.add(const Duration(seconds: 2)).toIso8601String(),
+        messageId: 'ra014-current-epoch',
+      );
+
+      expect(current, isNotNull);
+      expect(current!.keyGeneration, 3);
+      expect(
+        (await msgRepo.getMessage('ra014-current-epoch'))!.text,
+        'RA-014 current epoch after rejection',
+      );
     },
   );
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
@@ -83,6 +84,9 @@ void main() {
   ChatMessage makeMessage({
     String groupId = 'grp-abc123',
     String inviteId = 'invite-1',
+    String groupKey = 'base64-key',
+    int keyEpoch = 1,
+    Map<String, dynamic>? groupConfig,
     String messageTo = 'myPeerId',
     bool includePolicy = true,
     bool excludeRecipientFromPolicy = false,
@@ -92,27 +96,29 @@ void main() {
   }) {
     final issuedAtUtc = (issuedAt ?? DateTime.utc(2026, 3, 2, 12)).toUtc();
     final timestamp = issuedAtUtc.toIso8601String();
-    final groupConfig = {
-      'name': 'Book Club',
-      'groupType': 'chat',
-      'description': 'A group for book lovers',
-      'members': const [
+    final resolvedGroupConfig =
+        groupConfig ??
         {
-          'peerId': '12D3KooWAlice',
-          'role': 'admin',
-          'publicKey': 'alicePubKey64',
-        },
-        {'peerId': 'myPeerId', 'role': 'writer', 'publicKey': 'myPubKey64'},
-      ],
-      'createdBy': '12D3KooWAlice',
-      'createdAt': '2026-03-02T00:00:00.000Z',
-    };
+          'name': 'Book Club',
+          'groupType': 'chat',
+          'description': 'A group for book lovers',
+          'members': const [
+            {
+              'peerId': '12D3KooWAlice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+            },
+            {'peerId': 'myPeerId', 'role': 'writer', 'publicKey': 'myPubKey64'},
+          ],
+          'createdBy': '12D3KooWAlice',
+          'createdAt': '2026-03-02T00:00:00.000Z',
+        };
     final payload = GroupInvitePayload(
       id: inviteId,
       groupId: groupId,
-      groupKey: 'base64-key',
-      keyEpoch: 1,
-      groupConfig: groupConfig,
+      groupKey: groupKey,
+      keyEpoch: keyEpoch,
+      groupConfig: resolvedGroupConfig,
       senderPeerId: '12D3KooWAlice',
       senderUsername: 'Alice',
       recipientPeerId: 'myPeerId',
@@ -122,15 +128,15 @@ void main() {
         assignedRole: 'writer',
         canInviteOthers: false,
         joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
-        keyEpoch: 1,
+        keyEpoch: keyEpoch,
         reusePolicy: reusePolicy,
       ),
       membershipFreshnessProof: _makeFreshnessProof(
         inviteId: inviteId,
         groupId: groupId,
         recipientPeerId: 'myPeerId',
-        groupConfig: groupConfig,
-        keyEpoch: 1,
+        groupConfig: resolvedGroupConfig,
+        keyEpoch: keyEpoch,
         issuedAt: issuedAtUtc,
       ),
       timestamp: timestamp,
@@ -404,6 +410,123 @@ void main() {
       expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
       expect(await groupRepo.getGroup('grp-abc123'), isNull);
     });
+
+    test('ML-018 ignores delayed invite copy after local decline', () async {
+      final receivedAt = DateTime.utc(2026, 4, 29, 12);
+      final (
+        storedResult,
+        storedInvite,
+      ) = await storeIncomingPendingGroupInvite(
+        message: makeMessage(issuedAt: receivedAt),
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownPeerId: 'myPeerId',
+        receivedAt: receivedAt,
+      );
+      expect(storedResult, StorePendingGroupInviteResult.storedPending);
+      expect(storedInvite, isNotNull);
+
+      final declineResult = await declinePendingGroupInvite(
+        pendingInviteRepo: pendingInviteRepo,
+        groupId: 'grp-abc123',
+        now: receivedAt.add(const Duration(minutes: 1)),
+      );
+      expect(declineResult, DeclinePendingGroupInviteResult.success);
+
+      final (
+        delayedResult,
+        delayedInvite,
+      ) = await storeIncomingPendingGroupInvite(
+        message: makeMessage(
+          issuedAt: receivedAt.add(const Duration(minutes: 10)),
+        ),
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownPeerId: 'myPeerId',
+        receivedAt: receivedAt.add(const Duration(minutes: 10)),
+      );
+
+      expect(delayedResult, StorePendingGroupInviteResult.alreadyUsed);
+      expect(delayedInvite, isNull);
+      expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+      expect(await groupRepo.getGroup('grp-abc123'), isNull);
+      expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+      expect(bridge.commandLog, isNot(contains('group:join')));
+    });
+
+    test(
+      'ML-019 delayed older invite cannot replace newer pending re-add package',
+      () async {
+        final oldIssuedAt = DateTime.utc(2026, 4, 29, 12);
+        final newIssuedAt = oldIssuedAt.add(const Duration(minutes: 5));
+        final oldConfig = {
+          'name': 'Book Club',
+          'groupType': 'chat',
+          'members': const [
+            {
+              'peerId': '12D3KooWAlice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+            },
+            {'peerId': 'myPeerId', 'role': 'writer', 'publicKey': 'myPubKey64'},
+          ],
+          'createdBy': '12D3KooWAlice',
+          'createdAt': '2026-03-02T00:00:00.000Z',
+          'metadataUpdatedAt': oldIssuedAt.toIso8601String(),
+        };
+        final newConfig = {
+          ...oldConfig,
+          'metadataUpdatedAt': newIssuedAt.toIso8601String(),
+        };
+
+        final (newResult, newInvite) = await storeIncomingPendingGroupInvite(
+          message: makeMessage(
+            inviteId: 'invite-new',
+            groupKey: 'fresh-key',
+            keyEpoch: 2,
+            groupConfig: newConfig,
+            issuedAt: newIssuedAt,
+          ),
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: 'myPeerId',
+          receivedAt: newIssuedAt,
+        );
+        expect(newResult, StorePendingGroupInviteResult.storedPending);
+        expect(newInvite, isNotNull);
+
+        final (oldResult, oldInvite) = await storeIncomingPendingGroupInvite(
+          message: makeMessage(
+            inviteId: 'invite-old',
+            groupKey: 'old-key',
+            keyEpoch: 1,
+            groupConfig: oldConfig,
+            issuedAt: oldIssuedAt,
+          ),
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: 'myPeerId',
+          receivedAt: newIssuedAt.add(const Duration(minutes: 1)),
+        );
+
+        expect(oldResult, StorePendingGroupInviteResult.invalidPayload);
+        expect(oldInvite, isNull);
+        final pending = await pendingInviteRepo.getPendingInvite('grp-abc123');
+        expect(pending, isNotNull);
+        expect(pending!.inviteId, 'invite-new');
+        final payload = pending.toPayload()!;
+        expect(payload.keyEpoch, 2);
+        expect(payload.groupKey, 'fresh-key');
+      },
+    );
 
     test(
       'IJ005 stores multi-use replay despite a local consumption tombstone',

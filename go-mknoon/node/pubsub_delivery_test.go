@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -10,10 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
 	"github.com/mknoon/go-mknoon/internal"
@@ -33,6 +38,186 @@ func startLocalNodeForMultiRelayTestWithCollector(t *testing.T, collector *testE
 	}
 	t.Cleanup(func() { n.Stop() })
 	return n
+}
+
+func startNW002LocalCircuitRelay(t *testing.T) (host.Host, string) {
+	t.Helper()
+	privKey, _, err := libp2pcrypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate relay key: %v", err)
+	}
+	relayHost, err := libp2p.New(
+		libp2p.Identity(privKey),
+		libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"),
+		libp2p.EnableRelayService(),
+		libp2p.ForceReachabilityPublic(),
+	)
+	if err != nil {
+		t.Fatalf("start local circuit relay: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := relayHost.Close(); err != nil {
+			t.Fatalf("close local circuit relay: %v", err)
+		}
+	})
+	if len(relayHost.Addrs()) == 0 {
+		t.Fatal("local circuit relay has no listen addresses")
+	}
+	relayAddr := fmt.Sprintf("%s/p2p/%s", relayHost.Addrs()[0], relayHost.ID())
+	return relayHost, relayAddr
+}
+
+func startNW002RelayNode(
+	t *testing.T,
+	relayAddr string,
+	collector *testEventCollector,
+) *Node {
+	t.Helper()
+	hexKey := generateTestKey(t)
+	n := New(collector)
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{relayAddr},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start with local circuit relay: %v", err)
+	}
+	t.Cleanup(func() { n.Stop() })
+	if err := n.WaitForRelayConnection(5 * time.Second); err != nil {
+		t.Fatalf("%s did not warm local relay: %v", n.PeerId(), err)
+	}
+	relayInfo, err := peer.AddrInfoFromString(relayAddr)
+	if err != nil {
+		t.Fatalf("parse local relay addr: %v", err)
+	}
+	reserveCtx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	defer cancel()
+	if _, err := relayclient.Reserve(reserveCtx, n.Host(), *relayInfo); err != nil {
+		t.Fatalf("%s could not reserve local circuit relay: %v", n.PeerId(), err)
+	}
+	return n
+}
+
+func cancelNW002GroupDiscovery(t *testing.T, n *Node, groupId string) {
+	t.Helper()
+	n.mu.Lock()
+	cancel, ok := n.groupDiscoveryCtx[groupId]
+	if ok {
+		cancel()
+		delete(n.groupDiscoveryCtx, groupId)
+	}
+	n.mu.Unlock()
+}
+
+func clearNW002DirectRouteState(t *testing.T, from *Node, target *Node) {
+	t.Helper()
+	fromID, err := peer.Decode(from.PeerId())
+	if err != nil {
+		t.Fatalf("decode sender peer ID: %v", err)
+	}
+	targetID, err := peer.Decode(target.PeerId())
+	if err != nil {
+		t.Fatalf("decode target peer ID: %v", err)
+	}
+	fromHost := from.Host()
+	targetHost := target.Host()
+	if fromHost == nil {
+		t.Fatalf("%s host is nil", from.PeerId())
+	}
+	if targetHost == nil {
+		t.Fatalf("%s host is nil", target.PeerId())
+	}
+
+	_ = fromHost.Network().ClosePeer(targetID)
+	_ = targetHost.Network().ClosePeer(fromID)
+	fromHost.Peerstore().ClearAddrs(targetID)
+	targetHost.Peerstore().ClearAddrs(fromID)
+}
+
+func assertNW002NoDirectPeerstoreAddrs(t *testing.T, from *Node, target *Node) {
+	t.Helper()
+	pid, err := peer.Decode(target.PeerId())
+	if err != nil {
+		t.Fatalf("decode target peer ID: %v", err)
+	}
+	if got := collectDirectMultiaddrs(from.Host(), pid, nil); len(got) != 0 {
+		t.Fatalf(
+			"%s unexpectedly had %d direct peerstore addrs for %s before circuit dial: %v",
+			from.PeerId(),
+			len(got),
+			target.PeerId(),
+			multiaddrsToStrings(got),
+		)
+	}
+}
+
+func assertNW002LimitedCircuitConn(t *testing.T, from *Node, target *Node) {
+	t.Helper()
+	pid, err := peer.Decode(target.PeerId())
+	if err != nil {
+		t.Fatalf("decode target peer ID: %v", err)
+	}
+	conns := from.Host().Network().ConnsToPeer(pid)
+	if len(conns) == 0 {
+		t.Fatalf("%s has no connection to %s", from.PeerId(), target.PeerId())
+	}
+	for _, conn := range conns {
+		if conn.Stat().Limited {
+			return
+		}
+	}
+	t.Fatalf("%s connection to %s was not marked limited/circuit-routed", from.PeerId(), target.PeerId())
+}
+
+func assertNW002ReceivedText(
+	t *testing.T,
+	events []map[string]interface{},
+	text string,
+	senderPeerId string,
+) {
+	t.Helper()
+	for _, event := range events {
+		if event["text"] == text && event["senderId"] == senderPeerId {
+			return
+		}
+	}
+	t.Fatalf("missing received text %q from %s in events: %+v", text, senderPeerId, events)
+}
+
+func waitForCollectedGroupDiscoveryPeerPrefix(
+	t *testing.T,
+	collector *testEventCollector,
+	groupId string,
+	step string,
+	peerId string,
+	timeout time.Duration,
+) map[string]interface{} {
+	t.Helper()
+	wantPrefix := peerIDDiagnosticPrefix(peerId)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range collector.collectEvents("group:discovery") {
+			if event["groupId"] != groupId || event["step"] != step {
+				continue
+			}
+			if event["peerIdPrefix"] == wantPrefix {
+				if len(wantPrefix) > 12 {
+					t.Fatalf("peerIdPrefix length = %d, want <= 12", len(wantPrefix))
+				}
+				return event
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf(
+		"timed out waiting for group discovery peer prefix %q step %q group %s; events=%v",
+		wantPrefix,
+		step,
+		groupId,
+		collector.snapshot(),
+	)
+	return nil
 }
 
 type lp013GroupHarness struct {
@@ -1131,6 +1316,425 @@ func TestPublishGroupMessage_ReturnsPeerCountPositive_WhenPeersConnected(t *test
 	if peerCount < 1 {
 		t.Errorf("expected peerCount >= 1 (node B is connected and subscribed), got %d", peerCount)
 	}
+}
+
+func TestNW001FullMeshDirectGroupDeliveryWithoutRelayFallback(t *testing.T) {
+	alicePrivB64, alicePubB64 := generateEd25519KeyPair(t)
+	bobPrivB64, bobPubB64 := generateEd25519KeyPair(t)
+	charliePrivB64, charliePubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
+	nodeB := startLocalNodeForMultiRelayTest(t)
+	nodeC := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "nw001-full-mesh-direct-no-relay"
+	config := &GroupConfig{
+		Name:      "NW-001 Full Mesh Direct Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: bobPubB64},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: charliePubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	for _, pair := range []struct {
+		from *Node
+		to   *Node
+	}{
+		{from: nodeA, to: nodeB},
+		{from: nodeA, to: nodeC},
+		{from: nodeB, to: nodeA},
+		{from: nodeB, to: nodeC},
+		{from: nodeC, to: nodeA},
+		{from: nodeC, to: nodeB},
+	} {
+		toID, err := peer.Decode(pair.to.PeerId())
+		if err != nil {
+			t.Fatalf("decode peer ID %s: %v", pair.to.PeerId(), err)
+		}
+		pair.from.Host().Peerstore().AddAddrs(toID, pair.to.Host().Addrs(), time.Hour)
+	}
+
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		n.relayReady = make(chan struct{})
+		if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("%s JoinGroupTopic: %v", n.PeerId(), err)
+		}
+	}
+
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		waitForGroupTopicPeerCount(t, n, groupId, 2, 3*time.Second)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		node       *Node
+		privateKey string
+		publicKey  string
+		username   string
+		messageId  string
+		text       string
+	}{
+		{
+			name:       "alice",
+			node:       nodeA,
+			privateKey: alicePrivB64,
+			publicKey:  alicePubB64,
+			username:   "Alice",
+			messageId:  "nw001-go-alice",
+			text:       "NW-001 direct full mesh from Alice",
+		},
+		{
+			name:       "bob",
+			node:       nodeB,
+			privateKey: bobPrivB64,
+			publicKey:  bobPubB64,
+			username:   "Bob",
+			messageId:  "nw001-go-bob",
+			text:       "NW-001 direct full mesh from Bob",
+		},
+		{
+			name:       "charlie",
+			node:       nodeC,
+			privateKey: charliePrivB64,
+			publicKey:  charliePubB64,
+			username:   "Charlie",
+			messageId:  "nw001-go-charlie",
+			text:       "NW-001 direct full mesh from Charlie",
+		},
+	} {
+		msgID, peerCount, err := tc.node.PublishGroupMessage(
+			groupId,
+			tc.privateKey,
+			tc.node.PeerId(),
+			tc.publicKey,
+			tc.username,
+			tc.text,
+			"",
+			map[string]interface{}{"messageId": tc.messageId},
+		)
+		if err != nil {
+			t.Fatalf("%s PublishGroupMessage failed: %v", tc.name, err)
+		}
+		if msgID == "" {
+			t.Fatalf("%s PublishGroupMessage returned empty messageId", tc.name)
+		}
+		if peerCount < 2 {
+			t.Fatalf("%s topicPeers=%d, want >=2 for NW-001 full mesh", tc.name, peerCount)
+		}
+	}
+}
+
+func TestNW002RelayOnlyOrCircuitRoutedPeerReceivesGroupMessages(t *testing.T) {
+	alicePrivB64, alicePubB64 := generateEd25519KeyPair(t)
+	bobPrivB64, bobPubB64 := generateEd25519KeyPair(t)
+	_, charliePubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	_, relayAddr := startNW002LocalCircuitRelay(t)
+	nodeACapture := &testEventCollector{}
+	nodeBCapture := &testEventCollector{}
+	nodeCCapture := &testEventCollector{}
+	nodeA := startNW002RelayNode(t, relayAddr, nodeACapture)
+	nodeB := startNW002RelayNode(t, relayAddr, nodeBCapture)
+	nodeC := startNW002RelayNode(t, relayAddr, nodeCCapture)
+
+	groupId := "nw002-relay-only-or-circuit-routed"
+	config := &GroupConfig{
+		Name:      "NW-002 Relay Only Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: bobPubB64},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: charliePubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("%s JoinGroupTopic: %v", n.PeerId(), err)
+		}
+		cancelNW002GroupDiscovery(t, n, groupId)
+	}
+
+	for _, pair := range []struct {
+		from *Node
+		to   *Node
+	}{
+		{from: nodeA, to: nodeB},
+		{from: nodeA, to: nodeC},
+		{from: nodeB, to: nodeA},
+		{from: nodeB, to: nodeC},
+		{from: nodeC, to: nodeA},
+		{from: nodeC, to: nodeB},
+	} {
+		clearNW002DirectRouteState(t, pair.from, pair.to)
+		assertNW002NoDirectPeerstoreAddrs(t, pair.from, pair.to)
+		if err := pair.from.DialPeerViaRelay(pair.to.PeerId()); err != nil {
+			t.Fatalf("%s circuit dial to %s: %v", pair.from.PeerId(), pair.to.PeerId(), err)
+		}
+		assertNW002LimitedCircuitConn(t, pair.from, pair.to)
+	}
+
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		waitForGroupTopicPeerCount(t, n, groupId, 2, 10*time.Second)
+	}
+
+	aliceMsgID, alicePeerCount, err := nodeA.PublishGroupMessage(
+		groupId,
+		alicePrivB64,
+		nodeA.PeerId(),
+		alicePubB64,
+		"Alice",
+		"NW-002 Alice to relay-only Bob",
+		"nw002-go-alice-to-relay-only-bob",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Alice PublishGroupMessage failed: %v", err)
+	}
+	if aliceMsgID == "" {
+		t.Fatal("Alice PublishGroupMessage returned empty messageId")
+	}
+	if alicePeerCount < 2 {
+		t.Fatalf("Alice topicPeers=%d, want >=2 through circuit relay", alicePeerCount)
+	}
+	bobAfterAlice := waitForCollectedEventCount(t, nodeBCapture, "group_message:received", 1, 5*time.Second)
+	charlieAfterAlice := waitForCollectedEventCount(t, nodeCCapture, "group_message:received", 1, 5*time.Second)
+	assertNW002ReceivedText(t, bobAfterAlice, "NW-002 Alice to relay-only Bob", nodeA.PeerId())
+	assertNW002ReceivedText(t, charlieAfterAlice, "NW-002 Alice to relay-only Bob", nodeA.PeerId())
+
+	bobMsgID, bobPeerCount, err := nodeB.PublishGroupMessage(
+		groupId,
+		bobPrivB64,
+		nodeB.PeerId(),
+		bobPubB64,
+		"Bob",
+		"NW-002 Bob relay-only publish back",
+		"nw002-go-bob-relay-publish-back",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Bob PublishGroupMessage failed: %v", err)
+	}
+	if bobMsgID == "" {
+		t.Fatal("Bob PublishGroupMessage returned empty messageId")
+	}
+	if bobPeerCount < 2 {
+		t.Fatalf("Bob topicPeers=%d, want >=2 through circuit relay", bobPeerCount)
+	}
+	aliceAfterBob := waitForCollectedEventCount(t, nodeACapture, "group_message:received", 1, 5*time.Second)
+	charlieAfterBob := waitForCollectedEventCount(t, nodeCCapture, "group_message:received", 2, 5*time.Second)
+	assertNW002ReceivedText(t, aliceAfterBob, "NW-002 Bob relay-only publish back", nodeB.PeerId())
+	assertNW002ReceivedText(t, charlieAfterBob, "NW-002 Bob relay-only publish back", nodeB.PeerId())
+}
+
+func TestNW003PartitionDuringRemoveReaddHealsToLatestTopicState(t *testing.T) {
+	alicePrivB64, alicePubB64 := generateEd25519KeyPair(t)
+	bobPrivB64, bobPubB64 := generateEd25519KeyPair(t)
+	charliePrivB64, charliePubB64 := generateEd25519KeyPair(t)
+	initialGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate initial group key: %v", err)
+	}
+	removedGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate removed group key: %v", err)
+	}
+	readdedGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate readded group key: %v", err)
+	}
+
+	nodeACapture := &testEventCollector{}
+	nodeBCapture := &testEventCollector{}
+	nodeCCapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+	nodeC := startLocalNodeForMultiRelayTestWithCollector(t, nodeCCapture)
+
+	groupId := "nw003-partition-remove-readd-heal"
+	initialConfig := &GroupConfig{
+		Name:      "NW-003 Partition Readd",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: bobPubB64},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: charliePubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	initialKey := &GroupKeyInfo{Key: initialGroupKey, KeyEpoch: 1}
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		if err := n.JoinGroupTopic(groupId, initialConfig, initialKey); err != nil {
+			t.Fatalf("%s initial JoinGroupTopic: %v", n.PeerId(), err)
+		}
+	}
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	connectLocalGroupNodes(t, nodeA, nodeC)
+	connectLocalGroupNodes(t, nodeB, nodeC)
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		waitForGroupTopicPeerCount(t, n, groupId, 2, 5*time.Second)
+	}
+
+	msgID, peerCount, err := nodeA.PublishGroupMessage(
+		groupId,
+		alicePrivB64,
+		nodeA.PeerId(),
+		alicePubB64,
+		"Alice",
+		"NW-003 baseline before partition",
+		"nw003-go-baseline",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Alice baseline PublishGroupMessage: %v", err)
+	}
+	if msgID == "" || peerCount < 2 {
+		t.Fatalf("baseline publish returned msgID=%q peerCount=%d, want non-empty/>=2", msgID, peerCount)
+	}
+	assertNW002ReceivedText(
+		t,
+		waitForCollectedEventCount(t, nodeBCapture, "group_message:received", 1, 5*time.Second),
+		"NW-003 baseline before partition",
+		nodeA.PeerId(),
+	)
+	assertNW002ReceivedText(
+		t,
+		waitForCollectedEventCount(t, nodeCCapture, "group_message:received", 1, 5*time.Second),
+		"NW-003 baseline before partition",
+		nodeA.PeerId(),
+	)
+
+	clearNW002DirectRouteState(t, nodeA, nodeB)
+	clearNW002DirectRouteState(t, nodeA, nodeC)
+
+	removedConfig := &GroupConfig{
+		Name:      "NW-003 Partition Readd",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: bobPubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	removedKey := &GroupKeyInfo{Key: removedGroupKey, KeyEpoch: 2}
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		if updated, err := n.RefreshJoinedGroupStateIfNewer(groupId, removedConfig, removedKey); err != nil {
+			t.Fatalf("%s removed RefreshJoinedGroupStateIfNewer: %v", n.PeerId(), err)
+		} else if !updated {
+			t.Fatalf("%s did not accept removed epoch refresh", n.PeerId())
+		}
+	}
+	if msgID, peerCount, err = nodeC.PublishGroupMessage(
+		groupId,
+		charliePrivB64,
+		nodeC.PeerId(),
+		charliePubB64,
+		"Charlie",
+		"NW-003 Charlie removed-window publish should fail",
+		"nw003-go-charlie-removed-window",
+		nil,
+	); err == nil {
+		t.Fatalf("Charlie removed-window publish unexpectedly succeeded msgID=%q peerCount=%d", msgID, peerCount)
+	}
+
+	readdedConfig := &GroupConfig{
+		Name:      "NW-003 Partition Readd",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: bobPubB64},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: charliePubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	readdedKey := &GroupKeyInfo{Key: readdedGroupKey, KeyEpoch: 3}
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		if updated, err := n.RefreshJoinedGroupStateIfNewer(groupId, readdedConfig, readdedKey); err != nil {
+			t.Fatalf("%s readded RefreshJoinedGroupStateIfNewer: %v", n.PeerId(), err)
+		} else if !updated {
+			t.Fatalf("%s did not accept readded epoch refresh", n.PeerId())
+		}
+	}
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	connectLocalGroupNodes(t, nodeA, nodeC)
+	connectLocalGroupNodes(t, nodeB, nodeC)
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		waitForGroupTopicPeerCount(t, n, groupId, 2, 10*time.Second)
+	}
+
+	_, peerCount, err = nodeA.PublishGroupMessage(
+		groupId,
+		alicePrivB64,
+		nodeA.PeerId(),
+		alicePubB64,
+		"Alice",
+		"NW-003 Alice current after heal",
+		"nw003-go-alice-current",
+		nil,
+	)
+	if err != nil || peerCount < 2 {
+		t.Fatalf("Alice current publish err=%v peerCount=%d, want nil/>=2", err, peerCount)
+	}
+	_, peerCount, err = nodeB.PublishGroupMessage(
+		groupId,
+		bobPrivB64,
+		nodeB.PeerId(),
+		bobPubB64,
+		"Bob",
+		"NW-003 Bob current after heal",
+		"nw003-go-bob-current",
+		nil,
+	)
+	if err != nil || peerCount < 2 {
+		t.Fatalf("Bob current publish err=%v peerCount=%d, want nil/>=2", err, peerCount)
+	}
+	_, peerCount, err = nodeC.PublishGroupMessage(
+		groupId,
+		charliePrivB64,
+		nodeC.PeerId(),
+		charliePubB64,
+		"Charlie",
+		"NW-003 Charlie current after heal",
+		"nw003-go-charlie-current",
+		nil,
+	)
+	if err != nil || peerCount < 2 {
+		t.Fatalf("Charlie current publish err=%v peerCount=%d, want nil/>=2", err, peerCount)
+	}
+
+	assertNW002ReceivedText(
+		t,
+		waitForCollectedEventCount(t, nodeBCapture, "group_message:received", 3, 5*time.Second),
+		"NW-003 Charlie current after heal",
+		nodeC.PeerId(),
+	)
+	assertNW002ReceivedText(
+		t,
+		waitForCollectedEventCount(t, nodeCCapture, "group_message:received", 3, 5*time.Second),
+		"NW-003 Bob current after heal",
+		nodeB.PeerId(),
+	)
+	assertNW002ReceivedText(
+		t,
+		waitForCollectedEventCount(t, nodeACapture, "group_message:received", 2, 5*time.Second),
+		"NW-003 Charlie current after heal",
+		nodeC.PeerId(),
+	)
 }
 
 func TestGA001CurrentMemberPublishesPrivateChatMessageExactlyOnce(t *testing.T) {
@@ -3696,7 +4300,108 @@ func TestJoinGroupTopic_DuplicateJoinPreservesDelivery(t *testing.T) {
 	}
 }
 
+func TestBB007FullConfigJoinDeliversLiveMessageAtJoinedEpoch(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	_, receiverPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "bb007-full-config-live-delivery"
+	messageId := "bb007-live-message-at-epoch-7"
+	config := &GroupConfig{
+		Name:        "BB-007 Full Config Delivery Group",
+		GroupType:   GroupTypeChat,
+		Description: "Full-config join payload live decrypt proof",
+		Members: []GroupMember{
+			{
+				PeerId:         nodeA.PeerId(),
+				Username:       "BB-007 Admin",
+				Role:           GroupRoleAdmin,
+				PublicKey:      senderPubB64,
+				MlKemPublicKey: "bb007-admin-mlkem",
+			},
+			{
+				PeerId:         nodeB.PeerId(),
+				Username:       "BB-007 Receiver",
+				Role:           GroupRoleWriter,
+				PublicKey:      receiverPubB64,
+				MlKemPublicKey: "bb007-receiver-mlkem",
+			},
+		},
+		CreatedBy: nodeA.PeerId(),
+		CreatedAt: "2026-05-10T20:00:00Z",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 7}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	var nodeBAddrStrs []string
+	for _, addr := range nodeB.Host().Addrs() {
+		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
+	}
+	if err := nodeA.DialPeer(nodeB.PeerId(), nodeBAddrStrs); err != nil {
+		t.Fatalf("DialPeer A->B: %v", err)
+	}
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 2*time.Second)
+
+	baselineEvents := len(nodeBCapture.snapshot())
+	msgId, peerCount, err := nodeA.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		nodeA.PeerId(),
+		senderPubB64,
+		"BB-007 Admin",
+		"BB-007 live message at joined epoch",
+		messageId,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage failed: %v", err)
+	}
+	if msgId != messageId {
+		t.Fatalf("messageId = %q, want %q", msgId, messageId)
+	}
+	if peerCount < 1 {
+		t.Fatalf("topicPeers = %d, want >= 1", peerCount)
+	}
+
+	events := waitForCollectedEventCount(t, nodeBCapture, "group_message:received", 1, 5*time.Second)
+	event := events[0]
+	if got, _ := event["messageId"].(string); got != messageId {
+		t.Fatalf("event messageId = %q, want %q", got, messageId)
+	}
+	if got, _ := event["text"].(string); got != "BB-007 live message at joined epoch" {
+		t.Fatalf("event text = %q, want BB-007 live message at joined epoch", got)
+	}
+	if got, _ := event["senderId"].(string); got != nodeA.PeerId() {
+		t.Fatalf("event senderId = %q, want %q", got, nodeA.PeerId())
+	}
+	if got := int(event["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("event keyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+	assertNoCollectedEventContainingAfter(t, nodeBCapture, baselineEvents, `"event":"group:decryption_failed"`, 200*time.Millisecond)
+}
+
 func TestGL009LeaveGroupTopicUnregistersValidatorAndRejoinUsesLatestConfigKey(t *testing.T) {
+	testGL009LeaveGroupTopicUnregistersValidatorAndRejoinUsesLatestConfigKey(t)
+}
+
+func TestRA014GL009LeaveGroupTopicUnregistersValidatorAndRejoinUsesLatestConfigKey(t *testing.T) {
+	testGL009LeaveGroupTopicUnregistersValidatorAndRejoinUsesLatestConfigKey(t)
+}
+
+func testGL009LeaveGroupTopicUnregistersValidatorAndRejoinUsesLatestConfigKey(t *testing.T) {
 	oldPrivB64, oldPubB64 := generateEd25519KeyPair(t)
 	latestPrivB64, latestPubB64 := generateEd25519KeyPair(t)
 	oldGroupKey, err := mcrypto.GenerateGroupKey()
@@ -4512,7 +5217,8 @@ func TestPublishGroupMessage_RefreshesMissingKnownTopicPeersBeforePublish(t *tes
 		t.Fatalf("generate group key: %v", err)
 	}
 
-	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
 	nodeB := startLocalNodeForMultiRelayTest(t)
 	nodeC := startLocalNodeForMultiRelayTest(t)
 
@@ -5150,7 +5856,8 @@ func TestGroupPeerDiscoveryLoop_DialsKnownMembersBeforeCircuitAddressWait(t *tes
 		t.Fatalf("generate group key: %v", err)
 	}
 
-	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
 	nodeB := startLocalNodeForMultiRelayTest(t)
 
 	releaseCircuitWait := make(chan struct{})
@@ -5189,6 +5896,17 @@ func TestGroupPeerDiscoveryLoop_DialsKnownMembersBeforeCircuitAddressWait(t *tes
 	defer close(releaseCircuitWait)
 
 	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 2*time.Second)
+	routeDiagnostic := waitForCollectedGroupDiscoveryPeerPrefix(
+		t,
+		nodeACapture,
+		groupId,
+		"known_member_dial_success",
+		nodeB.PeerId(),
+		2*time.Second,
+	)
+	if routeDiagnostic["path"] != "direct" {
+		t.Fatalf("route diagnostic path = %v, want direct", routeDiagnostic["path"])
+	}
 
 	msgID, peerCount, err := nodeA.PublishGroupMessage(
 		groupId,

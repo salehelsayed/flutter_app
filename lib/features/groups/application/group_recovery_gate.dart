@@ -1,10 +1,15 @@
+import 'package:flutter/foundation.dart';
+
 class GroupRecoveryGate {
   int _activeDepth = 0;
+  final ValueNotifier<int> _activeDepthListenable = ValueNotifier<int>(0);
 
   bool get isActive => _activeDepth > 0;
+  ValueListenable<int> get activeDepthListenable => _activeDepthListenable;
 
   void begin() {
     _activeDepth += 1;
+    _activeDepthListenable.value = _activeDepth;
   }
 
   void end() {
@@ -12,6 +17,7 @@ class GroupRecoveryGate {
       return;
     }
     _activeDepth -= 1;
+    _activeDepthListenable.value = _activeDepth;
   }
 
   Future<T> run<T>(Future<T> Function() action) async {
@@ -25,6 +31,7 @@ class GroupRecoveryGate {
 
   void resetForTest() {
     _activeDepth = 0;
+    _activeDepthListenable.value = 0;
   }
 }
 
