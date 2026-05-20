@@ -490,6 +490,108 @@ void main() {
     );
 
     test(
+      'PL-002 fake-network media-only message reaches recipients with empty text',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-pl002-media-only-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-pl002-media-only-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('bob-pl002-media-only'),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-pl002-media-only-peer',
+          username: 'Charlie',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('charlie-pl002-media-only'),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-pl002-media-only';
+        await alice.createGroup(groupId: groupId, name: 'PL002 Media Only');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: 1);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        final voice = attachment(
+          id: 'blob-pl002-media-only-voice',
+          mime: 'audio/mp4',
+          size: 4,
+          durationMs: 2200,
+          waveform: const <double>[0.2, 0.6, 0.4],
+        );
+        final (result, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: '',
+          messageId: 'msg-pl002-media-only',
+          mediaAttachments: [voice],
+        );
+        expect(result, group_send.SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.text, '');
+
+        for (final receiver in [bob, charlie]) {
+          await waitForDownloads(user: receiver, expectedCount: 1);
+          await waitForDownloadedAttachments(
+            user: receiver,
+            groupId: groupId,
+            messageTexts: const [''],
+          );
+
+          final incoming = (await receiver.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming && message.text == '')
+              .toList(growable: false);
+          expect(incoming, hasLength(1), reason: receiver.username);
+          expect(incoming.single.id, sentMessage.id, reason: receiver.username);
+
+          await expectSingleAttachment(
+            user: receiver,
+            groupId: groupId,
+            messageText: '',
+            sent: voice,
+            expectDownloaded: true,
+          );
+        }
+
+        await expectOutgoingAttachment(
+          user: alice,
+          groupId: groupId,
+          messageText: '',
+          sent: voice,
+        );
+        final messageDeliveryRecords = network.deliveryRecords
+            .where((record) => record['messageId'] == 'msg-pl002-media-only')
+            .toList(growable: false);
+        expect(messageDeliveryRecords, hasLength(2));
+        expect(
+          messageDeliveryRecords.map((record) => record['receiverPeerId']),
+          containsAll([
+            'bob-pl002-media-only-peer',
+            'charlie-pl002-media-only-peer',
+          ]),
+        );
+      },
+    );
+
+    test(
       'one recipient media download failure remains observable per recipient',
       () async {
         final alice = GroupTestUser.create(

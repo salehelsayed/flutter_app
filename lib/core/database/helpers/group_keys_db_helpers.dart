@@ -238,3 +238,163 @@ Future<void> dbDeleteGroupKeysBeforeGeneration(
     rethrow;
   }
 }
+
+/// Upserts the locally generated but not yet committed rotation key for a
+/// group. Only one draft is kept per group because rotation execution is
+/// serialized at the use-case boundary.
+Future<void> dbUpsertPendingGroupKeyRotation(
+  Database db,
+  Map<String, Object?> row,
+) async {
+  final groupId = row['group_id'] as String? ?? '';
+  final keyGen = row['key_generation'] as int? ?? 0;
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_KEY_ROTATION_DRAFT_DB_UPSERT_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'keyGeneration': keyGen,
+    },
+  );
+
+  try {
+    await db.insert(
+      'group_key_rotation_drafts',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_UPSERT_SUCCESS',
+      details: {'keyGeneration': keyGen},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_UPSERT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Loads the pending local rotation draft for a group, if one exists.
+Future<Map<String, Object?>?> dbLoadPendingGroupKeyRotation(
+  Database db,
+  String groupId,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_KEY_ROTATION_DRAFT_DB_LOAD_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+
+  try {
+    final results = await db.query(
+      'group_key_rotation_drafts',
+      where: 'group_id = ?',
+      whereArgs: [groupId],
+      limit: 1,
+    );
+
+    if (results.isEmpty) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'GROUP_KEY_ROTATION_DRAFT_DB_LOAD_NOT_FOUND',
+        details: {},
+      );
+      return null;
+    }
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_LOAD_FOUND',
+      details: {'keyGeneration': results.first['key_generation']},
+    );
+    return results.first;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_LOAD_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Deletes one pending local rotation draft when it matches the generation
+/// being abandoned or promoted.
+Future<void> dbDeletePendingGroupKeyRotation(
+  Database db,
+  String groupId,
+  int keyGeneration,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_KEY_ROTATION_DRAFT_DB_DELETE_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'keyGeneration': keyGeneration,
+    },
+  );
+
+  try {
+    await db.delete(
+      'group_key_rotation_drafts',
+      where: 'group_id = ? AND key_generation = ?',
+      whereArgs: [groupId, keyGeneration],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_DELETE_SUCCESS',
+      details: {'keyGeneration': keyGeneration},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_DELETE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Deletes all pending local rotation drafts for a group.
+Future<void> dbDeletePendingGroupKeyRotations(
+  Database db,
+  String groupId,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_KEY_ROTATION_DRAFT_DB_DELETE_ALL_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
+  );
+
+  try {
+    await db.delete(
+      'group_key_rotation_drafts',
+      where: 'group_id = ?',
+      whereArgs: [groupId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_DELETE_ALL_SUCCESS',
+      details: {},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEY_ROTATION_DRAFT_DB_DELETE_ALL_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}

@@ -572,6 +572,112 @@ void main() {
     },
   );
 
+  test(
+    'NW-013 restart retry reuses pending generated key before commit',
+    () async {
+      bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'nw013-draft-key-a',
+        'keyEpoch': 2,
+      };
+      final capturedPayloads = <Map<String, dynamic>>[];
+
+      final firstResult = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        distributionAttemptCount: 1,
+        distributionRetryDelay: Duration.zero,
+        sendP2PMessage: (peerId, message) async {
+          capturedPayloads.add(_decodeDirectKeyUpdatePayload(message));
+          return peerId == 'peer-bob';
+        },
+      );
+
+      expect(firstResult, isNull);
+      final latestAfterFailedDistribution = await groupRepo.getLatestKey(
+        groupId,
+      );
+      expect(latestAfterFailedDistribution, isNotNull);
+      expect(latestAfterFailedDistribution!.keyGeneration, 1);
+      expect(await groupRepo.getKeyByGeneration(groupId, 2), isNull);
+      final pendingDraft = await groupRepo.getPendingKeyRotation(groupId);
+      expect(pendingDraft, isNotNull);
+      expect(pendingDraft!.keyGeneration, 2);
+      expect(pendingDraft.encryptedKey, 'nw013-draft-key-a');
+
+      final retryBridge = PassthroughCryptoBridge();
+      retryBridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'nw013-draft-key-b',
+        'keyEpoch': 2,
+      };
+      retryBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'nw013-key-rotated',
+      };
+
+      final retryResult = await rotateAndDistributeGroupKey(
+        bridge: retryBridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sendP2PMessage: (peerId, message) async {
+          capturedPayloads.add(_decodeDirectKeyUpdatePayload(message));
+          return true;
+        },
+      );
+
+      expect(retryResult, isNotNull);
+      expect(retryResult!.keyGeneration, 2);
+      expect(retryResult.encryptedKey, 'nw013-draft-key-a');
+      expect(retryBridge.commandLog, isNot(contains('group:generateNextKey')));
+      _expectNoSameEpochDifferentKeys(capturedPayloads);
+
+      final latestAfterRetry = await groupRepo.getLatestKey(groupId);
+      expect(latestAfterRetry, isNotNull);
+      expect(latestAfterRetry!.keyGeneration, 2);
+      expect(latestAfterRetry.encryptedKey, 'nw013-draft-key-a');
+      expect(await groupRepo.getPendingKeyRotation(groupId), isNull);
+    },
+  );
+
+  test(
+    'NW-013 future pending draft fails closed instead of skipping epoch',
+    () async {
+      await groupRepo.savePendingKeyRotation(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 3,
+          encryptedKey: 'future-draft-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+      );
+
+      expect(result, isNull);
+      expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
+      expect(await groupRepo.getKeyByGeneration(groupId, 2), isNull);
+      expect(await groupRepo.getPendingKeyRotation(groupId), isNotNull);
+    },
+  );
+
   test('distribution completes before admin update and broadcast', () async {
     final result = await rotateAndDistributeGroupKey(
       bridge: bridge,

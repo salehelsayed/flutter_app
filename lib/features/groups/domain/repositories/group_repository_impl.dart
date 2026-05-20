@@ -12,7 +12,10 @@ String sharedGroupPushKeyName(String groupId, int keyGeneration) =>
 
 /// Implementation of GroupRepository using constructor-injected DB helper functions.
 class GroupRepositoryImpl
-    implements GroupRepository, RemovedGroupMemberSnapshotRepository {
+    implements
+        GroupRepository,
+        RemovedGroupMemberSnapshotRepository,
+        GroupKeyRotationDraftRepository {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
   final Future<List<Map<String, Object?>>> Function() dbLoadAllGroups;
@@ -50,8 +53,17 @@ class GroupRepositoryImpl
   dbLoadAllGroupKeys;
   final Future<void> Function(String groupId, int minKeyGenerationToKeep)?
   dbDeleteGroupKeysBeforeGeneration;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbUpsertPendingGroupKeyRotation;
+  final Future<Map<String, Object?>?> Function(String groupId)?
+  dbLoadPendingGroupKeyRotation;
+  final Future<void> Function(String groupId, int keyGeneration)?
+  dbDeletePendingGroupKeyRotation;
+  final Future<void> Function(String groupId)? dbDeletePendingGroupKeyRotations;
   final SecureKeyStore? groupKeyStore;
   final SecureKeyStore? pushSharedKeyStore;
+
+  final Map<String, GroupKeyInfo> _pendingKeyRotationFallback = {};
 
   GroupRepositoryImpl({
     required this.dbInsertGroup,
@@ -76,6 +88,10 @@ class GroupRepositoryImpl
     required this.dbDeleteAllGroupKeys,
     this.dbLoadAllGroupKeys,
     this.dbDeleteGroupKeysBeforeGeneration,
+    this.dbUpsertPendingGroupKeyRotation,
+    this.dbLoadPendingGroupKeyRotation,
+    this.dbDeletePendingGroupKeyRotation,
+    this.dbDeletePendingGroupKeyRotations,
     this.groupKeyStore,
     this.pushSharedKeyStore,
   });
@@ -255,10 +271,70 @@ class GroupRepositoryImpl
         ? const <Map<String, Object?>>[]
         : await dbLoadAllGroupKeys!(groupId);
     await dbDeleteAllGroupKeys(groupId);
+    await clearPendingKeyRotations(groupId);
     for (final row in existingKeys) {
       final key = GroupKeyInfo.fromMap(row);
       await _deleteGroupKeyMirror(key);
       await _deleteGroupKeyMaterial(key);
+    }
+  }
+
+  @override
+  Future<void> savePendingKeyRotation(GroupKeyInfo key) async {
+    final upsertPending = dbUpsertPendingGroupKeyRotation;
+    if (upsertPending == null) {
+      _pendingKeyRotationFallback[key.groupId] = key;
+      return;
+    }
+
+    await upsertPending(await _toStorageRow(key));
+  }
+
+  @override
+  Future<GroupKeyInfo?> getPendingKeyRotation(String groupId) async {
+    final loadPending = dbLoadPendingGroupKeyRotation;
+    if (loadPending == null) {
+      return _pendingKeyRotationFallback[groupId];
+    }
+
+    final row = await loadPending(groupId);
+    if (row == null) return null;
+    return _groupKeyFromRow(row);
+  }
+
+  @override
+  Future<void> clearPendingKeyRotation(
+    String groupId,
+    int keyGeneration,
+  ) async {
+    final deletePending = dbDeletePendingGroupKeyRotation;
+    if (deletePending == null) {
+      final pending = _pendingKeyRotationFallback[groupId];
+      if (pending?.keyGeneration == keyGeneration) {
+        _pendingKeyRotationFallback.remove(groupId);
+      }
+      return;
+    }
+
+    await deletePending(groupId, keyGeneration);
+    await _deletePendingKeyMaterialIfUncommitted(groupId, keyGeneration);
+  }
+
+  @override
+  Future<void> clearPendingKeyRotations(String groupId) async {
+    final pending = await getPendingKeyRotation(groupId);
+    final deletePending = dbDeletePendingGroupKeyRotations;
+    if (deletePending == null) {
+      _pendingKeyRotationFallback.remove(groupId);
+    } else {
+      await deletePending(groupId);
+    }
+
+    if (pending != null) {
+      await _deletePendingKeyMaterialIfUncommitted(
+        groupId,
+        pending.keyGeneration,
+      );
     }
   }
 
@@ -425,5 +501,21 @@ class GroupRepositoryImpl
     await store.delete(
       groupKeyMaterialStoreName(key.groupId, key.keyGeneration),
     );
+  }
+
+  Future<void> _deletePendingKeyMaterialIfUncommitted(
+    String groupId,
+    int keyGeneration,
+  ) async {
+    final store = groupKeyStore;
+    if (store == null) {
+      return;
+    }
+
+    if (await getKeyByGeneration(groupId, keyGeneration) != null) {
+      return;
+    }
+
+    await store.delete(groupKeyMaterialStoreName(groupId, keyGeneration));
   }
 }

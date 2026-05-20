@@ -75,3 +75,15 @@ abstract class RemovedGroupMemberSnapshotRepository {
 
   Future<GroupMember?> getRemovedMemberSnapshot(String groupId, String peerId);
 }
+
+/// Optional repository capability for locally generated rotation keys that
+/// have not been promoted to the committed group key set yet.
+abstract class GroupKeyRotationDraftRepository {
+  Future<void> savePendingKeyRotation(GroupKeyInfo key);
+
+  Future<GroupKeyInfo?> getPendingKeyRotation(String groupId);
+
+  Future<void> clearPendingKeyRotation(String groupId, int keyGeneration);
+
+  Future<void> clearPendingKeyRotations(String groupId);
+}

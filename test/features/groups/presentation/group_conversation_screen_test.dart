@@ -1637,6 +1637,44 @@ void main() {
     },
   );
 
+  testWidgets(
+    'PL-004 renders visible quote parents and unavailable fallback for missing parents',
+    (tester) async {
+      final now = DateTime.utc(2026, 5, 13, 20, 55);
+      final parent = GroupMessage(
+        id: 'pl004-visible-parent',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'PL-004 visible quote parent',
+        timestamp: now,
+        createdAt: now,
+        isIncoming: true,
+      );
+      final reply = GroupMessage(
+        id: 'pl004-reply',
+        groupId: 'group-1',
+        senderPeerId: 'peer-3',
+        senderUsername: 'Bob',
+        text: 'PL-004 quoted reply',
+        quotedMessageId: parent.id,
+        timestamp: now.add(const Duration(seconds: 1)),
+        createdAt: now.add(const Duration(seconds: 1)),
+        isIncoming: true,
+      );
+
+      await tester.pumpWidget(buildTestWidget(messages: [parent, reply]));
+      expect(find.text('PL-004 visible quote parent'), findsWidgets);
+      expect(find.text('PL-004 quoted reply'), findsOneWidget);
+      expect(find.text('Message unavailable'), findsNothing);
+
+      await tester.pumpWidget(buildTestWidget(messages: [reply]));
+      await tester.pump();
+      expect(find.text('PL-004 quoted reply'), findsOneWidget);
+      expect(find.text('Message unavailable'), findsOneWidget);
+    },
+  );
+
   testWidgets('resolves quoted media-only parent from mediaMap', (
     tester,
   ) async {

@@ -1891,6 +1891,377 @@ void main() {
     );
 
     test(
+      'PL-001 unicode and multiline text survives live delivery and offline replay',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'pl001-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'pl001-bob-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'pl001-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-pl001-unicode-multiline';
+        const messageId = 'pl001-live-replay-unicode';
+        const pl001Text =
+            'PL-001 emoji 👩‍💻🚀\n'
+            'RTL مرحبا שלום 123\n'
+            'Combining cafe\u0301 na\u0308ive\n'
+            'Tabs\tand symbols ✓';
+        final baseTime = DateTime.now().toUtc();
+        final createdAt = baseTime.subtract(const Duration(seconds: 2));
+        final joinedAt = baseTime.subtract(const Duration(seconds: 1));
+        final sentAt = baseTime.add(const Duration(seconds: 1));
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'PL-001 Group',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: joinedAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: joinedAt,
+        );
+        await _saveKey(alice, groupId, 1, 'pl001-k1');
+        await _saveKey(bob, groupId, 1, 'pl001-k1');
+        await _saveKey(charlie, groupId, 1, 'pl001-k1');
+
+        alice.start();
+        charlie.start();
+
+        final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: pl001Text,
+          messageId: messageId,
+          timestamp: sentAt,
+        );
+        expect(sendResult, SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.text, pl001Text);
+
+        await pumpUntilAsync(
+          () async => (await charlie.msgRepo.getMessage(messageId)) != null,
+        );
+        final charlieRows = (await charlie.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == messageId).toList();
+        expect(charlieRows, hasLength(1));
+        expect(charlieRows.single.text, pl001Text);
+        expect(charlieRows.single.isIncoming, isTrue);
+        expect(charlieRows.single.keyGeneration, 1);
+
+        expect(await bob.msgRepo.getMessage(messageId), isNull);
+
+        final storedReplay =
+            latestBridgePayload(alice.bridge, 'group:inboxStore')['message']
+                as String;
+        final replayPayload = _decodedGroupReplayPayload(storedReplay);
+        expect(replayPayload['messageId'], messageId);
+        expect(replayPayload['keyEpoch'], 1);
+        expect(replayPayload['text'], pl001Text);
+
+        final bobBridge = bob.bridge as _CursorInboxBridge;
+        bobBridge.addPage(groupId, '', [
+          {
+            'from': alice.peerId,
+            'message': storedReplay,
+            'timestamp': sentAt.millisecondsSinceEpoch,
+          },
+        ], 'cursor-pl001');
+
+        bob.start();
+        await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          groupMessageListener: bob.groupMessageListener,
+          mediaAttachmentRepo: bob.mediaAttachmentRepo,
+          selfPeerId: bob.peerId,
+          drainAllPages: false,
+        );
+        await pumpUntilAsync(
+          () async => (await bob.msgRepo.getMessage(messageId)) != null,
+        );
+
+        final bobRows = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == messageId).toList();
+        expect(bobRows, hasLength(1));
+        expect(bobRows.single.text, pl001Text);
+        expect(bobRows.single.senderPeerId, alice.peerId);
+        expect(bobRows.single.isIncoming, isTrue);
+        expect(bobRows.single.keyGeneration, 1);
+        expect(await bob.msgRepo.getInboxCursor(groupId), 'cursor-pl001');
+      },
+    );
+
+    test(
+      'PL-004 quote ids survive live replay and re-add visibility boundaries',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'pl004-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'pl004-bob-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'pl004-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-pl004-quotes';
+        const parentId = 'pl004-parent-before-replay';
+        const quoteId = 'pl004-quote-before-replay';
+        const removedWindowQuoteId = 'pl004-removed-window-quote';
+        const postReaddParentId = 'pl004-post-readd-parent';
+        const postReaddQuoteId = 'pl004-post-readd-quote';
+        final createdAt = DateTime.utc(2026, 5, 13, 20, 50);
+        final groupCreatedAt = createdAt.subtract(const Duration(seconds: 2));
+        final joinedAt = createdAt.subtract(const Duration(seconds: 1));
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'PL-004 Quotes',
+          createdAt: groupCreatedAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: joinedAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: joinedAt,
+        );
+        await _saveKey(alice, groupId, 1, 'pl004-k1');
+        await _saveKey(bob, groupId, 1, 'pl004-k1');
+        await _saveKey(charlie, groupId, 1, 'pl004-k1');
+
+        alice.start();
+        charlie.start();
+        network.unsubscribe(groupId, bob.peerId);
+
+        final (parentResult, parent) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'PL-004 visible parent before replay',
+          messageId: parentId,
+          timestamp: createdAt,
+        );
+        expect(parentResult, SendGroupMessageResult.success);
+        expect(parent, isNotNull);
+
+        final (quoteResult, quote) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'PL-004 quoted reply before replay',
+          quotedMessageId: parent!.id,
+          messageId: quoteId,
+          timestamp: createdAt.add(const Duration(seconds: 1)),
+        );
+        expect(quoteResult, SendGroupMessageResult.success);
+        expect(quote, isNotNull);
+
+        await pumpUntilAsync(() async {
+          final charlieMessages = await charlie.loadGroupMessages(groupId);
+          return charlieMessages.any((message) => message.id == quoteId);
+        }, maxPumps: 120);
+        final charlieInitial = await charlie.loadGroupMessages(groupId);
+        expect(
+          charlieInitial.where((message) => message.id == parentId),
+          hasLength(1),
+        );
+        final charlieInitialQuote = charlieInitial.singleWhere(
+          (message) => message.id == quoteId,
+        );
+        expect(charlieInitialQuote.quotedMessageId, parentId);
+        expect(await bob.loadGroupMessages(groupId), isEmpty);
+
+        String storedReplayFor(String messageId) {
+          return bridgePayloads(alice.bridge, 'group:inboxStore').singleWhere((
+                payload,
+              ) {
+                final replayPayload = _decodedGroupReplayPayload(
+                  payload['message'] as String,
+                );
+                return replayPayload['messageId'] == messageId;
+              })['message']
+              as String;
+        }
+
+        final parentReplay = storedReplayFor(parentId);
+        final quoteReplay = storedReplayFor(quoteId);
+        expect(
+          _decodedGroupReplayPayload(quoteReplay)['quotedMessageId'],
+          parentId,
+        );
+
+        final bobBridge = bob.bridge as _CursorInboxBridge;
+        bobBridge.addPage(groupId, '', [
+          {
+            'from': alice.peerId,
+            'message': parentReplay,
+            'timestamp': createdAt.millisecondsSinceEpoch,
+          },
+          {
+            'from': alice.peerId,
+            'message': quoteReplay,
+            'timestamp': createdAt
+                .add(const Duration(seconds: 1))
+                .millisecondsSinceEpoch,
+          },
+        ], 'cursor-pl004');
+
+        bob.start();
+        await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          groupMessageListener: bob.groupMessageListener,
+          mediaAttachmentRepo: bob.mediaAttachmentRepo,
+          selfPeerId: bob.peerId,
+          drainAllPages: false,
+        );
+        await pumpUntilAsync(() async {
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          return bobMessages.any((message) => message.id == quoteId);
+        }, maxPumps: 120);
+        final bobReplay = await bob.loadGroupMessages(groupId);
+        expect(
+          bobReplay.where((message) => message.id == parentId),
+          hasLength(1),
+        );
+        final bobReplayQuote = bobReplay.singleWhere(
+          (message) => message.id == quoteId,
+        );
+        expect(bobReplayQuote.quotedMessageId, parentId);
+        expect(await bob.msgRepo.getInboxCursor(groupId), 'cursor-pl004');
+
+        network.subscribe(groupId, bob.peerId);
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await pump();
+        expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+        final (removedQuoteResult, removedQuote) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'PL-004 quoted reply while Charlie is removed',
+              quotedMessageId: parentId,
+              messageId: removedWindowQuoteId,
+              timestamp: createdAt.add(const Duration(minutes: 1, seconds: 1)),
+            );
+        expect(removedQuoteResult, SendGroupMessageResult.success);
+        expect(removedQuote, isNotNull);
+        await pumpUntilAsync(() async {
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          return bobMessages.any(
+            (message) => message.id == removedWindowQuoteId,
+          );
+        }, maxPumps: 120);
+        expect(
+          (await bob.loadGroupMessages(groupId))
+              .singleWhere((message) => message.id == removedWindowQuoteId)
+              .quotedMessageId,
+          parentId,
+        );
+        expect(
+          (await charlie.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == removedWindowQuoteId),
+          isEmpty,
+        );
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await pump();
+        expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
+
+        final (postParentResult, postParent) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'PL-004 visible parent after re-add',
+              messageId: postReaddParentId,
+              timestamp: createdAt.add(const Duration(minutes: 2, seconds: 1)),
+            );
+        expect(postParentResult, SendGroupMessageResult.success);
+        expect(postParent, isNotNull);
+        final (postQuoteResult, postQuote) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'PL-004 quoted reply after re-add',
+              quotedMessageId: postParent!.id,
+              messageId: postReaddQuoteId,
+              timestamp: createdAt.add(const Duration(minutes: 2, seconds: 2)),
+            );
+        expect(postQuoteResult, SendGroupMessageResult.success);
+        expect(postQuote, isNotNull);
+
+        Future<void> expectPostReaddQuote(GroupTestUser user) async {
+          await pumpUntilAsync(() async {
+            final messages = await user.loadGroupMessages(groupId);
+            return messages.any((message) => message.id == postReaddQuoteId);
+          }, maxPumps: 120);
+          final messages = await user.loadGroupMessages(groupId);
+          expect(
+            messages.where((message) => message.id == postReaddParentId),
+            hasLength(1),
+            reason: '${user.username} must have the visible post-readd parent',
+          );
+          final quoteRow = messages.singleWhere(
+            (message) => message.id == postReaddQuoteId,
+          );
+          expect(quoteRow.quotedMessageId, postReaddParentId);
+        }
+
+        await expectPostReaddQuote(bob);
+        await expectPostReaddQuote(charlie);
+      },
+    );
+
+    test(
       'GP-026 same message is not duplicated if both pubsub and group inbox deliver it',
       () async {
         final bob = GroupTestUser.create(

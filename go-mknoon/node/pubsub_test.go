@@ -7450,6 +7450,103 @@ func TestKnownGroupMemberDial_PrefersExistingOrDirectPathBeforeRelay(t *testing.
 	}
 }
 
+func TestNW015ManualDialDisconnectPreservesGroupTopicConfigAndKey(t *testing.T) {
+	admin := startLocalNodeForMultiRelayTest(t)
+	target := startLocalNodeForMultiRelayTest(t)
+
+	targetID, err := peer.Decode(target.PeerId())
+	if err != nil {
+		t.Fatalf("decode target peer ID: %v", err)
+	}
+
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupID := "nw015-manual-peer-commands"
+	config := &GroupConfig{
+		Name:      "NW015 Stable Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: admin.PeerId(), Username: "admin", Role: GroupRoleAdmin, PublicKey: "adminPk"},
+			{PeerId: target.PeerId(), Username: "target", Role: GroupRoleWriter, PublicKey: "targetPk"},
+		},
+		CreatedBy: admin.PeerId(),
+		CreatedAt: "2026-05-13T22:05:00Z",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 15}
+
+	if err := admin.JoinGroupTopic(groupID, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	admin.mu.RLock()
+	topicBefore := admin.groupTopics[groupID]
+	subBefore := admin.groupSubs[groupID]
+	configBefore := admin.groupConfigs[groupID]
+	keyBefore := admin.groupKeys[groupID]
+	admin.mu.RUnlock()
+
+	if topicBefore == nil {
+		t.Fatal("expected joined group topic before manual peer commands")
+	}
+	if subBefore == nil {
+		t.Fatal("expected joined group subscription before manual peer commands")
+	}
+	if configBefore == nil || keyBefore == nil {
+		t.Fatal("expected stored group config and key before manual peer commands")
+	}
+	targetAddrStrings := make([]string, 0, len(target.Host().Addrs()))
+	for _, addr := range target.Host().Addrs() {
+		targetAddrStrings = append(targetAddrStrings, addr.String())
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := admin.DialPeer(target.PeerId(), targetAddrStrings); err != nil {
+			t.Fatalf("DialPeer iteration %d: %v", i, err)
+		}
+		waitForRP017Connectedness(t, admin, targetID, network.Connected, time.Second)
+
+		if err := admin.DisconnectPeer(target.PeerId()); err != nil {
+			t.Fatalf("DisconnectPeer iteration %d: %v", i, err)
+		}
+
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			if admin.Host().Network().Connectedness(targetID) != network.Connected {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if got := admin.Host().Network().Connectedness(targetID); got == network.Connected {
+			t.Fatalf("target remained connected after manual disconnect iteration %d", i)
+		}
+	}
+
+	admin.mu.RLock()
+	defer admin.mu.RUnlock()
+
+	if admin.groupTopics[groupID] != topicBefore {
+		t.Fatal("manual peer commands replaced or removed group topic")
+	}
+	if admin.groupSubs[groupID] != subBefore {
+		t.Fatal("manual peer commands replaced or removed group subscription")
+	}
+	if admin.groupConfigs[groupID] != configBefore {
+		t.Fatal("manual peer commands replaced or removed group config")
+	}
+	if admin.groupKeys[groupID] != keyBefore {
+		t.Fatal("manual peer commands replaced or removed group key")
+	}
+	if got := admin.groupKeys[groupID].KeyEpoch; got != 15 {
+		t.Fatalf("manual peer commands changed key epoch to %d", got)
+	}
+	if got := len(admin.groupConfigs[groupID].Members); got != 2 {
+		t.Fatalf("manual peer commands changed member count to %d", got)
+	}
+}
+
 func TestGP013DirectAddressPreferenceExcludesRelayCircuitAddrs(t *testing.T) {
 	dialer := startLocalNodeForMultiRelayTest(t)
 	setFakeRelays(t, dialer)

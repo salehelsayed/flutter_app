@@ -1667,7 +1667,7 @@ func GroupPublish(paramsJSON string) (result string) {
 		params.SenderPublicKey == "" || params.SenderPrivateKey == "" {
 		return errJSON("INVALID_INPUT", "missing groupId, senderPeerId, senderPublicKey, or senderPrivateKey")
 	}
-	if params.Text == "" && len(params.Media) == 0 {
+	if strings.TrimSpace(params.Text) == "" && len(params.Media) == 0 {
 		return errJSON("INVALID_INPUT", "either text or media is required")
 	}
 

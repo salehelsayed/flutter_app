@@ -133,32 +133,73 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
       groupRepo,
       groupId,
     );
+    final draftRepo = groupRepo is GroupKeyRotationDraftRepository
+        ? groupRepo as GroupKeyRotationDraftRepository
+        : null;
     final expectedEpoch = persistedKey.keyGeneration + 1;
 
-    // 1. Generate the next key without updating Go state yet.
-    final generateResult = await callGroupGenerateNextKey(bridge, groupId);
-    if (generateResult['ok'] != true) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
-        details: {'errorCode': generateResult['errorCode']},
-      );
+    final pendingDraftResult = await _loadUsablePendingRotationDraft(
+      draftRepo: draftRepo,
+      groupId: groupId,
+      persistedEpoch: persistedKey.keyGeneration,
+      expectedEpoch: expectedEpoch,
+    );
+    if (pendingDraftResult.failedClosed) {
       return null;
     }
+    final pendingDraft = pendingDraftResult.draft;
 
-    final newEpoch = generateResult['keyEpoch'] as int;
-    if (newEpoch != expectedEpoch) {
+    late final int newEpoch;
+    late final String newKey;
+    late final DateTime generatedAt;
+
+    if (pendingDraft != null) {
+      newEpoch = pendingDraft.keyGeneration;
+      newKey = pendingDraft.encryptedKey;
+      generatedAt = pendingDraft.createdAt;
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_EPOCH_MISMATCH',
-        details: {
-          'persistedEpoch': persistedKey.keyGeneration,
-          'generatedEpoch': newEpoch,
-        },
+        event: 'GROUP_ROTATE_KEY_PENDING_DRAFT_REUSED',
+        details: {'newEpoch': newEpoch},
       );
-      return null;
+    } else {
+      // 1. Generate the next key without updating Go state yet.
+      final generateResult = await callGroupGenerateNextKey(bridge, groupId);
+      if (generateResult['ok'] != true) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
+          details: {'errorCode': generateResult['errorCode']},
+        );
+        return null;
+      }
+
+      newEpoch = generateResult['keyEpoch'] as int;
+      if (newEpoch != expectedEpoch) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_EPOCH_MISMATCH',
+          details: {
+            'persistedEpoch': persistedKey.keyGeneration,
+            'generatedEpoch': newEpoch,
+          },
+        );
+        return null;
+      }
+      newKey = generateResult['groupKey'] as String;
+      generatedAt = DateTime.now().toUtc();
+
+      final savedDraft = await _savePendingRotationDraft(
+        draftRepo: draftRepo,
+        groupId: groupId,
+        keyGeneration: newEpoch,
+        encryptedKey: newKey,
+        createdAt: generatedAt,
+      );
+      if (!savedDraft) {
+        return null;
+      }
     }
-    final newKey = generateResult['groupKey'] as String;
     final directKeyUpdateEventAt = DateTime.now().toUtc();
     final maxDistributionAttempts = distributionAttemptCount < 1
         ? 1
@@ -264,9 +305,10 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
       groupId: groupId,
       keyGeneration: newEpoch,
       encryptedKey: newKey,
-      createdAt: DateTime.now().toUtc(),
+      createdAt: generatedAt,
     );
     await groupRepo.saveKey(keyInfo);
+    await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
 
     emitFlowEvent(
       layer: 'FL',
@@ -330,6 +372,91 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
 }
 
 final Map<String, Future<void>> _groupRotationQueues = <String, Future<void>>{};
+
+Future<({GroupKeyInfo? draft, bool failedClosed})>
+_loadUsablePendingRotationDraft({
+  required GroupKeyRotationDraftRepository? draftRepo,
+  required String groupId,
+  required int persistedEpoch,
+  required int expectedEpoch,
+}) async {
+  if (draftRepo == null) {
+    return (draft: null, failedClosed: false);
+  }
+
+  final pendingDraft = await draftRepo.getPendingKeyRotation(groupId);
+  if (pendingDraft == null) {
+    return (draft: null, failedClosed: false);
+  }
+
+  if (pendingDraft.keyGeneration <= persistedEpoch) {
+    await draftRepo.clearPendingKeyRotation(
+      groupId,
+      pendingDraft.keyGeneration,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_PENDING_DRAFT_STALE_CLEARED',
+      details: {
+        'persistedEpoch': persistedEpoch,
+        'pendingEpoch': pendingDraft.keyGeneration,
+      },
+    );
+    return (draft: null, failedClosed: false);
+  }
+
+  if (pendingDraft.keyGeneration != expectedEpoch ||
+      pendingDraft.encryptedKey.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_PENDING_DRAFT_EPOCH_MISMATCH',
+      details: {
+        'persistedEpoch': persistedEpoch,
+        'expectedEpoch': expectedEpoch,
+        'pendingEpoch': pendingDraft.keyGeneration,
+      },
+    );
+    return (draft: null, failedClosed: true);
+  }
+
+  return (draft: pendingDraft, failedClosed: false);
+}
+
+Future<bool> _savePendingRotationDraft({
+  required GroupKeyRotationDraftRepository? draftRepo,
+  required String groupId,
+  required int keyGeneration,
+  required String encryptedKey,
+  required DateTime createdAt,
+}) async {
+  if (draftRepo == null) {
+    return true;
+  }
+
+  try {
+    await draftRepo.savePendingKeyRotation(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: keyGeneration,
+        encryptedKey: encryptedKey,
+        createdAt: createdAt,
+      ),
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_PENDING_DRAFT_SAVED',
+      details: {'newEpoch': keyGeneration},
+    );
+    return true;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_PENDING_DRAFT_SAVE_ERROR',
+      details: {'error': e.toString()},
+    );
+    return false;
+  }
+}
 
 Future<T> _withSerializedGroupRotation<T>(
   String groupId,

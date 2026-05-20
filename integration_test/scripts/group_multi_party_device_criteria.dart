@@ -53,6 +53,10 @@ const _ir016Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'ir016',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _pl002Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'pl002',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
 const _privateAbcCreateRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_abc_create',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -122,6 +126,11 @@ const _privateReaddActiveMembersRequirement =
 const _privateReaddAlternatingChurnRequirement =
     GroupMultiPartyScenarioRequirement(
       scenario: 'private_readd_alternating_churn',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
+const _privateNetworkChaosInvariantsRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_network_chaos_invariants',
       roles: <String>['alice', 'bob', 'charlie', 'dana'],
     );
 const _privateLateLeaveReaddRequirement = GroupMultiPartyScenarioRequirement(
@@ -430,6 +439,7 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'ir001': _ir001Requirement,
   'ir015': _ir015Requirement,
   'ir016': _ir016Requirement,
+  'pl002': _pl002Requirement,
   'private_abc_create': _privateAbcCreateRequirement,
   'private_full_mesh_online': _privateFullMeshOnlineRequirement,
   'private_relay_only_delivery': _privateRelayOnlyDeliveryRequirement,
@@ -449,6 +459,7 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'private_readd_current': _privateReaddCurrentRequirement,
   'private_readd_active_members': _privateReaddActiveMembersRequirement,
   'private_readd_alternating_churn': _privateReaddAlternatingChurnRequirement,
+  'private_network_chaos_invariants': _privateNetworkChaosInvariantsRequirement,
   'private_late_leave_readd': _privateLateLeaveReaddRequirement,
   'private_rotated_device_readd': _privateRotatedDeviceReaddRequirement,
   'private_same_user_multi_device_readd':
@@ -919,7 +930,7 @@ _SentProofMessage? _validateSentMessage({
     );
   }
   final text = _messageText(sent);
-  if (text == null || text.isEmpty) {
+  if (text == null || (!message.allowEmptyText && text.isEmpty)) {
     failures.add('${message.senderRole}: sent ${message.key} missing text');
   }
   final sentPeerId = _stringValue(sent['senderPeerId']);
@@ -940,7 +951,7 @@ _SentProofMessage? _validateSentMessage({
   if (messageId == null ||
       messageId.isEmpty ||
       text == null ||
-      text.isEmpty ||
+      (!message.allowEmptyText && text.isEmpty) ||
       sentPeerId == null ||
       sentPeerId.isEmpty ||
       keyEpoch == null ||
@@ -1931,6 +1942,15 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['bob', 'charlie'],
         ),
       ];
+    case 'pl002':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'alicePl002MediaOnly',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+          allowEmptyText: true,
+        ),
+      ];
     case 'private_online_add':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
@@ -2260,6 +2280,7 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
     case 'private_readd_active_members':
       return _ra017ExpectedMessages();
     case 'private_readd_alternating_churn':
+    case 'private_network_chaos_invariants':
       return _ra018ExpectedMessages();
     case 'private_readd_cycles':
       return const <_ExpectedProofMessage>[];
@@ -2724,6 +2745,10 @@ void _validateScenarioProofFields({
     _validateIr016RetentionCutoffProof(byRole: byRole, failures: failures);
     return;
   }
+  if (scenario == 'pl002') {
+    _validatePl002MediaOnlyProof(byRole: byRole, failures: failures);
+    return;
+  }
   if (scenario == 'private_abc_create') {
     _validatePrivateAbcCreateReusableProof(byRole: byRole, failures: failures);
     _validateMl001CreateInviteProofFields(byRole: byRole, failures: failures);
@@ -3132,6 +3157,7 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validatePl004QuoteReaddLiveProof(byRole: byRole, failures: failures);
     _validateRa002OnlineSubscribedReaddProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
@@ -3185,6 +3211,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_readd_alternating_churn') {
     _validateRa018AlternatingChurnProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_network_chaos_invariants') {
+    _validateNw014ChaosInvariantProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -4462,6 +4496,95 @@ void _validateIr016RetentionCutoffProof({
         'charlie: $proofName.onlineControlRetainedCount must be '
         '${retainedKeys.length}',
       );
+    }
+  }
+}
+
+void _validatePl002MediaOnlyProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'pl002MediaOnlyProof';
+  const key = 'alicePl002MediaOnly';
+
+  bool mediaOk(Map<String, dynamic>? entry) {
+    if (entry == null) return false;
+    if (_messageText(entry) != '') return false;
+    final media = _mapList(entry['media']).isNotEmpty
+        ? _mapList(entry['media'])
+        : _mapList(entry['mediaAttachments']);
+    if (media.length != 1) return false;
+    final attachment = media.single;
+    return _stringValue(attachment['mime']) == 'audio/mp4' &&
+        _stringValue(attachment['mediaType']) == 'audio' &&
+        _intValue(attachment['durationMs']) == 2200;
+  }
+
+  Map<String, dynamic>? entryFor(String role, String collectionName) {
+    final entries = _mapList(byRole[role]?[collectionName])
+        .where((entry) => _stringValue(entry['key']) == key)
+        .toList(growable: false);
+    return entries.length == 1 ? entries.single : null;
+  }
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'PL-002') {
+      failures.add('$role: $proofName.rowId must be PL-002');
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  if (aliceProof == null) {
+    failures.add('alice: missing PL-002 media-only proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'acceptedMediaOnly',
+      'emptyTextPreserved',
+      'mediaDescriptorPublished',
+      'bobReceiptSignalObserved',
+      'charlieReceiptSignalObserved',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (!mediaOk(entryFor('alice', 'sentMessages'))) {
+    failures.add('alice: $proofName sent media-only descriptor mismatch');
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing PL-002 media-only proof fields');
+    } else {
+      requireRowId(role, proof);
+      for (final field in const <String>[
+        'receivedVisibleMessageOnce',
+        'emptyTextPreserved',
+        'mediaDescriptorPersisted',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: proofName,
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+      if (_intValue(proof['mediaCount']) != 1) {
+        failures.add('$role: $proofName.mediaCount must be 1');
+      }
+    }
+
+    if (!mediaOk(entryFor(role, 'receivedMessages'))) {
+      failures.add('$role: $proofName received media-only descriptor mismatch');
     }
   }
 }
@@ -12615,6 +12738,176 @@ void _validateMl007ReaddCurrentProof({
   }
 }
 
+void _validatePl004QuoteReaddLiveProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'pl004QuoteReaddLiveProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  Map<String, dynamic>? sentEntry(String role, String key) {
+    final entries = _mapList(
+      byRole[role]?['sentMessages'],
+    ).where((entry) => _stringValue(entry['key']) == key).toList();
+    return entries.length == 1 ? entries.single : null;
+  }
+
+  Map<String, dynamic>? receivedEntry(String role, String key) {
+    final entries = _mapList(
+      byRole[role]?['receivedMessages'],
+    ).where((entry) => _stringValue(entry['key']) == key).toList();
+    return entries.length == 1 ? entries.single : null;
+  }
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'PL-004') {
+      failures.add('$role: $proofName.rowId must be PL-004');
+    }
+  }
+
+  void requireQuoteTarget(
+    String role,
+    Map<String, dynamic> proof,
+    String? expectedTarget,
+  ) {
+    if (_stringValue(proof['quoteTargetMessageId']) != expectedTarget) {
+      failures.add('$role: $proofName.quoteTargetMessageId mismatch');
+    }
+  }
+
+  final targetMessageId = _stringValue(
+    sentEntry('alice', 'aliceAfterImmediateReadd')?['messageId'],
+  );
+  if (targetMessageId == null) {
+    failures.add('alice: PL-004 target message is missing');
+  }
+
+  final bobSentQuoteId = _stringValue(
+    sentEntry('bob', 'bobAfterReaddCurrent')?['quotedMessageId'],
+  );
+  final aliceReceivedQuoteId = _stringValue(
+    receivedEntry('alice', 'bobAfterReaddCurrent')?['quotedMessageId'],
+  );
+  final charlieReceivedQuoteId = _stringValue(
+    receivedEntry('charlie', 'bobAfterReaddCurrent')?['quotedMessageId'],
+  );
+
+  if (targetMessageId != null && bobSentQuoteId != targetMessageId) {
+    failures.add(
+      'bob: $proofName sent quote did not reference Alice post-readd target',
+    );
+  }
+  if (targetMessageId != null && aliceReceivedQuoteId != targetMessageId) {
+    failures.add(
+      'alice: $proofName received quote did not reference Alice post-readd target',
+    );
+  }
+  if (targetMessageId != null && charlieReceivedQuoteId != targetMessageId) {
+    failures.add(
+      'charlie: $proofName received quote did not reference Alice post-readd target',
+    );
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing PL-004 quote re-add proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'readdedCharlieBeforeQuote',
+      'receivedQuotedPostReaddLive',
+      'quoteTargetVisibleBeforeQuotedDelivery',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireQuoteTarget('alice', aliceProof, targetMessageId);
+    if (_stringValue(aliceProof['receivedQuotedMessageId']) !=
+        targetMessageId) {
+      failures.add('alice: $proofName.receivedQuotedMessageId mismatch');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing PL-004 quote re-add proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieReaddedBeforeQuote',
+      'sentQuotedPostReaddLive',
+      'quoteTargetVisibleBeforeSend',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireQuoteTarget('bob', bobProof, targetMessageId);
+    if (_stringValue(bobProof['sentQuotedMessageId']) != targetMessageId) {
+      failures.add('bob: $proofName.sentQuotedMessageId mismatch');
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing PL-004 quote re-add proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'readdedBeforeQuotedDelivery',
+      'receivedQuotedPostReaddLive',
+      'quoteTargetVisibleBeforeQuotedDelivery',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireQuoteTarget('charlie', charlieProof, targetMessageId);
+    if (_stringValue(charlieProof['receivedQuotedMessageId']) !=
+        targetMessageId) {
+      failures.add('charlie: $proofName.receivedQuotedMessageId mismatch');
+    }
+    final plaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
+  }
+
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch == null || aliceEpoch < 2) {
+    failures.add('alice: $proofName.finalEpoch must be >= 2');
+  }
+  if (bobEpoch == null || bobEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+  if (charlieEpoch == null || charlieEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final epochs = <int>{};
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: PL-004 finalEpoch mismatch');
+  }
+}
+
 void _validateRa002OnlineSubscribedReaddProof({
   required Map<String, Map<String, dynamic>> byRole,
   required Map<String, String> peerIdByRole,
@@ -13108,6 +13401,140 @@ void _validateRa018AlternatingChurnProof({
         failures.add('dana: sent $readdKey missing from RA-018 proof');
       }
     }
+  }
+}
+
+void _validateNw014ChaosInvariantProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'nw014ChaosInvariantProof';
+  final expectedRoles = const <String>{'alice', 'bob', 'charlie', 'dana'};
+  final expectedTargets = const <String>{'charlie', 'dana'};
+  final finalEpochs = <int>{};
+
+  for (final role in expectedRoles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing NW-014 chaos invariant proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'NW-014') {
+      failures.add('$role: $proofName.rowId must be NW-014');
+    }
+    if (_stringValue(proof['scenario']) != 'private_network_chaos_invariants') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+    if (_stringValue(proof['chaosProofSource']) !=
+        'app_peer_core_simulator_churn_invariant_subset') {
+      failures.add('$role: $proofName.chaosProofSource mismatch');
+    }
+    if (_intValue(proof['fixedSeed']) != 14014) {
+      failures.add('$role: $proofName.fixedSeed must be 14014');
+    }
+    if (_stringValue(proof['modelInvariant']) !=
+        'active_entitled_exactly_once') {
+      failures.add('$role: $proofName.modelInvariant mismatch');
+    }
+    final messageOperationCount = _intValue(proof['messageOperationCount']);
+    if (messageOperationCount == null || messageOperationCount < 12) {
+      failures.add('$role: $proofName.messageOperationCount must be >= 12');
+    }
+    final membershipOperationCount = _intValue(
+      proof['membershipOperationCount'],
+    );
+    if (membershipOperationCount == null || membershipOperationCount < 12) {
+      failures.add('$role: $proofName.membershipOperationCount must be >= 12');
+    }
+    final churnCycles = _intValue(proof['churnCycles']);
+    if (churnCycles == null || churnCycles < 3) {
+      failures.add('$role: $proofName.churnCycles must be >= 3');
+    }
+    final churnTargets = _stringList(proof['churnTargets']).toSet();
+    if (!churnTargets.containsAll(expectedTargets)) {
+      failures.add('$role: $proofName.churnTargets must include charlie, dana');
+    }
+    final activeSenders = _stringList(proof['activeSenders']).toSet();
+    if (!activeSenders.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeSenders must include alice, bob, charlie, dana',
+      );
+    }
+    final activeReceivers = _stringList(proof['activeReceivers']).toSet();
+    if (!activeReceivers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeReceivers must include alice, bob, charlie, dana',
+      );
+    }
+    for (final field in const <String>[
+      'finalMemberListConverged',
+      'finalEpochConverged',
+      'fakeNetworkChaosProofRequired',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final charlieLeak = _intValue(proof['charlieRemovedWindowPlaintextCount']);
+    if (charlieLeak != 0) {
+      failures.add(
+        '$role: $proofName.charlieRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final danaLeak = _intValue(proof['danaRemovedWindowPlaintextCount']);
+    if (danaLeak != 0) {
+      failures.add(
+        '$role: $proofName.danaRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final duplicateCount = _intValue(proof['duplicateVisibleMessageCount']);
+    if (duplicateCount != 0) {
+      failures.add('$role: $proofName.duplicateVisibleMessageCount must be 0');
+    }
+    final inactiveSenderAttempts = _intValue(
+      proof['inactiveSenderAttemptCount'],
+    );
+    if (inactiveSenderAttempts != 0) {
+      failures.add('$role: $proofName.inactiveSenderAttemptCount must be 0');
+    }
+    final finalMembers = _stringList(proof['finalRoles']).toSet();
+    if (!finalMembers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.finalRoles must include alice, bob, charlie, dana',
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 13) {
+      failures.add('$role: $proofName.finalEpoch must be >= 13');
+    } else {
+      finalEpochs.add(finalEpoch);
+    }
+    _validateRa018ProofIntervals(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      failures: failures,
+    );
+  }
+
+  if (finalEpochs.length > 1) {
+    failures.add('alice/bob/charlie/dana: NW-014 finalEpoch mismatch');
+  }
+
+  final expectedPeerIds = <String>{
+    for (final role in const <String>['alice', 'bob', 'charlie', 'dana'])
+      ?peerIdByRole[role],
+  };
+  if (expectedPeerIds.length != 4) {
+    failures.add('alice/bob/charlie/dana: NW-014 requires four peer ids');
   }
 }
 
@@ -20495,12 +20922,14 @@ class _ExpectedProofMessage {
     required this.senderRole,
     required this.receiverRoles,
     this.expectedSenderPeerRole,
+    this.allowEmptyText = false,
   });
 
   final String key;
   final String senderRole;
   final List<String> receiverRoles;
   final String? expectedSenderPeerRole;
+  final bool allowEmptyText;
 }
 
 class _SentProofMessage {
@@ -20524,9 +20953,13 @@ String? _stringValue(Object? value) {
 }
 
 String? _messageText(Map<String, dynamic> message) {
-  final text = _stringValue(message['text']);
+  final rawText = message['text'];
+  if (rawText is String && rawText.isEmpty) return '';
+  final text = _stringValue(rawText);
   if (text != null && text.isNotEmpty) return text;
-  return _stringValue(message['plaintext']);
+  final rawPlaintext = message['plaintext'];
+  if (rawPlaintext is String && rawPlaintext.isEmpty) return '';
+  return _stringValue(rawPlaintext);
 }
 
 int? _intValue(Object? value) {

@@ -892,6 +892,80 @@ void main() {
   });
 
   test(
+    'PL-001 outgoing unicode and multiline text is identical in live publish and replay payloads',
+    () async {
+      const messageId = 'pl001-unicode-multiline';
+      const pl001Text =
+          'PL-001 emoji 👩‍💻🚀\n'
+          'RTL مرحبا שלום 123\n'
+          'Combining cafe\u0301 na\u0308ive\n'
+          'Tabs\tand symbols ✓';
+      final sentAt = DateTime.utc(2026, 5, 13, 20, 30);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: testGroup.id,
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: sentAt,
+        ),
+      );
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': messageId,
+        'topicPeers': 1,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: pl001Text,
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: messageId,
+        timestamp: sentAt,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.id, messageId);
+      expect(message.text, pl001Text);
+      expect(message.keyGeneration, 1);
+
+      final saved = await msgRepo.getMessage(messageId);
+      expect(saved, isNotNull);
+      expect(saved!.text, pl001Text);
+      expect(saved.status, 'sent');
+
+      final publishRaw = bridge.sentMessages.firstWhere((raw) {
+        final parsed = jsonDecode(raw) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:publish';
+      });
+      final publishPayload =
+          (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      expect(publishPayload['messageId'], messageId);
+      expect(publishPayload['text'], pl001Text);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      final recipientPeerIds =
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>();
+      expect(recipientPeerIds, contains('peer-2'));
+
+      final replayPayload = _decodedGroupInboxReplayPayload(bridge);
+      expect(replayPayload['messageId'], messageId);
+      expect(replayPayload['keyEpoch'], 1);
+      expect(replayPayload['text'], pl001Text);
+      expect(replayPayload['timestamp'], sentAt.toIso8601String());
+    },
+  );
+
+  test(
     'propagates quotedMessageId through publish, inbox, and saved message',
     () async {
       final (result, message) = await sendGroupMessage(
@@ -924,6 +998,49 @@ void main() {
       final saved = await msgRepo.getMessage(message.id);
       expect(saved, isNotNull);
       expect(saved!.quotedMessageId, 'msg-parent-1');
+    },
+  );
+
+  test(
+    'PL-004 quoted message id is preserved in publish inbox and sender row',
+    () async {
+      final sentAt = DateTime.utc(2026, 5, 13, 20, 45);
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'PL-004 quoted reply',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'pl004-quoted-reply',
+        timestamp: sentAt,
+        quotedMessageId: 'pl004-visible-parent',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.quotedMessageId, 'pl004-visible-parent');
+      expect(message.id, 'pl004-quoted-reply');
+      expect(message.timestamp, sentAt);
+
+      final publishMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+      );
+      final publishPayload =
+          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+      expect(publishPayload['messageId'], 'pl004-quoted-reply');
+      expect(publishPayload['quotedMessageId'], 'pl004-visible-parent');
+
+      final innerPayload = _decodedGroupInboxReplayPayload(bridge);
+      expect(innerPayload['messageId'], 'pl004-quoted-reply');
+      expect(innerPayload['quotedMessageId'], 'pl004-visible-parent');
+
+      final saved = await msgRepo.getMessage('pl004-quoted-reply');
+      expect(saved, isNotNull);
+      expect(saved!.quotedMessageId, 'pl004-visible-parent');
     },
   );
 
@@ -3069,55 +3186,85 @@ void main() {
       },
     );
 
-    test('sends message with empty text and media (voice note)', () async {
-      final voiceAttachment = MediaAttachment(
-        id: 'att-voice',
-        messageId: '',
-        mime: 'audio/mp4',
-        size: 48000,
-        mediaType: 'audio',
-        downloadStatus: 'done',
-        createdAt: DateTime.now().toUtc().toIso8601String(),
-        localPath: '/tmp/voice.m4a',
-        durationMs: 3000,
-        waveform: [0.1, 0.5, 0.8, 0.3],
-        contentHash: _validContentHash,
-        encryptionKeyBase64: 'key-att-voice',
-        encryptionNonce: 'nonce-att-voice',
-        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-      );
+    test(
+      'PL-002 media-only group message accepts empty text and preserves media',
+      () async {
+        final voiceAttachment = MediaAttachment(
+          id: 'att-voice',
+          messageId: '',
+          mime: 'audio/mp4',
+          size: 48000,
+          mediaType: 'audio',
+          downloadStatus: 'done',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+          localPath: '/tmp/voice.m4a',
+          durationMs: 3000,
+          waveform: [0.1, 0.5, 0.8, 0.3],
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'key-att-voice',
+          encryptionNonce: 'nonce-att-voice',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        const messageId = 'pl002-media-only-empty-text';
+        final sentAt = DateTime.utc(2026, 5, 14, 18, 4);
 
-      final (result, message) = await sendGroupMessage(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        groupId: 'group-1',
-        text: '',
-        senderPeerId: 'peer-1',
-        senderPublicKey: 'pk-1',
-        senderPrivateKey: 'sk-1',
-        senderUsername: 'Alice',
-        mediaAttachments: [voiceAttachment],
-        mediaAttachmentRepo: mediaRepo,
-      );
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          timestamp: sentAt,
+          mediaAttachments: [voiceAttachment],
+          mediaAttachmentRepo: mediaRepo,
+        );
 
-      expect(result, SendGroupMessageResult.success);
-      expect(message, isNotNull);
-      expect(message!.text, '');
-      expect(message.status, 'sent');
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, messageId);
+        expect(message.text, '');
+        expect(message.status, 'sent');
 
-      // Verify bridge received media in publish payload
-      final publishMsg = bridge.sentMessages.firstWhere(
-        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
-      );
-      final payload =
-          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
-      expect(payload['media'], isNotNull);
-      expect((payload['media'] as List).length, 1);
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+        );
+        final payload =
+            (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+        expect(payload['messageId'], messageId);
+        expect(payload['text'], '');
+        expect(payload['media'], isNotNull);
+        expect((payload['media'] as List), hasLength(1));
+        final publishMedia =
+            (payload['media'] as List).single as Map<String, dynamic>;
+        expect(publishMedia['id'], voiceAttachment.id);
+        expect(publishMedia['mime'], 'audio/mp4');
+        expect(publishMedia['mediaType'], 'audio');
+        expect(publishMedia['durationMs'], 3000);
+        expect(publishMedia['waveform'], [0.1, 0.5, 0.8, 0.3]);
 
-      // Verify attachment saved with resolved messageId
-      expect(mediaRepo.count, 1);
-    });
+        final replayPayload = _decodedGroupInboxReplayPayload(bridge);
+        expect(replayPayload['messageId'], messageId);
+        expect(replayPayload['text'], '');
+        expect(replayPayload['timestamp'], sentAt.toIso8601String());
+        expect(replayPayload['media'], isNotNull);
+        final replayMedia =
+            (replayPayload['media'] as List).single as Map<String, dynamic>;
+        expect(replayMedia['id'], voiceAttachment.id);
+        expect(replayMedia['mime'], 'audio/mp4');
+        expect(replayMedia['mediaType'], 'audio');
+
+        expect(mediaRepo.count, 1);
+        final savedAttachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+        );
+        expect(savedAttachments, hasLength(1));
+      },
+    );
 
     test(
       'ML-017 retained removed history rejects send before bootstrap-key checks',
@@ -3294,6 +3441,32 @@ void main() {
       // Should not have called bridge at all
       expect(bridge.commandLog, isEmpty);
     });
+
+    test(
+      'PL-003 empty text without media is rejected before local ghost row or bridge publish',
+      () async {
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: ' \n\t ',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'pl003-empty-no-media',
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(await msgRepo.getMessagesPage('group-1'), isEmpty);
+        expect(await msgRepo.getMessage('pl003-empty-no-media'), isNull);
+        expect(bridge.sentMessages, isEmpty);
+        expect(bridge.commandLog, isEmpty);
+      },
+    );
 
     test('rejects message with whitespace-only text and no media', () async {
       final (result, message) = await sendGroupMessage(
