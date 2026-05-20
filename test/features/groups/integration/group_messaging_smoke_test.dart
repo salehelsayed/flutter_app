@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
@@ -1269,6 +1270,153 @@ void main() {
         expect(network.publishCount, 0);
         expect(alice.bridge.sentMessages, isEmpty);
         expect(alice.bridge.commandLog, isEmpty);
+      },
+    );
+
+    test(
+      'PL-008 media upload progress storm does not drop fake-network group messages',
+      () async {
+        final progressEvents = <Map<String, dynamic>>[];
+        final progressSub = mediaUploadProgressStream.listen(
+          progressEvents.add,
+        );
+        addTearDown(progressSub.cancel);
+
+        final alice = GroupTestUser.create(
+          peerId: 'pl008-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'pl008-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'pl008-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-pl008-progress-storm';
+        await alice.createGroup(groupId: groupId, name: 'PL-008 Progress');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        Future<void> saveKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'pl008-key',
+              createdAt: DateTime.utc(2026, 5, 13, 21),
+            ),
+          );
+        }
+
+        await Future.wait([saveKey(alice), saveKey(bob), saveKey(charlie)]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        var progressSequence = 0;
+        void emitProgressBurst(String phase) {
+          for (var i = 0; i < 6; i++) {
+            progressSequence++;
+            emitMediaUploadProgressEvent({
+              'id': 'pl008-upload',
+              'sentBytes': progressSequence * 1024,
+              'totalBytes': 36 * 1024,
+              'phase': phase,
+            });
+          }
+        }
+
+        Future<void> sendDuringProgress({
+          required GroupTestUser sender,
+          required String messageId,
+          required String text,
+        }) async {
+          emitProgressBurst('before-$messageId');
+          final (result, sent) = await sender.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: text,
+            messageId: messageId,
+          );
+          expect(result.name, 'success');
+          expect(sent, isNotNull);
+          emitProgressBurst('after-$messageId');
+        }
+
+        const messageTexts = [
+          'PL-008 Alice message 1',
+          'PL-008 Bob message',
+          'PL-008 Alice message 2',
+        ];
+
+        await sendDuringProgress(
+          sender: alice,
+          messageId: 'pl008-alice-1',
+          text: messageTexts[0],
+        );
+        await sendDuringProgress(
+          sender: bob,
+          messageId: 'pl008-bob-1',
+          text: messageTexts[1],
+        );
+        await sendDuringProgress(
+          sender: alice,
+          messageId: 'pl008-alice-2',
+          text: messageTexts[2],
+        );
+
+        Future<List<GroupMessage>> waitForAllMessages(
+          GroupTestUser user,
+        ) async {
+          final deadline = DateTime.now().add(const Duration(seconds: 3));
+          while (DateTime.now().isBefore(deadline)) {
+            final messages = await user.loadGroupMessages(groupId);
+            final hasAll = messageTexts.every(
+              (text) =>
+                  messages.where((message) => message.text == text).length == 1,
+            );
+            if (hasAll) return messages;
+            await pump();
+          }
+          fail('Expected all PL-008 messages for ${user.username}');
+        }
+
+        final aliceMessages = await waitForAllMessages(alice);
+        final bobMessages = await waitForAllMessages(bob);
+        final charlieMessages = await waitForAllMessages(charlie);
+
+        for (final text in messageTexts) {
+          expect(
+            aliceMessages.where((message) => message.text == text),
+            hasLength(1),
+            reason: 'Alice should retain exactly one copy of $text',
+          );
+          expect(
+            bobMessages.where((message) => message.text == text),
+            hasLength(1),
+            reason: 'Bob should retain exactly one copy of $text',
+          );
+          expect(
+            charlieMessages.where((message) => message.text == text),
+            hasLength(1),
+            reason: 'Charlie should receive exactly one copy of $text',
+          );
+        }
+
+        expect(progressEvents, hasLength(36));
+        expect(progressEvents.last['id'], 'pl008-upload');
+        expect(progressEvents.last['sentBytes'], 36 * 1024);
       },
     );
 
