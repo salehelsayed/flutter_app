@@ -75,6 +75,51 @@ void main() {
     expect(stored, hasLength(1));
   });
 
+  test(
+    'PL-009 active sender reaction applies once to the correct message',
+    () async {
+      final first = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'pl009-r-1',
+          messageId: 'pl009-target',
+          emoji: '🔥',
+        ),
+      );
+      final duplicate = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'pl009-r-1',
+          messageId: 'pl009-target',
+          emoji: '🔥',
+        ),
+      );
+
+      expect(first.$1, HandleGroupReactionResult.success);
+      expect(duplicate.$1, HandleGroupReactionResult.success);
+      expect(first.$2?.type, ReactionChangeType.upserted);
+      expect(duplicate.$2?.type, ReactionChangeType.upserted);
+      expect(first.$2?.messageId, 'pl009-target');
+      expect(first.$2?.reaction?.senderPeerId, 'peer-sender');
+      expect(first.$2?.reaction?.emoji, '🔥');
+
+      final targetReactions = await reactionRepo.getReactionsForMessage(
+        'pl009-target',
+      );
+      expect(targetReactions, hasLength(1));
+      expect(targetReactions.single.id, 'pl009-r-1');
+      expect(targetReactions.single.senderPeerId, 'peer-sender');
+      expect(targetReactions.single.emoji, '🔥');
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    },
+  );
+
   test('replaces prior emoji from same sender', () async {
     // First reaction: 👍
     await handleIncomingGroupReaction(

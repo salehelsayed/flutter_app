@@ -125,6 +125,53 @@ void main() {
     expect(stored.first.emoji, '👍');
   });
 
+  test(
+    'PL-009 active member publishes reaction command and stores local reaction once',
+    () async {
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, SendGroupReactionResult.success);
+      expect(reaction, isNotNull);
+      expect(reaction!.messageId, 'msg-1');
+      expect(reaction.senderPeerId, 'peer-1');
+      expect(reaction.emoji, '🔥');
+
+      final publishCommands = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:publishReaction')
+          .toList(growable: false);
+      expect(publishCommands, hasLength(1));
+      final payload = publishCommands.single['payload'] as Map<String, dynamic>;
+      expect(payload['groupId'], 'group-1');
+      expect(payload['senderPeerId'], 'peer-1');
+      final reactionPayload =
+          jsonDecode(payload['reactionPayload'] as String)
+              as Map<String, dynamic>;
+      expect(reactionPayload['messageId'], 'msg-1');
+      expect(reactionPayload['senderPeerId'], 'peer-1');
+      expect(reactionPayload['emoji'], '🔥');
+      expect(reactionPayload['action'], 'add');
+
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+      expect(stored.single.senderPeerId, 'peer-1');
+      expect(stored.single.emoji, '🔥');
+      expect(reactionRepo.saveReactionCallCount, 1);
+    },
+  );
+
   test('announcement member can react', () async {
     final announcementGroup = GroupModel(
       id: 'group-ann',
