@@ -205,6 +205,27 @@ func sendMediaRequest(s network.Stream, req *mediaRequest) (*mediaResponse, erro
 	return &resp, nil
 }
 
+func copyMediaDownloadToFile(outputPath string, reader io.Reader, expectedSize int64, idleTimeout time.Duration) (int64, error) {
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return 0, fmt.Errorf("create output file: %w", err)
+	}
+
+	idleReader := newIdleTimeoutReader(reader, idleTimeout)
+	written, copyErr := io.CopyN(f, idleReader, expectedSize)
+	closeErr := f.Close()
+	if copyErr == nil {
+		copyErr = closeErr
+	}
+
+	if copyErr != nil || written != expectedSize {
+		os.Remove(outputPath)
+		return written, fmt.Errorf("download incomplete: wrote %d/%d, err=%v", written, expectedSize, copyErr)
+	}
+
+	return written, nil
+}
+
 // --- Public methods ---
 
 // MediaUpload uploads a file to the relay's media store.
@@ -322,21 +343,10 @@ func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, er
 		return "", 0, fmt.Errorf("download failed: %s", resp.Error)
 	}
 
-	// Create local file
-	f, sErr := os.Create(outputPath)
-	if sErr != nil {
-		return "", 0, fmt.Errorf("create output file: %w", sErr)
-	}
-
 	// Read exactly resp.Size bytes
 	downloadStart := time.Now()
-	idleReader := newIdleTimeoutReader(s, MediaIdleTimeout)
-	written, sErr := io.CopyN(f, idleReader, resp.Size)
-	f.Close()
-
-	if sErr != nil || written != resp.Size {
-		os.Remove(outputPath) // clean up partial file
-		return "", 0, fmt.Errorf("download incomplete: wrote %d/%d, err=%v", written, resp.Size, sErr)
+	if _, sErr := copyMediaDownloadToFile(outputPath, s, resp.Size, MediaIdleTimeout); sErr != nil {
+		return "", 0, sErr
 	}
 
 	downloadMs := time.Since(downloadStart).Milliseconds()

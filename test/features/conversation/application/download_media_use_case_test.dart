@@ -151,6 +151,32 @@ class _DelayedBridge extends _FakeBridge {
   }
 }
 
+class _FailOncePartialDownloadBridge extends _FakeBridge {
+  String? firstOutputPath;
+  bool _failedOnce = false;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'media:download' && !_failedOnce) {
+      sendCallCount++;
+      lastRequest = parsed;
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final outputPath = payload['outputPath'] as String;
+      firstOutputPath = outputPath;
+      final file = File(outputPath);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(<int>[9, 9], flush: true);
+      _failedOnce = true;
+      return jsonEncode({
+        'ok': false,
+        'errorMessage': 'forced partial download failure',
+      });
+    }
+    return super.send(message);
+  }
+}
+
 /// Fake media attachment repository that tracks calls.
 class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
   final List<(String, String)> downloadStatusUpdates = [];
@@ -407,6 +433,52 @@ void main() {
       expect(mediaRepo.downloadStatusUpdates.length, 2);
       expect(mediaRepo.downloadStatusUpdates[0].$2, 'downloading');
       expect(mediaRepo.downloadStatusUpdates[1].$2, 'failed');
+    });
+
+    test('PL-013 removes partial failed download and retry succeeds', () async {
+      final retryBridge = _FailOncePartialDownloadBridge()
+        ..downloadedBytes = const <int>[1, 2, 3];
+
+      final firstResult = await downloadMedia(
+        bridge: retryBridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment,
+        contactPeerId: 'group-pl013',
+      );
+
+      expect(firstResult, isNull);
+      expect(retryBridge.firstOutputPath, isNotNull);
+      expect(File(retryBridge.firstOutputPath!).existsSync(), isFalse);
+      expect(
+        mediaRepo.downloadStatusUpdates,
+        equals([
+          ('blob-download-001', 'downloading'),
+          ('blob-download-001', 'failed'),
+        ]),
+      );
+      expect(mediaRepo.localPathUpdates, isEmpty);
+
+      final retryResult = await downloadMedia(
+        bridge: retryBridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment,
+        contactPeerId: 'group-pl013',
+      );
+
+      expect(retryResult, isNotNull);
+      expect(retryResult!.downloadStatus, 'done');
+      expect(File(retryResult.localPath!).existsSync(), isTrue);
+      expect(
+        mediaRepo.downloadStatusUpdates,
+        equals([
+          ('blob-download-001', 'downloading'),
+          ('blob-download-001', 'failed'),
+          ('blob-download-001', 'downloading'),
+        ]),
+      );
+      expect(mediaRepo.localPathUpdates, hasLength(1));
     });
 
     test('returns null and sets failed when bridge throws', () async {

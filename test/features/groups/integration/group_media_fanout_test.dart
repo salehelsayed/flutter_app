@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
@@ -67,6 +68,44 @@ class _FailingDownloadBridge extends _DownloadWritingBridge {
           'ok': false,
           'id': blobId,
           'errorMessage': 'forced download failure for $blobId',
+        });
+      }
+    }
+    return super.send(message);
+  }
+}
+
+class _FailOncePartialDownloadBridge extends _DownloadWritingBridge {
+  _FailOncePartialDownloadBridge({required Set<String> failingBlobIds})
+    : _failingBlobIds = failingBlobIds;
+
+  final Set<String> _failingBlobIds;
+  String? firstPartialOutputPath;
+  bool _failedOnce = false;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'media:download' && !_failedOnce) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final blobId = payload['id'] as String;
+      if (_failingBlobIds.contains(blobId)) {
+        sendCallCount++;
+        lastSentMessage = message;
+        sentMessages.add(message);
+        lastCommand = cmd;
+        commandLog.add(cmd!);
+        final outputPath = payload['outputPath'] as String;
+        firstPartialOutputPath = outputPath;
+        final file = File(outputPath);
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(<int>[9, 9], flush: true);
+        _failedOnce = true;
+        return jsonEncode({
+          'ok': false,
+          'id': blobId,
+          'errorMessage': 'forced partial download failure for $blobId',
         });
       }
     }
@@ -763,6 +802,94 @@ void main() {
             .where((record) => record['messageId'] == messageId)
             .toList(growable: false);
         expect(deliveryRecords, hasLength(2));
+      },
+    );
+
+    test(
+      'PL-013 partial fake-network media download cleans up and retries',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-pl013-partial-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bobBridge = _FailOncePartialDownloadBridge(
+          failingBlobIds: {'blob-pl013-partial-image'},
+        );
+        final bobMediaFileManager = _ScopedMediaFileManager(
+          'bob-pl013-partial',
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-pl013-partial-peer',
+          username: 'Bob',
+          network: network,
+          bridge: bobBridge,
+          mediaFileManager: bobMediaFileManager,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-pl013-partial-media';
+        await alice.createGroup(groupId: groupId, name: 'PL-013 Partial Media');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+
+        alice.start();
+        bob.start();
+
+        final image = attachment(
+          id: 'blob-pl013-partial-image',
+          mime: 'image/jpeg',
+          size: 4,
+          width: 640,
+          height: 480,
+        );
+        final (result, message) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'PL-013 partial media retry',
+          mediaAttachments: [image],
+        );
+        expect(result, group_send.SendGroupMessageResult.success);
+        expect(message, isNotNull);
+
+        await waitForDownloads(user: bob, expectedCount: 1);
+        await waitForAttachmentStatus(
+          user: bob,
+          messageId: message!.id,
+          expectedStatus: kMediaDownloadStatusFailed,
+        );
+        expect(bobBridge.firstPartialOutputPath, isNotNull);
+        expect(File(bobBridge.firstPartialOutputPath!).existsSync(), isFalse);
+
+        final failedAttachment = await expectSingleAttachment(
+          user: bob,
+          groupId: groupId,
+          messageText: 'PL-013 partial media retry',
+          sent: image,
+          expectDownloaded: false,
+        );
+        expect(failedAttachment.downloadStatus, kMediaDownloadStatusFailed);
+        expect(failedAttachment.localPath, isNull);
+
+        final retryResult = await downloadMedia(
+          bridge: bobBridge,
+          mediaAttachmentRepo: bob.mediaAttachmentRepo,
+          mediaFileManager: bobMediaFileManager,
+          attachment: failedAttachment,
+          contactPeerId: groupId,
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(retryResult, isNotNull);
+        expect(retryResult!.downloadStatus, kMediaDownloadStatusDone);
+        expect(File(retryResult.localPath!).existsSync(), isTrue);
+        expect(
+          bobBridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(2),
+        );
       },
     );
 
