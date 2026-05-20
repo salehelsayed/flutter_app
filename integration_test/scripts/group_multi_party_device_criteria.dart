@@ -3227,6 +3227,7 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateUp003ComposeGateProof(byRole: byRole, failures: failures);
     _validatePl004QuoteReaddLiveProof(byRole: byRole, failures: failures);
     _validatePl007ReaddMediaProof(
       byRole: byRole,
@@ -14986,6 +14987,52 @@ void _validatePl007ReaddMediaProof({
       failures.add('charlie: $proofName.postReaddMediaEpoch must be >= 2');
     }
     requireFinalEpoch('charlie', charlieProof);
+  }
+}
+
+void _validateUp003ComposeGateProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up003ComposeGateProof';
+  final proof = _mapValue(byRole['charlie']?[proofName]);
+  if (proof == null) {
+    failures.add('charlie: missing UP-003 compose gate proof fields');
+    return;
+  }
+  if (_stringValue(proof['rowId']) != 'UP-003') {
+    failures.add('charlie: $proofName.rowId must be UP-003');
+  }
+  for (final field in const <String>[
+    'liveThreePartyProof',
+    'hostUiComposerGateCovered',
+    'activeBeforeRemovalObserved',
+    'removedStateSendRejected',
+    'pendingReaddImportedWithoutCurrentKey',
+    'pendingReaddMemberListIncludesCharlie',
+    'pendingReaddSendRejected',
+    'rejoinAcknowledgedAfterCurrentKey',
+    'activeAfterCurrentKeyCanSend',
+  ]) {
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: proof,
+      field: field,
+      failures: failures,
+    );
+  }
+  final finalEpoch = _intValue(proof['finalEpoch']);
+  if (finalEpoch == null || finalEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  final removedOutcome = _stringValue(proof['removedStateOutcome']);
+  if (removedOutcome == 'success' || removedOutcome == 'successNoPeers') {
+    failures.add('charlie: $proofName removed state must not publish');
+  }
+  final pendingOutcome = _stringValue(proof['pendingReaddSendOutcome']);
+  if (pendingOutcome == 'success' || pendingOutcome == 'successNoPeers') {
+    failures.add('charlie: $proofName pending re-add must not publish');
   }
 }
 

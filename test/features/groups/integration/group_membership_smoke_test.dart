@@ -9201,6 +9201,117 @@ void main() {
     );
 
     test(
+      'UP-003 removed and pending re-add member cannot send until current key is installed',
+      () async {
+        const groupId = 'grp-up003-compose-send-capability';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          admin.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> saveCharlieKey(int epoch) async {
+          await charlie.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: 'up003-group-key-$epoch',
+              createdAt: DateTime.utc(2026, 5, 13, 12, epoch),
+            ),
+          );
+        }
+
+        await admin.createGroup(groupId: groupId, name: 'UP-003 Gate');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+        await saveCharlieKey(1);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        final (activeResult, activeMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'UP-003 active with current key',
+            );
+        expect(activeResult, group_send.SendGroupMessageResult.success);
+        expect(activeMessage, isNotNull);
+        expect(activeMessage!.keyGeneration, 1);
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+        );
+        await pump();
+
+        expect(
+          await charlie.groupRepo.getMember(groupId, charlie.peerId),
+          isNull,
+        );
+        expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
+
+        final (removedResult, removedMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'UP-003 removed cannot send',
+            );
+        expect(
+          removedResult,
+          anyOf(
+            group_send.SendGroupMessageResult.unauthorized,
+            group_send.SendGroupMessageResult.groupNotFound,
+          ),
+        );
+        expect(removedMessage, isNull);
+
+        await admin.addMember(groupId: groupId, invitee: charlie);
+        await pump();
+
+        expect(
+          await charlie.groupRepo.getMember(groupId, charlie.peerId),
+          isNotNull,
+        );
+        expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
+
+        final (pendingResult, pendingMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'UP-003 pending re-add without current key',
+            );
+        expect(pendingResult, group_send.SendGroupMessageResult.error);
+        expect(pendingMessage, isNull);
+
+        await saveCharlieKey(2);
+        final (readdedResult, readdedMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'UP-003 re-added with current key',
+            );
+        expect(readdedResult, group_send.SendGroupMessageResult.success);
+        expect(readdedMessage, isNotNull);
+        expect(readdedMessage!.keyGeneration, 2);
+      },
+    );
+
+    test(
       'GM-024 member display and topic state converge after Charlie re-add',
       () async {
         const groupId = 'grp-gm024-display-state-convergence';

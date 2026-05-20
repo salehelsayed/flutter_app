@@ -3281,6 +3281,102 @@ void main() {
     );
 
     testWidgets(
+      'UP-003 composer enables only for an active member with current key',
+      (tester) async {
+        final group = makeChatGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+
+        GroupMember selfMember(DateTime joinedAt) => GroupMember(
+          groupId: group.id,
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.writer,
+          publicKey: testIdentity.publicKey,
+          mlKemPublicKey: testIdentity.mlKemPublicKey,
+          joinedAt: joinedAt,
+        );
+
+        await groupRepo.saveMember(selfMember(DateTime.utc(2026, 5, 13, 10)));
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            joinedAt: DateTime.utc(2026, 5, 13, 10, 1),
+          ),
+        );
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsOneWidget);
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+        final staleOnSend = screen.onSend as Future<void> Function(String);
+
+        await groupRepo.removeMember(group.id, testIdentity.peerId);
+        await staleOnSend('UP-003 stale removed send');
+        await pumpFrames(tester, count: 5);
+
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          (await msgRepo.getMessagesPage(
+            group.id,
+          )).where((message) => message.text == 'UP-003 stale removed send'),
+          isEmpty,
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpFrames(tester, count: 2);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.text(
+            "You can read this group's history, but you are not an active member.",
+          ),
+          findsOneWidget,
+        );
+
+        await groupRepo.saveMember(selfMember(DateTime.utc(2026, 5, 13, 11)));
+        await groupRepo.removeAllKeys(group.id);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpFrames(tester, count: 2);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.text('Waiting for the current group key before you can send.'),
+          findsOneWidget,
+        );
+
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: group.id,
+            keyGeneration: 2,
+            encryptedKey: 'test-group-key-2',
+            createdAt: DateTime.utc(2026, 5, 13, 12),
+          ),
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpFrames(tester, count: 2);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsOneWidget);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+      },
+    );
+
+    testWidgets(
       'dissolved groups hide reaction entry even when reaction deps are wired',
       (tester) async {
         final group = makeChatGroup().copyWith(
