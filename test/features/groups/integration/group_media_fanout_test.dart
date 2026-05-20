@@ -1005,7 +1005,7 @@ void main() {
     );
 
     test(
-      'MD-011 removed member is excluded from future media descriptors and downloads',
+      'PL-006 MD-011 removed member is excluded from future media descriptors and downloads',
       () async {
         final alice = GroupTestUser.create(
           peerId: 'alice-md011-media-peer',
