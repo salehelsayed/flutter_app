@@ -4601,6 +4601,155 @@ void main() {
         expect(afterSaved!.keyGeneration, 2);
       },
     );
+
+    test(
+      'ST-006 rotation-boundary sends keep active recipients and valid epochs',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-bob',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            mlKemPublicKey: 'mlkem-charlie',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.removeMember('group-1', 'peer-charlie');
+
+        bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'test-group-key-2',
+          'keyEpoch': 2,
+        };
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'st006-publish-ok',
+          'topicPeers': 1,
+        };
+
+        final distributionStarted = Completer<void>();
+        final distributionGate = Completer<bool>();
+        final distributionTargets = <String>[];
+        final rotationFuture = rotateAndDistributeGroupKey(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          selfPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          perRecipientTimeout: const Duration(seconds: 5),
+          distributionTimeout: const Duration(seconds: 5),
+          sendP2PMessage: (peerId, message) {
+            distributionTargets.add(peerId);
+            if (!distributionStarted.isCompleted) {
+              distributionStarted.complete();
+            }
+            return distributionGate.future;
+          },
+        );
+        await distributionStarted.future;
+
+        final (bobDuringResult, bobDuringMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'ST-006 Bob during rotation',
+          senderPeerId: 'peer-bob',
+          senderPublicKey: 'pk-bob',
+          senderPrivateKey: 'sk-bob',
+          senderUsername: 'Bob',
+          messageId: 'st006-bob-during-rotation',
+        );
+        expect(bobDuringResult, SendGroupMessageResult.success);
+        expect(bobDuringMessage, isNotNull);
+        expect(bobDuringMessage!.keyGeneration, 1);
+
+        distributionGate.complete(true);
+        final rotatedKey = await rotationFuture;
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+        expect(distributionTargets, ['peer-bob']);
+        expect(distributionTargets, isNot(contains('peer-charlie')));
+        expect(
+          _bridgeCommandIndex(bridge, 'group:updateKey', keyEpoch: 2),
+          isNot(-1),
+        );
+
+        final (aliceAfterResult, aliceAfterMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'ST-006 Alice after rotation',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'st006-alice-after-rotation',
+        );
+        expect(aliceAfterResult, SendGroupMessageResult.success);
+        expect(aliceAfterMessage, isNotNull);
+        expect(aliceAfterMessage!.keyGeneration, 2);
+
+        Map<String, dynamic> inboxPayloadFor(String messageId) {
+          final inboxMessages = bridge.sentMessages
+              .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:inboxStore');
+          for (final message in inboxMessages) {
+            final payload = (message['payload'] as Map).cast<String, dynamic>();
+            final envelope =
+                jsonDecode(payload['message'] as String)
+                    as Map<String, dynamic>;
+            if (envelope['messageId'] == messageId) {
+              return payload;
+            }
+          }
+          fail('Missing group:inboxStore payload for $messageId');
+        }
+
+        Map<String, dynamic> envelopeFor(String messageId) {
+          return jsonDecode(inboxPayloadFor(messageId)['message'] as String)
+              as Map<String, dynamic>;
+        }
+
+        final bobDuringPayload = inboxPayloadFor('st006-bob-during-rotation');
+        final aliceAfterPayload = inboxPayloadFor('st006-alice-after-rotation');
+        expect(bobDuringPayload['recipientPeerIds'], ['peer-1']);
+        expect(aliceAfterPayload['recipientPeerIds'], ['peer-bob']);
+        expect(
+          bobDuringPayload['recipientPeerIds'],
+          isNot(contains('peer-charlie')),
+        );
+        expect(
+          aliceAfterPayload['recipientPeerIds'],
+          isNot(contains('peer-charlie')),
+        );
+        expect(envelopeFor('st006-bob-during-rotation')['keyEpoch'], 1);
+        expect(envelopeFor('st006-alice-after-rotation')['keyEpoch'], 2);
+
+        final bobSaved = await msgRepo.getMessage('st006-bob-during-rotation');
+        final aliceSaved = await msgRepo.getMessage(
+          'st006-alice-after-rotation',
+        );
+        expect(bobSaved!.keyGeneration, 1);
+        expect(aliceSaved!.keyGeneration, 2);
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

@@ -3261,6 +3261,11 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateSt006RotationBoundaryPublishProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     _validatePl006RemovedMediaProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
@@ -12190,6 +12195,180 @@ void _validateKe006RemovalKeyRotationProof({
       'postRemovalPublishAccepted',
       'receivedAliceAfterRemoval',
       'receivedBobAfterRemoval',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final excludedEpoch = _intValue(charlieProof['excludedRotatedEpoch']);
+    final retainedEpoch = _intValue(charlieProof['retainedEpochAfterRemoval']);
+    if (excludedEpoch == null || excludedEpoch <= 1) {
+      failures.add(
+        'charlie: $proofName.excludedRotatedEpoch must be a rotated epoch > 1',
+      );
+    }
+    if (expectedRotatedEpoch != null && excludedEpoch != expectedRotatedEpoch) {
+      failures.add(
+        'charlie: $proofName.excludedRotatedEpoch must match Alice rotated epoch',
+      );
+    }
+    if (retainedEpoch == null ||
+        (excludedEpoch != null && retainedEpoch >= excludedEpoch)) {
+      failures.add(
+        'charlie: $proofName.retainedEpochAfterRemoval must stay below rotated epoch',
+      );
+    }
+    final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+  }
+}
+
+void _validateSt006RotationBoundaryPublishProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'st006RotationBoundaryPublishProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  final expectedRotatedEpoch = _intValue(byRole['alice']?['keyEpoch']);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'ST-006') {
+      failures.add('$role: $proofName.rowId must be ST-006');
+    }
+  }
+
+  void requireRotatedEpoch(
+    String role,
+    Map<String, dynamic> proof, {
+    required String field,
+  }) {
+    final value = _intValue(proof[field]);
+    if (value == null || value <= 1) {
+      failures.add('$role: $proofName.$field must be a rotated epoch > 1');
+    }
+    if (expectedRotatedEpoch != null && value != expectedRotatedEpoch) {
+      failures.add('$role: $proofName.$field must match Alice rotated epoch');
+    }
+  }
+
+  void requireBoundaryEpochBeforeRotation(
+    String role,
+    Map<String, dynamic> proof, {
+    required String field,
+  }) {
+    final value = _intValue(proof[field]);
+    if (value == null || value < 1) {
+      failures.add(
+        '$role: $proofName.$field must be a valid pre-rotation epoch',
+      );
+      return;
+    }
+    if (expectedRotatedEpoch != null && value >= expectedRotatedEpoch) {
+      failures.add('$role: $proofName.$field must be below rotated epoch');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing ST-006 rotation-boundary proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'memberListExcludesCharlie',
+      'receivedBobDuringRotation',
+      'sentAlicePostRotationAtRotatedEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+    requireRotatedEpoch('alice', aliceProof, field: 'rotatedEpoch');
+    requireRotatedEpoch('alice', aliceProof, field: 'alicePostRotationEpoch');
+    requireBoundaryEpochBeforeRotation(
+      'alice',
+      aliceProof,
+      field: 'bobDuringRotationEpoch',
+    );
+    final persistedCount = _intValue(
+      aliceProof['bobDuringRotationPersistedCount'],
+    );
+    if (persistedCount != 1) {
+      failures.add(
+        'alice: $proofName.bobDuringRotationPersistedCount must be 1',
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing ST-006 rotation-boundary proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListExcludesCharlie',
+      'sentDuringRotationBeforeRotatedKey',
+      'receivedRotatedKeyBeforeAlicePostRotation',
+      'receivedAlicePostRotation',
+      'receivedAlicePostRotationAtRotatedEpoch',
+      'sentPostRotationAtRotatedEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireRotatedEpoch('bob', bobProof, field: 'rotatedEpoch');
+    requireRotatedEpoch('bob', bobProof, field: 'alicePostRotationEpoch');
+    requireBoundaryEpochBeforeRotation(
+      'bob',
+      bobProof,
+      field: 'bobDuringRotationEpoch',
+    );
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing ST-006 rotation-boundary proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineBeforeRemoval',
+      'currentMemberBeforeRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'groupPresentAfterRemoval',
+      'hasRotatedEpoch',
+      'postRemovalPublishAccepted',
+      'receivedBobDuringRotation',
+      'receivedAlicePostRotation',
     ]) {
       _requireFalseProof(
         role: 'charlie',
