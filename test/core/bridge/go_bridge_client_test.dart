@@ -2150,6 +2150,119 @@ void main() {
         expect(groupMessageCalls, 0);
       },
     );
+
+    test(
+      'OB-006 dispatcher pressure and overflow diagnostics reach Flutter logs',
+      () async {
+        var groupMessageCalls = 0;
+        client.onGroupMessageReceived = (_) {
+          groupMessageCalls++;
+        };
+
+        flowEventLoggingEnabled = true;
+        final flowLogs = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            flowLogs.add(message);
+          }
+        };
+
+        final diagnostics = <Map<String, dynamic>>[];
+        final sub = groupDiagnosticEventStream.listen(diagnostics.add);
+        addTearDown(sub.cancel);
+        final pushLogs = <String>[];
+
+        await runZoned(
+          () async {
+            client.debugHandleEventForTest(
+              jsonEncode({
+                'event': 'group:dispatcher_pressure',
+                'data': {
+                  'state': 'near_overflow',
+                  'queueDepth': 800,
+                  'statusCount': 3,
+                  'maxQueueSize': 1024,
+                  'droppedCount': 0,
+                  'coalescedCount': 4,
+                  'deliveredCount': 20,
+                  'lastEvent': 'group_message:received',
+                },
+              }),
+            );
+            client.debugHandleEventForTest(
+              jsonEncode({
+                'event': 'group:dispatcher_overflow',
+                'data': {
+                  'state': 'overflow',
+                  'queueDepth': 1024,
+                  'statusCount': 4,
+                  'maxQueueSize': 1024,
+                  'droppedCount': 9,
+                  'coalescedCount': 6,
+                  'deliveredCount': 21,
+                  'lastEvent': 'group_message:received',
+                },
+              }),
+            );
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (_, _, _, line) {
+              pushLogs.add(line);
+            },
+          ),
+        );
+
+        await waitForCondition(
+          () => diagnostics.length >= 2,
+          description: 'OB-006 dispatcher diagnostics',
+        );
+
+        final pressure = diagnostics.firstWhere(
+          (event) => event['event'] == 'group:dispatcher_pressure',
+        );
+        expect(pressure['state'], 'near_overflow');
+        expect(pressure['queueDepth'], 800);
+        expect(pressure['maxQueueSize'], 1024);
+        expect(pressure['droppedCount'], 0);
+        expect(pressure['lastEvent'], 'group_message:received');
+
+        final overflow = diagnostics.firstWhere(
+          (event) => event['event'] == 'group:dispatcher_overflow',
+        );
+        expect(overflow['state'], 'overflow');
+        expect(overflow['queueDepth'], 1024);
+        expect(overflow['maxQueueSize'], 1024);
+        expect(overflow['droppedCount'], 9);
+        expect(overflow['lastEvent'], 'group_message:received');
+        expect(
+          flowLogs.any((line) => line.contains('GROUP_DISPATCHER_PRESSURE')),
+          isTrue,
+        );
+        expect(
+          flowLogs.any((line) => line.contains('GROUP_DISPATCHER_OVERFLOW')),
+          isTrue,
+        );
+        expect(
+          pushLogs.any(
+            (line) =>
+                line.startsWith('[PUSH_DIAG] group_dispatcher_pressure') &&
+                line.contains('queueDepth=800') &&
+                line.contains('maxQueueSize=1024'),
+          ),
+          isTrue,
+        );
+        expect(
+          pushLogs.any(
+            (line) =>
+                line.startsWith('[PUSH_DIAG] group_dispatcher_overflow') &&
+                line.contains('droppedCount=9') &&
+                line.contains('lastEvent=group_message:received'),
+          ),
+          isTrue,
+        );
+        expect(groupMessageCalls, 0);
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

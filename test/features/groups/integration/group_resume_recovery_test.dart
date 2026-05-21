@@ -10552,6 +10552,151 @@ void main() {
       );
 
       test(
+        'OB-006 dispatcher overflow diagnostics expose replay recovery result',
+        () async {
+          final flowEvents = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flowEvents.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          final admin = GroupTestUser.create(
+            peerId: 'admin-ob006-overflow',
+            username: 'Alice',
+            network: network,
+          );
+          final bobDiagnostics =
+              StreamController<Map<String, dynamic>>.broadcast();
+          late final GroupTestUser bob;
+          var recoveryCount = 0;
+          final recoveryDone = Completer<void>();
+          final recoveryDiagnostics = <Map<String, dynamic>>[];
+          bob = GroupTestUser.create(
+            peerId: 'reader-ob006-overflow',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+            groupDiagnosticEvents: bobDiagnostics.stream,
+            recoverFromDispatcherOverflow: (diagnostic) async {
+              recoveryCount++;
+              recoveryDiagnostics.add(Map<String, dynamic>.from(diagnostic));
+              await drainGroupOfflineInbox(
+                bridge: bob.bridge,
+                groupRepo: bob.groupRepo,
+                msgRepo: bob.msgRepo,
+                groupMessageListener: bob.groupMessageListener,
+                selfPeerId: bob.peerId,
+              );
+              if (!recoveryDone.isCompleted) {
+                recoveryDone.complete();
+              }
+            },
+          );
+          addTearDown(() {
+            admin.dispose();
+            bob.dispose();
+            bobDiagnostics.close();
+          });
+
+          final bobBridge = bob.bridge as _CursorInboxBridge;
+          const groupId = 'group-ob006-overflow';
+          const messageId = 'ob006-overflow-replay';
+          const text = 'OB-006 overflow replay recovery';
+          await admin.createGroup(
+            groupId: groupId,
+            name: 'OB-006 Overflow Recovery',
+          );
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+          network.unsubscribe(groupId, bob.peerId);
+
+          admin.start();
+          bob.start();
+
+          final (result, sent) = await admin.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: text,
+            messageId: messageId,
+            publishTopicPeersOverride: 1,
+          );
+
+          expect(result, SendGroupMessageResult.success);
+          expect(sent, isNotNull);
+          expect(sent!.inboxStored, isTrue);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          expect(await bob.loadGroupMessages(groupId), isEmpty);
+
+          _injectInboxMessageFromLatestStore(
+            senderBridge: admin.bridge,
+            receiverBridge: bobBridge,
+            receiverPeerId: bob.peerId,
+            groupId: groupId,
+          );
+
+          bobDiagnostics.add({
+            'event': 'group:dispatcher_overflow',
+            'state': 'overflow',
+            'lastEvent': 'group_message:received',
+            'droppedCount': 4,
+            'queueDepth': 5,
+            'maxQueueSize': 5,
+          });
+
+          await recoveryDone.future.timeout(const Duration(seconds: 2));
+          final deadline = DateTime.now().add(const Duration(seconds: 2));
+          List<GroupMessage> bobMessages = const <GroupMessage>[];
+          while (DateTime.now().isBefore(deadline)) {
+            bobMessages = await bob.loadGroupMessages(groupId);
+            if (bobMessages.any(
+              (message) =>
+                  message.isIncoming &&
+                  message.id == messageId &&
+                  message.text == text,
+            )) {
+              break;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 25));
+          }
+
+          expect(
+            bobMessages.where(
+              (message) =>
+                  message.isIncoming &&
+                  message.id == messageId &&
+                  message.text == text,
+            ),
+            hasLength(1),
+          );
+          expect(recoveryCount, 1);
+          expect(
+            recoveryDiagnostics.single['lastEvent'],
+            'group_message:received',
+          );
+          expect(recoveryDiagnostics.single['droppedCount'], 4);
+          expect(recoveryDiagnostics.single['queueDepth'], 5);
+          expect(recoveryDiagnostics.single['maxQueueSize'], 5);
+
+          final requested = flowEvents.singleWhere(
+            (event) =>
+                event['event'] ==
+                'GROUP_DISPATCHER_OVERFLOW_RECOVERY_REQUESTED',
+          );
+          final done = flowEvents.singleWhere(
+            (event) =>
+                event['event'] == 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_DONE',
+          );
+          for (final event in [requested, done]) {
+            final details = event['details'] as Map<String, dynamic>;
+            expect(details['state'], 'overflow');
+            expect(details['lastEvent'], 'group_message:received');
+            expect(details['droppedCount'], 4);
+            expect(details['queueDepth'], 5);
+            expect(details['maxQueueSize'], 5);
+          }
+          expect(bob.bridge.commandLog, contains('group:inboxRetrieveCursor'));
+        },
+      );
+
+      test(
         'IR-017 fake-network dispatcher overflow replay restores and dedupes dropped live event',
         () async {
           final flowEvents = <Map<String, dynamic>>[];
