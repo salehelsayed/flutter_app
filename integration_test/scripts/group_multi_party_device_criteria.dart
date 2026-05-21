@@ -3422,6 +3422,11 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateSt001ModelOracleProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     return;
   }
   if (scenario == 'private_readd_cycles') {
@@ -15576,6 +15581,147 @@ void _validateNw014ChaosInvariantProof({
   };
   if (expectedPeerIds.length != 4) {
     failures.add('alice/bob/charlie/dana: NW-014 requires four peer ids');
+  }
+}
+
+void _validateSt001ModelOracleProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'st001ModelOracleProof';
+  final expectedRoles = const <String>{'alice', 'bob', 'charlie', 'dana'};
+  final expectedTargets = const <String>{'charlie', 'dana'};
+  final finalEpochs = <int>{};
+
+  for (final role in expectedRoles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing ST-001 model oracle proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ST-001') {
+      failures.add('$role: $proofName.rowId must be ST-001');
+    }
+    if (_stringValue(proof['scenario']) != 'private_network_chaos_invariants') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+    if (_stringValue(proof['oracleProofSource']) !=
+        'app_peer_core_simulator_model_oracle') {
+      failures.add('$role: $proofName.oracleProofSource mismatch');
+    }
+    if (_intValue(proof['fixedSeed']) != 14014) {
+      failures.add('$role: $proofName.fixedSeed must be 14014');
+    }
+    if (_stringValue(proof['modelInvariant']) !=
+        'active_recipient_set_exactly_once') {
+      failures.add('$role: $proofName.modelInvariant mismatch');
+    }
+    final oracleMessageCount = _intValue(proof['oracleMessageCount']);
+    if (oracleMessageCount == null || oracleMessageCount < 12) {
+      failures.add('$role: $proofName.oracleMessageCount must be >= 12');
+    }
+    final messageOperationCount = _intValue(proof['messageOperationCount']);
+    if (messageOperationCount == null || messageOperationCount < 12) {
+      failures.add('$role: $proofName.messageOperationCount must be >= 12');
+    }
+    final membershipOperationCount = _intValue(
+      proof['membershipOperationCount'],
+    );
+    if (membershipOperationCount == null || membershipOperationCount < 12) {
+      failures.add('$role: $proofName.membershipOperationCount must be >= 12');
+    }
+    final churnCycles = _intValue(proof['churnCycles']);
+    if (churnCycles == null || churnCycles < 3) {
+      failures.add('$role: $proofName.churnCycles must be >= 3');
+    }
+    final churnTargets = _stringList(proof['churnTargets']).toSet();
+    if (!churnTargets.containsAll(expectedTargets)) {
+      failures.add('$role: $proofName.churnTargets must include charlie, dana');
+    }
+    for (final field in const <String>[
+      'deliveredAndReplayedMessagesMatchOracle',
+      'duplicateDeliveryCovered',
+      'restartStyleReconnectCovered',
+      'replayPathCovered',
+      'finalMemberListConverged',
+      'finalEpochConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final activeSenders = _stringList(proof['activeSenders']).toSet();
+    if (!activeSenders.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeSenders must include alice, bob, charlie, dana',
+      );
+    }
+    final activeReceivers = _stringList(proof['activeReceivers']).toSet();
+    if (!activeReceivers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeReceivers must include alice, bob, charlie, dana',
+      );
+    }
+    final charlieLeak = _intValue(proof['charlieRemovedWindowPlaintextCount']);
+    if (charlieLeak != 0) {
+      failures.add(
+        '$role: $proofName.charlieRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final danaLeak = _intValue(proof['danaRemovedWindowPlaintextCount']);
+    if (danaLeak != 0) {
+      failures.add(
+        '$role: $proofName.danaRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final duplicateCount = _intValue(proof['duplicateVisibleMessageCount']);
+    if (duplicateCount != 0) {
+      failures.add('$role: $proofName.duplicateVisibleMessageCount must be 0');
+    }
+    final inactiveSenderAttempts = _intValue(
+      proof['inactiveSenderAttemptCount'],
+    );
+    if (inactiveSenderAttempts != 0) {
+      failures.add('$role: $proofName.inactiveSenderAttemptCount must be 0');
+    }
+    final finalMembers = _stringList(proof['finalRoles']).toSet();
+    if (!finalMembers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.finalRoles must include alice, bob, charlie, dana',
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 13) {
+      failures.add('$role: $proofName.finalEpoch must be >= 13');
+    } else {
+      finalEpochs.add(finalEpoch);
+    }
+    _validateRa018ProofIntervals(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      failures: failures,
+    );
+  }
+
+  if (finalEpochs.length > 1) {
+    failures.add('alice/bob/charlie/dana: ST-001 finalEpoch mismatch');
+  }
+
+  final expectedPeerIds = <String>{
+    for (final role in const <String>['alice', 'bob', 'charlie', 'dana'])
+      ?peerIdByRole[role],
+  };
+  if (expectedPeerIds.length != 4) {
+    failures.add('alice/bob/charlie/dana: ST-001 requires four peer ids');
   }
 }
 
