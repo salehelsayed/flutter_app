@@ -44,6 +44,7 @@ void main() {
           'private_readd_current',
           'private_readd_active_members',
           'private_readd_alternating_churn',
+          'private_max_group_size_churn',
           'private_network_chaos_invariants',
           'private_process_death_matrix',
           'private_rotated_device_readd',
@@ -295,6 +296,15 @@ void main() {
           'private_readd_alternating_churn',
         ).requiredDeviceCount,
         4,
+      );
+      expect(scenarioRequirement('private_max_group_size_churn').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_max_group_size_churn').requiredDeviceCount,
+        3,
       );
       expect(scenarioRequirement('private_network_chaos_invariants').roles, [
         'alice',
@@ -6506,6 +6516,61 @@ void main() {
         contains('finalEpochConverged must be true'),
       );
       expect(divergentRejected.detail, contains('finalEpoch must be >= 13'));
+    });
+
+    test('ST-009 accepts private_max_group_size_churn proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_max_group_size_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateMaxGroupSizeChurnVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_max_group_size_churn verdicts valid'),
+      );
+    });
+
+    test('ST-009 rejects missing max-size churn proof fields', () {
+      final missingProof = _validPrivateMaxGroupSizeChurnVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('st009MaxGroupSizeChurnProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_max_group_size_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing ST-009 max-size churn proof fields'),
+      );
+    });
+
+    test('ST-009 rejects weak max-size churn proof', () {
+      final weakProof = _validPrivateMaxGroupSizeChurnVerdicts();
+      weakProof[0] =
+          _withSt009ProofOverrides(weakProof[0], const <String, Object?>{
+            'finalMemberCount': 49,
+            'postReaddRecipientCount': 2,
+            'overflowRejectedAtLimit': false,
+            'proofSource': 'generic_readd',
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_max_group_size_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: weakProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('proofSource mismatch'));
+      expect(rejected.detail, contains('finalMemberCount must be 50'));
+      expect(rejected.detail, contains('postReaddRecipientCount must be 49'));
+      expect(rejected.detail, contains('overflowRejectedAtLimit must be true'));
     });
 
     test('NW-014 accepts private_network_chaos_invariants proof verdicts', () {
@@ -29957,6 +30022,140 @@ Map<String, dynamic> _withRa018ProofOverrides(
     'ra018AlternatingChurnProof': <String, Object?>{
       ...Map<String, Object?>.from(
         verdict['ra018AlternatingChurnProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateMaxGroupSizeChurnVerdicts() {
+  const scenario = 'private_max_group_size_churn';
+  const groupId = 'private-max-group-size-churn-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  final members = <String>[
+    'alice-peer',
+    'bob-peer',
+    'charlie-peer',
+    for (var index = 0; index < 47; index++)
+      'synth-${index.toString().padLeft(2, '0')}',
+  ];
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+
+  void addMessage({
+    required String key,
+    required String senderRole,
+    required List<String> receiverRoles,
+  }) {
+    final messageId = 'st009-$key';
+    final text = 'ST-009 $key from ${_titleRoleForTest(senderRole)}';
+    sentByRole[senderRole]!.add(<String, Object?>{
+      'key': key,
+      'messageId': messageId,
+      'text': text,
+      'outcome': 'success',
+      'senderPeerId': peerIdsByRole[senderRole],
+      'keyEpoch': 1,
+    });
+    for (final receiverRole in receiverRoles) {
+      receivedByRole[receiverRole]!.add(
+        _received(
+          key,
+          messageId,
+          text,
+          peerIdsByRole[senderRole]!,
+          keyEpoch: 1,
+        ),
+      );
+    }
+  }
+
+  addMessage(
+    key: 'aliceSt009RemovedWindow',
+    senderRole: 'alice',
+    receiverRoles: const <String>['bob'],
+  );
+  addMessage(
+    key: 'aliceSt009AfterReadd',
+    senderRole: 'alice',
+    receiverRoles: const <String>['bob', 'charlie'],
+  );
+  addMessage(
+    key: 'bobSt009AfterReadd',
+    senderRole: 'bob',
+    receiverRoles: const <String>['alice', 'charlie'],
+  );
+  addMessage(
+    key: 'charlieSt009AfterReadd',
+    senderRole: 'charlie',
+    receiverRoles: const <String>['alice', 'bob'],
+  );
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'ST-009',
+    'scenario': scenario,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'proofSource': 'app_peer_core_simulator_max_size_churn',
+    'proofRole': role,
+    'maxMembers': 50,
+    'syntheticMemberCount': 47,
+    'initialMemberCount': 50,
+    'removedMemberCount': 49,
+    'finalMemberCount': 50,
+    'removedWindowRecipientCount': 48,
+    'postReaddRecipientCount': 49,
+    'overflowRejectedAtLimit': true,
+    'removedSlotFreed': true,
+    'readdAtLimitSucceeded': true,
+    'allActiveAppPeersDeliveredAfterReadd': true,
+    'finalMemberListConverged': true,
+    'hostKeyFanoutProofRequired': true,
+    'charlieRemovedWindowPlaintextCount': 0,
+    'duplicateVisibleMessageCount': 0,
+    'finalRoles': const <String>['alice', 'bob', 'charlie'],
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 1,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'st009MaxGroupSizeChurnProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withSt009ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'st009MaxGroupSizeChurnProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['st009MaxGroupSizeChurnProof'] as Map,
       ),
       ...overrides,
     },

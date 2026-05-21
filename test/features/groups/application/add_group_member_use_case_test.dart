@@ -63,6 +63,7 @@ void main() {
           peerId: index == 0 ? 'peer-admin' : 'peer-seed-$index',
           username: index == 0 ? 'Admin' : 'Seed $index',
           role: index == 0 ? MemberRole.admin : MemberRole.writer,
+          publicKey: index == 0 ? 'pk-peer-admin' : 'pk-peer-seed-$index',
           joinedAt: DateTime.now().toUtc(),
         ),
       );
@@ -1126,6 +1127,111 @@ void main() {
     expect(await groupRepo.getMember('group-1', 'peer-over-limit'), isNull);
     expect(bridge.commandLog, isEmpty);
   });
+
+  test(
+    'ST-009 full group churn frees exactly one slot before re-add',
+    () async {
+      await seedGroupMembers(
+        groupId: 'group-1',
+        totalMembers: groupMembershipLimit,
+      );
+      bridge.commandLog.clear();
+
+      Future<void> expectOverflowRejected(String peerId) async {
+        await expectLater(
+          addGroupMember(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: 'group-1',
+            newMember: GroupMember(
+              groupId: 'group-1',
+              peerId: peerId,
+              username: 'Overflow',
+              role: MemberRole.writer,
+              publicKey: 'pk-$peerId',
+              joinedAt: DateTime.utc(2026, 5, 16, 9),
+            ),
+            selfPeerId: 'peer-admin',
+          ),
+          throwsA(
+            isA<GroupMembershipLimitException>()
+                .having((e) => e.maxMembers, 'maxMembers', groupMembershipLimit)
+                .having(
+                  (e) => e.currentMemberCount,
+                  'currentMemberCount',
+                  groupMembershipLimit,
+                )
+                .having(
+                  (e) => e.requestedAdditionalMembers,
+                  'requestedAdditionalMembers',
+                  1,
+                ),
+          ),
+        );
+        expect(await groupRepo.getMember('group-1', peerId), isNull);
+      }
+
+      await expectOverflowRejected('peer-st009-overflow-before-remove');
+      expect(bridge.commandLog, isEmpty);
+
+      await groupRepo.removeMember('group-1', 'peer-seed-49');
+      expect((await groupRepo.getMembers('group-1')).length, 49);
+
+      final readded = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-st009-readded',
+        username: 'ST-009 Readded',
+        role: MemberRole.writer,
+        publicKey: 'pk-peer-st009-readded',
+        mlKemPublicKey: 'mlkem-peer-st009-readded',
+        joinedAt: DateTime.utc(2026, 5, 16, 9, 1),
+      );
+      await addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: readded,
+        selfPeerId: 'peer-admin',
+      );
+
+      final members = await groupRepo.getMembers('group-1');
+      expect(members.length, groupMembershipLimit);
+      expect(
+        await groupRepo.getMember('group-1', 'peer-st009-readded'),
+        isNotNull,
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(1),
+      );
+
+      final updateConfigMessage = bridge.sentMessages.singleWhere((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final payload =
+          (jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      final configMembers = (groupConfig['members'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      expect(configMembers, hasLength(groupMembershipLimit));
+      expect(
+        configMembers.map((member) => member['peerId']),
+        contains('peer-st009-readded'),
+      );
+      expect(
+        configMembers.map((member) => member['peerId']),
+        isNot(contains('peer-seed-49')),
+      );
+
+      await expectOverflowRejected('peer-st009-overflow-after-readd');
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(1),
+      );
+    },
+  );
 
   test('saves member to repo', () async {
     final newMember = GroupMember(

@@ -274,6 +274,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 
 > **ST-008 note:** ST-008 closure during worktree-to-main integration on 2026-05-21 adds one Dart listener test and one Dart fake-network integration test across existing files, updating aggregate counts by +2 tests. The row imported only missing DB-lock contention proof selectors plus the narrow `GroupTestUser` repository injection hook needed by the fake-network test. Evidence passed: focused ST-008 listener selector (`+1`), focused ST-008 fake-network selector (`+1`), scoped analyzer, Dart format, and diff hygiene. No simulator proof was required because source 3-Party E2E is `N/A`.
 
+> **ST-009 note:** ST-009 closure during worktree-to-main integration on 2026-05-21 adds three Dart application tests, one Dart fake-network integration test, and three Dart criteria tests across existing files, updating aggregate counts by +7 tests. The row imported only missing maximum group-size churn proof surfaces: overflow/re-add at 50 members, send fanout after slot reuse, key fanout after slot reuse, fake-network convergence, and `private_max_group_size_churn` live-harness/runner/criteria support. Evidence passed: focused ST-009 add-member, send, rotate-key, fake-network, and criteria selectors; scoped analyzer; Dart format; diff hygiene; and iOS 26.2 `private_max_group_size_churn` live proof run `1779362667252` in `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_max_group_size_churn_PoJYak` on Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, and Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`.
+
 ## 0. Row Closure Crosswalk (2026-04-11)
 
 | Row | Closure state | Concrete repo evidence |

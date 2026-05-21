@@ -18,6 +18,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
@@ -1537,6 +1538,135 @@ void main() {
       messageId: 'msg-ek004-offline-replay',
     );
   });
+
+  test(
+    'ST-009 full group churn sends to every active max-size recipient',
+    () async {
+      final joinedAt = DateTime.utc(2026, 5, 16, 9, 9);
+      const bobPeerId = 'peer-st009-bob';
+      const charliePeerId = 'peer-st009-charlie';
+
+      Future<void> saveMember({
+        required String peerId,
+        required String username,
+        required DateTime joinedAt,
+      }) async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: peerId,
+            username: username,
+            role: MemberRole.writer,
+            publicKey: 'pk-$peerId',
+            mlKemPublicKey: 'mlkem-$peerId',
+            joinedAt: joinedAt,
+          ),
+        );
+      }
+
+      await saveMember(
+        peerId: bobPeerId,
+        username: 'Bob',
+        joinedAt: joinedAt.add(const Duration(minutes: 1)),
+      );
+      await saveMember(
+        peerId: charliePeerId,
+        username: 'Charlie',
+        joinedAt: joinedAt.add(const Duration(minutes: 2)),
+      );
+      for (var index = 0; index < groupMembershipLimit - 3; index++) {
+        final peerId = 'peer-st009-synth-${index.toString().padLeft(2, '0')}';
+        await saveMember(
+          peerId: peerId,
+          username: 'Synthetic $index',
+          joinedAt: joinedAt.add(Duration(minutes: 3 + index)),
+        );
+      }
+
+      expect(
+        (await groupRepo.getMembers('group-1')).length,
+        groupMembershipLimit,
+      );
+
+      List<String> recipientPeerIdsForLastInboxStore() {
+        final inboxPayload = _lastGroupInboxStorePayload(bridge);
+        return (inboxPayload['recipientPeerIds'] as List<dynamic>)
+            .cast<String>();
+      }
+
+      await groupRepo.removeMember('group-1', charliePeerId);
+      expect((await groupRepo.getMembers('group-1')).length, 49);
+      bridge.sentMessages.clear();
+      bridge.commandLog.clear();
+
+      final (
+        removedWindowResult,
+        removedWindowMessage,
+      ) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'ST-009 removed-window max-size send',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'st009-removed-window-send',
+        timestamp: joinedAt.add(const Duration(hours: 1)),
+      );
+
+      expect(removedWindowResult, SendGroupMessageResult.success);
+      expect(removedWindowMessage, isNotNull);
+      final removedWindowRecipients = recipientPeerIdsForLastInboxStore();
+      expect(removedWindowRecipients, hasLength(groupMembershipLimit - 2));
+      expect(removedWindowRecipients, contains(bobPeerId));
+      expect(removedWindowRecipients, isNot(contains(charliePeerId)));
+      expect(removedWindowRecipients, isNot(contains('peer-1')));
+      expect(
+        removedWindowRecipients,
+        hasLength(removedWindowRecipients.toSet().length),
+      );
+
+      await saveMember(
+        peerId: charliePeerId,
+        username: 'Charlie',
+        joinedAt: joinedAt.add(const Duration(hours: 2)),
+      );
+      expect(
+        (await groupRepo.getMembers('group-1')).length,
+        groupMembershipLimit,
+      );
+      bridge.sentMessages.clear();
+      bridge.commandLog.clear();
+
+      final (postReaddResult, postReaddMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'ST-009 post-readd max-size send',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'st009-post-readd-send',
+        timestamp: joinedAt.add(const Duration(hours: 3)),
+      );
+
+      expect(postReaddResult, SendGroupMessageResult.success);
+      expect(postReaddMessage, isNotNull);
+      final postReaddRecipients = recipientPeerIdsForLastInboxStore();
+      expect(postReaddRecipients, hasLength(groupMembershipLimit - 1));
+      expect(postReaddRecipients, contains(bobPeerId));
+      expect(postReaddRecipients, contains(charliePeerId));
+      expect(postReaddRecipients, isNot(contains('peer-1')));
+      expect(
+        postReaddRecipients,
+        hasLength(postReaddRecipients.toSet().length),
+      );
+    },
+  );
 
   test('ML-003 B post-add send stores durable replay for offline D', () async {
     final joinedAt = DateTime.utc(2026, 5, 11, 9);
