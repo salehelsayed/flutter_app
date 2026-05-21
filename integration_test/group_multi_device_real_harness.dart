@@ -103,6 +103,7 @@ import 'package:flutter_app/features/groups/application/group_key_update_listene
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -214,20 +215,66 @@ Future<void> waitForCondition(
   throw TimeoutException('Timed out waiting for condition');
 }
 
+String _secureStorePathForDb(String dbName) {
+  final safeName = dbName.replaceAll(RegExp('[^A-Za-z0-9_.-]'), '_');
+  return sharedPath('secure_store_$safeName.json');
+}
+
+Future<void> deleteTestSecureStore(String dbName) async {
+  try {
+    final file = File(_secureStorePathForDb(dbName));
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+  } catch (_) {}
+}
+
 class _FakeSecureKeyStore implements SecureKeyStore {
+  _FakeSecureKeyStore({String? dbName})
+    : _persistenceFile = dbName == null || dbName.isEmpty
+          ? null
+          : File(_secureStorePathForDb(dbName)) {
+    final file = _persistenceFile;
+    if (file == null || !file.existsSync()) return;
+    try {
+      final persisted = jsonDecode(file.readAsStringSync());
+      if (persisted is Map<String, dynamic>) {
+        for (final entry in persisted.entries) {
+          if (entry.value is String) {
+            _store[entry.key] = entry.value as String;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  final File? _persistenceFile;
   final Map<String, String> _store = {};
 
   @override
   Future<String?> read(String key) async => _store[key];
 
   @override
-  Future<void> write(String key, String value) async => _store[key] = value;
+  Future<void> write(String key, String value) async {
+    _store[key] = value;
+    _flush();
+  }
 
   @override
-  Future<void> delete(String key) async => _store.remove(key);
+  Future<void> delete(String key) async {
+    _store.remove(key);
+    _flush();
+  }
 
   @override
   Future<bool> containsKey(String key) async => _store.containsKey(key);
+
+  void _flush() {
+    final file = _persistenceFile;
+    if (file == null) return;
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(jsonEncode(_store));
+  }
 }
 
 Future<void> deleteTestDatabase(String dbName) async {
@@ -488,10 +535,15 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   required Map<String, dynamic>? cliPeerFixture,
   String? restoreMnemonic,
   IdentityModel? restoreIdentity,
+  bool deleteExistingDb = true,
+  bool reuseExistingIdentity = false,
   bool useFreshTransportIdentityForRestoredAccount = false,
 }) async {
-  final secureKeyStore = _FakeSecureKeyStore();
-  await deleteTestDatabase(dbName);
+  if (deleteExistingDb) {
+    await deleteTestSecureStore(dbName);
+    await deleteTestDatabase(dbName);
+  }
+  final secureKeyStore = _FakeSecureKeyStore(dbName: dbName);
   final db = await _openTestDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
@@ -647,6 +699,14 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   await bridge.initialize();
 
   var savedIdentity = restoreIdentity;
+  if (savedIdentity == null && reuseExistingIdentity) {
+    savedIdentity = await identityRepo.loadIdentity();
+  }
+  if (reuseExistingIdentity &&
+      savedIdentity == null &&
+      restoreMnemonic == null) {
+    throw StateError('Existing identity requested but none was found');
+  }
   if (savedIdentity == null) {
     final identityResult = restoreMnemonic == null
         ? await generateNewIdentity(
@@ -779,6 +839,9 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     incomingGroupReactions: groupReactionStreamController.stream,
   );
   groupMembershipUpdateListener.start();
+  if (reuseExistingIdentity) {
+    await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+  }
 
   return GroupMultiDeviceTestStack(
     db: db,

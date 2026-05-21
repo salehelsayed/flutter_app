@@ -15232,6 +15232,313 @@ void main() {
     );
 
     test(
+      'ST-007 fake-network process-death checkpoints recover add remove re-add membership',
+      () async {
+        const checkpoints = <String>[
+          'local_db_write',
+          'bridge_update',
+          'key_generation',
+          'invite_send',
+          'inbox_store',
+          'ack',
+        ];
+        final checkpointEvidence = <Map<String, Object?>>[];
+
+        for (final checkpoint in checkpoints) {
+          final caseNetwork = FakeGroupPubSubNetwork();
+          final groupId = 'grp-st007-$checkpoint';
+          final createdAt = DateTime.utc(2026, 5, 14, 7);
+          var currentEpoch = 1;
+
+          final alice = GroupTestUser.create(
+            peerId: 'peer-st007-$checkpoint-alice',
+            username: 'Alice',
+            network: caseNetwork,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'peer-st007-$checkpoint-bob',
+            username: 'Bob',
+            network: caseNetwork,
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'peer-st007-$checkpoint-charlie',
+            username: 'Charlie',
+            network: caseNetwork,
+          );
+
+          try {
+            Future<void> saveKeyFor(
+              Iterable<GroupTestUser> users,
+              int epoch,
+              DateTime timestamp,
+            ) async {
+              for (final user in users) {
+                await user.groupRepo.saveKey(
+                  GroupKeyInfo(
+                    groupId: groupId,
+                    keyGeneration: epoch,
+                    encryptedKey: 'st007-$checkpoint-key-$epoch',
+                    createdAt: timestamp.toUtc(),
+                  ),
+                );
+              }
+            }
+
+            Future<void> restartPeer(GroupTestUser user) async {
+              user.groupMessageListener.stop();
+              await pump();
+              user.start();
+              checkpointEvidence.add(<String, Object?>{
+                'checkpoint': checkpoint,
+                'restartRole': user.username,
+              });
+            }
+
+            Future<Set<String>> memberIds(GroupTestUser user) async {
+              return (await user.groupRepo.getMembers(
+                groupId,
+              )).map((member) => member.peerId).toSet();
+            }
+
+            Future<int> countText(GroupTestUser user, String text) async {
+              return (await user.loadGroupMessages(
+                groupId,
+              )).where((message) => message.text == text).length;
+            }
+
+            Future<void> waitForText(GroupTestUser user, String text) async {
+              await waitUntil(
+                () async => await countText(user, text) == 1,
+                maxTicks: 80,
+              );
+              expect(await countText(user, text), 1);
+            }
+
+            Future<void> waitForMemberState({
+              required GroupTestUser user,
+              required bool includesCharlie,
+            }) async {
+              await waitUntil(() async {
+                final ids = await memberIds(user);
+                return ids.contains(charlie.peerId) == includesCharlie;
+              }, maxTicks: 80);
+              expect(
+                await memberIds(user),
+                includesCharlie
+                    ? contains(charlie.peerId)
+                    : isNot(contains(charlie.peerId)),
+                reason: '$checkpoint ${user.username} member state',
+              );
+            }
+
+            await alice.createGroup(
+              groupId: groupId,
+              name: 'ST-007 $checkpoint',
+              createdAt: createdAt,
+            );
+            await alice.addMember(
+              groupId: groupId,
+              invitee: bob,
+              joinedAt: createdAt.add(const Duration(minutes: 1)),
+            );
+            await saveKeyFor([alice, bob], currentEpoch, createdAt);
+
+            alice.start();
+            bob.start();
+            charlie.start();
+            await pump();
+
+            await alice.addMember(
+              groupId: groupId,
+              invitee: charlie,
+              joinedAt: createdAt.add(const Duration(minutes: 2)),
+            );
+            if (checkpoint == 'local_db_write') {
+              await restartPeer(alice);
+            }
+            await alice.broadcastMemberAdded(
+              groupId: groupId,
+              newMember: charlie,
+              eventAt: createdAt.add(const Duration(minutes: 2)),
+            );
+            await saveKeyFor(
+              [alice, bob, charlie],
+              currentEpoch,
+              createdAt.add(const Duration(minutes: 2)),
+            );
+            if (checkpoint == 'bridge_update') {
+              await restartPeer(bob);
+            }
+            if (checkpoint == 'invite_send') {
+              await restartPeer(charlie);
+            }
+            await waitForMemberState(user: bob, includesCharlie: true);
+            await waitForMemberState(user: charlie, includesCharlie: true);
+
+            final addText = 'ST-007 $checkpoint after add';
+            await alice.sendGroupMessage(
+              groupId: groupId,
+              text: addText,
+              messageId: 'st007-$checkpoint-after-add',
+              timestamp: createdAt.add(const Duration(minutes: 3)),
+            );
+            await waitForText(bob, addText);
+            await waitForText(charlie, addText);
+
+            await alice.removeMember(
+              groupId: groupId,
+              memberPeerId: charlie.peerId,
+              memberUsername: charlie.username,
+              removedAt: createdAt.add(const Duration(minutes: 4)),
+            );
+            await waitForMemberState(user: bob, includesCharlie: false);
+            await waitUntil(() async {
+              final self = await charlie.groupRepo.getMember(
+                groupId,
+                charlie.peerId,
+              );
+              final key = await charlie.groupRepo.getLatestKey(groupId);
+              return self == null && key == null;
+            }, maxTicks: 80);
+            currentEpoch++;
+            await saveKeyFor(
+              [alice, bob],
+              currentEpoch,
+              createdAt.add(const Duration(minutes: 4)),
+            );
+            if (checkpoint == 'key_generation') {
+              await restartPeer(alice);
+            }
+
+            final removedWindowText =
+                'ST-007 $checkpoint removed-window active delivery';
+            if (checkpoint == 'inbox_store') {
+              bob.unsubscribeFromGroup(groupId);
+              await alice.sendGroupMessage(
+                groupId: groupId,
+                text: removedWindowText,
+                messageId: 'st007-$checkpoint-removed-window',
+                timestamp: createdAt.add(const Duration(minutes: 5)),
+              );
+              await pump();
+              expect(await countText(bob, removedWindowText), 0);
+              await restartPeer(bob);
+              bob.subscribeToGroup(groupId);
+              await caseNetwork.publish(groupId, alice.peerId, {
+                'groupId': groupId,
+                'senderId': alice.peerId,
+                'senderUsername': alice.username,
+                'keyEpoch': currentEpoch,
+                'text': removedWindowText,
+                'timestamp': createdAt
+                    .add(const Duration(minutes: 5))
+                    .toIso8601String(),
+                'messageId': 'st007-$checkpoint-removed-window',
+              }, senderDeviceId: alice.deviceId);
+            } else {
+              await alice.sendGroupMessage(
+                groupId: groupId,
+                text: removedWindowText,
+                messageId: 'st007-$checkpoint-removed-window',
+                timestamp: createdAt.add(const Duration(minutes: 5)),
+              );
+            }
+            await waitForText(bob, removedWindowText);
+            await pump();
+            expect(await countText(charlie, removedWindowText), 0);
+
+            await alice.addMember(
+              groupId: groupId,
+              invitee: charlie,
+              joinedAt: createdAt.add(const Duration(minutes: 6)),
+            );
+            currentEpoch++;
+            await saveKeyFor(
+              [alice, bob, charlie],
+              currentEpoch,
+              createdAt.add(const Duration(minutes: 6)),
+            );
+            await alice.broadcastMemberAdded(
+              groupId: groupId,
+              newMember: charlie,
+              eventAt: createdAt.add(const Duration(minutes: 6)),
+            );
+            if (checkpoint == 'ack') {
+              await restartPeer(charlie);
+            }
+            await waitForMemberState(user: bob, includesCharlie: true);
+            await waitForMemberState(user: charlie, includesCharlie: true);
+
+            final postReaddText = 'ST-007 $checkpoint after re-add';
+            await alice.sendGroupMessage(
+              groupId: groupId,
+              text: postReaddText,
+              messageId: 'st007-$checkpoint-post-readd',
+              timestamp: createdAt.add(const Duration(minutes: 7)),
+            );
+            await waitForText(bob, postReaddText);
+            await waitForText(charlie, postReaddText);
+
+            final charlieReturnText =
+                'ST-007 $checkpoint Charlie confirms active';
+            await charlie.sendGroupMessage(
+              groupId: groupId,
+              text: charlieReturnText,
+              messageId: 'st007-$checkpoint-charlie-return',
+              timestamp: createdAt.add(const Duration(minutes: 8)),
+            );
+            await waitForText(alice, charlieReturnText);
+            await waitForText(bob, charlieReturnText);
+
+            final expectedMembers = {alice.peerId, bob.peerId, charlie.peerId};
+            for (final user in [alice, bob, charlie]) {
+              expect(await memberIds(user), expectedMembers);
+              final key = await user.groupRepo.getLatestKey(groupId);
+              expect(key, isNotNull);
+              expect(key!.keyGeneration, currentEpoch);
+              expect(await countText(user, postReaddText), 1);
+            }
+
+            checkpointEvidence.add(<String, Object?>{
+              'checkpoint': checkpoint,
+              'removedWindowLeakCount': await countText(
+                charlie,
+                removedWindowText,
+              ),
+              'finalEpoch': currentEpoch,
+              'finalMembersConverged': true,
+            });
+          } finally {
+            alice.dispose();
+            bob.dispose();
+            charlie.dispose();
+          }
+        }
+
+        expect(
+          checkpointEvidence
+              .where((entry) => entry.containsKey('finalMembersConverged'))
+              .map((entry) => entry['checkpoint'])
+              .toSet(),
+          checkpoints.toSet(),
+        );
+        expect(
+          checkpointEvidence
+              .where((entry) => entry.containsKey('restartRole'))
+              .map((entry) => entry['checkpoint'])
+              .toSet(),
+          checkpoints.toSet(),
+        );
+        expect(
+          checkpointEvidence
+              .where((entry) => entry.containsKey('removedWindowLeakCount'))
+              .map((entry) => entry['removedWindowLeakCount']),
+          everyElement(0),
+        );
+      },
+    );
+
+    test(
       'ML-009 rapid remove and re-add preserves latest membership ordering',
       () async {
         const groupId = 'grp-ml009-rapid-readd';
