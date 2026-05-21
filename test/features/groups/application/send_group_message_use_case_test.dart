@@ -592,6 +592,149 @@ void main() {
     },
   );
 
+  test('OB-008 degraded send branches map to one retry owner', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-2',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'pk-2',
+        joinedAt: DateTime.utc(2026, 5, 14, 7, 28),
+      ),
+    );
+
+    Future<GroupMessage> sendBranch({
+      required FakeBridge branchBridge,
+      required String messageId,
+      required String text,
+      required SendGroupMessageResult expectedResult,
+    }) async {
+      final (result, message) = await sendGroupMessage(
+        bridge: branchBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: text,
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: messageId,
+      );
+
+      expect(result, expectedResult);
+      expect(message, isNotNull);
+      final saved = await msgRepo.getMessage(messageId);
+      expect(saved, isNotNull);
+      return saved!;
+    }
+
+    final pendingInboxBridge = _InboxStoreOkFalseBridge()
+      ..responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'ob008-pending-inbox-owner',
+        'topicPeers': 1,
+      };
+    final pendingInbox = await sendBranch(
+      branchBridge: pendingInboxBridge,
+      messageId: 'ob008-pending-inbox-owner',
+      text: 'OB-008 pending inbox owner',
+      expectedResult: SendGroupMessageResult.success,
+    );
+    expect(pendingInbox.status, 'pending');
+    expect(pendingInbox.wireEnvelope, isNull);
+    expect(pendingInbox.inboxStored, isFalse);
+    expect(pendingInbox.inboxRetryPayload, isNotNull);
+
+    final failedBothBridge = _InboxStoreOkFalseBridge()
+      ..responses['group:publish'] = {
+        'ok': false,
+        'errorCode': 'PUBLISH_FAILED',
+      };
+    final failedBoth = await sendBranch(
+      branchBridge: failedBothBridge,
+      messageId: 'ob008-failed-both-owner',
+      text: 'OB-008 failed both owner',
+      expectedResult: SendGroupMessageResult.error,
+    );
+    expect(failedBoth.status, 'failed');
+    expect(failedBoth.wireEnvelope, isNotNull);
+    expect(failedBoth.inboxStored, isFalse);
+    expect(failedBoth.inboxRetryPayload, isNotNull);
+
+    final failedPublishInboxOkBridge = FakeBridge()
+      ..responses['group:publish'] = {
+        'ok': false,
+        'errorCode': 'PUBLISH_FAILED',
+      };
+    final failedPublishInboxOk = await sendBranch(
+      branchBridge: failedPublishInboxOkBridge,
+      messageId: 'ob008-failed-publish-inbox-ok',
+      text: 'OB-008 failed publish inbox ok',
+      expectedResult: SendGroupMessageResult.error,
+    );
+    expect(failedPublishInboxOk.status, 'failed');
+    expect(failedPublishInboxOk.inboxStored, isTrue);
+    expect(failedPublishInboxOk.inboxRetryPayload, isNull);
+
+    final zeroPeerInboxFailBridge = _InboxStoreOkFalseBridge()
+      ..responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'ob008-zero-peer-inbox-fail',
+        'topicPeers': 0,
+      };
+    final zeroPeerInboxFail = await sendBranch(
+      branchBridge: zeroPeerInboxFailBridge,
+      messageId: 'ob008-zero-peer-inbox-fail',
+      text: 'OB-008 zero peer inbox fail',
+      expectedResult: SendGroupMessageResult.error,
+    );
+    expect(zeroPeerInboxFail.status, 'failed');
+    expect(zeroPeerInboxFail.inboxStored, isFalse);
+    expect(zeroPeerInboxFail.inboxRetryPayload, isNotNull);
+
+    final timeoutCustodyBridge = FakeBridge()
+      ..responses['group:publish'] = {
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+        'errorMessage': 'publish timed out',
+      };
+    final timeoutCustody = await sendBranch(
+      branchBridge: timeoutCustodyBridge,
+      messageId: 'ob008-timeout-durable-custody',
+      text: 'OB-008 timeout durable custody',
+      expectedResult: SendGroupMessageResult.success,
+    );
+    expect(timeoutCustody.status, 'sent');
+    expect(timeoutCustody.inboxStored, isTrue);
+    expect(timeoutCustody.wireEnvelope, isNull);
+    expect(timeoutCustody.inboxRetryPayload, isNull);
+
+    final failedMessageOwnerIds = (await msgRepo.getFailedOutgoingMessages())
+        .map((row) => row.id)
+        .toSet();
+    final inboxRetryOwnerIds = (await msgRepo.getMessagesWithFailedInboxStore())
+        .map((row) => row.id)
+        .toSet();
+
+    expect(inboxRetryOwnerIds, {'ob008-pending-inbox-owner'});
+    expect(failedMessageOwnerIds, {
+      'ob008-failed-both-owner',
+      'ob008-failed-publish-inbox-ok',
+      'ob008-zero-peer-inbox-fail',
+    });
+    expect(failedMessageOwnerIds.intersection(inboxRetryOwnerIds), isEmpty);
+    expect(
+      failedMessageOwnerIds.contains('ob008-timeout-durable-custody'),
+      isFalse,
+    );
+    expect(
+      inboxRetryOwnerIds.contains('ob008-timeout-durable-custody'),
+      isFalse,
+    );
+  });
+
   test('GM-032 empty active membership disables publish and inbox', () async {
     await groupRepo.removeAllMembers(testGroup.id);
 
