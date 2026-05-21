@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
@@ -39,6 +41,7 @@ import '../../../features/contacts/domain/repositories/fake_contact_repository.d
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/group_test_user.dart';
+import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 
@@ -162,6 +165,8 @@ class _SmokeInMemoryGroupPendingKeyRepairRepository
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late FakeGroupPubSubNetwork network;
 
   setUp(() {
@@ -14424,6 +14429,135 @@ void main() {
           'st008-bob-send',
         });
         expect(bobRepo.blockedSaveIds, contains('st008-bob-send'));
+      },
+    );
+
+    test(
+      'ST-011 EventChannel reinitialize loop keeps group callback stream live',
+      () async {
+        const eventChannelName = 'com.mknoon/go_bridge_events';
+        const eventCodec = StandardMethodCodec();
+        final eventChannelCalls = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMessageHandler(eventChannelName, (message) async {
+          final call = eventCodec.decodeMethodCall(message!);
+          expect(call.method, anyOf('listen', 'cancel'));
+          eventChannelCalls.add(call.method);
+          return eventCodec.encodeSuccessEnvelope(null);
+        });
+
+        final client = GoBridgeClient();
+        final sourceController =
+            StreamController<Map<String, dynamic>>.broadcast();
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: client,
+        );
+        addTearDown(() async {
+          listener.dispose();
+          await sourceController.close();
+          client.dispose();
+          await Future<void>.delayed(Duration.zero);
+          messenger.setMockMessageHandler(eventChannelName, null);
+        });
+
+        const groupId = 'group-st011-eventchannel-loop';
+        final createdAt = DateTime.utc(2026, 1, 14, 11, 1);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'ST-011 EventChannel Loop',
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: createdAt,
+            createdBy: 'st011-admin-peer',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'st011-sender-peer',
+            username: 'Sender',
+            role: MemberRole.writer,
+            publicKey: 'pk-st011-sender',
+            joinedAt: createdAt.add(const Duration(minutes: 1)),
+          ),
+        );
+
+        client.onGroupMessageReceived = sourceController.add;
+        listener.start(sourceController.stream);
+        await client.initialize();
+
+        Future<void> sendEvent(int index) {
+          return messenger.handlePlatformMessage(
+            eventChannelName,
+            eventCodec.encodeSuccessEnvelope(
+              jsonEncode({
+                'event': 'group_message:received',
+                'data': {
+                  'groupId': groupId,
+                  'senderId': 'st011-sender-peer',
+                  'senderUsername': 'Sender',
+                  'keyEpoch': 1,
+                  'text': 'ST-011 callback message $index',
+                  'timestamp': createdAt
+                      .add(Duration(minutes: 2, seconds: index))
+                      .toIso8601String(),
+                  'messageId': 'st011-callback-$index',
+                },
+              }),
+            ),
+            (_) {},
+          );
+        }
+
+        for (var index = 1; index <= 4; index++) {
+          await Future.wait(
+            List<Future<void>>.generate(4, (_) => client.reinitialize()),
+          );
+          await sendEvent(index);
+        }
+        await sendEvent(5);
+
+        final expectedIds = {
+          for (var index = 1; index <= 5; index++) 'st011-callback-$index',
+        };
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        while (DateTime.now().isBefore(deadline)) {
+          final ids = (await msgRepo.getMessagesPage(
+            groupId,
+            limit: 10,
+          )).map((message) => message.id).toSet();
+          if (ids.containsAll(expectedIds)) break;
+          await pump();
+        }
+
+        final messages = await msgRepo.getMessagesPage(groupId, limit: 10);
+        final st011Messages = messages
+            .where((message) => message.id.startsWith('st011-callback-'))
+            .toList();
+        expect(st011Messages.map((message) => message.id).toSet(), expectedIds);
+        for (final id in expectedIds) {
+          expect(
+            st011Messages.where((message) => message.id == id),
+            hasLength(1),
+            reason: '$id should persist exactly once after reinitialize loops',
+          );
+        }
+        expect(
+          eventChannelCalls.where((call) => call == 'listen'),
+          hasLength(5),
+        );
+        expect(
+          eventChannelCalls.where((call) => call == 'cancel'),
+          hasLength(4),
+        );
+        expect(client.isInitialized, isTrue);
       },
     );
 
