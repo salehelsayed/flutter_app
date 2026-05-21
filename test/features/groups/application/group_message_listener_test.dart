@@ -883,6 +883,116 @@ void main() {
   );
 
   test(
+    'SV-008 unauthorized config update payloads leave state and bridge unchanged',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          joinedAt: initialMemberJoinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          joinedAt: initialMemberJoinedAt,
+        ),
+      );
+      await groupRepo.removeMember('group-1', 'peer-charlie');
+      listener.start(sourceController.stream);
+
+      final writerAddsAttacker = jsonEncode({
+        '__sys': 'member_added',
+        'member': {
+          'peerId': 'peer-attacker',
+          'username': 'Attacker',
+          'role': 'writer',
+          'publicKey': 'pk-attacker',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {'peerId': 'peer-sender', 'role': 'writer'},
+            {'peerId': 'peer-bob', 'role': 'writer', 'publicKey': 'pk-bob'},
+            {
+              'peerId': 'peer-attacker',
+              'role': 'writer',
+              'publicKey': 'pk-attacker',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': initialGroupCreatedAt.toIso8601String(),
+        },
+      });
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': writerAddsAttacker,
+        'timestamp': DateTime.utc(2026, 5, 14, 5, 20).toIso8601String(),
+        'messageId': 'sv008-writer-adds-attacker',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final removedCharlieRemovesBob = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {'peerId': 'peer-bob', 'username': 'Bob'},
+        'removedAt': DateTime.utc(2026, 5, 14, 5, 21).toIso8601String(),
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {'peerId': 'peer-sender', 'role': 'writer'},
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': initialGroupCreatedAt.toIso8601String(),
+        },
+      });
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-charlie',
+        'senderUsername': 'Charlie',
+        'keyEpoch': 0,
+        'text': removedCharlieRemovesBob,
+        'timestamp': DateTime.utc(2026, 5, 14, 5, 21).toIso8601String(),
+        'messageId': 'sv008-removed-removes-bob',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getMember('group-1', 'peer-attacker'), isNull);
+      expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+      expect(await groupRepo.getMember('group-1', 'peer-bob'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNotNull);
+      expect(msgRepo.count, 0);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      final eventNames = flowEvents.map((event) => event['event']).toList();
+      expect(
+        eventNames,
+        contains('GROUP_MESSAGE_LISTENER_UNAUTHORIZED_MEMBERSHIP_EVENT'),
+      );
+      expect(
+        eventNames,
+        contains('GROUP_MESSAGE_LISTENER_UNBOUND_SYSTEM_DEVICE'),
+      );
+    },
+  );
+
+  test(
     'GO-003 sender-visible validation feedback marks outgoing row failed and retryable',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();

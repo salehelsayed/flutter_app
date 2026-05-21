@@ -977,6 +977,68 @@ void main() {
       );
     });
 
+    test('SV-008 accepts unauthorized config update rejection verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_old_key_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateRemovedOldKeyPublishRejectedVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_removed_old_key_publish_rejected verdicts valid'),
+      );
+    });
+
+    test('SV-008 rejects applied unauthorized config update', () {
+      final verdicts = _validPrivateRemovedOldKeyPublishRejectedVerdicts();
+      verdicts[1] =
+          _withSv008ProofOverrides(verdicts[1], const <String, Object?>{
+            'configPublishAccepted': true,
+            'localConfigUpdateApplied': true,
+            'attackerInActiveConfig': true,
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_old_key_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: SV-008 unauthorized config update must not be accepted or applied',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains('bob: SV-008 attacker must not enter active config'),
+      );
+    });
+
+    test('SV-008 rejects forged removal of Bob', () {
+      final verdicts = _validPrivateRemovedOldKeyPublishRejectedVerdicts();
+      verdicts[0] = _withSv008ProofOverrides(
+        verdicts[0],
+        const <String, Object?>{'bobStillActive': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_old_key_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: SV-008 Bob must remain active after forged removal'),
+      );
+    });
+
     test('accepts valid GM-001 A/B/C receiver persistence verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm001',
@@ -19421,6 +19483,32 @@ List<Map<String, dynamic>> _validPrivateRemovedOldKeyPublishRejectedVerdicts() {
     };
   }
 
+  Map<String, Object?> sv008ProofFor(
+    String role, {
+    bool charlieAttempted = false,
+  }) {
+    return <String, Object?>{
+      'rowId': 'SV-008',
+      'scenario': scenario,
+      'observedByRole': role,
+      'unauthorizedRole': 'charlie',
+      'removedPeerId': charliePeerId,
+      'targetedRemovedPeerId': bobPeerId,
+      'attemptedAddedPeerId': 'sv008-attacker',
+      'attemptedUnauthorizedConfigUpdate': true,
+      'attemptedNativeConfigUpdate': charlieAttempted,
+      'configPublishAccepted': false,
+      'configPublishOutcome': charlieAttempted ? 'GROUP_ERROR' : 'GROUP_ERROR',
+      'observedUnauthorizedConfigRejected': true,
+      'normalAliceDeliveryStillWorks': true,
+      'bobStillActive': true,
+      'attackerInActiveConfig': false,
+      'removedMemberInActiveConfig': false,
+      'localConfigUpdateApplied': false,
+      'storedLocalConfigMessage': false,
+    };
+  }
+
   return <Map<String, dynamic>>[
     _baseVerdict(
       scenario: scenario,
@@ -19431,6 +19519,7 @@ List<Map<String, dynamic>> _validPrivateRemovedOldKeyPublishRejectedVerdicts() {
       sentMessages: const <Map<String, Object?>>[aliceMessage],
       extra: <String, Object?>{
         'sv002RemovedOldKeyPublishProof': proofFor('alice'),
+        'sv008UnauthorizedConfigUpdateProof': sv008ProofFor('alice'),
       },
     ),
     _baseVerdict(
@@ -19452,6 +19541,7 @@ List<Map<String, dynamic>> _validPrivateRemovedOldKeyPublishRejectedVerdicts() {
       persistedMessageCounts: const <String, int>{'aliceBeforeRemoval': 1},
       extra: <String, Object?>{
         'sv002RemovedOldKeyPublishProof': proofFor('bob'),
+        'sv008UnauthorizedConfigUpdateProof': sv008ProofFor('bob'),
       },
     ),
     _baseVerdict(
@@ -19477,6 +19567,10 @@ List<Map<String, dynamic>> _validPrivateRemovedOldKeyPublishRejectedVerdicts() {
           'charlie',
           charlieAttempted: true,
         ),
+        'sv008UnauthorizedConfigUpdateProof': sv008ProofFor(
+          'charlie',
+          charlieAttempted: true,
+        ),
       },
     ),
   ];
@@ -19491,6 +19585,21 @@ Map<String, dynamic> _withSv002ProofOverrides(
     'sv002RemovedOldKeyPublishProof': <String, Object?>{
       ...Map<String, Object?>.from(
         verdict['sv002RemovedOldKeyPublishProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+Map<String, dynamic> _withSv008ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'sv008UnauthorizedConfigUpdateProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['sv008UnauthorizedConfigUpdateProof'] as Map,
       ),
       ...overrides,
     },

@@ -1575,6 +1575,154 @@ void main() {
       },
     );
 
+    test(
+      'SV-008 unauthorized config update payloads are ignored by peers',
+      () async {
+        const groupId = 'grp-sv008-config-guard';
+
+        final admin = GroupTestUser.create(
+          peerId: 'sv008-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv008-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv008-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        final diana = GroupTestUser.create(
+          peerId: 'sv008-diana',
+          username: 'Diana',
+          network: network,
+        );
+        addTearDown(() {
+          admin.dispose();
+          bob.dispose();
+          charlie.dispose();
+          diana.dispose();
+        });
+
+        await admin.createGroup(groupId: groupId, name: 'SV-008 Guard');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+        );
+        await pump();
+
+        expect(
+          await admin.groupRepo.getMember(groupId, charlie.peerId),
+          isNull,
+        );
+        expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
+        admin.bridge.commandLog.clear();
+        bob.bridge.commandLog.clear();
+
+        final removedCharlieAddsAttacker = jsonEncode({
+          '__sys': 'members_added',
+          'members': [
+            {
+              'peerId': 'sv008-attacker',
+              'username': 'Attacker',
+              'role': 'writer',
+              'publicKey': 'pk-sv008-attacker',
+            },
+          ],
+          'groupConfig': {
+            'name': 'SV-008 Guard',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': admin.peerId,
+                'username': admin.username,
+                'role': 'admin',
+                'publicKey': admin.publicKey,
+              },
+              {
+                'peerId': 'sv008-attacker',
+                'username': 'Attacker',
+                'role': 'writer',
+                'publicKey': 'pk-sv008-attacker',
+              },
+            ],
+            'createdBy': admin.peerId,
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+        await network.publish(groupId, charlie.peerId, {
+          'groupId': groupId,
+          'senderId': charlie.peerId,
+          'senderUsername': charlie.username,
+          'keyEpoch': 0,
+          'text': removedCharlieAddsAttacker,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+        await pump();
+
+        final writerRemovesAdmin = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': admin.peerId, 'username': admin.username},
+          'removedAt': DateTime.now().toUtc().toIso8601String(),
+          'groupConfig': {
+            'name': 'SV-008 Guard',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': admin.peerId,
+                'username': admin.username,
+                'role': 'admin',
+                'publicKey': admin.publicKey,
+              },
+            ],
+            'createdBy': admin.peerId,
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+        await network.publish(groupId, bob.peerId, {
+          'groupId': groupId,
+          'senderId': bob.peerId,
+          'senderUsername': bob.username,
+          'keyEpoch': 0,
+          'text': writerRemovesAdmin,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+        await pump();
+
+        Future<void> expectGuardedMembers(GroupTestUser user) async {
+          final memberIds = (await user.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId).toSet();
+          expect(memberIds, containsAll(<String>{admin.peerId, bob.peerId}));
+          expect(memberIds, isNot(contains(charlie.peerId)));
+          expect(memberIds, isNot(contains('sv008-attacker')));
+        }
+
+        await expectGuardedMembers(admin);
+        await expectGuardedMembers(bob);
+        expect(admin.bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(bob.bridge.commandLog, isNot(contains('group:updateConfig')));
+
+        await admin.addMember(groupId: groupId, invitee: diana);
+        await admin.broadcastMemberAdded(groupId: groupId, newMember: diana);
+        await pump();
+
+        expect(await bob.groupRepo.getMember(groupId, diana.peerId), isNotNull);
+        expect(bob.bridge.commandLog, contains('group:updateConfig'));
+      },
+    );
+
     // -----------------------------------------------------------------------
     // 3. Self-removal — removed user calls leaveGroup and cleans up.
     // -----------------------------------------------------------------------
