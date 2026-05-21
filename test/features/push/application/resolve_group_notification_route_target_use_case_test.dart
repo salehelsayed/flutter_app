@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
@@ -8,6 +9,32 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 
 const _groupId = 'group-123';
+
+GroupModel _makeGroup({String groupId = _groupId}) {
+  return GroupModel(
+    id: groupId,
+    name: 'Orbit Group',
+    type: GroupType.chat,
+    topicName: '/mknoon/group/$groupId',
+    createdAt: DateTime.utc(2026, 4, 6, 10),
+    createdBy: 'peer-admin',
+    myRole: GroupRole.member,
+  );
+}
+
+GroupMember _makeMember({
+  String groupId = _groupId,
+  String peerId = 'peer-user-a',
+  DateTime? joinedAt,
+}) {
+  return GroupMember(
+    groupId: groupId,
+    peerId: peerId,
+    username: 'User A',
+    role: MemberRole.writer,
+    joinedAt: joinedAt ?? DateTime.utc(2026, 4, 6, 10, 1),
+  );
+}
 
 GroupInvitePayload _makeInvitePayload({String groupId = _groupId}) {
   return GroupInvitePayload(
@@ -66,17 +93,7 @@ void main() {
       final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
       var drainCalls = 0;
 
-      await groupRepo.saveGroup(
-        GroupModel(
-          id: _groupId,
-          name: 'Orbit Group',
-          type: GroupType.chat,
-          topicName: '/mknoon/group/$_groupId',
-          createdAt: DateTime.utc(2026, 4, 6, 10),
-          createdBy: 'peer-admin',
-          myRole: GroupRole.member,
-        ),
-      );
+      await groupRepo.saveGroup(_makeGroup());
 
       final result = await resolveGroupNotificationRouteTarget(
         groupId: _groupId,
@@ -150,17 +167,7 @@ void main() {
         pendingInviteRepo: pendingInviteRepo,
         drainOfflineInbox: () async {
           drainCalls += 1;
-          await groupRepo.saveGroup(
-            GroupModel(
-              id: _groupId,
-              name: 'Orbit Group',
-              type: GroupType.chat,
-              topicName: '/mknoon/group/$_groupId',
-              createdAt: DateTime.utc(2026, 4, 6, 10),
-              createdBy: 'peer-admin',
-              myRole: GroupRole.member,
-            ),
-          );
+          await groupRepo.saveGroup(_makeGroup());
         },
       );
 
@@ -199,17 +206,7 @@ void main() {
         final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
         var drainCalls = 0;
 
-        await groupRepo.saveGroup(
-          GroupModel(
-            id: _groupId,
-            name: 'Orbit Group',
-            type: GroupType.chat,
-            topicName: '/mknoon/group/$_groupId',
-            createdAt: DateTime.utc(2026, 4, 6, 10),
-            createdBy: 'peer-admin',
-            myRole: GroupRole.member,
-          ),
-        );
+        await groupRepo.saveGroup(_makeGroup());
         await groupRepo.deleteGroup(_groupId);
 
         final result = await resolveGroupNotificationRouteTarget(
@@ -226,6 +223,119 @@ void main() {
         expect(result.hasGroup, isFalse);
         expect(result.hasPendingInvite, isFalse);
         expect(drainCalls, 1);
+      },
+    );
+
+    test(
+      'UP-010 opens existing group only when local peer is a current member',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        var drainCalls = 0;
+
+        await groupRepo.saveGroup(_makeGroup());
+        await groupRepo.saveMember(_makeMember(peerId: 'peer-user-a'));
+
+        final result = await resolveGroupNotificationRouteTarget(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+          drainOfflineInbox: () async {
+            drainCalls += 1;
+          },
+        );
+
+        expect(result.group, isNotNull);
+        expect(result.group!.id, _groupId);
+        expect(result.pendingInvite, isNull);
+        expect(drainCalls, 0);
+      },
+    );
+
+    test(
+      'UP-010 refuses stale removed group route when local member is absent',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        var drainCalls = 0;
+
+        await groupRepo.saveGroup(_makeGroup());
+
+        final result = await resolveGroupNotificationRouteTarget(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+          drainOfflineInbox: () async {
+            drainCalls += 1;
+          },
+        );
+
+        expect(result.group, isNull);
+        expect(result.pendingInvite, isNull);
+        expect(result.hasGroup, isFalse);
+        expect(result.hasPendingInvite, isFalse);
+        expect(drainCalls, 1);
+      },
+    );
+
+    test(
+      'UP-010 recovers re-added local member before routing group notification',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        var drainCalls = 0;
+
+        await groupRepo.saveGroup(_makeGroup());
+
+        final result = await resolveGroupNotificationRouteTarget(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+          drainOfflineInbox: () async {
+            drainCalls += 1;
+            await groupRepo.saveMember(
+              _makeMember(
+                peerId: 'peer-user-a',
+                joinedAt: DateTime.utc(2026, 4, 6, 10, 30),
+              ),
+            );
+          },
+        );
+
+        expect(result.group, isNotNull);
+        expect(result.group!.id, _groupId);
+        expect(result.pendingInvite, isNull);
+        expect(drainCalls, 1);
+      },
+    );
+
+    test(
+      'UP-010 redirects to pending invite instead of stale removed group',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        var drainCalls = 0;
+
+        await groupRepo.saveGroup(_makeGroup());
+        await pendingInviteRepo.savePendingInvite(_makePendingInvite());
+
+        final result = await resolveGroupNotificationRouteTarget(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+          drainOfflineInbox: () async {
+            drainCalls += 1;
+          },
+        );
+
+        expect(result.group, isNull);
+        expect(result.pendingInvite, isNotNull);
+        expect(result.pendingInvite!.groupId, _groupId);
+        expect(drainCalls, 0);
       },
     );
   });

@@ -12397,6 +12397,74 @@ void main() {
       },
     );
 
+    test(
+      'UP-010 accepts private_timeline_truth notification route proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateTimelineTruthVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_timeline_truth verdicts valid'),
+        );
+      },
+    );
+
+    test(
+      'UP-010 rejects private_timeline_truth without notification route proof',
+      () {
+        final missingProof = _validPrivateTimelineTruthVerdicts();
+        missingProof[0] = Map<String, dynamic>.from(missingProof[0])
+          ..remove('up010NotificationRouteProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('alice: missing UP-010 notification route proof fields'),
+        );
+      },
+    );
+
+    test('UP-010 rejects private_timeline_truth stale removed route open', () {
+      final stale = _validPrivateTimelineTruthVerdicts();
+      stale[2] = {
+        ...stale[2],
+        'up010NotificationRouteProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            stale[2]['up010NotificationRouteProof'] as Map,
+          ),
+          'staleRemovedGroupRejected': false,
+          'staleRemovedResolutionMissing': false,
+          'staleRemovedGroupOpened': true,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: stale,
+      );
+
+      expect(
+        rejected.detail,
+        contains('staleRemovedGroupRejected must be true'),
+      );
+      expect(
+        rejected.detail,
+        contains('staleRemovedGroupOpened must be false'),
+      );
+    });
+
     test('rejects private_timeline_truth without ML-015 proof fields', () {
       final missingProof = _validPrivateTimelineTruthVerdicts();
       missingProof[1] = Map<String, dynamic>.from(missingProof[1])
@@ -21923,6 +21991,26 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalEpoch': 3,
         },
+        'up010NotificationRouteProof': <String, Object?>{
+          'rowId': 'UP-010',
+          'role': 'alice',
+          'liveThreePartyProof': true,
+          'notificationRouteProofSource': 'app_peer_core_simulator',
+          'currentLocalMemberPresent': true,
+          'currentGroupRouteOpened': true,
+          'currentRouteGroupIdMatches': true,
+          'currentRoutePendingInviteAbsent': true,
+          'currentResolutionRecoveryDrainCalls': 0,
+          'staleRemovedRecoveryDrainAttempted': true,
+          'staleRemovedGroupRejected': true,
+          'staleRemovedResolutionMissing': true,
+          'staleRemovedGroupOpened': false,
+          'restoredLocalMemberAfterProbe': true,
+          'postReaddMessageVisible': true,
+          'messageVisibilityMatchesMembership': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -22059,6 +22147,26 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalEpoch': 3,
         },
+        'up010NotificationRouteProof': <String, Object?>{
+          'rowId': 'UP-010',
+          'role': 'bob',
+          'liveThreePartyProof': true,
+          'notificationRouteProofSource': 'app_peer_core_simulator',
+          'currentLocalMemberPresent': true,
+          'currentGroupRouteOpened': true,
+          'currentRouteGroupIdMatches': true,
+          'currentRoutePendingInviteAbsent': true,
+          'currentResolutionRecoveryDrainCalls': 0,
+          'staleRemovedRecoveryDrainAttempted': true,
+          'staleRemovedGroupRejected': true,
+          'staleRemovedResolutionMissing': true,
+          'staleRemovedGroupOpened': false,
+          'restoredLocalMemberAfterProbe': true,
+          'postReaddMessageVisible': true,
+          'messageVisibilityMatchesMembership': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -22187,6 +22295,26 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'renderedLabelNotUnknown': true,
           'contactIndependentResolution': true,
           'memberListIncludesCharlie': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
+        'up010NotificationRouteProof': <String, Object?>{
+          'rowId': 'UP-010',
+          'role': 'charlie',
+          'liveThreePartyProof': true,
+          'notificationRouteProofSource': 'app_peer_core_simulator',
+          'currentLocalMemberPresent': true,
+          'currentGroupRouteOpened': true,
+          'currentRouteGroupIdMatches': true,
+          'currentRoutePendingInviteAbsent': true,
+          'currentResolutionRecoveryDrainCalls': 0,
+          'staleRemovedRecoveryDrainAttempted': true,
+          'staleRemovedGroupRejected': true,
+          'staleRemovedResolutionMissing': true,
+          'staleRemovedGroupOpened': false,
+          'restoredLocalMemberAfterProbe': true,
+          'postReaddMessageVisible': true,
+          'messageVisibilityMatchesMembership': true,
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalEpoch': 3,
         },

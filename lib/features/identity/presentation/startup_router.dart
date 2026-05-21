@@ -814,6 +814,7 @@ class _StartupRouterState extends State<StartupRouter> {
   Future<void> _prepareNotificationRouteTarget(
     NotificationRouteTarget routeTarget,
   ) async {
+    final identity = await widget.repository.loadIdentity();
     await prepareNotificationRouteTarget(
       routeTarget: routeTarget,
       drainOfflineInbox: widget.p2pService.drainOfflineInbox,
@@ -825,6 +826,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
+      selfPeerId: identity?.peerId,
     );
   }
 

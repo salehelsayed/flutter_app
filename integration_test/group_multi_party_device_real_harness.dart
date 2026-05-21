@@ -54,6 +54,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 
 import 'group_multi_device_real_harness.dart';
@@ -27016,6 +27017,95 @@ Future<Map<String, dynamic>> _up009ReaddSenderIdentityProof({
   };
 }
 
+Future<Map<String, dynamic>> _up010NotificationRouteProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required String role,
+  required String charlieMessageId,
+}) async {
+  final localPeerId = identities[role]!['peerId'] as String;
+  final currentMember = await stack.groupRepo.getMember(groupId, localPeerId);
+  final currentRouteDrainCalls = _Counter();
+  final currentResolution = await resolveGroupNotificationRouteTarget(
+    groupId: groupId,
+    groupRepo: stack.groupRepo,
+    localPeerId: localPeerId,
+    drainOfflineInbox: () async {
+      currentRouteDrainCalls.increment();
+    },
+  );
+
+  var staleRemovedGroupRejected = false;
+  var staleRemovedResolutionMissing = false;
+  var staleRemovedGroupOpened = false;
+  var staleRemovedRecoveryDrainCalls = 0;
+  if (currentMember != null) {
+    await stack.groupRepo.removeMember(groupId, localPeerId);
+    try {
+      final staleRouteDrainCalls = _Counter();
+      final staleResolution = await resolveGroupNotificationRouteTarget(
+        groupId: groupId,
+        groupRepo: stack.groupRepo,
+        localPeerId: localPeerId,
+        drainOfflineInbox: () async {
+          staleRouteDrainCalls.increment();
+        },
+      );
+      staleRemovedRecoveryDrainCalls = staleRouteDrainCalls.value;
+      staleRemovedGroupOpened = staleResolution.hasGroup;
+      staleRemovedResolutionMissing =
+          !staleResolution.hasGroup && !staleResolution.hasPendingInvite;
+      staleRemovedGroupRejected =
+          staleRemovedResolutionMissing && !staleRemovedGroupOpened;
+    } finally {
+      await stack.groupRepo.saveMember(currentMember);
+    }
+  }
+
+  final restoredMember = await stack.groupRepo.getMember(groupId, localPeerId);
+  final postReaddMessage = await stack.groupMsgRepo.getMessage(
+    charlieMessageId,
+  );
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalEpoch = await _keyEpoch(stack, groupId);
+
+  return <String, dynamic>{
+    'rowId': 'UP-010',
+    'role': role,
+    'liveThreePartyProof': true,
+    'notificationRouteProofSource': 'app_peer_core_simulator',
+    'currentLocalMemberPresent': currentMember != null,
+    'currentGroupRouteOpened': currentResolution.hasGroup,
+    'currentRouteGroupIdMatches': currentResolution.group?.id == groupId,
+    'currentRoutePendingInviteAbsent': !currentResolution.hasPendingInvite,
+    'currentResolutionRecoveryDrainCalls': currentRouteDrainCalls.value,
+    'staleRemovedRecoveryDrainAttempted': staleRemovedRecoveryDrainCalls > 0,
+    'staleRemovedGroupRejected': staleRemovedGroupRejected,
+    'staleRemovedResolutionMissing': staleRemovedResolutionMissing,
+    'staleRemovedGroupOpened': staleRemovedGroupOpened,
+    'restoredLocalMemberAfterProbe': restoredMember != null,
+    'postReaddMessageVisible': postReaddMessage != null,
+    'messageVisibilityMatchesMembership':
+        currentResolution.hasGroup &&
+        currentMember != null &&
+        postReaddMessage != null,
+    'finalMemberListIncludesAliceBobCharlie': _ml008HasAllMembers(
+      memberPeerIds,
+      identities,
+    ),
+    'finalEpoch': finalEpoch,
+  };
+}
+
+class _Counter {
+  int value = 0;
+
+  void increment() {
+    value += 1;
+  }
+}
+
 Future<void> _runMl015Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -27317,6 +27407,13 @@ Future<void> _runMl015Alice(
         role: 'alice',
         charlieMessageId: charlieSent['messageId'] as String,
       ),
+      'up010NotificationRouteProof': await _up010NotificationRouteProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'alice',
+        charlieMessageId: charlieSent['messageId'] as String,
+      ),
     },
   );
 }
@@ -27527,6 +27624,13 @@ Future<void> _runMl015Bob(
         role: 'bob',
         charlieMessageId: charlieSent['messageId'] as String,
       ),
+      'up010NotificationRouteProof': await _up010NotificationRouteProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'bob',
+        charlieMessageId: charlieSent['messageId'] as String,
+      ),
     },
   );
 }
@@ -27729,6 +27833,13 @@ Future<void> _runMl015Charlie(
         role: 'charlie',
       ),
       'up009ReaddSenderIdentityProof': await _up009ReaddSenderIdentityProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'charlie',
+        charlieMessageId: charlieSent['messageId'] as String,
+      ),
+      'up010NotificationRouteProof': await _up010NotificationRouteProof(
         stack: stack,
         groupId: groupId,
         identities: identities,

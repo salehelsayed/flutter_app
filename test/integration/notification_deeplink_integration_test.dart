@@ -1,10 +1,15 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 
 import '../shared/fakes/fake_notification_service.dart';
 import '../shared/fakes/fake_push_token_store.dart';
+import '../shared/fakes/in_memory_group_repository.dart';
+import '../shared/fakes/in_memory_pending_group_invite_repository.dart';
 
 void main() {
   group('Notification deep-link integration', () {
@@ -85,6 +90,81 @@ void main() {
         ]);
         expect(routed.single.kind, NotificationRouteTargetKind.group);
         expect(routed.single.groupId, 'group-xyz-789');
+      },
+    );
+
+    test(
+      'UP-010 group push routes only after current local membership is resolved',
+      () async {
+        const groupId = 'group-up-010';
+        const localPeerId = 'peer-bob-up-010';
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        final events = <String>[];
+        final routed = <NotificationRouteTarget>[];
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'UP-010 Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdAt: DateTime.utc(2026, 4, 6, 10),
+            createdBy: 'peer-alice-up-010',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        await routeRemoteNotificationOpen(
+          data: const <String, dynamic>{
+            'type': 'group_message',
+            'groupId': groupId,
+          },
+          onBeforeRouteTarget: (target) async {
+            events.add('prepare:${target.toPayload()}');
+            final result = await prepareNotificationOpen(
+              routeTarget: target,
+              drainOfflineInbox: () async {},
+              drainGroupOfflineInboxForGroup: (targetGroupId) async {
+                events.add('drain:group:$targetGroupId');
+                await groupRepo.saveMember(
+                  GroupMember(
+                    groupId: targetGroupId,
+                    peerId: localPeerId,
+                    username: 'Bob',
+                    role: MemberRole.writer,
+                    joinedAt: DateTime.utc(2026, 4, 6, 10, 30),
+                  ),
+                );
+              },
+            );
+            expect(result.ok, isTrue);
+          },
+          onRouteTarget: (target) async {
+            events.add('route:${target.toPayload()}');
+            final resolution = await resolveGroupNotificationRouteTarget(
+              groupId: target.groupId!,
+              groupRepo: groupRepo,
+              pendingInviteRepo: pendingInviteRepo,
+              localPeerId: localPeerId,
+              drainOfflineInbox: () async {
+                events.add('resolve-drain');
+              },
+            );
+            expect(resolution.group?.id, groupId);
+            expect(resolution.pendingInvite, isNull);
+            routed.add(target);
+          },
+          onMissingRouteTarget: () async => events.add('missing'),
+        );
+
+        expect(events, [
+          'prepare:group:$groupId',
+          'drain:group:$groupId',
+          'route:group:$groupId',
+        ]);
+        expect(routed.single.kind, NotificationRouteTargetKind.group);
+        expect(routed.single.groupId, groupId);
       },
     );
 
