@@ -518,6 +518,89 @@ void main() {
       expect(lastCall, isNull);
     });
 
+    test(
+      'ST-010 malformed bridge requests and native group responses return safe errors',
+      () async {
+        const sentinel = 'st010-groupKey-secret';
+        final invalidRequests = <({String label, String request})>[
+          (label: 'invalid json', request: '{not-json $sentinel'),
+          (label: 'top-level list', request: jsonEncode([sentinel])),
+          (
+            label: 'missing cmd',
+            request: jsonEncode({
+              'payload': {'groupKey': sentinel},
+            }),
+          ),
+          (
+            label: 'non-string cmd',
+            request: jsonEncode({
+              'cmd': 42,
+              'payload': {'groupKey': sentinel},
+            }),
+          ),
+          (
+            label: 'blank cmd',
+            request: jsonEncode({
+              'cmd': '  ',
+              'payload': {'groupKey': sentinel},
+            }),
+          ),
+          (
+            label: 'non-object payload',
+            request: jsonEncode({
+              'cmd': 'group:publish',
+              'payload': [sentinel],
+            }),
+          ),
+        ];
+
+        for (final invalid in invalidRequests) {
+          lastCall = null;
+          final response = await client.send(invalid.request);
+          final decoded = jsonDecode(response) as Map<String, dynamic>;
+
+          expect(decoded['ok'], isFalse, reason: invalid.label);
+          expect(
+            decoded['errorCode'],
+            equals('INVALID_INPUT'),
+            reason: invalid.label,
+          );
+          expect(response, isNot(contains(sentinel)), reason: invalid.label);
+          expect(lastCall, isNull, reason: invalid.label);
+        }
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                return 'not-json groupKey=$sentinel';
+              },
+            );
+
+        final request = jsonEncode({
+          'cmd': 'group:publish',
+          'payload': {
+            'groupId': 'st010-group',
+            'text': 'malformed native proof',
+            'senderPeerId': 'alice',
+            'senderPublicKey': 'alice-pk',
+            'senderPrivateKey': 'alice-sk',
+          },
+        });
+
+        final malformedResponse = await client.send(request);
+        final malformedDecoded =
+            jsonDecode(malformedResponse) as Map<String, dynamic>;
+
+        expect(malformedDecoded['ok'], isFalse);
+        expect(malformedDecoded['errorCode'], equals('MALFORMED_RESPONSE'));
+        expect(malformedResponse, isNot(contains(sentinel)));
+        expect(lastCall, isNotNull);
+        expect(lastCall!.method, equals('groupPublish'));
+      },
+    );
+
     test('null response from native returns NULL_RESPONSE error', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(

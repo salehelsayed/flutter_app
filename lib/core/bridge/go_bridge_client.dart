@@ -675,9 +675,30 @@ class GoBridgeClient extends Bridge {
 
   @override
   Future<String> send(String message) async {
-    final request = jsonDecode(message) as Map<String, dynamic>;
-    final cmd = request['cmd'] as String;
-    final payload = request['payload'] as Map<String, dynamic>?;
+    final Map<String, dynamic> request;
+    try {
+      final decoded = jsonDecode(message);
+      if (decoded is! Map<String, dynamic>) {
+        return _invalidBridgeRequest('Bridge request must be a JSON object');
+      }
+      request = decoded;
+    } catch (_) {
+      return _invalidBridgeRequest('Bridge request must be valid JSON');
+    }
+
+    final rawCmd = request['cmd'];
+    if (rawCmd is! String || rawCmd.trim().isEmpty) {
+      return _invalidBridgeRequest('Bridge request missing valid cmd');
+    }
+    final cmd = rawCmd;
+
+    final rawPayload = request['payload'];
+    if (rawPayload != null && rawPayload is! Map<String, dynamic>) {
+      return _invalidBridgeRequest(
+        'Bridge request payload must be a JSON object',
+      );
+    }
+    final payload = rawPayload as Map<String, dynamic>?;
 
     // Refuse to issue a native-bridge round-trip from inside a SQLCipher
     // write transaction. Holding the DB lock across this hop is what
@@ -812,6 +833,14 @@ class GoBridgeClient extends Bridge {
       });
     }
   }
+}
+
+String _invalidBridgeRequest(String errorMessage) {
+  return jsonEncode({
+    'ok': false,
+    'errorCode': 'INVALID_INPUT',
+    'errorMessage': errorMessage,
+  });
 }
 
 String _sanitizeBridgeResult(String result) {
