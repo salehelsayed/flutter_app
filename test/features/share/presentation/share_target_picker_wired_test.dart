@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
-import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
@@ -136,10 +137,12 @@ void main() {
       contactRepository.addTestContact(archivedContact);
       await contactRepository.archiveContact(archivedContact.peerId);
 
-      await groupRepository.saveGroup(
+      await _saveWritableGroup(
+        groupRepository,
         _makeGroup('chat-group', 'Friends', GroupType.chat, GroupRole.member),
       );
-      await groupRepository.saveGroup(
+      await _saveWritableGroup(
+        groupRepository,
         _makeGroup(
           'announce-member',
           'Announcements',
@@ -147,7 +150,8 @@ void main() {
           GroupRole.member,
         ),
       );
-      await groupRepository.saveGroup(
+      await _saveWritableGroup(
+        groupRepository,
         _makeGroup(
           'announce-admin',
           'Admin Announcements',
@@ -155,7 +159,8 @@ void main() {
           GroupRole.admin,
         ),
       );
-      await groupRepository.saveGroup(
+      await _saveWritableGroup(
+        groupRepository,
         _makeGroup(
           'archived-group',
           'Archived Group',
@@ -189,6 +194,101 @@ void main() {
       expect(find.text('Admin Announcements'), findsOneWidget);
       expect(find.text('Announcements'), findsNothing);
       expect(find.text('Archived Group'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'UP-014 filters removed pending and dissolved groups from share targets',
+    (tester) async {
+      final harness = _buildHarness();
+      final writableGroup = _makeGroup(
+        'writable-group',
+        'Writable Group',
+        GroupType.chat,
+        GroupRole.member,
+      );
+      final removedGroup = _makeGroup(
+        'removed-group',
+        'Removed Group',
+        GroupType.chat,
+        GroupRole.member,
+      );
+      final pendingGroup = _makeGroup(
+        'pending-group',
+        'Pending Group',
+        GroupType.chat,
+        GroupRole.member,
+      );
+      final dissolvedGroup =
+          _makeGroup(
+            'dissolved-group',
+            'Dissolved Group',
+            GroupType.chat,
+            GroupRole.admin,
+          ).copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.parse('2026-03-09T09:00:00.000Z'),
+            dissolvedBy: 'peer-admin',
+          );
+      final announcementReaderGroup = _makeGroup(
+        'announcement-reader',
+        'Reader Announcement',
+        GroupType.announcement,
+        GroupRole.member,
+      );
+
+      await _saveWritableGroup(harness.groupRepository, writableGroup);
+      await harness.groupRepository.saveGroup(removedGroup);
+      await harness.groupRepository.saveMember(
+        _makeGroupMember(groupId: removedGroup.id, peerId: 'peer-other'),
+      );
+      await _saveGroupKey(harness.groupRepository, removedGroup.id);
+      await harness.groupRepository.saveGroup(pendingGroup);
+      await harness.groupRepository.saveMember(
+        _makeGroupMember(groupId: pendingGroup.id, peerId: _localPeerId),
+      );
+      await _saveWritableGroup(harness.groupRepository, dissolvedGroup);
+      await _saveWritableGroup(
+        harness.groupRepository,
+        announcementReaderGroup,
+      );
+
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
+        ),
+      );
+
+      expect(
+        find.byKey(ValueKey('share-group-${writableGroup.id}')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(ValueKey('share-group-${removedGroup.id}')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(ValueKey('share-group-${pendingGroup.id}')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(ValueKey('share-group-${dissolvedGroup.id}')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(ValueKey('share-group-${announcementReaderGroup.id}')),
+        findsNothing,
+      );
     },
   );
 
@@ -241,7 +341,7 @@ void main() {
       );
 
       harness.contactRepository.addTestContact(activeContact);
-      await harness.groupRepository.saveGroup(group);
+      await _saveWritableGroup(harness.groupRepository, group);
 
       await pumpPicker(
         tester,
@@ -274,6 +374,53 @@ void main() {
         ShareTargetSelection.contact(activeContact).key,
         ShareTargetSelection.group(group).key,
       ]);
+    },
+  );
+
+  testWidgets(
+    'UP-014 stale removed group selection is dropped before delivery',
+    (tester) async {
+      final harness = _buildHarness();
+      final group = _makeGroup(
+        'group-1',
+        'Writers',
+        GroupType.chat,
+        GroupRole.admin,
+      );
+      final coordinator = _RecordingBatchCoordinator(
+        result: const ShareBatchDeliveryResult(results: []),
+      );
+
+      await _saveWritableGroup(harness.groupRepository, group);
+
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
+        ),
+        batchShareCoordinator: coordinator,
+        preSendReady: () async {
+          await harness.groupRepository.removeMember(group.id, _localPeerId);
+        },
+      );
+
+      await tester.tap(find.byKey(ValueKey('share-group-${group.id}')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(coordinator.deliverCallCount, 0);
+      expect(find.text('Share with...'), findsOneWidget);
     },
   );
 
@@ -487,7 +634,7 @@ void main() {
     );
 
     harness.contactRepository.addTestContact(activeContact);
-    await harness.groupRepository.saveGroup(group);
+    await _saveWritableGroup(harness.groupRepository, group);
 
     await pumpPicker(
       tester,
@@ -643,6 +790,8 @@ void main() {
   });
 }
 
+const _localPeerId = 'my-peer-id-12345';
+
 _Harness _buildHarness() {
   final contactRepository = InMemoryContactRepository();
   final groupRepository = InMemoryGroupRepository();
@@ -693,6 +842,55 @@ class _Harness {
     required this.chatMessageListener,
     required this.groupMessageListener,
   });
+}
+
+Future<void> _saveWritableGroup(
+  InMemoryGroupRepository repository,
+  GroupModel group, {
+  String peerId = _localPeerId,
+  MemberRole? memberRole,
+}) async {
+  await repository.saveGroup(group);
+  await repository.saveMember(
+    _makeGroupMember(
+      groupId: group.id,
+      peerId: peerId,
+      role:
+          memberRole ??
+          (group.myRole == GroupRole.admin
+              ? MemberRole.admin
+              : MemberRole.writer),
+    ),
+  );
+  await _saveGroupKey(repository, group.id);
+}
+
+GroupMember _makeGroupMember({
+  required String groupId,
+  required String peerId,
+  MemberRole role = MemberRole.writer,
+}) {
+  return GroupMember(
+    groupId: groupId,
+    peerId: peerId,
+    username: peerId == _localPeerId ? 'Me' : 'Other',
+    role: role,
+    joinedAt: DateTime.parse('2026-03-09T08:00:00.000Z'),
+  );
+}
+
+Future<void> _saveGroupKey(
+  InMemoryGroupRepository repository,
+  String groupId,
+) async {
+  await repository.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: 1,
+      encryptedKey: 'key-$groupId',
+      createdAt: DateTime.parse('2026-03-09T08:00:00.000Z'),
+    ),
+  );
 }
 
 Future<void> pumpPickerFrames(WidgetTester tester, {int count = 20}) async {
@@ -746,7 +944,7 @@ GroupModel _makeGroup(String id, String name, GroupType type, GroupRole role) {
 
 IdentityModel _makeIdentity() {
   return IdentityModel(
-    peerId: 'my-peer-id-12345',
+    peerId: _localPeerId,
     publicKey: 'my-public-key',
     privateKey: 'my-private-key',
     mnemonic12:
