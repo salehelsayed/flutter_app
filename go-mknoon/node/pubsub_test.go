@@ -10359,6 +10359,73 @@ func TestGroupDiscoveryConcurrency_IsReasonable(t *testing.T) {
 	}
 }
 
+func TestSV012GroupConfigPeerIdentityRejectsVariants(t *testing.T) {
+	canonical := generatePeerIDStr(t)
+	pid, err := peer.Decode(canonical)
+	if err != nil {
+		t.Fatalf("decode generated peer id: %v", err)
+	}
+	cidVariant := peer.ToCid(pid).String()
+	if cidVariant == canonical {
+		t.Fatal("expected CID peer id encoding to differ from canonical string")
+	}
+	if _, err := groupPeerIdentityKey(cidVariant); err == nil {
+		t.Fatal("expected alternate CID encoding to be rejected")
+	}
+	if _, err := groupPeerIdentityKey(" " + canonical); err == nil {
+		t.Fatal("expected whitespace peer id variant to be rejected")
+	}
+
+	caseVariant := togglePeerIDCaseForTest(canonical)
+	if caseVariant == canonical {
+		t.Fatal("expected generated peer id to have a case-toggleable character")
+	}
+	config := &GroupConfig{
+		Name:      "SV-012",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: canonical, Role: GroupRoleWriter, PublicKey: "pk1"},
+			{PeerId: caseVariant, Role: GroupRoleAdmin, PublicKey: "pk2"},
+		},
+		CreatedBy: canonical,
+	}
+	if err := validateGroupConfigPeerIdentity(config); err == nil {
+		t.Fatal("expected case-equivalent duplicate peer id variant to be rejected")
+	}
+
+	n := &Node{
+		groupConfigs: map[string]*GroupConfig{
+			"group-1": {
+				Name:      "Existing",
+				GroupType: GroupTypeChat,
+				Members: []GroupMember{
+					{PeerId: canonical, Role: GroupRoleWriter, PublicKey: "pk1"},
+				},
+				CreatedBy: canonical,
+			},
+		},
+	}
+	n.UpdateGroupConfig("group-1", config)
+	if got := len(n.groupConfigs["group-1"].Members); got != 1 {
+		t.Fatalf("invalid update replaced stored config; member count = %d", got)
+	}
+}
+
+func togglePeerIDCaseForTest(value string) string {
+	runes := []rune(value)
+	for i, r := range runes {
+		switch {
+		case r >= 'a' && r <= 'z':
+			runes[i] = r - ('a' - 'A')
+			return string(runes)
+		case r >= 'A' && r <= 'Z':
+			runes[i] = r + ('a' - 'A')
+			return string(runes)
+		}
+	}
+	return value
+}
+
 // Test 7.3 / GM-022: findMember with duplicate peer IDs returns the active
 // re-add entry instead of a stale shadow.
 func TestFindMember_DuplicatePeerId_ReturnsActiveReaddEntry(t *testing.T) {

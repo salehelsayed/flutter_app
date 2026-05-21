@@ -619,10 +619,22 @@ String? groupConfigMemberKeyMaterialRejectReason(
   if (members is! List) {
     return 'invalid_members';
   }
+  final seenPeerIds = <String, String>{};
   for (final rawMember in members) {
     if (rawMember is! Map) {
       return 'invalid_member';
     }
+    final peerIdReason = groupMemberPeerIdRejectReason(rawMember['peerId']);
+    if (peerIdReason != null) {
+      return peerIdReason;
+    }
+    final peerId = rawMember['peerId'] as String;
+    final identityKey = groupPeerIdIdentityKey(peerId);
+    final existingPeerId = seenPeerIds[identityKey];
+    if (existingPeerId != null && existingPeerId != peerId) {
+      return 'duplicate_peer_id_variant:${peerId.trim()}';
+    }
+    seenPeerIds[identityKey] = peerId;
     final reason = groupMemberConfigKeyMaterialRejectReason(rawMember);
     if (reason != null) {
       final peerId = rawMember['peerId'];
@@ -635,7 +647,8 @@ String? groupConfigMemberKeyMaterialRejectReason(
 }
 
 String? groupMemberConfigKeyMaterialRejectReason(Map<dynamic, dynamic> member) {
-  return _optionalKeyMaterialRejectReason(
+  return groupMemberPeerIdRejectReason(member['peerId']) ??
+      _optionalKeyMaterialRejectReason(
         member,
         'publicKey',
         'invalid_public_key',
@@ -646,6 +659,41 @@ String? groupMemberConfigKeyMaterialRejectReason(Map<dynamic, dynamic> member) {
         'invalid_ml_kem_public_key',
       ) ??
       _deviceKeyMaterialRejectReason(member['devices']);
+}
+
+String groupPeerIdIdentityKey(String peerId) => peerId.trim().toLowerCase();
+
+String? groupMemberPeerIdRejectReason(Object? rawPeerId) {
+  if (rawPeerId is! String) {
+    return 'invalid_peer_id_type';
+  }
+  final trimmed = rawPeerId.trim();
+  if (trimmed.isEmpty) {
+    return 'invalid_peer_id';
+  }
+  if (trimmed != rawPeerId) {
+    return 'noncanonical_peer_id';
+  }
+  if (trimmed.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
+    return 'noncanonical_peer_id';
+  }
+  return null;
+}
+
+String? groupMemberDuplicatePeerIdVariantRejectReason(
+  Iterable<GroupMember> existingMembers,
+  GroupMember candidate,
+) {
+  final candidateIdentityKey = groupPeerIdIdentityKey(candidate.peerId);
+  for (final existingMember in existingMembers) {
+    if (existingMember.peerId == candidate.peerId) {
+      continue;
+    }
+    if (groupPeerIdIdentityKey(existingMember.peerId) == candidateIdentityKey) {
+      return 'duplicate_peer_id_variant:${candidate.peerId}';
+    }
+  }
+  return null;
 }
 
 String? _deviceKeyMaterialRejectReason(Object? rawDevices) {

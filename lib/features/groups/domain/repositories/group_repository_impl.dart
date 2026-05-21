@@ -171,6 +171,17 @@ class GroupRepositoryImpl
 
   @override
   Future<void> saveMember(GroupMember member) async {
+    final peerIdRejectReason = groupMemberPeerIdRejectReason(member.peerId);
+    if (peerIdRejectReason != null) {
+      throw ArgumentError.value(member.peerId, 'peerId', peerIdRejectReason);
+    }
+    final duplicateRejectReason = groupMemberDuplicatePeerIdVariantRejectReason(
+      await getMembers(member.groupId),
+      member,
+    );
+    if (duplicateRejectReason != null) {
+      throw StateError(duplicateRejectReason);
+    }
     await dbInsertGroupMember(member.toMap());
   }
 
@@ -193,11 +204,19 @@ class GroupRepositoryImpl
     String peerId,
     MemberRole role,
   ) async {
+    final peerIdRejectReason = groupMemberPeerIdRejectReason(peerId);
+    if (peerIdRejectReason != null) {
+      throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
+    }
     await dbUpdateGroupMemberRole(groupId, peerId, role.toValue());
   }
 
   @override
   Future<void> removeMember(String groupId, String peerId) async {
+    final peerIdRejectReason = groupMemberPeerIdRejectReason(peerId);
+    if (peerIdRejectReason != null) {
+      throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
+    }
     await dbDeleteGroupMember(groupId, peerId);
   }
 
