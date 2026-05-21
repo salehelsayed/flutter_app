@@ -2966,6 +2966,7 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateOb011ReleaseTelemetryProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_long_offline_epoch_churn') {
@@ -10615,6 +10616,96 @@ void _validateNw010BackgroundResumeDeliveryProof({
     failures.add(
       'charlie: NW-010 removed member must not receive post-removal background send',
     );
+  }
+}
+
+void _validateOb011ReleaseTelemetryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ob011ReleaseTelemetryProof';
+  const roles = <String>['alice', 'bob', 'charlie'];
+  final coveredAcrossRoles = <String>{};
+
+  for (final role in roles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing OB-011 release telemetry proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'OB-011') {
+      failures.add('$role: $proofName.rowId must be OB-011');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_background_resume_group_delivery') {
+      failures.add(
+        '$role: $proofName.scenario must be private_background_resume_group_delivery',
+      );
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add(
+        '$role: $proofName.appPeerPlatform must be ios_26_2_core_simulator',
+      );
+    }
+    if (_stringValue(proof['releaseTelemetryProofSource']) !=
+        'app_peer_background_resume_verdict') {
+      failures.add(
+        '$role: $proofName.releaseTelemetryProofSource must be app_peer_background_resume_verdict',
+      );
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole must match the verdict role');
+    }
+    if (_intValue(proof['unknownCount']) != 0) {
+      failures.add('$role: $proofName.unknownCount must be 0');
+    }
+
+    final canonicalCauses = _stringList(
+      proof['hostCanonicalCauseCoverageRequired'],
+    ).toSet();
+    for (final cause in const <String>[
+      'dispatcher',
+      'key',
+      'membership',
+      'replay',
+      'transport',
+      'ui_filter',
+    ]) {
+      if (!canonicalCauses.contains(cause)) {
+        failures.add(
+          '$role: $proofName.hostCanonicalCauseCoverageRequired missing $cause',
+        );
+      }
+    }
+
+    final diagnostics = _mapList(proof['missedDiagnostics']);
+    for (final diagnostic in diagnostics) {
+      final cause = _stringValue(diagnostic['cause']);
+      if (cause != null && cause.isNotEmpty) coveredAcrossRoles.add(cause);
+      if (_stringValue(diagnostic['messageKey']) == null) {
+        failures.add('$role: $proofName diagnostic missing messageKey');
+      }
+      if (_stringValue(diagnostic['recipientRole']) == null) {
+        failures.add('$role: $proofName diagnostic missing recipientRole');
+      }
+      if (_stringValue(diagnostic['sourceEvent']) == null) {
+        failures.add('$role: $proofName diagnostic missing sourceEvent');
+      }
+      if (_stringValue(diagnostic['resolution']) == null) {
+        failures.add('$role: $proofName diagnostic missing resolution');
+      }
+    }
+  }
+
+  for (final cause in const <String>[
+    'membership',
+    'replay',
+    'transport',
+    'ui_filter',
+  ]) {
+    if (!coveredAcrossRoles.contains(cause)) {
+      failures.add('OB-011 app-peer telemetry proof missing $cause coverage');
+    }
   }
 }
 

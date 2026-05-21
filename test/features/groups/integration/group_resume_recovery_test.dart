@@ -17,6 +17,7 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_missed_message_telemetry.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
@@ -10437,6 +10438,116 @@ void main() {
       });
 
       test(
+        'OB-011 fake-network release telemetry identifies missed-message causes',
+        () async {
+          final flowEvents = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flowEvents.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-ob011-telemetry',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-ob011-telemetry',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+
+          const groupId = 'group-ob011-release-telemetry';
+          await admin.createGroup(groupId: groupId, name: 'OB-011 Telemetry');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+          bob.unsubscribeFromGroup(groupId);
+
+          final (result, missedLiveMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'OB-011 live miss recovered by replay',
+              );
+          expect(result, SendGroupMessageResult.successNoPeers);
+          expect(missedLiveMessage, isNotNull);
+
+          final report = emitGroupMissedMessageTelemetryReport(
+            expectedDeliveries: <GroupDeliveryExpectation>[
+              GroupDeliveryExpectation(
+                groupId: groupId,
+                messageId: missedLiveMessage!.id,
+                senderPeerId: admin.peerId,
+                recipientPeerId: bob.peerId,
+                keyEpoch: missedLiveMessage.keyGeneration,
+                expectedVia: 'live_or_replay',
+              ),
+              ..._ob011SyntheticExpectations(groupId: groupId, admin: admin),
+            ],
+            observedDeliveries: const <GroupDeliveryObservation>[],
+            diagnostics: <Map<String, dynamic>>[
+              _ob011Diagnostic(
+                groupId: groupId,
+                messageId: missedLiveMessage.id,
+                recipientPeerId: bob.peerId,
+                event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
+                cause: ob011CauseTransport,
+                reason: 'zero_peers',
+                resolution: 'relay_inbox_pending',
+              ),
+              ..._ob011SyntheticDiagnostics(groupId: groupId),
+            ],
+          );
+
+          final summary = report['summary'] as Map;
+          expect(summary['unknownCount'], 0);
+          expect(
+            summary['coveredCauseClasses'],
+            equals(ob011RequiredCauseClasses.toList()..sort()),
+          );
+          expect(
+            flowEvents.any(
+              (event) => event['event'] == ob011MissedMessageTelemetryEvent,
+            ),
+            isTrue,
+          );
+
+          bob.subscribeToGroup(groupId);
+          _injectInboxMessageFromLatestStore(
+            senderBridge: admin.bridge,
+            receiverBridge: bob.bridge as _CursorInboxBridge,
+            receiverPeerId: bob.peerId,
+            groupId: groupId,
+          );
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+          );
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where(
+              (message) =>
+                  message.id == missedLiveMessage.id &&
+                  message.text == 'OB-011 live miss recovered by replay',
+            ),
+            hasLength(1),
+          );
+
+          admin.dispose();
+          bob.dispose();
+        },
+      );
+
+      test(
         'IR-007 DE-008 publish failure branch retries over fake network with same id and one row',
         () async {
           final adminBridge = _Section10MirroringBridge(
@@ -12966,4 +13077,98 @@ void main() {
       });
     });
   });
+}
+
+List<GroupDeliveryExpectation> _ob011SyntheticExpectations({
+  required String groupId,
+  required GroupTestUser admin,
+}) {
+  return const <String, String>{
+        'ob011-key-miss': ob011CauseKey,
+        'ob011-membership-miss': ob011CauseMembership,
+        'ob011-replay-miss': ob011CauseReplay,
+        'ob011-dispatcher-miss': ob011CauseDispatcher,
+        'ob011-ui-filter-miss': ob011CauseUiFilter,
+      }.entries
+      .map(
+        (entry) => GroupDeliveryExpectation(
+          groupId: groupId,
+          messageId: entry.key,
+          senderPeerId: admin.peerId,
+          recipientPeerId: 'reader-${entry.value}-ob011',
+          keyEpoch: entry.value == ob011CauseKey ? 2 : 1,
+          expectedVia: 'canonical_failure_suite',
+        ),
+      )
+      .toList(growable: false);
+}
+
+List<Map<String, dynamic>> _ob011SyntheticDiagnostics({
+  required String groupId,
+}) {
+  return <Map<String, dynamic>>[
+    _ob011Diagnostic(
+      groupId: groupId,
+      messageId: 'ob011-key-miss',
+      recipientPeerId: 'reader-$ob011CauseKey-ob011',
+      event: 'GROUP_DECRYPTION_FAILED',
+      cause: ob011CauseKey,
+      reason: 'missing_epoch_key',
+      resolution: 'key_repair_requested',
+    ),
+    _ob011Diagnostic(
+      groupId: groupId,
+      messageId: 'ob011-membership-miss',
+      recipientPeerId: 'reader-$ob011CauseMembership-ob011',
+      event: 'GROUP_MEMBERSHIP_REJECTED',
+      cause: ob011CauseMembership,
+      reason: 'removed_member',
+    ),
+    _ob011Diagnostic(
+      groupId: groupId,
+      messageId: 'ob011-replay-miss',
+      recipientPeerId: 'reader-$ob011CauseReplay-ob011',
+      event: 'GROUP_INBOX_REPLAY_CURSOR_GAP',
+      cause: ob011CauseReplay,
+      reason: 'cursor_gap',
+      resolution: 'retry_replay',
+    ),
+    _ob011Diagnostic(
+      groupId: groupId,
+      messageId: 'ob011-dispatcher-miss',
+      recipientPeerId: 'reader-$ob011CauseDispatcher-ob011',
+      event: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_REQUESTED',
+      cause: ob011CauseDispatcher,
+      reason: 'dispatcher_overflow',
+      resolution: 'overflow_replay_requested',
+    ),
+    _ob011Diagnostic(
+      groupId: groupId,
+      messageId: 'ob011-ui-filter-miss',
+      recipientPeerId: 'reader-$ob011CauseUiFilter-ob011',
+      event: 'GROUP_CONVERSATION_UI_FILTERED_MESSAGE',
+      cause: ob011CauseUiFilter,
+      reason: 'visibility_filter',
+    ),
+  ];
+}
+
+Map<String, dynamic> _ob011Diagnostic({
+  required String groupId,
+  required String messageId,
+  required String recipientPeerId,
+  required String event,
+  required String cause,
+  required String reason,
+  String? resolution,
+}) {
+  return <String, dynamic>{
+    'event': event,
+    'groupId': groupId,
+    'messageId': messageId,
+    'recipientPeerId': recipientPeerId,
+    'missedMessageCause': cause,
+    'reason': reason,
+    'resolution': ?resolution,
+  };
 }
