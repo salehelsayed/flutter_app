@@ -2832,6 +2832,172 @@ func TestGK012ValidateGroupEnvelopeRejectsMissingSignatureAsBadSignature(t *test
 	}
 }
 
+func TestST012ManyChurnCyclesCleanTopicStateAndKeepFinalReaddActive(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	t.Cleanup(func() { _ = n.Stop() })
+	if _, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupID := "st012-topic-subscription-churn"
+	configForCycle := func(cycle int) *GroupConfig {
+		return &GroupConfig{
+			Name:      fmt.Sprintf("ST-012 churn cycle %02d", cycle),
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+			},
+			CreatedBy: n.PeerId(),
+			CreatedAt: fmt.Sprintf("2026-05-16T12:%02d:00Z", cycle%60),
+		}
+	}
+	keyForCycle := func(cycle int) *GroupKeyInfo {
+		groupKey, err := mcrypto.GenerateGroupKey()
+		if err != nil {
+			t.Fatalf("generate ST-012 group key cycle %d: %v", cycle, err)
+		}
+		return &GroupKeyInfo{Key: groupKey, KeyEpoch: cycle + 1}
+	}
+
+	assertJoinedOnly := func(label string, wantConfig *GroupConfig, wantKey *GroupKeyInfo) {
+		t.Helper()
+		n.mu.RLock()
+		topic := n.groupTopics[groupID]
+		sub := n.groupSubs[groupID]
+		config := n.groupConfigs[groupID]
+		key := n.groupKeys[groupID]
+		subCancel := n.groupSubCtx[groupID]
+		discoveryCancel := n.groupDiscoveryCtx[groupID]
+		topicsLen := len(n.groupTopics)
+		subsLen := len(n.groupSubs)
+		configsLen := len(n.groupConfigs)
+		keysLen := len(n.groupKeys)
+		subCtxLen := len(n.groupSubCtx)
+		discoveryCtxLen := len(n.groupDiscoveryCtx)
+		n.mu.RUnlock()
+
+		if topic == nil || sub == nil || config == nil || key == nil || subCancel == nil || discoveryCancel == nil {
+			t.Fatalf(
+				"%s joined state incomplete: topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+				label,
+				topic != nil,
+				sub != nil,
+				config != nil,
+				key != nil,
+				subCancel != nil,
+				discoveryCancel != nil,
+			)
+		}
+		if topicsLen != 1 || subsLen != 1 || configsLen != 1 || keysLen != 1 || subCtxLen != 1 || discoveryCtxLen != 1 {
+			t.Fatalf(
+				"%s expected exactly one active group runtime entry, got topics=%d subs=%d configs=%d keys=%d subCtx=%d discoveryCtx=%d",
+				label,
+				topicsLen,
+				subsLen,
+				configsLen,
+				keysLen,
+				subCtxLen,
+				discoveryCtxLen,
+			)
+		}
+		if config.Name != wantConfig.Name || len(config.Members) != len(wantConfig.Members) || config.Members[0].PeerId != wantConfig.Members[0].PeerId {
+			t.Fatalf("%s config = %#v, want %#v", label, config, wantConfig)
+		}
+		if key.Key != wantKey.Key || key.KeyEpoch != wantKey.KeyEpoch {
+			t.Fatalf("%s key = (%q,%d), want (%q,%d)", label, key.Key, key.KeyEpoch, wantKey.Key, wantKey.KeyEpoch)
+		}
+	}
+
+	assertNoGroupRuntimeEntries := func(label string) {
+		t.Helper()
+		n.mu.RLock()
+		topicsLen := len(n.groupTopics)
+		subsLen := len(n.groupSubs)
+		configsLen := len(n.groupConfigs)
+		keysLen := len(n.groupKeys)
+		subCtxLen := len(n.groupSubCtx)
+		discoveryCtxLen := len(n.groupDiscoveryCtx)
+		_, hasTopic := n.groupTopics[groupID]
+		_, hasSub := n.groupSubs[groupID]
+		_, hasConfig := n.groupConfigs[groupID]
+		_, hasKey := n.groupKeys[groupID]
+		_, hasSubCtx := n.groupSubCtx[groupID]
+		_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupID]
+		n.mu.RUnlock()
+		if topicsLen != 0 || subsLen != 0 || configsLen != 0 || keysLen != 0 || subCtxLen != 0 || discoveryCtxLen != 0 ||
+			hasTopic || hasSub || hasConfig || hasKey || hasSubCtx || hasDiscoveryCtx {
+			t.Fatalf(
+				"%s retained runtime entries: topics=%d subs=%d configs=%d keys=%d subCtx=%d discoveryCtx=%d target(topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t)",
+				label,
+				topicsLen,
+				subsLen,
+				configsLen,
+				keysLen,
+				subCtxLen,
+				discoveryCtxLen,
+				hasTopic,
+				hasSub,
+				hasConfig,
+				hasKey,
+				hasSubCtx,
+				hasDiscoveryCtx,
+			)
+		}
+	}
+
+	const cycles = 48
+	var finalConfig *GroupConfig
+	var finalKey *GroupKeyInfo
+	for cycle := 0; cycle < cycles; cycle++ {
+		finalConfig = configForCycle(cycle)
+		finalKey = keyForCycle(cycle)
+		if err := n.JoinGroupTopic(groupID, finalConfig, finalKey); err != nil {
+			t.Fatalf("JoinGroupTopic cycle %d: %v", cycle, err)
+		}
+		assertJoinedOnly(fmt.Sprintf("cycle %d joined", cycle), finalConfig, finalKey)
+
+		if err := n.LeaveGroupTopic(groupID); err != nil {
+			t.Fatalf("LeaveGroupTopic cycle %d: %v", cycle, err)
+		}
+		assertNoGroupRuntimeEntries(fmt.Sprintf("cycle %d left", cycle))
+	}
+
+	finalConfig = configForCycle(cycles)
+	finalKey = keyForCycle(cycles)
+	if err := n.JoinGroupTopic(groupID, finalConfig, finalKey); err != nil {
+		t.Fatalf("final readd JoinGroupTopic: %v", err)
+	}
+	assertJoinedOnly("final readd", finalConfig, finalKey)
+
+	msgID, peerCount, err := n.PublishGroupMessage(
+		groupID,
+		senderPrivB64,
+		n.PeerId(),
+		senderPubB64,
+		"ST-012 Admin",
+		"ST-012 final readd active publish",
+		"st012-final-readd-message",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage after final readd: %v", err)
+	}
+	if msgID != "st012-final-readd-message" || peerCount != 0 {
+		t.Fatalf("final readd publish returned msgID=%q peerCount=%d, want st012-final-readd-message/0", msgID, peerCount)
+	}
+
+	if err := n.LeaveGroupTopic(groupID); err != nil {
+		t.Fatalf("final cleanup LeaveGroupTopic: %v", err)
+	}
+	assertNoGroupRuntimeEntries("after final cleanup")
+}
+
 func TestGK026ValidateGroupEnvelopeRejectsSenderIDTamperUnderClaimedMemberKey(t *testing.T) {
 	memberBPrivB64, memberBPubB64 := generateEd25519KeyPair(t)
 	_, memberCPubB64 := generateEd25519KeyPair(t)

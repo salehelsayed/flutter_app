@@ -308,6 +308,191 @@ func TestBB009LeaveRemovesTopicSubscriptionForValidatorsAndPubSub(t *testing.T) 
 	}
 }
 
+func TestST012RepeatedLeaveRejoinKeepsOnlyActiveSubscription(t *testing.T) {
+	alicePrivB64, alicePubB64 := generateEd25519KeyPair(t)
+	_, bobPubB64 := generateEd25519KeyPair(t)
+	charliePrivB64, charliePubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeACapture)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeBCapture)
+	nodeCCapture := &testEventCollector{}
+	nodeC := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeCCapture)
+
+	groupId := "st012-repeated-leave-rejoin"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "ST012 Repeated Leave Rejoin",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: bobPubB64},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: charliePubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("%s JoinGroupTopic: %v", n.PeerId(), err)
+		}
+	}
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	connectLocalGroupNodes(t, nodeA, nodeC)
+	connectLocalGroupNodes(t, nodeB, nodeC)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 5*time.Second)
+	waitForGroupTopicPeerCount(t, nodeC, groupId, 2, 5*time.Second)
+
+	countEventsContaining := func(collector *testEventCollector, marker string) int {
+		count := 0
+		for _, raw := range collector.snapshot() {
+			if strings.Contains(raw, marker) {
+				count++
+			}
+		}
+		return count
+	}
+
+	assertCharlieJoinedOnlyOnce := func(label string) {
+		t.Helper()
+		nodeC.mu.RLock()
+		topic := nodeC.groupTopics[groupId]
+		sub := nodeC.groupSubs[groupId]
+		config := nodeC.groupConfigs[groupId]
+		key := nodeC.groupKeys[groupId]
+		subCancel := nodeC.groupSubCtx[groupId]
+		discoveryCancel := nodeC.groupDiscoveryCtx[groupId]
+		topicsLen := len(nodeC.groupTopics)
+		subsLen := len(nodeC.groupSubs)
+		configsLen := len(nodeC.groupConfigs)
+		keysLen := len(nodeC.groupKeys)
+		subCtxLen := len(nodeC.groupSubCtx)
+		discoveryCtxLen := len(nodeC.groupDiscoveryCtx)
+		nodeC.mu.RUnlock()
+		if topic == nil || sub == nil || config == nil || key == nil || subCancel == nil || discoveryCancel == nil ||
+			topicsLen != 1 || subsLen != 1 || configsLen != 1 || keysLen != 1 || subCtxLen != 1 || discoveryCtxLen != 1 {
+			t.Fatalf(
+				"%s Charlie runtime should have exactly one active joined state, got topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t lens(%d,%d,%d,%d,%d,%d)",
+				label,
+				topic != nil,
+				sub != nil,
+				config != nil,
+				key != nil,
+				subCancel != nil,
+				discoveryCancel != nil,
+				topicsLen,
+				subsLen,
+				configsLen,
+				keysLen,
+				subCtxLen,
+				discoveryCtxLen,
+			)
+		}
+	}
+	assertCharlieJoinedOnlyOnce("initial join")
+
+	preChurnMessageId := "st012-pre-churn-visible"
+	if msgID, peerCount, err := nodeA.PublishGroupMessage(
+		groupId,
+		alicePrivB64,
+		nodeA.PeerId(),
+		alicePubB64,
+		"Alice",
+		"ST012 pre-churn message",
+		preChurnMessageId,
+		nil,
+	); err != nil {
+		t.Fatalf("pre-churn PublishGroupMessage: %v", err)
+	} else if msgID != preChurnMessageId || peerCount < 2 {
+		t.Fatalf("pre-churn publish result msgID=%q peerCount=%d, want msgID=%q peerCount>=2", msgID, peerCount, preChurnMessageId)
+	}
+	waitForCollectedEventContaining(t, nodeCCapture, preChurnMessageId, 5*time.Second)
+
+	const cycles = 6
+	for cycle := 0; cycle < cycles; cycle++ {
+		if err := nodeC.LeaveGroupTopic(groupId); err != nil {
+			t.Fatalf("cycle %d nodeC LeaveGroupTopic: %v", cycle, err)
+		}
+		assertLP003GroupPubSubStateRemoved(t, nodeC, groupId)
+
+		time.Sleep(150 * time.Millisecond)
+		charliePostLeaveBaseline := len(nodeCCapture.snapshot())
+		removedWindowMessageId := fmt.Sprintf("st012-removed-window-%02d", cycle)
+		if msgID, _, err := nodeA.PublishGroupMessage(
+			groupId,
+			alicePrivB64,
+			nodeA.PeerId(),
+			alicePubB64,
+			"Alice",
+			fmt.Sprintf("ST012 removed window %02d", cycle),
+			removedWindowMessageId,
+			nil,
+		); err != nil {
+			t.Fatalf("cycle %d removed-window PublishGroupMessage: %v", cycle, err)
+		} else if msgID != removedWindowMessageId {
+			t.Fatalf("cycle %d removed-window msgID=%q, want %q", cycle, msgID, removedWindowMessageId)
+		}
+		waitForCollectedEventContaining(t, nodeBCapture, removedWindowMessageId, 5*time.Second)
+		assertBB009NoPostLeaveTopicEventsAfter(t, nodeCCapture, charliePostLeaveBaseline, groupId, 450*time.Millisecond)
+		if got := countEventsContaining(nodeCCapture, removedWindowMessageId); got != 0 {
+			t.Fatalf("cycle %d Charlie received removed-window message %q %d time(s)", cycle, removedWindowMessageId, got)
+		}
+
+		if err := nodeC.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("cycle %d nodeC rejoin JoinGroupTopic: %v", cycle, err)
+		}
+		assertCharlieJoinedOnlyOnce(fmt.Sprintf("cycle %d rejoin", cycle))
+		connectLocalGroupNodes(t, nodeA, nodeC)
+		connectLocalGroupNodes(t, nodeB, nodeC)
+		waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 5*time.Second)
+		waitForGroupTopicPeerCount(t, nodeC, groupId, 2, 5*time.Second)
+
+		readdMessageId := fmt.Sprintf("st012-readd-visible-%02d", cycle)
+		if msgID, _, err := nodeA.PublishGroupMessage(
+			groupId,
+			alicePrivB64,
+			nodeA.PeerId(),
+			alicePubB64,
+			"Alice",
+			fmt.Sprintf("ST012 readd visible %02d", cycle),
+			readdMessageId,
+			nil,
+		); err != nil {
+			t.Fatalf("cycle %d readd PublishGroupMessage: %v", cycle, err)
+		} else if msgID != readdMessageId {
+			t.Fatalf("cycle %d readd msgID=%q, want %q", cycle, msgID, readdMessageId)
+		}
+		waitForCollectedEventContaining(t, nodeCCapture, readdMessageId, 5*time.Second)
+		if got := countEventsContaining(nodeCCapture, readdMessageId); got != 1 {
+			t.Fatalf("cycle %d Charlie received readd message %q %d time(s), want exactly 1", cycle, readdMessageId, got)
+		}
+	}
+
+	finalFromCharlie := "st012-final-charlie-publish"
+	if msgID, peerCount, err := nodeC.PublishGroupMessage(
+		groupId,
+		charliePrivB64,
+		nodeC.PeerId(),
+		charliePubB64,
+		"Charlie",
+		"ST012 final active readd publish",
+		finalFromCharlie,
+		nil,
+	); err != nil {
+		t.Fatalf("final Charlie PublishGroupMessage: %v", err)
+	} else if msgID != finalFromCharlie || peerCount < 2 {
+		t.Fatalf("final Charlie publish result msgID=%q peerCount=%d, want msgID=%q peerCount>=2", msgID, peerCount, finalFromCharlie)
+	}
+	waitForCollectedEventContaining(t, nodeACapture, finalFromCharlie, 5*time.Second)
+	waitForCollectedEventContaining(t, nodeBCapture, finalFromCharlie, 5*time.Second)
+}
+
 func TestGL008LeaveGroupTopicStopsDiscoveryAndInboundAfterLeave(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	leaverPrivB64, leaverPubB64 := generateEd25519KeyPair(t)
