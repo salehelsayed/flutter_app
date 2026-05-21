@@ -8,6 +8,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 
 void main() {
@@ -655,6 +656,225 @@ void main() {
         expect(encodedResponse, contains('[redacted:multiaddr]'));
       },
     );
+
+    test(
+      'SV-013 group bridge failure flow logs redact keys plaintext and invite content',
+      () async {
+        const groupKeySecret = 'sv013-group-key-secret';
+        const secretKeySecret = 'sv013-secret-key-secret';
+        const plaintextSecret = 'SV013-PLAINTEXT-MESSAGE';
+        const inviteSecret = 'SV013-DECRYPTED-INVITE-CONTENT';
+        const ciphertextSecret = 'sv013-ciphertext-secret';
+        const nonceSecret = 'sv013-nonce-secret';
+        const multiaddrSecret =
+            '/ip4/10.99.0.1/tcp/4001/p2p/12D3KooWSV013Relay';
+        const sensitiveError =
+            'failure groupKey=$groupKeySecret '
+            'secretKey=$secretKeySecret '
+            'plaintext=$plaintextSecret '
+            'decryptedInviteContent=$inviteSecret '
+            'ciphertext=$ciphertextSecret '
+            'nonce=$nonceSecret '
+            '$multiaddrSecret';
+        const forbidden = [
+          groupKeySecret,
+          secretKeySecret,
+          plaintextSecret,
+          inviteSecret,
+          ciphertextSecret,
+          nonceSecret,
+          multiaddrSecret,
+        ];
+
+        flowEventLoggingEnabled = true;
+        final flowEvents = <Map<String, dynamic>>[];
+        final flowLogs = <String>[];
+        debugSetFlowEventSink(flowEvents.add);
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            flowLogs.add(message);
+          }
+        };
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                throw PlatformException(
+                  code: 'GROUP_ERROR',
+                  message: sensitiveError,
+                );
+              },
+            );
+
+        final cases =
+            <({String cmd, String method, Map<String, dynamic> payload})>[
+              (
+                cmd: 'group:create',
+                method: 'groupCreate',
+                payload: {
+                  'name': 'SV013 Create',
+                  'groupType': 'chat',
+                  'creatorPeerId': 'peer-alice',
+                  'creatorPublicKey': 'alice-public',
+                },
+              ),
+              (
+                cmd: 'group:join',
+                method: 'groupJoinTopic',
+                payload: {
+                  'groupId': 'group-sv013-join',
+                  'groupConfig': {'members': <Map<String, dynamic>>[]},
+                  'groupKey': groupKeySecret,
+                  'keyEpoch': 1,
+                },
+              ),
+              (
+                cmd: 'group:updateKey',
+                method: 'groupUpdateKey',
+                payload: {
+                  'groupId': 'group-sv013-update-key',
+                  'groupKey': groupKeySecret,
+                  'keyEpoch': 2,
+                },
+              ),
+              (
+                cmd: 'group.decrypt',
+                method: 'groupDecryptMessage',
+                payload: {
+                  'groupKey': groupKeySecret,
+                  'ciphertext': ciphertextSecret,
+                  'nonce': nonceSecret,
+                },
+              ),
+              (
+                cmd: 'group:inboxStore',
+                method: 'groupInboxStore',
+                payload: {
+                  'groupId': 'group-sv013-inbox',
+                  'message': 'plaintext=$plaintextSecret',
+                  'recipientPeerIds': ['peer-bob'],
+                },
+              ),
+              (
+                cmd: 'media:upload',
+                method: 'mediaUpload',
+                payload: {
+                  'id': 'media-sv013',
+                  'to': 'group-sv013-media',
+                  'path': '/tmp/sv013-media',
+                  'plaintextMessage': plaintextSecret,
+                },
+              ),
+            ];
+
+        for (final entry in cases) {
+          final response = await client.send(
+            jsonEncode({'cmd': entry.cmd, 'payload': entry.payload}),
+          );
+          final decoded = jsonDecode(response) as Map<String, dynamic>;
+          final encodedResponse = jsonEncode(decoded);
+
+          expect(decoded['ok'], isFalse, reason: entry.cmd);
+          expect(decoded['errorCode'], 'PLATFORM_ERROR', reason: entry.cmd);
+          expect(lastCall!.method, entry.method, reason: entry.cmd);
+          for (final fragment in forbidden) {
+            expect(
+              encodedResponse,
+              isNot(contains(fragment)),
+              reason: '${entry.cmd} response leaked $fragment',
+            );
+          }
+          expect(encodedResponse, contains('[redacted]'), reason: entry.cmd);
+          expect(
+            encodedResponse,
+            contains('[redacted:multiaddr]'),
+            reason: entry.cmd,
+          );
+        }
+
+        final encodedDiagnostics =
+            '${jsonEncode(flowEvents)}\n${flowLogs.join('\n')}';
+        for (final fragment in forbidden) {
+          expect(
+            encodedDiagnostics,
+            isNot(contains(fragment)),
+            reason: 'flow diagnostics leaked $fragment',
+          );
+        }
+        expect(encodedDiagnostics, contains('[redacted]'));
+        expect(encodedDiagnostics, contains('[redacted:multiaddr]'));
+        expect(
+          flowEvents
+              .where((event) => event['event'] == 'GO_BRIDGE_PLATFORM_ERROR')
+              .length,
+          cases.length,
+        );
+      },
+    );
+
+    test('SV-013 push diagnostics redact group failure details', () {
+      const groupKeySecret = 'sv013-push-group-key-secret';
+      const secretKeySecret = 'sv013-push-secret-key-secret';
+      const plaintextSecret = 'SV013-PUSH-PLAINTEXT-MESSAGE';
+      const inviteSecret = 'SV013-PUSH-DECRYPTED-INVITE-CONTENT';
+      const ciphertextSecret = 'sv013-push-ciphertext-secret';
+      const nonceSecret = 'sv013-push-nonce-secret';
+      const multiaddrSecret =
+          '/ip4/10.99.0.2/tcp/4001/p2p/12D3KooWSV013PushRelay';
+      const forbidden = [
+        groupKeySecret,
+        secretKeySecret,
+        plaintextSecret,
+        inviteSecret,
+        ciphertextSecret,
+        nonceSecret,
+        multiaddrSecret,
+      ];
+      final printed = <String>[];
+
+      runZoned(
+        () {
+          logPushDiagnostic(
+            'sv013_group_failure',
+            details: {
+              'groupKey': groupKeySecret,
+              'secretKey': secretKeySecret,
+              'plaintext': plaintextSecret,
+              'decryptedInviteContent': inviteSecret,
+              'nested': {
+                'ciphertext': ciphertextSecret,
+                'nonce': nonceSecret,
+                'errorMessage':
+                    'groupKey=$groupKeySecret '
+                    'secretKey=$secretKeySecret '
+                    'plaintext=$plaintextSecret '
+                    'decryptedInviteContent=$inviteSecret '
+                    '$multiaddrSecret',
+              },
+            },
+          );
+        },
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) {
+            printed.add(line);
+          },
+        ),
+      );
+
+      final encoded = printed.join('\n');
+      expect(encoded, contains('[PUSH_DIAG] sv013_group_failure'));
+      for (final fragment in forbidden) {
+        expect(
+          encoded,
+          isNot(contains(fragment)),
+          reason: 'push diagnostic leaked $fragment',
+        );
+      }
+      expect(encoded, contains('[redacted]'));
+      expect(encoded, contains('[redacted:multiaddr]'));
+    });
 
     test('PlatformException with null message uses fallback text', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

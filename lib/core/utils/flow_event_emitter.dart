@@ -28,6 +28,9 @@ const _sensitiveDiagnosticKeys = [
   'encryptionKeyBase64',
   'mediaKey',
   'inviteToken',
+  'decryptedInviteContent',
+  'inviteContent',
+  'plaintextMessage',
   'text',
 ];
 
@@ -82,6 +85,9 @@ bool _isSensitiveKey(String key) {
     'nonce',
     'groupkey',
     'keymaterial',
+    'decryptedinvite',
+    'invitecontent',
+    'plaintextmessage',
     'encryptionkey',
     'mediakey',
     'invitetoken',
@@ -100,20 +106,46 @@ bool _isPeerIdKey(String key) {
 }
 
 String _redactSensitiveText(String value) {
-  final withoutMultiaddrs = value.replaceAll(
+  final withoutPemSecrets = value.replaceAll(
+    RegExp(
+      r'-----BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY-----[\s\S]*?-----END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY-----',
+      caseSensitive: false,
+    ),
+    _redacted,
+  );
+  final withoutMultiaddrs = withoutPemSecrets.replaceAll(
     RegExp(
       r'/(?:ip4|ip6|dns|dns4|dns6|tcp|udp|quic-v1|ws|wss|p2p-circuit|p2p)(?:/[^\s,\]\)}"]+)+',
       caseSensitive: false,
     ),
     '[redacted:multiaddr]',
   );
-  return withoutMultiaddrs.replaceAllMapped(
+  final sensitiveKeys = _sensitiveDiagnosticKeys.join('|');
+  final withoutDoubleQuotedValues = _redactSensitiveAssignments(
+    withoutMultiaddrs,
+    RegExp('\\b($sensitiveKeys)\\b\\s*[:=]\\s*"[^"]*"', caseSensitive: false),
+  );
+  final withoutSingleQuotedValues = _redactSensitiveAssignments(
+    withoutDoubleQuotedValues,
+    RegExp("\\b($sensitiveKeys)\\b\\s*[:=]\\s*'[^']*'", caseSensitive: false),
+  );
+  return _redactSensitiveAssignments(
+    withoutSingleQuotedValues,
     RegExp(
-      "([\"']?\\b(?:${_sensitiveDiagnosticKeys.join('|')})\\b[\"']?\\s*[:=]\\s*)([\"']?)([^\"',\\s}\\]]+)([\"']?)",
+      '\\b($sensitiveKeys)\\b\\s*[:=]\\s*([^,\\s}\\]]+)',
       caseSensitive: false,
     ),
-    (match) => '${match.group(1)}${match.group(2)}$_redacted${match.group(4)}',
   );
+}
+
+String _redactSensitiveAssignments(String value, RegExp pattern) {
+  return value.replaceAllMapped(pattern, (match) {
+    final existingValue = match.groupCount >= 2 ? match.group(2) : null;
+    if (existingValue != null && existingValue.startsWith('[redacted')) {
+      return match.group(0)!;
+    }
+    return '${match.group(1)}=$_redacted';
+  });
 }
 
 void emitFlowEvent({

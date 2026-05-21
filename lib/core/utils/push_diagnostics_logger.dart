@@ -1,5 +1,7 @@
 import 'dart:developer' as developer;
 
+import 'flow_event_emitter.dart';
+
 String summarizePushToken(String? token, {int prefixLength = 10}) {
   if (token == null || token.isEmpty) {
     return '<none>';
@@ -15,7 +17,10 @@ void logPushDiagnostic(
   String event, {
   Map<String, Object?> details = const {},
 }) {
-  final suffix = details.entries
+  final sanitizedDetails = sanitizeFlowEventDetails(
+    Map<String, dynamic>.from(details),
+  );
+  final suffix = sanitizedDetails.entries
       .map((entry) => '${entry.key}=${entry.value}')
       .join(' ');
   final line = suffix.isEmpty
@@ -24,6 +29,7 @@ void logPushDiagnostic(
   // `devicectl device process launch --console` reliably captures stdout/stderr
   // from release/TestFlight apps, while `developer.log` is not always surfaced
   // in that path. Emit to both so device-side debugging works from the terminal.
+  // ignore: avoid_print
   print(line);
   developer.log(line, name: 'mknoon.push');
 }
