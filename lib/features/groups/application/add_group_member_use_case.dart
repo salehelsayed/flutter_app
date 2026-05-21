@@ -9,6 +9,15 @@ import 'package:flutter_app/features/groups/domain/models/group_membership_limit
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
+String _diagnosticPrefix(String value) =>
+    value.length > 8 ? value.substring(0, 8) : value;
+
+String _addMemberOperationId(String groupId, String peerId) =>
+    'add:${_diagnosticPrefix(groupId)}:${_diagnosticPrefix(peerId)}';
+
+String? _bridgeErrorCode(Object error) =>
+    error is BridgeCommandException ? error.errorCode : null;
+
 bool _sameOptionalString(String? left, String? right) {
   String? normalize(String? value) {
     final trimmed = value?.trim();
@@ -276,14 +285,19 @@ Future<void> addGroupMember({
     );
   } catch (e) {
     await groupRepo.removeMember(groupId, memberToAdd.peerId);
+    final errorCode = _bridgeErrorCode(e);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_ADD_MEMBER_USE_CASE_REVERTED',
       details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'peerId': memberToAdd.peerId.length > 8
-            ? memberToAdd.peerId.substring(0, 8)
-            : memberToAdd.peerId,
+        'groupId': _diagnosticPrefix(groupId),
+        'peerId': _diagnosticPrefix(memberToAdd.peerId),
+        'membershipOperationId': _addMemberOperationId(
+          groupId,
+          memberToAdd.peerId,
+        ),
+        'errorCode': ?errorCode,
+        'error': e.toString(),
       },
     );
     rethrow;

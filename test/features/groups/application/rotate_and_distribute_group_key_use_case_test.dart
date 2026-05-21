@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -89,6 +90,75 @@ void main() {
 
     bridge.responses['group:publish'] = {'ok': true, 'messageId': 'sys-msg-id'};
   });
+
+  test(
+    'OB-002 key generation failure emits safe group and epoch metadata',
+    () async {
+      const obGroupId = 'group-ob002-key-rotation';
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: obGroupId,
+          name: 'OB-002 Key Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$obGroupId',
+          createdAt: DateTime.utc(2026, 5, 14, 6, 52),
+          createdBy: selfPeerId,
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: obGroupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'selfMlKem',
+          joinedAt: DateTime.utc(2026, 5, 14, 6, 52),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: obGroupId,
+          keyGeneration: 4,
+          encryptedKey: 'epoch4Key==',
+          createdAt: DateTime.utc(2026, 5, 14, 6, 52),
+        ),
+      );
+      bridge.responses['group:generateNextKey'] = {
+        'ok': false,
+        'errorCode': 'KEYGEN_FAILED',
+        'errorMessage': 'generator unavailable',
+      };
+
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: obGroupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+      );
+
+      expect(result, isNull);
+      final event = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
+      );
+      final details = event['details'] as Map<String, dynamic>;
+      expect(details['groupId'], obGroupId.substring(0, 8));
+      expect(details['keyEpoch'], 5);
+      expect(details['membershipOperationId'], 'rotate:group-ob:peer-sel');
+      expect(details['errorCode'], 'KEYGEN_FAILED');
+
+      final encoded = jsonEncode(details);
+      expect(encoded, isNot(contains(obGroupId)));
+    },
+  );
 
   test(
     'allows writer with rotate permission override to rotate keys',

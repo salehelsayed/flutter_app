@@ -23,6 +23,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 typedef GroupMessageIdFactory = String Function();
 
+String _diagnosticPrefix(String value) =>
+    value.length > 8 ? value.substring(0, 8) : value;
+
 /// Result of sending a group message.
 enum SendGroupMessageResult {
   success,
@@ -817,7 +820,12 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_SEND_MSG_USE_CASE_PUBLISH_ERROR',
-        details: {'errorCode': publishErrorCode},
+        details: {
+          'groupId': _diagnosticPrefix(groupId),
+          'keyEpoch': keyEpoch,
+          'messageId': _diagnosticPrefix(resolvedMessageId),
+          'errorCode': publishErrorCode,
+        },
       );
     }
   } catch (e) {
@@ -890,9 +898,10 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_PUBLISH_FAILED',
       details: {
-        'messageId': resolvedMessageId.length > 8
-            ? resolvedMessageId.substring(0, 8)
-            : resolvedMessageId,
+        'groupId': _diagnosticPrefix(groupId),
+        'keyEpoch': keyEpoch,
+        'messageId': _diagnosticPrefix(resolvedMessageId),
+        'errorCode': publishErrorCode,
         'inboxOk': inboxOk,
       },
     );
