@@ -3032,6 +3032,7 @@ void _validateScenarioProofFields({
     _validateUp002DurableTimelineProof(byRole: byRole, failures: failures);
     _validateUp004UnreadChurnProof(byRole: byRole, failures: failures);
     _validateUp006ReaddUiStateProof(byRole: byRole, failures: failures);
+    _validateUp009ReaddSenderIdentityProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_non_friend_member_delivery') {
@@ -6842,6 +6843,122 @@ void _validateUp006ReaddUiStateProof({
   }
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: UP-006 finalEpoch mismatch');
+  }
+}
+
+void _validateUp009ReaddSenderIdentityProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up009ReaddSenderIdentityProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRoleProof(String role, Map<String, dynamic>? proof) {
+    if (proof == null) {
+      failures.add('$role: missing UP-009 sender identity proof fields');
+      return;
+    }
+    if (_stringValue(proof['rowId']) != 'UP-009') {
+      failures.add('$role: $proofName.rowId must be UP-009');
+    }
+    if (_stringValue(proof['role']) != role) {
+      failures.add('$role: $proofName.role must be $role');
+    }
+    for (final field in const <String>[
+      'liveThreePartyProof',
+      'readdMemberPresent',
+      'charliePostReaddMessageVisible',
+      'senderPeerIdMatchesCharlie',
+      'renderedLabelNonBlank',
+      'renderedLabelMatchesCurrentMember',
+      'renderedLabelNotPeerFallback',
+      'renderedLabelNotUnknown',
+      'contactIndependentResolution',
+      'memberListIncludesCharlie',
+      'finalMemberListIncludesAliceBobCharlie',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (role == 'alice' || role == 'bob') {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: 'charliePostReaddMessageIncoming',
+        failures: failures,
+      );
+    } else if (role == 'charlie') {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: 'charlieOwnMessageStoredAsSent',
+        failures: failures,
+      );
+    }
+
+    final currentMemberUsername =
+        _stringValue(proof['currentMemberUsername']) ?? '';
+    if (currentMemberUsername.trim().isEmpty) {
+      failures.add('$role: $proofName.currentMemberUsername must be nonblank');
+    }
+    final renderedSenderDisplayName =
+        _stringValue(proof['renderedSenderDisplayName']) ?? '';
+    if (renderedSenderDisplayName.trim().isEmpty) {
+      failures.add(
+        '$role: $proofName.renderedSenderDisplayName must be nonblank',
+      );
+    }
+    if (renderedSenderDisplayName == 'Unknown') {
+      failures.add(
+        '$role: $proofName.renderedSenderDisplayName must not be Unknown',
+      );
+    }
+    if (renderedSenderDisplayName != currentMemberUsername) {
+      failures.add(
+        '$role: $proofName.renderedSenderDisplayName must match currentMemberUsername',
+      );
+    }
+
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  requireRoleProof('alice', aliceProof);
+  requireRoleProof('bob', bobProof);
+  requireRoleProof('charlie', charlieProof);
+
+  final renderedNames = <String>{};
+  final epochs = <int>{};
+  for (final proof in <Map<String, dynamic>?>[
+    aliceProof,
+    bobProof,
+    charlieProof,
+  ]) {
+    final rendered = _stringValue(proof?['renderedSenderDisplayName']);
+    if (rendered != null && rendered.isNotEmpty) {
+      renderedNames.add(rendered);
+    }
+    final epoch = _intValue(proof?['finalEpoch']);
+    if (epoch != null) {
+      epochs.add(epoch);
+    }
+  }
+  if (renderedNames.length > 1) {
+    failures.add('alice/bob/charlie: UP-009 rendered sender label mismatch');
+  }
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: UP-009 finalEpoch mismatch');
   }
 }
 

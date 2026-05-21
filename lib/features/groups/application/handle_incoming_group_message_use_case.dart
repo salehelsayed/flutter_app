@@ -239,25 +239,27 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   final member = senderId == localRecipientAccountPeerId
       ? localRecipientMember
       : await groupRepo.getMember(groupId, senderId);
+  DateTime? senderRemovalCutoff;
   if (member == null) {
-    final removalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
+    senderRemovalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
       groupId,
       senderId,
     );
-    if (removalCutoff != null && !normalizedTimestamp.isBefore(removalCutoff)) {
+    if (senderRemovalCutoff != null &&
+        !normalizedTimestamp.isBefore(senderRemovalCutoff)) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
         details: {
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'cutoffAt': removalCutoff.toIso8601String(),
+          'cutoffAt': senderRemovalCutoff.toIso8601String(),
         },
       );
       return null;
     }
 
-    if (removalCutoff == null) {
+    if (senderRemovalCutoff == null) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_UNKNOWN_SENDER_REJECTED',
@@ -301,13 +303,13 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     );
     return null;
   } else {
-    final removalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
+    senderRemovalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
       groupId,
       senderId,
     );
     final joinedAt = member.joinedAt.toUtc();
-    if (removalCutoff != null &&
-        !normalizedTimestamp.isBefore(removalCutoff) &&
+    if (senderRemovalCutoff != null &&
+        !normalizedTimestamp.isBefore(senderRemovalCutoff) &&
         normalizedTimestamp.isBefore(joinedAt)) {
       emitFlowEvent(
         layer: 'FL',
@@ -315,16 +317,16 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         details: {
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'cutoffAt': removalCutoff.toIso8601String(),
+          'cutoffAt': senderRemovalCutoff.toIso8601String(),
           'joinedAt': joinedAt.toIso8601String(),
         },
       );
       return null;
     }
 
-    if (removalCutoff != null &&
+    if (senderRemovalCutoff != null &&
         keyEpoch > 0 &&
-        !joinedAt.isBefore(removalCutoff) &&
+        !joinedAt.isBefore(senderRemovalCutoff) &&
         !normalizedTimestamp.isBefore(joinedAt)) {
       final latestKey = await groupRepo.getLatestKey(groupId);
       final latestEpoch = latestKey?.keyGeneration ?? 0;
@@ -370,10 +372,16 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     }
   }
   final sanitizedSenderUsername = sanitizeUsername(senderUsername).trim();
+  final preferCurrentMemberUsername = _preferCurrentMemberUsernameAfterReadd(
+    member: member,
+    removalCutoff: senderRemovalCutoff,
+    messageTimestamp: normalizedTimestamp,
+  );
   final resolvedSenderUsername = resolveGroupSenderDisplayName(
     senderPeerId: senderId,
     wireSenderUsername: sanitizedSenderUsername,
     member: member,
+    preferMemberName: preferCurrentMemberUsername,
   );
 
   if (appendGroupEventLogEntry != null) {
@@ -443,7 +451,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
 
   if (member != null &&
       sanitizedSenderUsername.isNotEmpty &&
-      member.username?.trim() != sanitizedSenderUsername) {
+      member.username?.trim() != sanitizedSenderUsername &&
+      !preferCurrentMemberUsername) {
     await groupRepo.saveMember(
       member.copyWith(username: sanitizedSenderUsername),
     );
@@ -798,6 +807,23 @@ GroupMediaValidationResult _validateIncomingMediaDescriptors(
 String? _optionalString(Map<String, dynamic> value, String key) {
   final raw = value[key];
   return raw is String ? raw : null;
+}
+
+bool _preferCurrentMemberUsernameAfterReadd({
+  required GroupMember? member,
+  required DateTime? removalCutoff,
+  required DateTime messageTimestamp,
+}) {
+  if (member == null || removalCutoff == null) {
+    return false;
+  }
+  final memberName = member.username?.trim();
+  if (memberName == null || memberName.isEmpty) {
+    return false;
+  }
+  final rejoinedAt = member.joinedAt.toUtc();
+  return !rejoinedAt.isBefore(removalCutoff) &&
+      !messageTimestamp.isBefore(rejoinedAt);
 }
 
 GroupMediaValidationResult _validateRequiredStringDigestField(

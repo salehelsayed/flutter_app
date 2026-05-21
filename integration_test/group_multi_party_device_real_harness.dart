@@ -32,6 +32,7 @@ import 'package:flutter_app/features/groups/application/group_media_allowed_peer
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
@@ -26962,6 +26963,59 @@ Future<Map<String, dynamic>> _up006ReaddUiStateProof({
   };
 }
 
+Future<Map<String, dynamic>> _up009ReaddSenderIdentityProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required String role,
+  required String charlieMessageId,
+}) async {
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  final member = await stack.groupRepo.getMember(groupId, charliePeerId);
+  final message = await stack.groupMsgRepo.getMessage(charlieMessageId);
+  final fallbackLabel = groupPeerFallbackLabel(charliePeerId);
+  final renderedSenderDisplayName = message == null
+      ? ''
+      : resolveGroupSenderDisplayName(
+          senderPeerId: message.senderPeerId,
+          wireSenderUsername: message.senderUsername,
+          member: member,
+          preferMemberName: true,
+        );
+  final currentMemberUsername = member?.username?.trim() ?? '';
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalEpoch = await _keyEpoch(stack, groupId);
+
+  return <String, dynamic>{
+    'rowId': 'UP-009',
+    'role': role,
+    'liveThreePartyProof': true,
+    'readdMemberPresent': member != null,
+    'charliePostReaddMessageVisible': message != null,
+    'charliePostReaddMessageIncoming': message?.isIncoming ?? false,
+    'charlieOwnMessageStoredAsSent':
+        role == 'charlie' && message != null && !message.isIncoming,
+    'senderPeerIdMatchesCharlie': message?.senderPeerId == charliePeerId,
+    'messageId': charlieMessageId,
+    'storedSenderUsername': message?.senderUsername ?? '',
+    'currentMemberUsername': currentMemberUsername,
+    'renderedSenderDisplayName': renderedSenderDisplayName,
+    'renderedLabelNonBlank': renderedSenderDisplayName.trim().isNotEmpty,
+    'renderedLabelMatchesCurrentMember':
+        currentMemberUsername.isNotEmpty &&
+        renderedSenderDisplayName == currentMemberUsername,
+    'renderedLabelNotPeerFallback': renderedSenderDisplayName != fallbackLabel,
+    'renderedLabelNotUnknown': renderedSenderDisplayName != 'Unknown',
+    'contactIndependentResolution': true,
+    'memberListIncludesCharlie': memberPeerIds.contains(charliePeerId),
+    'finalMemberListIncludesAliceBobCharlie': _ml008HasAllMembers(
+      memberPeerIds,
+      identities,
+    ),
+    'finalEpoch': finalEpoch,
+  };
+}
+
 Future<void> _runMl015Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -27256,6 +27310,13 @@ Future<void> _runMl015Alice(
         identities: identities,
         role: 'alice',
       ),
+      'up009ReaddSenderIdentityProof': await _up009ReaddSenderIdentityProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'alice',
+        charlieMessageId: charlieSent['messageId'] as String,
+      ),
     },
   );
 }
@@ -27459,6 +27520,13 @@ Future<void> _runMl015Bob(
         identities: identities,
         role: 'bob',
       ),
+      'up009ReaddSenderIdentityProof': await _up009ReaddSenderIdentityProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'bob',
+        charlieMessageId: charlieSent['messageId'] as String,
+      ),
     },
   );
 }
@@ -27659,6 +27727,13 @@ Future<void> _runMl015Charlie(
         groupId: groupId,
         identities: identities,
         role: 'charlie',
+      ),
+      'up009ReaddSenderIdentityProof': await _up009ReaddSenderIdentityProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'charlie',
+        charlieMessageId: charlieSent['messageId'] as String,
       ),
     },
   );

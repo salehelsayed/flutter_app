@@ -180,6 +180,43 @@ void main() {
     expect(find.text('Unknown'), findsNothing);
   });
 
+  testWidgets(
+    'UP-009 re-added sender label prefers current member identity over stale wire username',
+    (tester) async {
+      final readdedAt = DateTime.now().toUtc();
+      final messages = [
+        GroupMessage(
+          id: 'up009-charlie-after-readd',
+          groupId: 'group-1',
+          senderPeerId: 'peer-charlie',
+          senderUsername: 'Old Charlie',
+          text: 'Charlie after re-add stays visible',
+          timestamp: readdedAt,
+          createdAt: readdedAt,
+          isIncoming: true,
+        ),
+      ];
+      final membersByPeerId = <String, GroupMember>{
+        'peer-charlie': GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Readded Charlie',
+          role: MemberRole.writer,
+          joinedAt: readdedAt,
+        ),
+      };
+
+      await tester.pumpWidget(
+        buildTestWidget(messages: messages, membersByPeerId: membersByPeerId),
+      );
+
+      expect(find.text('Charlie after re-add stays visible'), findsOneWidget);
+      expect(find.text('Readded Charlie'), findsOneWidget);
+      expect(find.text('Old Charlie'), findsNothing);
+      expect(find.text('Member peer-cha'), findsNothing);
+    },
+  );
+
   testWidgets('renders undecryptable epoch placeholders as safe text', (
     tester,
   ) async {

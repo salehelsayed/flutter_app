@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
@@ -6774,6 +6775,150 @@ void main() {
           expectedLabel: bob.username,
           text: bobText,
         );
+      },
+    );
+
+    test(
+      'UP-009 re-added sender identity uses current member label when wire name is stale',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'up009-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'up009-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'up009-charlie-peer',
+          username: 'Old Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-up009-readd-sender-identity';
+        const text = 'UP-009 Charlie after re-add remains visible';
+        const readdedUsername = 'Readded Charlie';
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 5),
+        );
+        final removedAt = createdAt.add(const Duration(minutes: 1));
+        final readdedAt = createdAt.add(const Duration(minutes: 2));
+        final sentAt = createdAt.add(const Duration(minutes: 3));
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'UP-009 Sender Identity',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt,
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: createdAt,
+        );
+
+        for (final user in [alice, bob, charlie]) {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'up009-shared-key',
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await pump();
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await pump();
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: readdedAt,
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: readdedAt,
+        );
+        await pump();
+
+        for (final user in [alice, bob]) {
+          final member = await user.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          expect(member, isNotNull, reason: user.username);
+          await user.groupRepo.saveMember(
+            member!.copyWith(username: readdedUsername, joinedAt: readdedAt),
+          );
+        }
+
+        final sent = await charlie.sendGroupMessage(
+          groupId: groupId,
+          text: text,
+          messageId: 'up009-charlie-after-readd',
+          timestamp: sentAt,
+        );
+        expect(sent, isNotNull);
+        await pump();
+
+        Future<void> expectRenderedLabel(GroupTestUser user) async {
+          final messages = await user.loadGroupMessages(groupId);
+          final matching = messages
+              .where((message) => message.id == 'up009-charlie-after-readd')
+              .toList();
+          expect(matching, hasLength(1), reason: user.username);
+          final message = matching.single;
+          expect(message.text, text, reason: user.username);
+          expect(message.senderPeerId, charlie.peerId, reason: user.username);
+          expect(
+            message.senderUsername,
+            readdedUsername,
+            reason: user.username,
+          );
+          final member = await user.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          final rendered = resolveGroupSenderDisplayName(
+            senderPeerId: message.senderPeerId,
+            wireSenderUsername: message.senderUsername,
+            member: member,
+            preferMemberName: true,
+          );
+          expect(rendered, readdedUsername, reason: user.username);
+          expect(rendered, isNot('Member up009-ch'), reason: user.username);
+        }
+
+        await expectRenderedLabel(alice);
+        await expectRenderedLabel(bob);
       },
     );
 
