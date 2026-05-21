@@ -17846,6 +17846,17 @@ Future<void> _runGm004Alice(
           'receivedBobAfterRemoval': true,
         },
       if (_scenario == 'private_online_remove')
+        'ke007FirstPostRotationProof': <String, dynamic>{
+          'rowId': 'KE-007',
+          'rotatedKeyGenerated': rotatedKey.keyGeneration > 1,
+          'rotatedEpoch': rotatedKey.keyGeneration,
+          'waitedForBobRotatedKeyBeforeFirstPostRemovalSend': true,
+          'sentFirstPostRemovalAtRotatedEpoch':
+              aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
+          'firstPostRemovalEpoch': aliceSent['keyEpoch'],
+          'receivedBobAfterRemoval': true,
+        },
+      if (_scenario == 'private_online_remove')
         'st006RotationBoundaryPublishProof': <String, dynamic>{
           'rowId': 'ST-006',
           'removedCharlie': true,
@@ -18016,6 +18027,19 @@ Future<void> _runGm004Bob(
           'hasRotatedEpoch': await _keyEpoch(stack, groupId) == rotatedEpoch,
           'rotatedEpoch': rotatedEpoch,
           'receivedAliceAfterRemoval': true,
+          'sentPostRemovalAtRotatedEpoch': bobSent['keyEpoch'] == rotatedEpoch,
+        },
+      if (_scenario == 'private_online_remove')
+        'ke007FirstPostRotationProof': <String, dynamic>{
+          'rowId': 'KE-007',
+          'receivedRotatedKeyBeforeFirstPostRemovalMessage': true,
+          'hasRotatedEpochBeforeFirstPostRemovalMessage':
+              await _keyEpoch(stack, groupId) == rotatedEpoch,
+          'rotatedEpoch': rotatedEpoch,
+          'receivedAliceAfterRemoval': true,
+          'receivedAliceAfterRemovalAtRotatedEpoch':
+              aliceReceived['keyEpoch'] == rotatedEpoch,
+          'aliceMessageEpoch': aliceReceived['keyEpoch'],
           'sentPostRemovalAtRotatedEpoch': bobSent['keyEpoch'] == rotatedEpoch,
         },
       if (_scenario == 'private_online_remove')
@@ -19301,6 +19325,15 @@ Future<void> _runGm006Alice(
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
+        'ke009ConfigBeforeKeyProof': <String, dynamic>{
+          'rowId': 'KE-009',
+          'configBeforeKeyOrderingCoveredByFakeNetwork': true,
+          'liveCurrentEpochDeliveryCovered': true,
+          'sentPostReaddAtCurrentEpoch':
+              (afterSent['keyEpoch'] as int?) == finalEpoch && finalEpoch >= 2,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
         'ke010KeyBeforeConfigProof': <String, dynamic>{
           'rowId': 'KE-010',
           'keyBeforeConfigOrderingCoveredByFakeNetwork': true,
@@ -19847,6 +19880,20 @@ Future<void> _runGm006Bob(
       if (isMl007)
         'ke008ReaddActivationProof': <String, dynamic>{
           'rowId': 'KE-008',
+          'observedCharlieReadded': memberPeerIds.contains(charliePeerId),
+          'receivedCharliePostReaddAtCurrentEpoch':
+              charlieReceivedEpoch != null &&
+              charlieReceivedEpoch == finalEpoch &&
+              finalEpoch >= 2,
+          'sentBobPostReaddAtCurrentEpoch':
+              bobSentEpoch != null && bobSentEpoch == finalEpoch,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'ke009ConfigBeforeKeyProof': <String, dynamic>{
+          'rowId': 'KE-009',
+          'configBeforeKeyOrderingCoveredByFakeNetwork': true,
+          'liveCurrentEpochDeliveryCovered': true,
           'observedCharlieReadded': memberPeerIds.contains(charliePeerId),
           'receivedCharliePostReaddAtCurrentEpoch':
               charlieReceivedEpoch != null &&
@@ -20753,6 +20800,21 @@ Future<void> _runGm006Charlie(
               removedWindowPlaintextBeforeReadd +
               removedWindowPlaintextAfterReadd,
           'hasStaleEpochAfterReadd': finalEpoch < 2,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'ke009ConfigBeforeKeyProof': <String, dynamic>{
+          'rowId': 'KE-009',
+          'configBeforeKeyOrderingCoveredByFakeNetwork': true,
+          'liveCurrentEpochDeliveryCovered': true,
+          'noPermanentInvisibleGapAfterKeyArrives':
+              afterReceivedEpoch != null &&
+              bobReceivedEpoch != null &&
+              finalEpoch >= 2,
+          'receivedAlicePostReaddAtCurrentEpoch':
+              afterReceivedEpoch != null && afterReceivedEpoch == finalEpoch,
+          'receivedBobPostReaddAtCurrentEpoch':
+              bobReceivedEpoch != null && bobReceivedEpoch == finalEpoch,
           'finalEpoch': finalEpoch,
         },
       if (isMl007)

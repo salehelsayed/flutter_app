@@ -3326,6 +3326,7 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateKe007FirstPostRotationProof(byRole: byRole, failures: failures);
     _validateSt006RotationBoundaryPublishProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
@@ -3433,6 +3434,7 @@ void _validateScenarioProofFields({
       failures: failures,
     );
     _validateKe008ReaddActivationProof(byRole: byRole, failures: failures);
+    _validateKe009ConfigBeforeKeyProof(byRole: byRole, failures: failures);
     _validateKe010KeyBeforeConfigProof(byRole: byRole, failures: failures);
     _validateKe011DelayedOldKeyAfterReaddProof(
       byRole: byRole,
@@ -12312,6 +12314,81 @@ void _validateKe006RemovalKeyRotationProof({
   }
 }
 
+void _validateKe007FirstPostRotationProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke007FirstPostRotationProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final expectedRotatedEpoch = _intValue(byRole['alice']?['keyEpoch']);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-007') {
+      failures.add('$role: $proofName.rowId must be KE-007');
+    }
+  }
+
+  void requireRotatedEpoch(
+    String role,
+    Map<String, dynamic> proof, {
+    required String field,
+  }) {
+    final value = _intValue(proof[field]);
+    if (value == null || value <= 1) {
+      failures.add('$role: $proofName.$field must be a rotated epoch > 1');
+    }
+    if (expectedRotatedEpoch != null && value != expectedRotatedEpoch) {
+      failures.add('$role: $proofName.$field must match Alice rotated epoch');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-007 first-post-rotation proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'rotatedKeyGenerated',
+      'waitedForBobRotatedKeyBeforeFirstPostRemovalSend',
+      'sentFirstPostRemovalAtRotatedEpoch',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireRotatedEpoch('alice', aliceProof, field: 'rotatedEpoch');
+    requireRotatedEpoch('alice', aliceProof, field: 'firstPostRemovalEpoch');
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-007 first-post-rotation proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'receivedRotatedKeyBeforeFirstPostRemovalMessage',
+      'hasRotatedEpochBeforeFirstPostRemovalMessage',
+      'receivedAliceAfterRemoval',
+      'receivedAliceAfterRemovalAtRotatedEpoch',
+      'sentPostRemovalAtRotatedEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireRotatedEpoch('bob', bobProof, field: 'rotatedEpoch');
+    requireRotatedEpoch('bob', bobProof, field: 'aliceMessageEpoch');
+  }
+}
+
 void _validateSt006RotationBoundaryPublishProof({
   required Map<String, Map<String, dynamic>> byRole,
   required Map<String, String> peerIdByRole,
@@ -17235,6 +17312,112 @@ void _validateKe008ReaddActivationProof({
   if (charlieEpoch != null) epochs.add(charlieEpoch);
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: KE-008 finalEpoch mismatch');
+  }
+}
+
+void _validateKe009ConfigBeforeKeyProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'ke009ConfigBeforeKeyProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'KE-009') {
+      failures.add('$role: $proofName.rowId must be KE-009');
+    }
+  }
+
+  void requireEpochAtLeastTwo(
+    String role,
+    Map<String, dynamic> proof,
+    String field,
+  ) {
+    final epoch = _intValue(proof[field]);
+    if (epoch == null || epoch < 2) {
+      failures.add('$role: $proofName.$field must be >= 2');
+    }
+  }
+
+  void requireSharedFields(String role, Map<String, dynamic> proof) {
+    requireRowId(role, proof);
+    for (final field in const <String>[
+      'configBeforeKeyOrderingCoveredByFakeNetwork',
+      'liveCurrentEpochDeliveryCovered',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireEpochAtLeastTwo(role, proof, 'finalEpoch');
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing KE-009 config-before-key proof fields');
+  } else {
+    requireSharedFields('alice', aliceProof);
+    _requireTrueProof(
+      role: 'alice',
+      proofName: proofName,
+      proof: aliceProof,
+      field: 'sentPostReaddAtCurrentEpoch',
+      failures: failures,
+    );
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing KE-009 config-before-key proof fields');
+  } else {
+    requireSharedFields('bob', bobProof);
+    for (final field in const <String>[
+      'observedCharlieReadded',
+      'receivedCharliePostReaddAtCurrentEpoch',
+      'sentBobPostReaddAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing KE-009 config-before-key proof fields');
+  } else {
+    requireSharedFields('charlie', charlieProof);
+    for (final field in const <String>[
+      'noPermanentInvisibleGapAfterKeyArrives',
+      'receivedAlicePostReaddAtCurrentEpoch',
+      'receivedBobPostReaddAtCurrentEpoch',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final epochs = <int>{};
+  final aliceEpoch = _intValue(aliceProof?['finalEpoch']);
+  final bobEpoch = _intValue(bobProof?['finalEpoch']);
+  final charlieEpoch = _intValue(charlieProof?['finalEpoch']);
+  if (aliceEpoch != null) epochs.add(aliceEpoch);
+  if (bobEpoch != null) epochs.add(bobEpoch);
+  if (charlieEpoch != null) epochs.add(charlieEpoch);
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: KE-009 finalEpoch mismatch');
   }
 }
 
