@@ -876,6 +876,116 @@ void main() {
       expect(encoded, contains('[redacted:multiaddr]'));
     });
 
+    test(
+      'OB-012 redacts real-looking secrets in bridge and push diagnostics',
+      () async {
+        const groupKey = 'k7Yx6WcRZP9Lq2mN4bV8tS0uA3hD5fG7jK9pL1qR3sT=';
+        const privateKeyPem = '''
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDOb012Bridge
+PrivateKeyMaterialShouldNeverAppearInDiagnostics
+-----END PRIVATE KEY-----''';
+        const plaintext =
+            'OB012 bridge plaintext body: meet at 10:45 near the east gate';
+        const relay =
+            '/dns/relay.ob012.example/tcp/4001/wss/p2p/12D3KooWOb012Relay';
+        const sensitiveError =
+            'group decrypt failed groupKey="$groupKey" '
+            'privateKey="$privateKeyPem" plaintext="$plaintext" $relay';
+        const forbidden = [
+          groupKey,
+          'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw',
+          '-----BEGIN PRIVATE KEY-----',
+          'PrivateKeyMaterialShouldNeverAppearInDiagnostics',
+          plaintext,
+          relay,
+        ];
+
+        flowEventLoggingEnabled = true;
+        final flowEvents = <Map<String, dynamic>>[];
+        final flowLogs = <String>[];
+        debugSetFlowEventSink(flowEvents.add);
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) flowLogs.add(message);
+        };
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                throw PlatformException(
+                  code: 'GROUP_ERROR',
+                  message: sensitiveError,
+                );
+              },
+            );
+
+        final response = await client.send(
+          jsonEncode({
+            'cmd': 'group.decrypt',
+            'payload': {
+              'groupKey': groupKey,
+              'privateKey': privateKeyPem,
+              'plaintextMessage': plaintext,
+            },
+          }),
+        );
+        final decoded = jsonDecode(response) as Map<String, dynamic>;
+        final encodedBridgeDiagnostics =
+            '${jsonEncode(decoded)}\n${jsonEncode(flowEvents)}\n'
+            '${flowLogs.join('\n')}';
+
+        expect(decoded['ok'], isFalse);
+        expect(decoded['errorCode'], 'PLATFORM_ERROR');
+        expect(lastCall!.method, 'groupDecryptMessage');
+        for (final fragment in forbidden) {
+          expect(
+            encodedBridgeDiagnostics,
+            isNot(contains(fragment)),
+            reason: 'bridge diagnostic leaked $fragment',
+          );
+        }
+        expect(encodedBridgeDiagnostics, contains('[redacted]'));
+        expect(encodedBridgeDiagnostics, contains('[redacted:multiaddr]'));
+
+        final printed = <String>[];
+        runZoned(
+          () {
+            logPushDiagnostic(
+              'ob012_group_failure',
+              details: {
+                'groupKey': groupKey,
+                'privateKey': privateKeyPem,
+                'plaintextMessage': plaintext,
+                'nested': {'errorMessage': sensitiveError},
+              },
+            );
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) {
+              printed.add(line);
+            },
+          ),
+        );
+
+        final encodedPushDiagnostics = printed.join('\n');
+        expect(
+          encodedPushDiagnostics,
+          contains('[PUSH_DIAG] ob012_group_failure'),
+        );
+        for (final fragment in forbidden) {
+          expect(
+            encodedPushDiagnostics,
+            isNot(contains(fragment)),
+            reason: 'push diagnostic leaked $fragment',
+          );
+        }
+        expect(encodedPushDiagnostics, contains('[redacted]'));
+        expect(encodedPushDiagnostics, contains('[redacted:multiaddr]'));
+      },
+    );
+
     test('PlatformException with null message uses fallback text', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
