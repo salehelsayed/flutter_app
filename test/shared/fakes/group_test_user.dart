@@ -107,6 +107,7 @@ class GroupTestUser {
     ReactionRepository? reactionRepo,
     GroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
     NotificationService? notificationService,
+    InMemoryGroupMessageRepository? msgRepo,
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
     RequestGroupKeyRepair? requestGroupKeyRepair,
@@ -124,7 +125,7 @@ class GroupTestUser {
         keyPackagePublicMaterial ?? 'key-package-public-$resolvedDeviceId';
     final effectiveBridge = bridge ?? FakeBridge();
     final groupRepo = InMemoryGroupRepository();
-    final msgRepo = InMemoryGroupMessageRepository();
+    final effectiveMsgRepo = msgRepo ?? InMemoryGroupMessageRepository();
     final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     final controller = network.registerPeer(peerId, deviceId: resolvedDeviceId);
     final reactionController = network.registerReactionPeer(
@@ -138,7 +139,7 @@ class GroupTestUser {
 
     final listener = GroupMessageListener(
       groupRepo: groupRepo,
-      msgRepo: msgRepo,
+      msgRepo: effectiveMsgRepo,
       bridge: effectiveBridge,
       getSelfPeerId: () async => peerId,
       mediaAttachmentRepo: mediaAttachmentRepo,
@@ -165,7 +166,7 @@ class GroupTestUser {
       keyPackagePublicMaterial: resolvedKeyPackagePublicMaterial,
       bridge: effectiveBridge,
       groupRepo: groupRepo,
-      msgRepo: msgRepo,
+      msgRepo: effectiveMsgRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
       groupMessageListener: listener,
       reactionRepo: reactionRepo,
