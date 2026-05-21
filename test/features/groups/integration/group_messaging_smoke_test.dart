@@ -44,6 +44,7 @@ import '../../../shared/fakes/group_test_user.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
+import '../../../shared/fakes/seeded_group_reproduction_log.dart';
 
 class _St008ContendedGroupMessageRepository
     extends InMemoryGroupMessageRepository {
@@ -11799,6 +11800,171 @@ void main() {
                 '${user.username} must stay receive-live during ST-014 soak',
           );
         }
+      },
+    );
+
+    test(
+      'ST-015 seeded reproduction log reruns with stable debug context',
+      () async {
+        const seed = 15015;
+
+        Future<String> runSeededScenario() async {
+          final localNetwork = FakeGroupPubSubNetwork();
+          final log = SeededGroupReproductionLog(
+            rowId: 'ST-015',
+            seed: seed,
+            scenario: 'fake-network-rerun',
+          );
+          final random = Random(seed);
+          final alice = GroupTestUser.create(
+            peerId: 'st015-alice-peer',
+            username: 'Alice',
+            network: localNetwork,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'st015-bob-peer',
+            username: 'Bob',
+            network: localNetwork,
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'st015-charlie-peer',
+            username: 'Charlie',
+            network: localNetwork,
+          );
+          try {
+            const groupId = 'group-st015-repro';
+            final createdAt = DateTime.utc(2026, 5, 14, 8, 15);
+            await alice.createGroup(
+              groupId: groupId,
+              name: 'ST-015 Repro',
+              createdAt: createdAt,
+            );
+            await alice.addMember(
+              groupId: groupId,
+              invitee: bob,
+              joinedAt: createdAt.add(const Duration(minutes: 1)),
+            );
+            await alice.addMember(
+              groupId: groupId,
+              invitee: charlie,
+              joinedAt: createdAt.add(const Duration(minutes: 2)),
+            );
+
+            final users = <GroupTestUser>[alice, bob, charlie];
+            Future<void> saveKey(GroupTestUser user) async {
+              await user.groupRepo.saveKey(
+                GroupKeyInfo(
+                  groupId: groupId,
+                  keyGeneration: 1,
+                  encryptedKey: 'st015-key',
+                  createdAt: createdAt.add(const Duration(minutes: 3)),
+                ),
+              );
+            }
+
+            await Future.wait(users.map(saveKey));
+
+            alice.start();
+            bob.start();
+            charlie.start();
+
+            final recipients = <GroupTestUser>[bob, charlie];
+            for (var step = 1; step <= 5; step++) {
+              final sender = alice;
+              final target = recipients[random.nextInt(recipients.length)];
+              final messageId = 'st015-$seed-step-$step-${sender.peerId}';
+              final text =
+                  'ST-015 seed $seed step $step for ${target.username}';
+              log.recordOperation(
+                step: step,
+                actor: sender.username,
+                action: 'send',
+                details: <String, Object?>{
+                  'groupId': groupId,
+                  'messageId': messageId,
+                  'targetPeerId': target.peerId,
+                  'text': text,
+                },
+              );
+
+              final beforeDeliveryCount = localNetwork.deliveryRecords.length;
+              final send = await sender.sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: text,
+                messageId: messageId,
+                timestamp: createdAt.add(Duration(minutes: 10 + step)),
+              );
+              expect(send.$1.name, 'success');
+              expect(send.$2, isNotNull);
+              await pump();
+
+              log.recordBridgeResponse(
+                step: step,
+                actor: sender.username,
+                command: 'group:publish',
+                ok: true,
+                response: <String, Object?>{
+                  'messageId': send.$2!.id,
+                  'keyEpoch': send.$2!.keyGeneration,
+                  'topicPeers': users.length - 1,
+                },
+              );
+
+              final deliveries = localNetwork.deliveryRecords
+                  .skip(beforeDeliveryCount)
+                  .map(
+                    (record) => <String, Object?>{
+                      'messageId': record['messageId'] as String?,
+                      'receiverPeerId': record['receiverPeerId'] as String?,
+                      'deliveryRouteKind':
+                          record['deliveryRouteKind'] as String?,
+                    },
+                  )
+                  .toList(growable: false);
+              log.recordDiagnostic(
+                step: step,
+                layer: 'transport',
+                event: 'fake_network_delivery',
+                details: <String, Object?>{
+                  'messageId': messageId,
+                  'deliveryCount': deliveries.length,
+                  'deliveries': deliveries,
+                },
+              );
+
+              if (step == 3) {
+                log.recordFailure(
+                  step: step,
+                  layer: 'transport',
+                  reason: 'simulated_recipient_miss',
+                  details: <String, Object?>{
+                    'seed': seed,
+                    'messageId': messageId,
+                    'expectedRecipients': users.length - 1,
+                    'actualRecipients': deliveries.length - 1,
+                    'bridgeCommand': 'group:publish',
+                  },
+                );
+              }
+            }
+
+            return log.canonicalJson();
+          } finally {
+            alice.dispose();
+            bob.dispose();
+            charlie.dispose();
+          }
+        }
+
+        final first = await runSeededScenario();
+        final second = await runSeededScenario();
+        expect(second, first);
+        expect(first, contains('"seed":15015'));
+        expect(first, contains('"operations"'));
+        expect(first, contains('"bridgeResponses"'));
+        expect(first, contains('"diagnostics"'));
+        expect(first, contains('"reason":"simulated_recipient_miss"'));
+        expect(first, contains('"bridgeCommand":"group:publish"'));
       },
     );
 
