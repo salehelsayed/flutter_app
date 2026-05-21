@@ -19,7 +19,10 @@ typedef RunGroupInboxPageTransaction =
 
 /// Implementation of GroupMessageRepository using constructor-injected DB helper functions.
 class GroupMessageRepositoryImpl
-    implements GroupMessageRepository, GroupThreadSummaryRepository {
+    implements
+        GroupMessageRepository,
+        GroupThreadSummaryRepository,
+        GroupMembershipRepairDeletionRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMessage;
   final Future<List<Map<String, Object?>>> Function(
     String groupId, {
@@ -39,6 +42,8 @@ class GroupMessageRepositoryImpl
   final Future<int> Function() dbCountTotalUnreadGroupMessages;
   final Future<int> Function(String groupId) dbMarkGroupMessagesAsRead;
   final Future<void> Function(String id) dbDeleteGroupMessage;
+  final Future<void> Function(String id)?
+  dbDeleteGroupMessageForMembershipRepairFn;
   final Future<bool> Function(
     String groupId,
     String senderPeerId,
@@ -82,6 +87,7 @@ class GroupMessageRepositoryImpl
     required this.dbCountTotalUnreadGroupMessages,
     required this.dbMarkGroupMessagesAsRead,
     required this.dbDeleteGroupMessage,
+    this.dbDeleteGroupMessageForMembershipRepairFn,
     required this.dbExistsGroupMessageByContent,
     required this.dbDeleteGroupMessagesForGroup,
     required this.dbLoadGroupThreadSummaries,
@@ -310,6 +316,16 @@ class GroupMessageRepositoryImpl
 
   @override
   Future<void> deleteMessage(String id) async {
+    await dbDeleteGroupMessage(id);
+  }
+
+  @override
+  Future<void> deleteMessageForMembershipRepair(String id) async {
+    final repairDelete = dbDeleteGroupMessageForMembershipRepairFn;
+    if (repairDelete != null) {
+      await repairDelete(id);
+      return;
+    }
     await dbDeleteGroupMessage(id);
   }
 

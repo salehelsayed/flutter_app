@@ -168,3 +168,12 @@ abstract class GroupMessageRepository {
     await apply(this);
   }
 }
+
+/// Optional repository capability for internal membership-window repair.
+///
+/// Unlike a user-initiated local deletion, this removes a message so the
+/// listener can re-evaluate it after delayed membership events without leaving
+/// a local deletion tombstone that would block a valid re-save.
+abstract class GroupMembershipRepairDeletionRepository {
+  Future<void> deleteMessageForMembershipRepair(String id);
+}

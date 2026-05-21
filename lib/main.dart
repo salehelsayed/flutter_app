@@ -1059,6 +1059,8 @@ void main() async {
       dbMarkGroupMessagesAsRead: (groupId) =>
           dbMarkGroupMessagesAsRead(executor, groupId),
       dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
+      dbDeleteGroupMessageForMembershipRepairFn: (id) =>
+          dbDeleteGroupMessageForMembershipRepair(executor, id),
       dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
           dbExistsGroupMessageByContent(
             executor,

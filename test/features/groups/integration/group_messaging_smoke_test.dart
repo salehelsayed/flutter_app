@@ -10621,6 +10621,358 @@ void main() {
     );
 
     test(
+      'ST-002 fake-network event ordering permutations converge membership visibility and key',
+      () async {
+        final cases = <String>[
+          'fifo',
+          'reverse-held',
+          'remove-message-add',
+          'message-remove-add',
+          'late-key',
+        ];
+
+        for (final caseName in cases) {
+          final caseNetwork = FakeGroupPubSubNetwork();
+          final alice = GroupTestUser.create(
+            peerId: 'st002-$caseName-alice-peer',
+            username: 'Alice',
+            network: caseNetwork,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'st002-$caseName-bob-peer',
+            username: 'Bob',
+            network: caseNetwork,
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'st002-$caseName-charlie-peer',
+            username: 'Charlie',
+            network: caseNetwork,
+          );
+
+          try {
+            final groupId = 'group-st002-$caseName-ordering';
+            final createdAt = DateTime.utc(2026, 5, 14, 5);
+            final removeAt = createdAt.add(const Duration(minutes: 5));
+            final removedWindowAt = removeAt.add(const Duration(seconds: 30));
+            final readdAt = createdAt.add(const Duration(minutes: 8));
+            final postReaddAt = readdAt.add(const Duration(seconds: 5));
+            final postMessageId = 'st002-$caseName-post-readd';
+            final removedWindowMessageId = 'st002-$caseName-removed-window';
+            final postText = 'ST-002 $caseName post re-add';
+            final removedWindowText = 'ST-002 $caseName removed window';
+            final users = <GroupTestUser>[alice, bob, charlie];
+
+            Future<void> saveKeyFor(
+              Iterable<GroupTestUser> targetUsers,
+              int epoch,
+              DateTime createdAt,
+            ) async {
+              for (final user in targetUsers) {
+                await user.groupRepo.saveKey(
+                  GroupKeyInfo(
+                    groupId: groupId,
+                    keyGeneration: epoch,
+                    encryptedKey: 'st002-$caseName-key-$epoch',
+                    createdAt: createdAt,
+                  ),
+                );
+              }
+            }
+
+            Future<void> copyAliceStateTo(
+              Iterable<GroupTestUser> targetUsers, {
+              required int keyEpoch,
+              required DateTime keyCreatedAt,
+            }) async {
+              final group = await alice.groupRepo.getGroup(groupId);
+              final members = await alice.groupRepo.getMembers(groupId);
+              expect(group, isNotNull, reason: caseName);
+              for (final user in targetUsers) {
+                await user.groupRepo.saveGroup(
+                  group!.copyWith(
+                    myRole: user.peerId == alice.peerId
+                        ? GroupRole.admin
+                        : GroupRole.member,
+                  ),
+                );
+                for (final member in members) {
+                  await user.groupRepo.saveMember(member);
+                }
+              }
+              await saveKeyFor(targetUsers, keyEpoch, keyCreatedAt);
+            }
+
+            Future<void> publishFromCharlie({
+              required String messageId,
+              required String text,
+              required int keyEpoch,
+              required DateTime timestamp,
+            }) async {
+              await caseNetwork.publish(groupId, charlie.peerId, {
+                'groupId': groupId,
+                'senderId': charlie.peerId,
+                'senderUsername': charlie.username,
+                'keyEpoch': keyEpoch,
+                'text': text,
+                'timestamp': timestamp.toUtc().toIso8601String(),
+                'messageId': messageId,
+              }, senderDeviceId: charlie.deviceId);
+              await pump();
+            }
+
+            Future<int> countMessage(
+              GroupTestUser user,
+              String messageId,
+            ) async {
+              final messages = await user.loadGroupMessages(groupId);
+              return messages
+                  .where((message) => message.id == messageId)
+                  .length;
+            }
+
+            Future<void> expectVisibleOnceAtEpoch(
+              GroupTestUser user,
+              String messageId,
+              String text,
+              int epoch,
+            ) async {
+              final matches = (await user.loadGroupMessages(
+                groupId,
+              )).where((message) => message.id == messageId).toList();
+              expect(matches, hasLength(1), reason: '$caseName ${user.peerId}');
+              expect(matches.single.text, text, reason: caseName);
+              expect(matches.single.keyGeneration, epoch, reason: caseName);
+            }
+
+            Future<void> expectFinalConverged() async {
+              final aliceReceivesPostInThisOrdering =
+                  caseName == 'fifo' || caseName == 'reverse-held';
+              for (final user in users) {
+                final members = await user.groupRepo.getMembers(groupId);
+                expect(
+                  members.map((member) => member.peerId).toSet(),
+                  {alice.peerId, bob.peerId, charlie.peerId},
+                  reason: '$caseName ${user.peerId} members',
+                );
+                final charlieMember = await user.groupRepo.getMember(
+                  groupId,
+                  charlie.peerId,
+                );
+                expect(charlieMember, isNotNull, reason: caseName);
+                expect(
+                  charlieMember!.joinedAt,
+                  readdAt.toUtc(),
+                  reason: '$caseName ${user.peerId} Charlie interval',
+                );
+                final latestKey = await user.groupRepo.getLatestKey(groupId);
+                expect(latestKey, isNotNull, reason: caseName);
+                expect(
+                  latestKey!.keyGeneration,
+                  3,
+                  reason: '$caseName ${user.peerId} key',
+                );
+              }
+              if (aliceReceivesPostInThisOrdering) {
+                await expectVisibleOnceAtEpoch(
+                  alice,
+                  postMessageId,
+                  postText,
+                  3,
+                );
+              }
+              await expectVisibleOnceAtEpoch(bob, postMessageId, postText, 3);
+              expect(await countMessage(bob, removedWindowMessageId), 0);
+              expect(await countMessage(charlie, removedWindowMessageId), 0);
+            }
+
+            await alice.createGroup(
+              groupId: groupId,
+              name: 'ST-002 $caseName',
+              createdAt: createdAt,
+            );
+            await alice.addMember(
+              groupId: groupId,
+              invitee: bob,
+              joinedAt: createdAt.add(const Duration(minutes: 1)),
+            );
+            await alice.addMember(
+              groupId: groupId,
+              invitee: charlie,
+              joinedAt: createdAt.add(const Duration(minutes: 2)),
+            );
+            await copyAliceStateTo(users, keyEpoch: 1, keyCreatedAt: createdAt);
+
+            alice.start();
+            bob.start();
+            charlie.start();
+
+            switch (caseName) {
+              case 'fifo':
+              case 'reverse-held':
+                caseNetwork.holdDeliveriesFor(bob.deviceId);
+                await alice.removeMember(
+                  groupId: groupId,
+                  memberPeerId: charlie.peerId,
+                  memberUsername: charlie.username,
+                  removedAt: removeAt,
+                );
+                await saveKeyFor([alice, bob], 2, removeAt);
+                await publishFromCharlie(
+                  messageId: removedWindowMessageId,
+                  text: removedWindowText,
+                  keyEpoch: 2,
+                  timestamp: removedWindowAt,
+                );
+                await alice.addMember(
+                  groupId: groupId,
+                  invitee: charlie,
+                  joinedAt: readdAt,
+                );
+                await saveKeyFor(users, 3, readdAt);
+                await alice.broadcastMemberAdded(
+                  groupId: groupId,
+                  newMember: charlie,
+                  eventAt: readdAt,
+                );
+                await publishFromCharlie(
+                  messageId: postMessageId,
+                  text: postText,
+                  keyEpoch: 3,
+                  timestamp: postReaddAt,
+                );
+                await caseNetwork.releaseHeldDeliveriesFor(
+                  bob.deviceId,
+                  reverse: caseName == 'reverse-held',
+                );
+                await pump();
+                break;
+              case 'remove-message-add':
+                caseNetwork.holdDeliveriesFor(bob.deviceId);
+                await alice.removeMember(
+                  groupId: groupId,
+                  memberPeerId: charlie.peerId,
+                  memberUsername: charlie.username,
+                  removedAt: removeAt,
+                );
+                await saveKeyFor([alice, bob], 2, removeAt);
+                await caseNetwork.releaseHeldDeliveriesFor(bob.deviceId);
+                await pump();
+                expect(
+                  await bob.groupRepo.getMember(groupId, charlie.peerId),
+                  isNull,
+                  reason: caseName,
+                );
+                await publishFromCharlie(
+                  messageId: postMessageId,
+                  text: postText,
+                  keyEpoch: 3,
+                  timestamp: postReaddAt,
+                );
+                expect(await countMessage(bob, postMessageId), 0);
+                await publishFromCharlie(
+                  messageId: removedWindowMessageId,
+                  text: removedWindowText,
+                  keyEpoch: 2,
+                  timestamp: removedWindowAt,
+                );
+                await alice.addMember(
+                  groupId: groupId,
+                  invitee: charlie,
+                  joinedAt: readdAt,
+                );
+                await saveKeyFor(users, 3, readdAt);
+                await alice.broadcastMemberAdded(
+                  groupId: groupId,
+                  newMember: charlie,
+                  eventAt: readdAt,
+                );
+                await pump();
+                break;
+              case 'message-remove-add':
+                await saveKeyFor(users, 3, readdAt);
+                await publishFromCharlie(
+                  messageId: postMessageId,
+                  text: postText,
+                  keyEpoch: 3,
+                  timestamp: postReaddAt,
+                );
+                await publishFromCharlie(
+                  messageId: removedWindowMessageId,
+                  text: removedWindowText,
+                  keyEpoch: 2,
+                  timestamp: removedWindowAt,
+                );
+                await alice.removeMember(
+                  groupId: groupId,
+                  memberPeerId: charlie.peerId,
+                  memberUsername: charlie.username,
+                  removedAt: removeAt,
+                );
+                await saveKeyFor([alice, bob], 2, removeAt);
+                await pump();
+                expect(await countMessage(bob, postMessageId), 0);
+                expect(await countMessage(bob, removedWindowMessageId), 0);
+                await alice.addMember(
+                  groupId: groupId,
+                  invitee: charlie,
+                  joinedAt: readdAt,
+                );
+                await saveKeyFor(users, 3, readdAt);
+                await alice.broadcastMemberAdded(
+                  groupId: groupId,
+                  newMember: charlie,
+                  eventAt: readdAt,
+                );
+                await pump();
+                break;
+              case 'late-key':
+                await alice.removeMember(
+                  groupId: groupId,
+                  memberPeerId: charlie.peerId,
+                  memberUsername: charlie.username,
+                  removedAt: removeAt,
+                );
+                await saveKeyFor([alice, bob], 2, removeAt);
+                await publishFromCharlie(
+                  messageId: postMessageId,
+                  text: postText,
+                  keyEpoch: 3,
+                  timestamp: postReaddAt,
+                );
+                await publishFromCharlie(
+                  messageId: removedWindowMessageId,
+                  text: removedWindowText,
+                  keyEpoch: 2,
+                  timestamp: removedWindowAt,
+                );
+                await alice.addMember(
+                  groupId: groupId,
+                  invitee: charlie,
+                  joinedAt: readdAt,
+                );
+                await alice.broadcastMemberAdded(
+                  groupId: groupId,
+                  newMember: charlie,
+                  eventAt: readdAt,
+                );
+                await pump();
+                await saveKeyFor(users, 3, readdAt);
+                break;
+              default:
+                fail('Unhandled ST-002 case $caseName');
+            }
+
+            await expectFinalConverged();
+          } finally {
+            alice.dispose();
+            bob.dispose();
+            charlie.dispose();
+          }
+        }
+      },
+    );
+
+    test(
       'NW-014 deterministic network chaos run maintains model invariants',
       () async {
         const seed = 14014;

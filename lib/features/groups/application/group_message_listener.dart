@@ -92,7 +92,7 @@ class GroupMessageListener {
   final RequestGroupKeyRepair _requestGroupKeyRepair;
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
 
-  StreamSubscription<Map<String, dynamic>>? _subscription;
+  StreamSubscription<void>? _subscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
   StreamSubscription<Map<String, dynamic>>? _diagnosticSubscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
@@ -169,12 +169,13 @@ class GroupMessageListener {
     Map<String, dynamic> data, {
     GroupMessageRepository? msgRepoOverride,
     bool rethrowOnError = false,
+    bool allowMembershipBuffer = false,
   }) {
     return _handleMessage(
       data,
       msgRepoOverride: msgRepoOverride,
       rethrowOnError: rethrowOnError,
-      allowMembershipBuffer: false,
+      allowMembershipBuffer: allowMembershipBuffer,
     );
   }
 
@@ -218,23 +219,25 @@ class GroupMessageListener {
       details: {},
     );
 
-    _subscription = incomingGroupMessages.listen(
-      _handleMessage,
-      onError: (error) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_MESSAGE_LISTENER_STREAM_ERROR',
-          details: {'error': error.toString()},
+    _subscription = incomingGroupMessages
+        .asyncMap(_handleMessage)
+        .listen(
+          (_) {},
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_MESSAGE_LISTENER_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+          onDone: () {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_MESSAGE_LISTENER_STREAM_DONE',
+              details: {},
+            );
+          },
         );
-      },
-      onDone: () {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_MESSAGE_LISTENER_STREAM_DONE',
-          details: {},
-        );
-      },
-    );
 
     if (incomingGroupReactions != null) {
       _reactionSubscription = incomingGroupReactions.listen(
@@ -870,6 +873,7 @@ class GroupMessageListener {
     required String groupId,
     required String removedPeerId,
     required DateTime? removedAt,
+    DateTime? beforeRejoinAt,
     required GroupMessageRepository msgRepo,
   }) async {
     if (removedPeerId.isEmpty || removedAt == null) {
@@ -891,12 +895,26 @@ class GroupMessageListener {
     }
 
     var deleted = 0;
+    final normalizedBeforeRejoinAt = beforeRejoinAt?.toUtc();
+    final repairDeletionRepo =
+        msgRepo is GroupMembershipRepairDeletionRepository
+        ? msgRepo as GroupMembershipRepairDeletionRepository
+        : null;
     for (final message in messages) {
       if (message.id.startsWith('sys-')) continue;
       if (message.senderPeerId != removedPeerId) continue;
-      if (message.timestamp.toUtc().isBefore(normalizedRemovedAt)) continue;
+      final messageTimestamp = message.timestamp.toUtc();
+      if (messageTimestamp.isBefore(normalizedRemovedAt)) continue;
+      if (normalizedBeforeRejoinAt != null &&
+          !messageTimestamp.isBefore(normalizedBeforeRejoinAt)) {
+        continue;
+      }
       _bufferPersistedMembershipDependentMessage(message);
-      await msgRepo.deleteMessage(message.id);
+      if (repairDeletionRepo != null) {
+        await repairDeletionRepo.deleteMessageForMembershipRepair(message.id);
+      } else {
+        await msgRepo.deleteMessage(message.id);
+      }
       deleted++;
     }
     if (deleted > 0) {
@@ -1315,6 +1333,7 @@ class GroupMessageListener {
             sysType: sysType,
             eventAt: membershipVersion.eventAt,
             hasExplicitConfigVersion: membershipVersion.hasConfigVersion,
+            msgRepo: msgRepo,
           )) {
             return;
           }
@@ -3497,6 +3516,7 @@ class GroupMessageListener {
     required String? sysType,
     required DateTime? eventAt,
     bool hasExplicitConfigVersion = false,
+    required GroupMessageRepository msgRepo,
   }) async {
     if (eventAt == null) {
       return false;
@@ -3507,28 +3527,35 @@ class GroupMessageListener {
       return false;
     }
 
-    if (hasExplicitConfigVersion) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'type': sysType ?? 'null',
-          'eventAt': eventAt.toIso8601String(),
-          'watermark': watermark.toIso8601String(),
-        },
-      );
-      return true;
-    }
-
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final removedPeerId = memberData?['peerId'] as String?;
     if (removedPeerId != null && removedPeerId.isNotEmpty) {
       final existingMember = await _groupRepo.getMember(groupId, removedPeerId);
       final joinedAt = existingMember?.joinedAt.toUtc();
-      if (existingMember != null &&
-          joinedAt != null &&
-          !joinedAt.isAfter(eventAt)) {
+      if (existingMember != null && joinedAt != null) {
+        if (joinedAt.isAfter(eventAt)) {
+          final deleted = await _deleteContentMessagesAtOrAfterRemoval(
+            groupId: groupId,
+            removedPeerId: removedPeerId,
+            removedAt: eventAt,
+            beforeRejoinAt: joinedAt,
+            msgRepo: msgRepo,
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_REPAIRED',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'memberPeerId': removedPeerId.length > 8
+                  ? removedPeerId.substring(0, 8)
+                  : removedPeerId,
+              'eventAt': eventAt.toIso8601String(),
+              'rejoinedAt': joinedAt.toIso8601String(),
+              'deletedCount': deleted,
+            },
+          );
+          return true;
+        }
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_CONFLICT_APPLIED',
@@ -3543,6 +3570,20 @@ class GroupMessageListener {
         );
         return false;
       }
+    }
+
+    if (hasExplicitConfigVersion) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'type': sysType ?? 'null',
+          'eventAt': eventAt.toIso8601String(),
+          'watermark': watermark.toIso8601String(),
+        },
+      );
+      return true;
     }
 
     emitFlowEvent(

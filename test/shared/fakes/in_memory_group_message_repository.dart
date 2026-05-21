@@ -7,7 +7,10 @@ import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.
 
 /// In-memory [GroupMessageRepository] for integration tests.
 class InMemoryGroupMessageRepository
-    implements GroupMessageRepository, GroupThreadSummaryRepository {
+    implements
+        GroupMessageRepository,
+        GroupThreadSummaryRepository,
+        GroupMembershipRepairDeletionRepository {
   final Map<String, GroupMessage> _messages = {};
   final Map<String, String> _inboxCursors = {};
   final Map<String, GroupMessageReceipt> _receipts = {};
@@ -141,6 +144,11 @@ class InMemoryGroupMessageRepository
     if (removed != null) {
       _localDeletionTombstones.add(id);
     }
+  }
+
+  @override
+  Future<void> deleteMessageForMembershipRepair(String id) async {
+    _messages.remove(id);
   }
 
   @override
