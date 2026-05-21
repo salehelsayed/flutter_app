@@ -184,6 +184,41 @@ void _validateVerdict(
     if (verdict['creatorMatrixPass'] != true) {
       failures.add('${role.name}: creatorMatrixPass was not true');
     }
+    final proof = verdict['up005InviteStateProof'];
+    if (proof is! Map) {
+      failures.add('${role.name}: missing up005InviteStateProof map');
+    } else {
+      final proofMap = proof.cast<String, dynamic>();
+      if (proofMap['rowId'] != 'UP-005') {
+        failures.add(
+          '${role.name}: up005InviteStateProof rowId mismatch: '
+          '${proofMap['rowId']}',
+        );
+      }
+      if (proofMap['displayProof'] != 'seeded_group_info_wired') {
+        failures.add(
+          '${role.name}: up005InviteStateProof displayProof mismatch: '
+          '${proofMap['displayProof']}',
+        );
+      }
+      for (final field in const [
+        'pendingStatusesVisible',
+        'failedStatusesVisible',
+        'acceptedMembersVisibleAsJoined',
+        'pendingMembersNotJoined',
+        'failedMembersNotJoined',
+        'unknownMembersNotJoined',
+      ]) {
+        if (proofMap[field] != true) {
+          failures.add('${role.name}: up005InviteStateProof $field was false');
+        }
+      }
+      if (proofMap['relayLifecycleProof'] == true) {
+        failures.add(
+          '${role.name}: up005InviteStateProof unexpectedly claimed relay proof',
+        );
+      }
+    }
   } else if (verdict['roleAttachPass'] != true) {
     failures.add('${role.name}: roleAttachPass was not true');
   }

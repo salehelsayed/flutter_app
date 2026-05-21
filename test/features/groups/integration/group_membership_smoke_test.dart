@@ -640,6 +640,139 @@ void main() {
     );
 
     test(
+      'UP-005 invite delivery statuses keep pending failed and joined recipients distinct',
+      () async {
+        const groupId = 'grp-up005-invite-states';
+        const groupKey = 'base64UP005InviteStatesKey==';
+        const keyEpoch = 4;
+        final createdAt = DateTime.utc(2026, 5, 13, 12);
+
+        final adminBridge = PassthroughCryptoBridge();
+        adminBridge.responses['group:create'] = {
+          'ok': true,
+          'groupId': groupId,
+          'topicName': 'topic-$groupId',
+          'groupKey': groupKey,
+          'keyEpoch': keyEpoch,
+        };
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-up005-admin',
+          username: 'Admin',
+          network: network,
+          bridge: adminBridge,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-up005-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-up005-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        final dave = GroupTestUser.create(
+          peerId: 'peer-up005-dave',
+          username: 'Dave',
+          network: network,
+        );
+        addTearDown(() {
+          admin.dispose();
+          bob.dispose();
+          charlie.dispose();
+          dave.dispose();
+        });
+
+        ContactModel contactFor(GroupTestUser user) {
+          return ContactModel(
+            peerId: user.peerId,
+            publicKey: user.publicKey,
+            rendezvous: '/ip4/0.0.0.0',
+            username: user.username,
+            signature: 'sig-${user.peerId}',
+            scannedAt: createdAt.toIso8601String(),
+            mlKemPublicKey: 'mlkem-${user.peerId}',
+          );
+        }
+
+        final p2pService = _PerRecipientInviteP2PService(
+          failingPeerIds: {dave.peerId},
+        );
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+
+        final createResult = await createGroupWithMembers(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          p2pService: p2pService,
+          identity: IdentityModel(
+            peerId: admin.peerId,
+            publicKey: admin.publicKey,
+            privateKey: admin.privateKey,
+            mnemonic12:
+                'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+            mlKemPublicKey: 'mlkem-${admin.peerId}',
+            username: admin.username,
+            createdAt: createdAt.toIso8601String(),
+            updatedAt: createdAt.toIso8601String(),
+          ),
+          selectedContacts: [
+            contactFor(bob),
+            contactFor(charlie),
+            contactFor(dave),
+          ],
+          type: GroupType.chat,
+          name: 'UP-005 Invite States',
+          inviteDeliveryAttemptRepo: inviteStatusRepo,
+        );
+
+        expect(createResult.membersAdded, 3);
+        expect(createResult.invitesSent, 2);
+        expect(createResult.hasWarnings, isTrue);
+        expect(
+          createResult.inviteBatchResult!.failures.single.peerId,
+          dave.peerId,
+        );
+
+        Future<GroupInviteDeliveryStatus> statusFor(GroupTestUser user) {
+          return inviteStatusRepo.getStatusForMember(
+            groupId: groupId,
+            peerId: user.peerId,
+          );
+        }
+
+        expect(await statusFor(bob), GroupInviteDeliveryStatus.sent);
+        expect(await statusFor(charlie), GroupInviteDeliveryStatus.sent);
+        expect(await statusFor(dave), GroupInviteDeliveryStatus.needsResend);
+        expect(
+          (await inviteStatusRepo.getAttemptsForGroup(
+            groupId,
+          )).map((attempt) => attempt.status),
+          isNot(contains(GroupInviteDeliveryStatus.joined)),
+        );
+        expect(await dave.groupRepo.getGroup(groupId), isNull);
+
+        await inviteStatusRepo.markJoined(
+          groupId: groupId,
+          peerId: bob.peerId,
+          username: bob.username,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+
+        expect(await statusFor(bob), GroupInviteDeliveryStatus.joined);
+        expect(await statusFor(charlie), GroupInviteDeliveryStatus.sent);
+        expect(await statusFor(dave), GroupInviteDeliveryStatus.needsResend);
+        final daveAttempt = await inviteStatusRepo.getAttempt(
+          groupId: groupId,
+          peerId: dave.peerId,
+        );
+        expect(daveAttempt, isNotNull);
+        expect(daveAttempt!.status, isNot(GroupInviteDeliveryStatus.joined));
+        expect(daveAttempt.lastError, 'send_failed');
+      },
+    );
+
+    test(
       'ML-014 config update failure rolls back local insert without fake-network membership',
       () async {
         const groupId = 'grp-ml014-config-rollback';

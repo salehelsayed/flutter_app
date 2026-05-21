@@ -427,6 +427,26 @@ void main() {
     };
 
     if (configuredRole == 'creator') {
+      Finder statusBadge(String peerId) =>
+          find.byKey(ValueKey('group-member-invite-status-$peerId'));
+
+      void expectBadge(String peerId, String label) {
+        expect(
+          find.descendant(of: statusBadge(peerId), matching: find.text(label)),
+          findsOneWidget,
+        );
+      }
+
+      void expectNotJoined(String peerId) {
+        expect(
+          find.descendant(
+            of: statusBadge(peerId),
+            matching: find.text('Joined'),
+          ),
+          findsNothing,
+        );
+      }
+
       expect(find.text('Invite sent'), findsOneWidget);
       expect(find.text('In their inbox'), findsOneWidget);
       expect(find.text('Resend needed'), findsOneWidget);
@@ -439,6 +459,18 @@ void main() {
       );
       expect(find.text('Joined'), findsNWidgets(2));
       expect(find.text('Invite unknown'), findsOneWidget);
+      expectBadge('peer-accepted-one', 'Joined');
+      expectBadge('peer-accepted-two', 'Joined');
+      expectBadge('peer-sent', 'Invite sent');
+      expectBadge('peer-queued', 'In their inbox');
+      expectBadge('peer-resend', 'Resend needed');
+      expectBadge('peer-cannot', 'Cannot send');
+      expectBadge('peer-unknown', 'Invite unknown');
+      expectNotJoined('peer-sent');
+      expectNotJoined('peer-queued');
+      expectNotJoined('peer-resend');
+      expectNotJoined('peer-cannot');
+      expectNotJoined('peer-unknown');
       verdict['creatorMatrixPass'] = true;
       verdict['labels'] = const [
         'Invite sent',
@@ -448,6 +480,25 @@ void main() {
         'Joined',
         'Invite unknown',
       ];
+      verdict['up005InviteStateProof'] = const {
+        'rowId': 'UP-005',
+        'displayProof': 'seeded_group_info_wired',
+        'pendingStatusesVisible': true,
+        'failedStatusesVisible': true,
+        'acceptedMembersVisibleAsJoined': true,
+        'pendingMembersNotJoined': true,
+        'failedMembersNotJoined': true,
+        'unknownMembersNotJoined': true,
+        'relayLifecycleProof': false,
+        'labels': [
+          'Invite sent',
+          'In their inbox',
+          'Resend needed',
+          'Cannot send',
+          'Joined',
+          'Invite unknown',
+        ],
+      };
     } else {
       expect(find.text('You'), findsOneWidget);
       verdict['roleAttachPass'] = true;
