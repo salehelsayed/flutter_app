@@ -164,6 +164,70 @@ void main() {
         expect(payload, contains('[redacted:multiaddr]'));
       }
     });
+
+    test(
+      'OB-012 redacts real-looking diagnostic secrets from sink and logs',
+      () {
+        flowEventLoggingEnabled = true;
+
+        const groupKey = 'k7Yx6WcRZP9Lq2mN4bV8tS0uA3hD5fG7jK9pL1qR3sT=';
+        const privateKeyPem = '''
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDOb012Private
+KeyMaterialShouldNeverAppearInDiagnostics
+-----END PRIVATE KEY-----''';
+        const plaintext =
+            'OB012 private plaintext body: meet at 10:45 near the east gate';
+        const relay =
+            '/dns/relay.ob012.example/tcp/4001/wss/p2p/12D3KooWOb012Relay';
+        const forbidden = [
+          groupKey,
+          'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw',
+          '-----BEGIN PRIVATE KEY-----',
+          'KeyMaterialShouldNeverAppearInDiagnostics',
+          plaintext,
+          relay,
+        ];
+
+        final sinkEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(sinkEvents.add);
+        final output = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) output.add(message);
+        };
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'OB012_REAL_SECRET_SURFACE',
+          details: {
+            'groupKey': groupKey,
+            'privateKeyPem': privateKeyPem,
+            'plaintextMessage': plaintext,
+            'errorMessage':
+                'failure groupKey="$groupKey" privateKey="$privateKeyPem" '
+                'plaintext="$plaintext" $relay',
+            'nested': [
+              {'secretKey': groupKey, 'note': 'plaintext="$plaintext"'},
+            ],
+          },
+        );
+
+        final sinkPayload = jsonEncode(sinkEvents.single);
+        final logPayload = output.single.substring('[FLOW] '.length);
+
+        for (final payload in [sinkPayload, logPayload]) {
+          for (final fragment in forbidden) {
+            expect(
+              payload,
+              isNot(contains(fragment)),
+              reason: 'diagnostic leaked $fragment',
+            );
+          }
+          expect(payload, contains('[redacted]'));
+          expect(payload, contains('[redacted:multiaddr]'));
+        }
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

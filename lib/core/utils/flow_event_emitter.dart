@@ -121,8 +121,23 @@ String _redactSensitiveText(String value) {
     '[redacted:multiaddr]',
   );
   final sensitiveKeys = _sensitiveDiagnosticKeys.join('|');
-  final withoutDoubleQuotedValues = _redactSensitiveAssignments(
+  final withoutEscapedJsonDoubleQuotedValues = _redactSensitiveAssignments(
     withoutMultiaddrs,
+    RegExp(
+      '\\\\\\"($sensitiveKeys)\\\\\\"\\s*:\\s*\\\\\\"[^\\\\"]*\\\\\\"',
+      caseSensitive: false,
+    ),
+  );
+  final withoutJsonDoubleQuotedValues = _redactSensitiveAssignments(
+    withoutEscapedJsonDoubleQuotedValues,
+    RegExp('"($sensitiveKeys)"\\s*:\\s*"[^"]*"', caseSensitive: false),
+  );
+  final withoutJsonSingleQuotedValues = _redactSensitiveAssignments(
+    withoutJsonDoubleQuotedValues,
+    RegExp("'($sensitiveKeys)'\\s*:\\s*'[^']*'", caseSensitive: false),
+  );
+  final withoutDoubleQuotedValues = _redactSensitiveAssignments(
+    withoutJsonSingleQuotedValues,
     RegExp('\\b($sensitiveKeys)\\b\\s*[:=]\\s*"[^"]*"', caseSensitive: false),
   );
   final withoutSingleQuotedValues = _redactSensitiveAssignments(
