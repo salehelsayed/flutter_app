@@ -2586,11 +2586,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         await _openIntroOrbitRoute(navigator: navigator);
         return;
       case NotificationRouteTargetKind.group:
+        final identity = await widget.repository.loadIdentity();
         final resolution = await resolveGroupNotificationRouteTarget(
           groupId: routeTarget.groupId!,
           groupRepo: widget.groupRepository,
           pendingInviteRepo: widget.groupInviteListener.pendingInviteRepo,
           drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+          localPeerId: identity?.peerId,
         );
         if (resolution.group == null) {
           _notificationTappedAt = null;
@@ -2766,6 +2768,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _prepareNotificationRouteTarget(
     NotificationRouteTarget routeTarget,
   ) async {
+    final identity = await widget.repository.loadIdentity();
     await prepareNotificationRouteTarget(
       routeTarget: routeTarget,
       drainOfflineInbox: widget.p2pService.drainOfflineInbox,
@@ -2775,6 +2778,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
+      selfPeerId: identity?.peerId,
     );
   }
 

@@ -3033,6 +3033,7 @@ void _validateScenarioProofFields({
     _validateUp004UnreadChurnProof(byRole: byRole, failures: failures);
     _validateUp006ReaddUiStateProof(byRole: byRole, failures: failures);
     _validateUp009ReaddSenderIdentityProof(byRole: byRole, failures: failures);
+    _validateUp010NotificationRouteProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_non_friend_member_delivery') {
@@ -6959,6 +6960,91 @@ void _validateUp009ReaddSenderIdentityProof({
   }
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: UP-009 finalEpoch mismatch');
+  }
+}
+
+void _validateUp010NotificationRouteProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up010NotificationRouteProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRoleProof(String role, Map<String, dynamic>? proof) {
+    if (proof == null) {
+      failures.add('$role: missing UP-010 notification route proof fields');
+      return;
+    }
+    if (_stringValue(proof['rowId']) != 'UP-010') {
+      failures.add('$role: $proofName.rowId must be UP-010');
+    }
+    if (_stringValue(proof['role']) != role) {
+      failures.add('$role: $proofName.role must be $role');
+    }
+    if (_stringValue(proof['notificationRouteProofSource']) !=
+        'app_peer_core_simulator') {
+      failures.add(
+        '$role: $proofName.notificationRouteProofSource must be app_peer_core_simulator',
+      );
+    }
+    for (final field in const <String>[
+      'liveThreePartyProof',
+      'currentLocalMemberPresent',
+      'currentGroupRouteOpened',
+      'currentRouteGroupIdMatches',
+      'currentRoutePendingInviteAbsent',
+      'staleRemovedRecoveryDrainAttempted',
+      'staleRemovedGroupRejected',
+      'staleRemovedResolutionMissing',
+      'restoredLocalMemberAfterProbe',
+      'postReaddMessageVisible',
+      'messageVisibilityMatchesMembership',
+      'finalMemberListIncludesAliceBobCharlie',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (proof['staleRemovedGroupOpened'] == true) {
+      failures.add('$role: $proofName.staleRemovedGroupOpened must be false');
+    }
+    final currentDrainCalls = _intValue(
+      proof['currentResolutionRecoveryDrainCalls'],
+    );
+    if (currentDrainCalls != 0) {
+      failures.add(
+        '$role: $proofName.currentResolutionRecoveryDrainCalls must be 0',
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  requireRoleProof('alice', aliceProof);
+  requireRoleProof('bob', bobProof);
+  requireRoleProof('charlie', charlieProof);
+
+  final epochs = <int>{};
+  for (final proof in <Map<String, dynamic>?>[
+    aliceProof,
+    bobProof,
+    charlieProof,
+  ]) {
+    final epoch = _intValue(proof?['finalEpoch']);
+    if (epoch != null) {
+      epochs.add(epoch);
+    }
+  }
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: UP-010 finalEpoch mismatch');
   }
 }
 

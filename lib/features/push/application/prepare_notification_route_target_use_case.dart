@@ -22,6 +22,7 @@ Future<void> prepareNotificationRouteTarget({
   GroupMessageListener? groupMessageListener,
   required MediaAttachmentRepository mediaAttachmentRepository,
   required ReactionRepository? reactionRepository,
+  String? selfPeerId,
 }) async {
   final result = await prepareNotificationOpen(
     routeTarget: routeTarget,
@@ -44,6 +45,7 @@ Future<void> prepareNotificationRouteTarget({
         pendingKeyRepairRepo: pendingKeyRepairRepository,
         historyGapRepairRepo: historyGapRepairRepository,
         requestGroupKeyRepair: emitGroupKeyRepairRequest,
+        selfPeerId: selfPeerId,
       );
     },
   );

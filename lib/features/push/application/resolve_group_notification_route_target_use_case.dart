@@ -27,19 +27,42 @@ Future<GroupNotificationRouteResolution> resolveGroupNotificationRouteTarget({
   required GroupRepository groupRepo,
   PendingGroupInviteRepository? pendingInviteRepo,
   Future<void> Function()? drainOfflineInbox,
+  String? localPeerId,
 }) async {
-  final existingGroup = await groupRepo.getGroup(groupId);
-  if (existingGroup != null) {
-    return GroupNotificationRouteResolution.group(existingGroup);
+  final normalizedLocalPeerId = localPeerId?.trim();
+  final requiresCurrentLocalMembership =
+      normalizedLocalPeerId != null && normalizedLocalPeerId.isNotEmpty;
+
+  Future<GroupNotificationRouteResolution?> resolveCurrentState() async {
+    final existingGroup = await groupRepo.getGroup(groupId);
+    if (existingGroup != null) {
+      if (!requiresCurrentLocalMembership) {
+        return GroupNotificationRouteResolution.group(existingGroup);
+      }
+      final localMember = await groupRepo.getMember(
+        groupId,
+        normalizedLocalPeerId,
+      );
+      if (localMember != null) {
+        return GroupNotificationRouteResolution.group(existingGroup);
+      }
+    }
+
+    final existingPendingInvite = await pendingInviteRepo?.getPendingInvite(
+      groupId,
+    );
+    if (existingPendingInvite != null) {
+      return GroupNotificationRouteResolution.pendingInvite(
+        existingPendingInvite,
+      );
+    }
+
+    return null;
   }
 
-  final existingPendingInvite = await pendingInviteRepo?.getPendingInvite(
-    groupId,
-  );
-  if (existingPendingInvite != null) {
-    return GroupNotificationRouteResolution.pendingInvite(
-      existingPendingInvite,
-    );
+  final existingResolution = await resolveCurrentState();
+  if (existingResolution != null) {
+    return existingResolution;
   }
 
   if (drainOfflineInbox == null) {
@@ -48,18 +71,9 @@ Future<GroupNotificationRouteResolution> resolveGroupNotificationRouteTarget({
 
   await drainOfflineInbox();
 
-  final recoveredGroup = await groupRepo.getGroup(groupId);
-  if (recoveredGroup != null) {
-    return GroupNotificationRouteResolution.group(recoveredGroup);
-  }
-
-  final recoveredPendingInvite = await pendingInviteRepo?.getPendingInvite(
-    groupId,
-  );
-  if (recoveredPendingInvite != null) {
-    return GroupNotificationRouteResolution.pendingInvite(
-      recoveredPendingInvite,
-    );
+  final recoveredResolution = await resolveCurrentState();
+  if (recoveredResolution != null) {
+    return recoveredResolution;
   }
 
   return const GroupNotificationRouteResolution.missing();
