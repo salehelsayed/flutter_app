@@ -83,6 +83,20 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       messageId != null &&
       messageId.isNotEmpty) {
     final existingById = await msgRepo.getMessage(messageId);
+    if (existingById != null &&
+        _isConflictingDuplicateMessageId(
+          existing: existingById,
+          groupId: groupId,
+          senderId: senderId,
+        )) {
+      _emitDuplicateMessageIdConflictRejected(
+        messageId: messageId,
+        groupId: groupId,
+        existing: existingById,
+        senderId: senderId,
+      );
+      return null;
+    }
     if (existingById != null && !_isRepairPlaceholder(existingById)) {
       final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
         msgRepo: msgRepo,
@@ -412,6 +426,20 @@ Future<GroupMessage?> handleIncomingGroupMessage({
 
   if (messageId != null && messageId.isNotEmpty) {
     final existingById = await msgRepo.getMessage(messageId);
+    if (existingById != null &&
+        _isConflictingDuplicateMessageId(
+          existing: existingById,
+          groupId: groupId,
+          senderId: senderId,
+        )) {
+      _emitDuplicateMessageIdConflictRejected(
+        messageId: messageId,
+        groupId: groupId,
+        existing: existingById,
+        senderId: senderId,
+      );
+      return null;
+    }
     if (existingById != null && !_isRepairPlaceholder(existingById)) {
       final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
         msgRepo: msgRepo,
@@ -534,6 +562,14 @@ bool _isRepairPlaceholder(GroupMessage message) {
           message.status == groupPendingKeyRepairStatusUndecryptable);
 }
 
+bool _isConflictingDuplicateMessageId({
+  required GroupMessage existing,
+  required String groupId,
+  required String senderId,
+}) {
+  return existing.groupId != groupId || existing.senderPeerId != senderId;
+}
+
 Future<GroupMember?> _findLocalRecipientMemberByDeviceTransport({
   required GroupRepository groupRepo,
   required String groupId,
@@ -579,6 +615,29 @@ bool _isSenderDeviceBound({
   return device != null &&
       device.isActive &&
       device.transportPeerId == transportPeerId;
+}
+
+void _emitDuplicateMessageIdConflictRejected({
+  required String messageId,
+  required String groupId,
+  required GroupMessage existing,
+  required String senderId,
+}) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE_ID_CONFLICT_REJECTED',
+    details: {
+      'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'existingGroupId': existing.groupId.length > 8
+          ? existing.groupId.substring(0, 8)
+          : existing.groupId,
+      'existingSenderId': existing.senderPeerId.length > 8
+          ? existing.senderPeerId.substring(0, 8)
+          : existing.senderPeerId,
+      'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+    },
+  );
 }
 
 Future<GroupMessage?> _reconcileOutgoingSelfEchoDuplicate({
