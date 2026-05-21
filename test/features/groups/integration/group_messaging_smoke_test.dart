@@ -39,7 +39,40 @@ import '../../../features/contacts/domain/repositories/fake_contact_repository.d
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/group_test_user.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
+
+class _St008ContendedGroupMessageRepository
+    extends InMemoryGroupMessageRepository {
+  _St008ContendedGroupMessageRepository({required this.heldMessageId});
+
+  final String heldMessageId;
+  final Completer<void> firstWriteStarted = Completer<void>();
+  final Completer<void> _releaseWrite = Completer<void>();
+  final List<String> blockedSaveIds = [];
+
+  bool get isWriteHeld =>
+      firstWriteStarted.isCompleted && !_releaseWrite.isCompleted;
+
+  void releaseWrite() {
+    if (!_releaseWrite.isCompleted) {
+      _releaseWrite.complete();
+    }
+  }
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    if (message.id == heldMessageId && !firstWriteStarted.isCompleted) {
+      firstWriteStarted.complete();
+      await _releaseWrite.future;
+    } else if (isWriteHeld && message.id.startsWith('st008-')) {
+      blockedSaveIds.add(message.id);
+      await _releaseWrite.future;
+    }
+
+    await super.saveMessage(message);
+  }
+}
 
 class _SmokeInMemoryGroupPendingKeyRepairRepository
     implements GroupPendingKeyRepairRepository {
@@ -14228,6 +14261,169 @@ void main() {
           bob.bridge.commandLog,
           isNot(contains('group:inboxRetrieveCursor')),
         );
+      },
+    );
+
+    test(
+      'ST-008 fake-network DB lock contention queues sends without message loss',
+      () async {
+        final bobRepo = _St008ContendedGroupMessageRepository(
+          heldMessageId: 'st008-alice-1',
+        );
+        final alice = GroupTestUser.create(
+          peerId: 'st008-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'st008-bob-peer',
+          username: 'Bob',
+          network: network,
+          msgRepo: bobRepo,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'st008-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-st008-db-lock-contention';
+        final createdAt = DateTime.utc(2026, 5, 14, 8);
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'ST-008 DB Lock',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        final firstSend = alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'ST-008 Alice while Bob DB is held 1',
+          messageId: 'st008-alice-1',
+          timestamp: createdAt.add(const Duration(minutes: 8, seconds: 1)),
+        );
+        await bobRepo.firstWriteStarted.future.timeout(
+          const Duration(seconds: 2),
+        );
+
+        final secondSend = alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'ST-008 Alice while Bob DB is held 2',
+          messageId: 'st008-alice-2',
+          timestamp: createdAt.add(const Duration(minutes: 8, seconds: 2)),
+        );
+        final bobSend = bob.sendGroupMessage(
+          groupId: groupId,
+          text: 'ST-008 Bob send queued behind local DB write',
+          messageId: 'st008-bob-send',
+          timestamp: createdAt.add(const Duration(minutes: 8, seconds: 3)),
+        );
+
+        await pump();
+        expect(await bob.msgRepo.getMessage('st008-alice-1'), isNull);
+        expect(await bob.msgRepo.getMessage('st008-alice-2'), isNull);
+        expect(await bob.msgRepo.getMessage('st008-bob-send'), isNull);
+
+        final charlieDuringLock = await charlie.msgRepo.getMessage(
+          'st008-alice-1',
+        );
+        expect(
+          charlieDuringLock,
+          isNotNull,
+          reason:
+              'An unrelated active recipient should keep processing while Bob '
+              'is contending on a local write.',
+        );
+
+        bobRepo.releaseWrite();
+        await Future.wait([firstSend, secondSend, bobSend]);
+
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (DateTime.now().isBefore(deadline)) {
+          final bobIds = (await bob.msgRepo.getMessagesPage(
+            groupId,
+            limit: 20,
+          )).map((message) => message.id).toSet();
+          final aliceIds = (await alice.msgRepo.getMessagesPage(
+            groupId,
+            limit: 20,
+          )).map((message) => message.id).toSet();
+          final charlieIds = (await charlie.msgRepo.getMessagesPage(
+            groupId,
+            limit: 20,
+          )).map((message) => message.id).toSet();
+          if (bobIds.containsAll({
+                'st008-alice-1',
+                'st008-alice-2',
+                'st008-bob-send',
+              }) &&
+              aliceIds.contains('st008-bob-send') &&
+              charlieIds.containsAll({
+                'st008-alice-1',
+                'st008-alice-2',
+                'st008-bob-send',
+              })) {
+            break;
+          }
+          await pump();
+        }
+
+        Future<void> expectExactIds(
+          GroupTestUser user,
+          Set<String> expectedIds,
+        ) async {
+          final messages = (await user.msgRepo.getMessagesPage(
+            groupId,
+            limit: 20,
+          )).where((message) => message.id.startsWith('st008-')).toList();
+          expect(
+            messages.map((message) => message.id).toSet(),
+            expectedIds,
+            reason: '${user.username} ST-008 ids',
+          );
+          for (final id in expectedIds) {
+            expect(
+              messages.where((message) => message.id == id),
+              hasLength(1),
+              reason: '${user.username} should persist $id exactly once',
+            );
+          }
+        }
+
+        await expectExactIds(alice, {
+          'st008-alice-1',
+          'st008-alice-2',
+          'st008-bob-send',
+        });
+        await expectExactIds(bob, {
+          'st008-alice-1',
+          'st008-alice-2',
+          'st008-bob-send',
+        });
+        await expectExactIds(charlie, {
+          'st008-alice-1',
+          'st008-alice-2',
+          'st008-bob-send',
+        });
+        expect(bobRepo.blockedSaveIds, contains('st008-bob-send'));
       },
     );
 

@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -374,6 +375,40 @@ class _DelayedMediaDownloadBridge extends FakeBridge {
   }
 }
 
+class _ContendedGroupMessageRepository extends InMemoryGroupMessageRepository {
+  _ContendedGroupMessageRepository({required this.heldMessageId});
+
+  final String heldMessageId;
+  static const String contendedPrefix = 'st008-';
+  final Completer<void> firstWriteStarted = Completer<void>();
+  final Completer<void> _releaseWrite = Completer<void>();
+  final List<String> savedIds = [];
+  final List<String> blockedIds = [];
+
+  bool get isWriteHeld =>
+      firstWriteStarted.isCompleted && !_releaseWrite.isCompleted;
+
+  void releaseWrite() {
+    if (!_releaseWrite.isCompleted) {
+      _releaseWrite.complete();
+    }
+  }
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    if (message.id == heldMessageId && !firstWriteStarted.isCompleted) {
+      firstWriteStarted.complete();
+      await _releaseWrite.future;
+    } else if (isWriteHeld && message.id.startsWith(contendedPrefix)) {
+      blockedIds.add(message.id);
+      await _releaseWrite.future;
+    }
+
+    await super.saveMessage(message);
+    savedIds.add(message.id);
+  }
+}
+
 void main() {
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
@@ -585,6 +620,105 @@ void main() {
       expect(saved.isIncoming, isTrue);
       expect(saved.status, 'delivered');
       expect(await msgRepo.getUnreadCount('group-1'), 1);
+    },
+  );
+
+  test(
+    'ST-008 queued listener events persist after DB write contention releases',
+    () async {
+      listener.dispose();
+      final contendedRepo = _ContendedGroupMessageRepository(
+        heldMessageId: 'st008-msg-1',
+      );
+      msgRepo = contendedRepo;
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+      );
+
+      final emitted = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(emitted.add);
+      addTearDown(subscription.cancel);
+      listener.start(sourceController.stream);
+
+      Map<String, dynamic> event(int index) {
+        return {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'ST-008 contended event $index',
+          'timestamp': DateTime.utc(2026, 5, 14, 8, 8, index).toIso8601String(),
+          'messageId': 'st008-msg-$index',
+        };
+      }
+
+      sourceController.add(event(1));
+      await contendedRepo.firstWriteStarted.future.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(await msgRepo.getMessage('st008-msg-1'), isNull);
+      expect(emitted, isEmpty);
+
+      sourceController
+        ..add(event(2))
+        ..add(event(3));
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(await msgRepo.getMessage('st008-msg-2'), isNull);
+      expect(await msgRepo.getMessage('st008-msg-3'), isNull);
+
+      Object? guardedError;
+      try {
+        await runInDbWriteTransactionZoneForTest(() {
+          return bridge.send(
+            jsonEncode({
+              'cmd': 'group:publish',
+              'payload': {'groupId': 'group-1', 'messageId': 'st008-guard'},
+            }),
+          );
+        });
+      } catch (error) {
+        guardedError = error;
+      }
+      expect(
+        guardedError,
+        isA<BridgeCallInsideDbTransactionError>(),
+        reason:
+            'ST-008 requires native bridge calls to fail fast instead of '
+            'running while a DB write lock is held.',
+      );
+
+      contendedRepo.releaseWrite();
+
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (emitted.length < 3 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+
+      final saved = await msgRepo.getMessagesPage('group-1', limit: 10);
+      final st008Messages = saved
+          .where((message) => message.id.startsWith('st008-msg-'))
+          .toList();
+      expect(st008Messages.map((message) => message.id).toList(), [
+        'st008-msg-1',
+        'st008-msg-2',
+        'st008-msg-3',
+      ]);
+      expect(st008Messages.map((message) => message.text).toList(), [
+        'ST-008 contended event 1',
+        'ST-008 contended event 2',
+        'ST-008 contended event 3',
+      ]);
+      expect(emitted.map((message) => message.id).toSet(), {
+        'st008-msg-1',
+        'st008-msg-2',
+        'st008-msg-3',
+      });
+      expect(
+        contendedRepo.savedIds.where((id) => id.startsWith('st008-msg-')),
+        ['st008-msg-1', 'st008-msg-2', 'st008-msg-3'],
+      );
     },
   );
 
