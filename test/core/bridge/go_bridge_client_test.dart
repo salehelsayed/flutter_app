@@ -25,7 +25,11 @@ void main() {
     return jsonEncode({'ok': true});
   }
 
-  void installMockGoBridgeEventChannel({List<String>? calls}) {
+  void installMockGoBridgeEventChannel({
+    List<String>? calls,
+    Completer<void>? cancelStarted,
+    Future<void>? cancelGate,
+  }) {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -33,6 +37,14 @@ void main() {
       final call = goBridgeEventCodec.decodeMethodCall(message!);
       expect(call.method, anyOf('listen', 'cancel'));
       calls?.add(call.method);
+      if (call.method == 'cancel') {
+        if (cancelStarted != null && !cancelStarted.isCompleted) {
+          cancelStarted.complete();
+        }
+        if (cancelGate != null) {
+          await cancelGate;
+        }
+      }
       return goBridgeEventCodec.encodeSuccessEnvelope(null);
     });
 
@@ -598,6 +610,86 @@ void main() {
         expect(malformedResponse, isNot(contains(sentinel)));
         expect(lastCall, isNotNull);
         expect(lastCall!.method, equals('groupPublish'));
+      },
+    );
+
+    test(
+      'ST-011 rapid reinitialize loop preserves final group callback',
+      () async {
+        final eventChannelCalls = <String>[];
+        final cancelStarted = Completer<void>();
+        final cancelRelease = Completer<void>();
+        installMockGoBridgeEventChannel(
+          calls: eventChannelCalls,
+          cancelStarted: cancelStarted,
+          cancelGate: cancelRelease.future,
+        );
+
+        final receivedMessageIds = <String>[];
+        client.onGroupMessageReceived = (payload) {
+          receivedMessageIds.add(payload['messageId'] as String);
+        };
+
+        await client.initialize();
+        expect(
+          eventChannelCalls.where((call) => call == 'listen'),
+          hasLength(1),
+        );
+
+        final burst = List<Future<void>>.generate(
+          8,
+          (_) => client.reinitialize(),
+        );
+        await cancelStarted.future.timeout(const Duration(seconds: 1));
+
+        expect(
+          eventChannelCalls.where((call) => call == 'cancel'),
+          hasLength(1),
+        );
+        cancelRelease.complete();
+        await Future.wait(burst);
+
+        expect(client.isInitialized, isTrue);
+        expect(
+          eventChannelCalls.where((call) => call == 'listen'),
+          hasLength(2),
+        );
+        expect(
+          eventChannelCalls.where((call) => call == 'cancel'),
+          hasLength(1),
+        );
+
+        await Future.wait(
+          List<Future<void>>.generate(5, (_) => client.reinitialize()),
+        );
+        expect(client.isInitialized, isTrue);
+        expect(
+          eventChannelCalls.where((call) => call == 'listen'),
+          hasLength(3),
+        );
+        expect(
+          eventChannelCalls.where((call) => call == 'cancel'),
+          hasLength(2),
+        );
+
+        await sendMockGoBridgeEvent(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-st011',
+              'messageId': 'st011-final-live-callback',
+              'senderId': 'peer-st011',
+              'keyEpoch': 1,
+              'payload': {'text': 'after rapid reinitialize loop'},
+            },
+          }),
+        );
+
+        await waitForCondition(
+          () => receivedMessageIds.contains('st011-final-live-callback'),
+          description: 'ST-011 final live group callback',
+        );
+        expect(receivedMessageIds, ['st011-final-live-callback']);
       },
     );
 

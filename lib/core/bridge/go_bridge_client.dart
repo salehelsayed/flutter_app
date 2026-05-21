@@ -52,6 +52,7 @@ class GoBridgeClient extends Bridge {
   bool _disposed = false;
   bool _intentionalEventStreamCancel = false;
   bool _eventStreamRecoveryInProgress = false;
+  Future<void>? _reinitializeFuture;
   StreamSubscription<dynamic>? _eventSubscription;
   int _malformedPushEventCount = 0;
   int _unknownPushEventCount = 0;
@@ -193,7 +194,23 @@ class GoBridgeClient extends Bridge {
   }
 
   @override
-  Future<void> reinitialize() async {
+  Future<void> reinitialize() {
+    final activeReinitialize = _reinitializeFuture;
+    if (activeReinitialize != null) {
+      return activeReinitialize;
+    }
+
+    late final Future<void> future;
+    future = _performReinitialize().whenComplete(() {
+      if (identical(_reinitializeFuture, future)) {
+        _reinitializeFuture = null;
+      }
+    });
+    _reinitializeFuture = future;
+    return future;
+  }
+
+  Future<void> _performReinitialize() async {
     debugPrint(
       '[BRIDGE] reinitialize() starting — '
       'cancelling event subscription and re-subscribing...',
