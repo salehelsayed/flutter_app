@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/application/remove_group_member_use_
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
+import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -9647,6 +9648,124 @@ void main() {
         );
         await charlie.msgRepo.markAsRead(groupId);
         expect(await charlie.msgRepo.getUnreadCount(groupId), 0);
+      },
+    );
+
+    test(
+      'UP-011 muted group keeps delivery unread and suppresses notifications through churn',
+      () async {
+        const groupId = 'grp-up011-muted-churn';
+        const beforeText = 'UP-011 before removal muted delivery';
+        const removedWindowText = 'UP-011 removed-window muted delivery';
+        const afterReaddText = 'UP-011 after readd muted delivery';
+        final bobNotificationService = FakeNotificationService();
+        final bobTracker = ActiveConversationTracker();
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-up011-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-up011-bob',
+          username: 'Bob',
+          network: network,
+          notificationService: bobNotificationService,
+          groupConversationTracker: bobTracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-up011-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        await alice.createGroup(groupId: groupId, name: 'UP-011 Muted');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await setGroupMuted(
+          groupRepo: bob.groupRepo,
+          groupId: groupId,
+          isMuted: true,
+        );
+        expect((await bob.groupRepo.getGroup(groupId))!.isMuted, isTrue);
+        final initialUnread = await bob.msgRepo.getUnreadCount(groupId);
+        final initialNotificationCount =
+            bobNotificationService.shown.length +
+            bobNotificationService.shownGeneric.length;
+
+        await alice.sendGroupMessage(groupId: groupId, text: beforeText);
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return bobTexts.contains(beforeText);
+        }, maxTicks: 40);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+        );
+        await waitUntil(() async {
+          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+          final charlieSelf = await charlie.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return charlieGroup == null || charlieSelf == null;
+        }, maxTicks: 40);
+
+        await alice.sendGroupMessage(groupId: groupId, text: removedWindowText);
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return bobTexts.containsAll({beforeText, removedWindowText});
+        }, maxTicks: 40);
+
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await waitUntil(() async {
+          final members = await bob.groupRepo.getMembers(groupId);
+          return members.map((member) => member.peerId).toSet().containsAll({
+            alice.peerId,
+            bob.peerId,
+            charlie.peerId,
+          });
+        }, maxTicks: 40);
+
+        await alice.sendGroupMessage(groupId: groupId, text: afterReaddText);
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return bobTexts.containsAll({
+            beforeText,
+            removedWindowText,
+            afterReaddText,
+          });
+        }, maxTicks: 40);
+
+        final finalUnread = await bob.msgRepo.getUnreadCount(groupId);
+        final finalNotificationCount =
+            bobNotificationService.shown.length +
+            bobNotificationService.shownGeneric.length;
+
+        expect(finalUnread, greaterThan(initialUnread));
+        expect(finalNotificationCount, initialNotificationCount);
+        expect(bobNotificationService.shown, isEmpty);
+        expect(bobNotificationService.shownGeneric, isEmpty);
       },
     );
 
