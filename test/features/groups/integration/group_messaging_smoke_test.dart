@@ -473,6 +473,105 @@ void main() {
     );
 
     test(
+      'SV-004 forged sender identity is rejected by all fake-network recipients',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        final alice = GroupTestUser.create(
+          peerId: 'sv004-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv004-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv004-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final dana = GroupTestUser.create(
+          peerId: 'sv004-dana-attacker',
+          username: 'Dana',
+          network: network,
+        );
+        addTearDown(() {
+          debugSetFlowEventSink(null);
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+          dana.dispose();
+        });
+
+        const groupId = 'group-sv004-forged-sender';
+        const forgedMessageId = 'sv004-forged-bob-from-dana-device';
+        await alice.createGroup(groupId: groupId, name: 'SV-004 Private ABC');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await network.publish(groupId, bob.peerId, {
+          'groupId': groupId,
+          'senderId': bob.peerId,
+          'senderUsername': bob.username,
+          'keyEpoch': 1,
+          'text': 'SV-004 forged Bob message from Dana device',
+          'timestamp': DateTime.utc(2026, 5, 14, 4, 34).toIso8601String(),
+          'messageId': forgedMessageId,
+          'senderDeviceId': dana.deviceId,
+          'transportPeerId': dana.deviceId,
+        }, senderDeviceId: dana.deviceId);
+        await pump();
+
+        for (final recipient in [alice, bob, charlie]) {
+          expect(
+            await recipient.msgRepo.getMessage(forgedMessageId),
+            isNull,
+            reason: '${recipient.username} must not persist forged Bob traffic',
+          );
+          expect(
+            (await recipient.loadGroupMessages(groupId))
+                .where(
+                  (message) =>
+                      message.id == forgedMessageId ||
+                      message.text ==
+                          'SV-004 forged Bob message from Dana device',
+                )
+                .toList(),
+            isEmpty,
+            reason: '${recipient.username} must not render forged Bob traffic',
+          );
+        }
+        expect(
+          flowEvents
+              .where(
+                (event) =>
+                    event['event'] ==
+                    'GROUP_HANDLE_INCOMING_MSG_UNBOUND_DEVICE_REJECTED',
+              )
+              .length,
+          greaterThanOrEqualTo(3),
+        );
+        expect(
+          network.deliveryRecords
+              .where(
+                (record) =>
+                    record['messageId'] == forgedMessageId &&
+                    record['senderPeerId'] == bob.peerId &&
+                    record['senderDeviceId'] == dana.deviceId,
+              )
+              .toList(),
+          hasLength(3),
+        );
+      },
+    );
+
+    test(
       'SV-002 removed old-key publish reaches listeners without timeline unread or reaction mutation',
       () async {
         final flowEvents = <Map<String, dynamic>>[];

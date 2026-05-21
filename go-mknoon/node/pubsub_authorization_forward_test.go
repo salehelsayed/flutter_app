@@ -495,6 +495,165 @@ func TestGA006SenderTransportPeerMismatchRejects(t *testing.T) {
 	}
 }
 
+func TestSV004ForgedSenderIdentityOrSignatureRejectsWithSafeDiagnostics(t *testing.T) {
+	bobPriv, bobPub := generateEd25519KeyPair(t)
+	attackerPriv, attackerPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "sv004-sensitive-group-id-should-not-log"
+	groupName := "SV004 Sensitive Group Name Should Not Log"
+	bobPeerId := generatePeerIDStr(t)
+	attackerPeerId := generatePeerIDStr(t)
+	localPeerId := generatePeerIDStr(t)
+	bobPID, err := peer.Decode(bobPeerId)
+	if err != nil {
+		t.Fatalf("decode Bob peer ID: %v", err)
+	}
+	attackerPID, err := peer.Decode(attackerPeerId)
+	if err != nil {
+		t.Fatalf("decode attacker peer ID: %v", err)
+	}
+
+	collector := &testEventCollector{}
+	n := NewNode()
+	n.peerId = localPeerId
+	n.eventCallback = collector
+	n.groupConfigs = map[string]*GroupConfig{
+		groupId: {
+			Name:      groupName,
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: bobPeerId, Role: GroupRoleAdmin, PublicKey: bobPub},
+			},
+			CreatedBy: bobPeerId,
+		},
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	n.groupKeys = map[string]*GroupKeyInfo{groupId: keyInfo}
+	n.pubsubRejectDiagNow = func() time.Time {
+		return time.Date(2026, 5, 14, 4, 30, 0, 0, time.UTC)
+	}
+
+	validator := n.groupTopicValidator(groupId)
+	logs := captureLP002ValidatorLogs(t)
+	cases := []struct {
+		name      string
+		pid       peer.ID
+		reason    string
+		privB64   string
+		pubB64    string
+		plaintext string
+	}{
+		{
+			name:      "claimed sender over wrong transport peer",
+			pid:       attackerPID,
+			reason:    "peer_mismatch",
+			privB64:   bobPriv,
+			pubB64:    bobPub,
+			plaintext: `{"text":"SV004-TRANSPORT-FORGE-SENTINEL","timestamp":"2026-05-14T04:30:00Z"}`,
+		},
+		{
+			name:      "claimed sender with bad signature",
+			pid:       bobPID,
+			reason:    "bad_signature_or_epoch",
+			privB64:   attackerPriv,
+			pubB64:    attackerPub,
+			plaintext: `{"text":"SV004-SIGNATURE-FORGE-SENTINEL","timestamp":"2026-05-14T04:31:00Z"}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			beforeRejects := countLP002RejectLogs(logs.String(), tc.reason)
+			beforeEvents := len(collector.snapshot())
+			envelopeJSON := buildTestEnvelopeWithPlaintext(
+				t,
+				groupId,
+				"group_message",
+				bobPeerId,
+				tc.privB64,
+				tc.pubB64,
+				groupKey,
+				keyInfo.KeyEpoch,
+				tc.plaintext,
+			)
+			env, err := internal.ParseGroupEnvelope(envelopeJSON)
+			if err != nil {
+				t.Fatalf("parse envelope: %v", err)
+			}
+			msg := &pubsub.Message{Message: &pb.Message{Data: []byte(envelopeJSON)}}
+
+			if result := validator(context.Background(), tc.pid, msg); result != pubsub.ValidationReject {
+				t.Fatalf("validator result = %v, want ValidationReject", result)
+			}
+			if got := countLP002RejectLogs(logs.String(), tc.reason) - beforeRejects; got != 1 {
+				t.Fatalf("diagnostic logs added = %d, want 1 for %s; logs:\n%s", got, tc.reason, logs.String())
+			}
+
+			events := collector.snapshot()
+			if got := len(events) - beforeEvents; got != 1 {
+				t.Fatalf("diagnostic events added = %d, want 1; events:\n%s", got, strings.Join(events, "\n"))
+			}
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(events[len(events)-1]), &payload); err != nil {
+				t.Fatalf("decode diagnostic event: %v", err)
+			}
+			if payload["event"] != "group:validation_rejected" {
+				t.Fatalf("event = %v, want group:validation_rejected", payload["event"])
+			}
+			data, ok := payload["data"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("event data has type %T, want object", payload["data"])
+			}
+			if got := data["reason"]; got != tc.reason {
+				t.Fatalf("event reason = %v, want %s", got, tc.reason)
+			}
+
+			sensitiveFragments := []string{
+				tc.plaintext,
+				"SV004-TRANSPORT-FORGE-SENTINEL",
+				"SV004-SIGNATURE-FORGE-SENTINEL",
+				groupId,
+				groupName,
+				bobPeerId,
+				attackerPeerId,
+				localPeerId,
+				bobPub,
+				bobPriv,
+				attackerPub,
+				attackerPriv,
+				env.Signature,
+				env.Encrypted.Ciphertext,
+				env.Encrypted.Nonce,
+			}
+			assertLP002LogsOmitSensitive(t, logs, sensitiveFragments)
+			eventJSON := events[len(events)-1]
+			for _, fragment := range sensitiveFragments {
+				if fragment != "" && strings.Contains(eventJSON, fragment) {
+					t.Fatalf("diagnostic event leaked sensitive fragment %q in %s", fragment, eventJSON)
+				}
+			}
+		})
+	}
+
+	assertLP002NoAcceptedGroupEvents(t, "SV-004 validator", collector)
+	for _, marker := range []string{
+		"authorization reject",
+		"reason=peer_mismatch",
+		"reason=bad_signature_or_epoch",
+		"groupHash=",
+		"senderHash=",
+		"transportPeerHash=",
+	} {
+		if !strings.Contains(logs.String(), marker) {
+			t.Fatalf("diagnostic missing useful marker %q in logs:\n%s", marker, logs.String())
+		}
+	}
+}
+
 func runRemovedPeerRawPubSubRejectsBeforeAcceptAndForward(t *testing.T, idPrefix, label string) {
 	removedPriv, removedPub := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()

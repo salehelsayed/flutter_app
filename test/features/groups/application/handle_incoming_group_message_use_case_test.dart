@@ -325,6 +325,44 @@ void main() {
     },
   );
 
+  test(
+    'SV-004 forged sender transport identity is rejected before persistence or event log',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final eventLog = _FakeEventLog();
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Forged Sender',
+        keyEpoch: 1,
+        text: 'SV-004 forged message',
+        timestamp: DateTime.utc(2026, 5, 14, 4, 32).toIso8601String(),
+        messageId: 'sv004-forged-transport',
+        transportPeerId: 'peer-attacker',
+        senderDeviceId: 'peer-attacker',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('sv004-forged-transport'), isNull);
+      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+      expect(eventLog.entries, isEmpty);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_UNBOUND_DEVICE_REJECTED',
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('MS002 stores verified transport peer id on accepted message', () async {
     final result = await handleIncomingGroupMessage(
       groupRepo: groupRepo,
