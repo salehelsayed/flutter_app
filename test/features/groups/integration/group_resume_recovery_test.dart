@@ -10625,6 +10625,184 @@ void main() {
       });
 
       test(
+        'ST-013 fake-network relay chaos surfaces gaps and recovers media replay',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            inboxStoreFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-st013-relay-chaos',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bobBridge = _FailFirstCursorInboxBridge();
+          final bob = GroupTestUser.create(
+            peerId: 'reader-st013-relay-chaos',
+            username: 'Bob',
+            network: network,
+            bridge: bobBridge,
+          );
+          addTearDown(() {
+            admin.dispose();
+            bob.dispose();
+          });
+
+          const groupId = 'group-st013-relay-chaos';
+          await admin.createGroup(groupId: groupId, name: 'ST-013 Chaos');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+
+          final (pendingResult, pendingMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'ST-013 inbox store failure is retry-owned',
+              );
+          expect(pendingResult, SendGroupMessageResult.success);
+          expect(pendingMessage, isNotNull);
+          expect(pendingMessage!.status, 'pending');
+          expect(pendingMessage.inboxStored, isFalse);
+          expect(pendingMessage.inboxRetryPayload, isNotNull);
+
+          final inboxRetried = await retryFailedGroupInboxStores(
+            bridge: admin.bridge,
+            msgRepo: admin.msgRepo,
+          );
+          expect(inboxRetried, 1);
+          final pendingAfterRetry = await admin.msgRepo.getMessage(
+            pendingMessage.id,
+          );
+          expect(pendingAfterRetry!.status, 'sent');
+          expect(pendingAfterRetry.inboxStored, isTrue);
+          final pendingStorePayload = latestBridgePayload(
+            admin.bridge,
+            'group:inboxStore',
+          );
+
+          bob.unsubscribeFromGroup(groupId);
+          const mediaMessageId = 'st013-offline-media';
+          final mediaAttachment = _uploadedMedia(
+            id: 'st013-offline-media-att',
+            messageId: mediaMessageId,
+            mime: 'image/jpeg',
+            localPath: 'media/st013/offline-media.jpg',
+          );
+          final (mediaResult, mediaMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'ST-013 offline media replay',
+                messageId: mediaMessageId,
+                mediaAttachments: [mediaAttachment],
+              );
+          expect(mediaResult, SendGroupMessageResult.successNoPeers);
+          expect(mediaMessage, isNotNull);
+          final mediaStorePayload = latestBridgePayload(
+            admin.bridge,
+            'group:inboxStore',
+          );
+
+          bobBridge
+            ..addPage(groupId, '', [
+              {
+                'from': admin.peerId,
+                'message': pendingStorePayload['message'] as String,
+                'timestamp': DateTime.now().millisecondsSinceEpoch,
+              },
+            ], 'st013-page2')
+            ..addPage(
+              groupId,
+              'st013-page2',
+              [
+                {
+                  'from': admin.peerId,
+                  'message': mediaStorePayload['message'] as String,
+                  'timestamp': DateTime.now().millisecondsSinceEpoch,
+                },
+              ],
+              '',
+              historyGaps: [
+                {
+                  'groupId': groupId,
+                  'gapId': 'st013-unrecoverable-gap',
+                  'missingAfterMessageId': pendingMessage.id,
+                  'missingBeforeMessageId': mediaMessageId,
+                  'expectedRangeHash': 'st013-missing-range-hash',
+                  'expectedHeadMessageId': mediaMessageId,
+                  'candidateSourcePeerIds': [admin.peerId],
+                },
+              ],
+            );
+          final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+
+          final firstDrain = await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+            mediaAttachmentRepo: bob.mediaAttachmentRepo,
+            historyGapRepairRepo: historyRepo,
+          );
+          expect(firstDrain.isSuccessful, isFalse);
+          expect(await bob.msgRepo.getInboxCursor(groupId), isNull);
+          expect(await bob.msgRepo.getMessage(mediaMessageId), isNull);
+
+          final secondDrain = await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+            mediaAttachmentRepo: bob.mediaAttachmentRepo,
+            historyGapRepairRepo: historyRepo,
+          );
+          expect(secondDrain.isSuccessful, isFalse);
+          expect(await bob.msgRepo.getInboxCursor(groupId), 'st013-page2');
+          expect(
+            (await bob.loadGroupMessages(
+              groupId,
+            )).where((message) => message.id == pendingMessage.id),
+            hasLength(1),
+          );
+          expect(await bob.msgRepo.getMessage(mediaMessageId), isNull);
+
+          final finalDrain = await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+            mediaAttachmentRepo: bob.mediaAttachmentRepo,
+            historyGapRepairRepo: historyRepo,
+          );
+          expect(finalDrain.isSuccessful, isTrue);
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where((message) => message.id == pendingMessage.id),
+            hasLength(1),
+          );
+          expect(
+            bobMessages.where((message) => message.id == mediaMessageId),
+            hasLength(1),
+          );
+          final media = await bob.mediaAttachmentRepo.getAttachmentsForMessage(
+            mediaMessageId,
+          );
+          expect(media, hasLength(1));
+          expect(media.single.id, 'st013-offline-media-att');
+          expect(media.single.contentHash, _validContentHash);
+          final failedRepair = await historyRepo.getRepair(
+            groupId: groupId,
+            gapId: 'st013-unrecoverable-gap',
+          );
+          expect(failedRepair, isNotNull);
+          expect(failedRepair!.status, groupHistoryGapRepairStatusFailed);
+          expect(failedRepair.failureReason, 'request_failed');
+        },
+      );
+
+      test(
         'OB-011 fake-network release telemetry identifies missed-message causes',
         () async {
           final flowEvents = <Map<String, dynamic>>[];

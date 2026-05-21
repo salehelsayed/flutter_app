@@ -490,6 +490,40 @@ class _TimeoutCursorInboxBridge extends _CursorInboxBridge {
   }
 }
 
+class _FailOnceCursorInboxBridge extends _CursorInboxBridge {
+  final Set<String> failOncePages = {};
+  final Set<String> failedPages = {};
+
+  void addFailOnce(String groupId, String cursor) {
+    failOncePages.add('$groupId:$cursor');
+  }
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:inboxRetrieveCursor') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final groupId = payload['groupId'] as String;
+      final cursor = payload['cursor'] as String? ?? '';
+      final key = '$groupId:$cursor';
+      if (failOncePages.contains(key) && failedPages.add(key)) {
+        if (cmd != null) commandLog.add(cmd);
+        sendCallCount++;
+        lastSentMessage = message;
+        sentMessages.add(message);
+        lastCommand = cmd;
+        return jsonEncode({
+          'ok': false,
+          'errorCode': 'ST013_RELAY_RETRIEVE_FAILED',
+          'errorMessage': 'simulated ST-013 relay retrieve failure',
+        });
+      }
+    }
+    return super.send(message);
+  }
+}
+
 class _SensitiveCursorErrorBridge extends _CursorInboxBridge {
   _SensitiveCursorErrorBridge(this.errorMessage);
 
@@ -2069,6 +2103,238 @@ void main() {
       expect(allCursorCommands, hasLength(2));
       expect(allCursorCommands[0]['payload']['cursor'], '');
       expect(allCursorCommands[1]['payload']['cursor'], '');
+    },
+  );
+
+  test(
+    'ST-013 relay chaos retries retrieve cursor repair and media without silent completion',
+    () async {
+      await saveDefaultReplayKey();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          publicKey: 'pk-sender',
+          joinedAt: DateTime.utc(2026, 5, 14, 9),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          publicKey: 'pk-sender',
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      for (final sourcePeerId in const ['peer-fail', 'peer-good']) {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: sourcePeerId,
+            username: sourcePeerId,
+            role: MemberRole.writer,
+            publicKey: 'pk-$sourcePeerId',
+            joinedAt: DateTime.utc(2026, 5, 1),
+          ),
+        );
+      }
+
+      final chaosBridge = _FailOnceCursorInboxBridge()
+        ..signLegacyReplayMessage = bridge.signLegacyReplayMessage
+        ..addFailOnce('group-1', '')
+        ..addFailOnce('group-1', 'st013-cursor-page2');
+      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      var failMediaSaveOnce = true;
+      mediaRepo.onSaveAttachment = (attachment) {
+        if (attachment.id == 'st013-media-att' && failMediaSaveOnce) {
+          failMediaSaveOnce = false;
+          throw StateError('ST-013 simulated media attachment store failure');
+        }
+      };
+
+      final repairedMessage = await signedRelayMessage(
+        id: 'st013-repaired-gap',
+        text: 'ST-013 repaired gap payload',
+        timestamp: DateTime.utc(2026, 5, 1, 12, 2),
+      );
+      final repairedRangeHash = computeGroupHistoryRangeHash([repairedMessage]);
+      final page1Message = await signedRelayMessage(
+        id: 'st013-page1',
+        text: 'ST-013 page one survives cursor chaos',
+        timestamp: DateTime.utc(2026, 5, 1, 12),
+      );
+      final mediaPayload = {
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'ST-013 media survives retry',
+        'timestamp': DateTime.utc(2026, 5, 1, 12, 3).toIso8601String(),
+        'messageId': 'st013-media-msg',
+        'media': [
+          {
+            'id': 'st013-media-att',
+            'mime': 'image/jpeg',
+            'size': 4096,
+            'mediaType': 'image',
+            'downloadStatus': 'pending',
+            'contentHash': _validContentHash,
+            'encryptionKeyBase64': 'st013-key',
+            'encryptionNonce': 'st013-nonce',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
+            'createdAt': DateTime.utc(2026, 5, 1, 12, 3).toIso8601String(),
+          },
+        ],
+      };
+      final mediaMessage = {
+        'from': 'peer-sender',
+        'message': await signedReplayEnvelope(
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: jsonEncode(mediaPayload),
+          messageId: 'st013-media-msg',
+        ),
+        'timestamp': DateTime.utc(2026, 5, 1, 12, 3).millisecondsSinceEpoch,
+      };
+
+      chaosBridge
+        ..addPage(
+          'group-1',
+          '',
+          [page1Message],
+          'st013-cursor-page2',
+          historyGaps: [
+            historyGap(
+              expectedRangeHash: repairedRangeHash,
+              candidateSources: const ['peer-fail', 'peer-good'],
+            ),
+            historyGap(
+              expectedRangeHash: 'missing-range-hash',
+              candidateSources: const ['peer-fail'],
+              gapId: 'gap-unrecoverable',
+            ),
+          ],
+        )
+        ..addPage('group-1', 'st013-cursor-page2', [mediaMessage], '');
+      chaosBridge.addRepairResponse(
+        groupId: 'group-1',
+        gapId: 'gap-1',
+        sourcePeerId: 'peer-fail',
+        response: {
+          'ok': false,
+          'errorCode': 'ST013_REPAIR_FAILED',
+          'errorMessage': 'simulated repair source failure',
+        },
+      );
+      chaosBridge.addRepairResponse(
+        groupId: 'group-1',
+        gapId: 'gap-1',
+        sourcePeerId: 'peer-good',
+        response: {
+          'ok': true,
+          'groupId': 'group-1',
+          'gapId': 'gap-1',
+          'sourcePeerId': 'peer-good',
+          'rangeHash': repairedRangeHash,
+          'headMessageId': 'msg-after',
+          'messages': [repairedMessage],
+        },
+      );
+
+      final firstResult = await drainGroupOfflineInbox(
+        bridge: chaosBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        mediaAttachmentRepo: mediaRepo,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+      expect(firstResult.isSuccessful, isFalse);
+      expect(await msgRepo.getInboxCursor('group-1'), isNull);
+      expect(await msgRepo.getMessage('st013-page1'), isNull);
+
+      final secondResult = await drainGroupOfflineInbox(
+        bridge: chaosBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        mediaAttachmentRepo: mediaRepo,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+      expect(secondResult.isSuccessful, isFalse);
+      expect(await msgRepo.getInboxCursor('group-1'), 'st013-cursor-page2');
+      expect(await msgRepo.getMessage('st013-page1'), isNotNull);
+      expect(await msgRepo.getMessage('st013-repaired-gap'), isNotNull);
+      final repaired = await historyRepo.getRepair(
+        groupId: 'group-1',
+        gapId: 'gap-1',
+      );
+      expect(repaired!.status, groupHistoryGapRepairStatusRepaired);
+      expect(repaired.attemptedSourcePeerIds, ['peer-fail', 'peer-good']);
+      final unrecoverable = await historyRepo.getRepair(
+        groupId: 'group-1',
+        gapId: 'gap-unrecoverable',
+      );
+      expect(unrecoverable!.status, groupHistoryGapRepairStatusFailed);
+      expect(unrecoverable.failureReason, 'request_failed');
+
+      final thirdResult = await drainGroupOfflineInbox(
+        bridge: chaosBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        mediaAttachmentRepo: mediaRepo,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+      expect(thirdResult.isSuccessful, isFalse);
+      expect(await msgRepo.getInboxCursor('group-1'), 'st013-cursor-page2');
+      expect(await msgRepo.getMessage('st013-media-msg'), isNotNull);
+      expect(
+        await mediaRepo.getAttachmentsForMessage('st013-media-msg'),
+        isEmpty,
+      );
+
+      final finalResult = await drainGroupOfflineInbox(
+        bridge: chaosBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        mediaAttachmentRepo: mediaRepo,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+      expect(finalResult.isSuccessful, isTrue);
+      expect(
+        await msgRepo.getInboxCursor('group-1'),
+        startsWith(groupInboxSyntheticSinceCursorPrefix),
+      );
+      final messages = await msgRepo.getMessagesPage('group-1');
+      for (final messageId in const [
+        'st013-page1',
+        'st013-repaired-gap',
+        'st013-media-msg',
+      ]) {
+        expect(
+          messages.where((message) => message.id == messageId),
+          hasLength(1),
+          reason: messageId,
+        );
+      }
+      final attachments = await mediaRepo.getAttachmentsForMessage(
+        'st013-media-msg',
+      );
+      expect(attachments, hasLength(1));
+      expect(attachments.single.id, 'st013-media-att');
+      expect(attachments.single.contentHash, _validContentHash);
+      expect(
+        (await historyRepo.getVisibleRepairsForGroup(
+          'group-1',
+        )).map((repair) => repair.gapId),
+        contains('gap-unrecoverable'),
+      );
     },
   );
 

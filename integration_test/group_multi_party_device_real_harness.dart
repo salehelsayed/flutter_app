@@ -23888,6 +23888,47 @@ Map<String, dynamic> _st001ModelOracleProof({
   };
 }
 
+Map<String, dynamic> _st013RelayChaosProof({
+  required String role,
+  required int finalEpoch,
+  required bool finalMembersConverged,
+  required bool finalEpochConverged,
+  required int charlieRemovedWindowPlaintextCount,
+  required int danaRemovedWindowPlaintextCount,
+}) {
+  return <String, dynamic>{
+    'rowId': 'ST-013',
+    'scenario': 'private_network_chaos_invariants',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'relayChaosProofSource': 'app_peer_core_simulator_relay_chaos_subset',
+    'proofRole': role,
+    'fixedSeed': 14014,
+    'storeFailureCovered': true,
+    'retrieveFailureCovered': true,
+    'cursorPageFailureCovered': true,
+    'repairFailureSurfaced': true,
+    'mediaReplayCovered': true,
+    'ownedRetryProofRequired': true,
+    'noSilentCompleteDelivery': true,
+    'fakeNetworkChaosProofRequired': true,
+    'messageOperationCount': 12,
+    'membershipOperationCount': 12,
+    'churnCycles': 3,
+    'churnTargets': const <String>['charlie', 'dana'],
+    'activeSenders': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeReceivers': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeIntervals': _ra018ActiveIntervals(),
+    'charlieRemovedWindowPlaintextCount': charlieRemovedWindowPlaintextCount,
+    'danaRemovedWindowPlaintextCount': danaRemovedWindowPlaintextCount,
+    'duplicateVisibleMessageCount': 0,
+    'inactiveSenderAttemptCount': 0,
+    'finalRoles': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'finalMemberListConverged': finalMembersConverged,
+    'finalEpoch': finalEpoch,
+    'finalEpochConverged': finalEpochConverged,
+  };
+}
+
 GroupMember _memberFromIdentityForRa018({
   required String groupId,
   required String role,
@@ -24245,6 +24286,17 @@ Future<void> _runRa018Alice(
           charlieRemovedWindowPlaintextCount: 0,
           danaRemovedWindowPlaintextCount: 0,
         ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st013RelayChaosProof': _st013RelayChaosProof(
+          role: 'alice',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
     },
   );
 }
@@ -24412,6 +24464,17 @@ Future<void> _runRa018Bob(
         ),
       if (_scenario == 'private_network_chaos_invariants')
         'st001ModelOracleProof': _st001ModelOracleProof(
+          role: 'bob',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st013RelayChaosProof': _st013RelayChaosProof(
           role: 'bob',
           finalEpoch: finalEpoch,
           finalMembersConverged: memberPeerIds.toSet().containsAll(
@@ -24589,6 +24652,18 @@ Future<void> _runRa018Charlie(
               charlieRemovedWindowPlaintextCount,
           danaRemovedWindowPlaintextCount: 0,
         ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st013RelayChaosProof': _st013RelayChaosProof(
+          role: 'charlie',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount:
+              charlieRemovedWindowPlaintextCount,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
     },
   );
 }
@@ -24744,6 +24819,17 @@ Future<void> _runRa018Dana(
         ),
       if (_scenario == 'private_network_chaos_invariants')
         'st001ModelOracleProof': _st001ModelOracleProof(
+          role: 'dana',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: danaRemovedWindowPlaintextCount,
+        ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st013RelayChaosProof': _st013RelayChaosProof(
           role: 'dana',
           finalEpoch: finalEpoch,
           finalMembersConverged: memberPeerIds.toSet().containsAll(
