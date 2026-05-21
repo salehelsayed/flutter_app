@@ -53,6 +53,8 @@ class GoBridgeClient extends Bridge {
   bool _intentionalEventStreamCancel = false;
   bool _eventStreamRecoveryInProgress = false;
   StreamSubscription<dynamic>? _eventSubscription;
+  int _malformedPushEventCount = 0;
+  int _unknownPushEventCount = 0;
 
   @override
   bool get isInitialized => _initialized;
@@ -254,6 +256,12 @@ class GoBridgeClient extends Bridge {
   @visibleForTesting
   void debugHandleEventForTest(dynamic event) => _handleEvent(event);
 
+  @visibleForTesting
+  int get debugMalformedPushEventCountForTest => _malformedPushEventCount;
+
+  @visibleForTesting
+  int get debugUnknownPushEventCountForTest => _unknownPushEventCount;
+
   void _emitRawGoFlowEvent(String? eventName, Map<String, dynamic> eventData) {
     if (eventName == null || !_rawFlowPassthroughEvents.contains(eventName)) {
       return;
@@ -290,6 +298,75 @@ class GoBridgeClient extends Bridge {
       if (text is String) 'textLength': text.length,
       if (media is List) 'mediaCount': media.length,
     };
+  }
+
+  Map<String, Object?> _diagnosticDetails({
+    required String reason,
+    required int count,
+    String? eventName,
+    Object? error,
+    Map<String, dynamic>? eventData,
+  }) {
+    final safeEventName = sanitizeDiagnosticText(eventName);
+    final safeError = sanitizeDiagnosticText(error);
+    final dataKeys = eventData == null
+        ? const <String>[]
+        : eventData.keys.map(sanitizeDiagnosticText).toList(growable: false);
+    return {
+      'reason': reason,
+      'count': count,
+      if (safeEventName.isNotEmpty) 'event': safeEventName,
+      if (safeError.isNotEmpty) 'error': safeError,
+      'dataKeyCount': dataKeys.length,
+      if (dataKeys.isNotEmpty) 'dataKeys': dataKeys,
+    };
+  }
+
+  void _recordMalformedPushEvent({
+    required String reason,
+    String? eventName,
+    Object? error,
+    Map<String, dynamic>? eventData,
+  }) {
+    _malformedPushEventCount++;
+    final details = _diagnosticDetails(
+      reason: reason,
+      count: _malformedPushEventCount,
+      eventName: eventName,
+      error: error,
+      eventData: eventData,
+    );
+    debugPrint(
+      '[GoBridgeClient] Malformed push event: '
+      'reason=$reason count=$_malformedPushEventCount',
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GO_BRIDGE_MALFORMED_PUSH_EVENT',
+      details: details,
+    );
+    logPushDiagnostic('go_bridge_malformed_push_event', details: details);
+  }
+
+  void _recordUnknownPushEvent(
+    String eventName,
+    Map<String, dynamic> eventData,
+  ) {
+    _unknownPushEventCount++;
+    final details = _diagnosticDetails(
+      reason: 'unknown_event',
+      count: _unknownPushEventCount,
+      eventName: eventName,
+      eventData: eventData,
+    );
+    final safeEventName = sanitizeDiagnosticText(eventName);
+    debugPrint('[GoBridgeClient] Unknown push event: $safeEventName');
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GO_BRIDGE_UNKNOWN_PUSH_EVENT',
+      details: details,
+    );
+    logPushDiagnostic('go_bridge_unknown_push_event', details: details);
   }
 
   void _handleEventStreamFailure(String reason, Object? error) {
@@ -374,17 +451,63 @@ class GoBridgeClient extends Bridge {
 
   /// Handle push events from the Go layer.
   void _handleEvent(dynamic event) {
-    try {
-      final data = jsonDecode(event as String) as Map<String, dynamic>;
-      final eventName = data['event'] as String?;
-      final eventData = data['data'] as Map<String, dynamic>? ?? {};
+    if (event is! String) {
+      _recordMalformedPushEvent(
+        reason: 'non_string_event',
+        error: 'type=${event.runtimeType}',
+      );
+      return;
+    }
 
-      debugPrint('[BRIDGE-EVENT] Push event received: $eventName');
+    final Map<String, dynamic> data;
+    try {
+      final decoded = jsonDecode(event);
+      if (decoded is! Map<String, dynamic>) {
+        _recordMalformedPushEvent(
+          reason: 'non_object_event',
+          error: 'type=${decoded.runtimeType}',
+        );
+        return;
+      }
+      data = decoded;
+    } catch (e) {
+      _recordMalformedPushEvent(reason: 'invalid_json', error: e.runtimeType);
+      return;
+    }
+
+    final eventValue = data['event'];
+    if (eventValue is! String || eventValue.trim().isEmpty) {
+      _recordMalformedPushEvent(
+        reason: 'missing_event_name',
+        eventName: eventValue?.toString(),
+      );
+      return;
+    }
+
+    final eventName = eventValue;
+    final dataValue = data['data'];
+    final Map<String, dynamic> eventData;
+    if (dataValue == null) {
+      eventData = {};
+    } else if (dataValue is Map<String, dynamic>) {
+      eventData = dataValue;
+    } else {
+      _recordMalformedPushEvent(
+        reason: 'malformed_event_data',
+        eventName: eventName,
+        error: 'type=${dataValue.runtimeType}',
+      );
+      return;
+    }
+
+    try {
+      final safeEventName = sanitizeDiagnosticText(eventName);
+      debugPrint('[BRIDGE-EVENT] Push event received: $safeEventName');
 
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_PUSH_EVENT_RECEIVED',
-        details: {'event': eventName},
+        details: {'event': safeEventName},
       );
       _emitRawGoFlowEvent(eventName, eventData);
 
@@ -510,12 +633,12 @@ class GoBridgeClient extends Bridge {
               eventName == 'group:publish_validation_rejected' ||
               eventName == 'group:dispatcher_pressure' ||
               eventName == 'group:dispatcher_overflow') {
-            emitGroupDiagnosticEvent(eventName!, eventData);
+            emitGroupDiagnosticEvent(eventName, eventData);
           }
           if (eventName == 'group:dispatcher_pressure' ||
               eventName == 'group:dispatcher_overflow') {
             logPushDiagnostic(
-              eventName!.replaceAll(':', '_'),
+              eventName.replaceAll(':', '_'),
               details: eventData.map(
                 (key, value) => MapEntry(key, value as Object?),
               ),
@@ -523,13 +646,13 @@ class GoBridgeClient extends Bridge {
           }
           emitFlowEvent(
             layer: 'GO',
-            event: eventName!.replaceAll(':', '_').toUpperCase(),
+            event: eventName.replaceAll(':', '_').toUpperCase(),
             details: eventData,
           );
           break;
 
         default:
-          debugPrint('[GoBridgeClient] Unknown push event: $eventName');
+          _recordUnknownPushEvent(eventName, eventData);
       }
     } catch (e) {
       debugPrint(
