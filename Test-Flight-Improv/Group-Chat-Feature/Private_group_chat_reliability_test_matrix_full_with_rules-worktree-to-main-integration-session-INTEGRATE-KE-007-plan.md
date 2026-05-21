@@ -1,6 +1,6 @@
 # INTEGRATE-KE-007 Integration Contract - First Post-Rotation Key Availability
 
-Status: blocked_conflict
+Status: accepted
 
 Created: 2026-05-18
 
@@ -33,36 +33,45 @@ The source fake-network proof uses `groupKeyRepairReasonReceivedMessageEpochMiss
 
 ## Target Reconciliation
 
-Current main already has related but non-identical behavior:
+KE-017 is now accepted in main, so the original conflict blocker is stale. Current main contains the higher-epoch receive repair contract KE-007 needs:
 
-- rotation distribution is fail-closed before sender promotion;
-- existing removal coverage proves the first post-removal send uses rotated epoch `2`;
-- offline/future-epoch replay repair and key-update listener retry paths exist.
+- `groupKeyRepairReasonReceivedMessageEpochMissingLocalKey` is defined in `lib/features/groups/application/group_pending_key_repair_service.dart`.
+- `group_message_listener.dart` emits `GROUP_RECEIVED_MESSAGE_KEY_EPOCH_AHEAD_OF_LOCAL` and calls the received-message key-repair path when a normal received message is ahead of local key state.
+- KE-017 focused host/fake-network coverage is accepted in main.
 
-Current main does not have exact KE-007 integration artifacts:
+This pass imported only missing KE-007 row-owned proof artifacts:
 
-- no `KE-007` selector exists under `lib`, `test`, `integration_test`, or `go-mknoon`;
-- no `ke007FirstPostRotationProof` criteria or live-harness fields exist;
-- no `groupKeyRepairReasonReceivedMessageEpochMissingLocalKey` constant exists;
-- no `GROUP_RECEIVED_MESSAGE_KEY_EPOCH_AHEAD_OF_LOCAL` diagnostic or `_requestReceivedMessageKeyRepairIfLocalEpochIsBehind` live receive repair path exists.
+- `test/features/groups/integration/group_messaging_smoke_test.dart` adds `KE-007 delayed rotated key triggers repair before retrying first post-rotation message`.
+- `integration_test/group_multi_party_device_real_harness.dart` emits `ke007FirstPostRotationProof` on `private_online_remove`.
+- `integration_test/scripts/group_multi_party_device_criteria.dart` validates `ke007FirstPostRotationProof`.
+- `test/integration/group_multi_party_device_criteria_test.dart` adds KE-007 missing-proof and ordering negative criteria coverage and updates the valid fixture.
 
-The missing live higher-epoch receive repair behavior is owned by source row `KE-017` / target session `INTEGRATE-KE-017`, which is still pending. Importing the KE-007 fake-network proof now would either fail or require importing KE-017 production behavior out of order.
+The fake-network selector was reconciled to the accepted ST-013 acknowledgement contract: key sends are acknowledged, while local key processing is delayed until the test releases the captured key update. This preserves real `P2PService.sendMessage` ack propagation and still proves the received-message repair retry path.
 
-## Conflict Block
+## Accepted Evidence
 
-Verdict: `blocked_conflict`.
+Verdict: `accepted`.
 
-No code, tests, harness files, scripts, fixtures, or source matrix docs were modified for KE-007. The row is blocked before import because preserving both row contracts requires resolving the dependency between:
+Focused host and criteria checks passed:
 
-- `INTEGRATE-KE-007`: first post-rotation key availability proof;
-- `INTEGRATE-KE-017`: received message epoch ahead of local key state triggers repair.
+- `flutter test test/features/groups/integration/group_messaging_smoke_test.dart --name "KE-007|KE-009|KE-017"` -> `+3: All tests passed!`
+- `flutter test test/integration/group_multi_party_device_criteria_test.dart --name "private_online_remove|private_readd_current|KE-007|KE-009|KE-008|KE-010"` -> `+63: All tests passed!`
 
-Affected overlap rows checked for preservation context: `KE-006`, `KE-017`, COMPLETE_1 `GM-014`, `GM-020`, `GI-020`, `GO-001`, and related key repair/replay coverage.
+Required iOS 26.2 live proof passed:
 
-## Verification
+- Scenario: `private_online_remove`
+- Run id: `1779397676077`
+- Shared dir: `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_online_remove_TUhhHG`
+- Devices: Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`
+- Orchestrator verdict: `private_online_remove proof passed: private_online_remove verdicts valid for alice, bob, charlie`
+- Verdict proof fields:
+  - Alice `ke007FirstPostRotationProof`: `rotatedKeyGenerated=true`, `rotatedEpoch=2`, `waitedForBobRotatedKeyBeforeFirstPostRemovalSend=true`, `sentFirstPostRemovalAtRotatedEpoch=true`, `firstPostRemovalEpoch=2`, `receivedBobAfterRemoval=true`
+  - Bob `ke007FirstPostRotationProof`: `receivedRotatedKeyBeforeFirstPostRemovalMessage=true`, `hasRotatedEpochBeforeFirstPostRemovalMessage=true`, `rotatedEpoch=2`, `receivedAliceAfterRemoval=true`, `receivedAliceAfterRemovalAtRotatedEpoch=true`, `aliceMessageEpoch=2`, `sentPostRemovalAtRotatedEpoch=true`
 
-No focused KE-007 tests or live iOS 26.2 proof were run because no row-owned code/test/harness delta was imported and the row is not accepted. Doc hygiene should be checked with scoped `git diff --check` after the ledger update.
+## Scope Guard
+
+No production code was changed for KE-007. Source docs, COMPLETE_1 docs, source worktree files, unrelated KE rows, ML rows, UI, media, notification, Android, and physical iOS stayed out of scope. The unrelated dirty `info.plist` was left unstaged and untouched.
 
 ## Safe Next Action
 
-Resolve `INTEGRATE-KE-017` first, or explicitly authorize a combined reconciliation that preserves both KE-007 and KE-017 row contracts. The controller may only proceed to `INTEGRATE-KE-008` after verifying dirty state safety, dependency independence from this KE-007/KE-017 blocker, and recording this blocker in the integration breakdown.
+KE-007 is terminally accepted. The only remaining re-reconciliation target from this focused pass is KE-009, which is no longer conflict-blocked but is blocked on the shared `private_readd_current` live fixture until that fixture is repaired and rerun.

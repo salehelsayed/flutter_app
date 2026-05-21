@@ -6519,6 +6519,400 @@ void main() {
     );
 
     test(
+      'KE-007 delayed rotated key triggers repair before retrying first post-rotation message',
+      () async {
+        final repairRequests = <GroupKeyRepairRequest>[];
+        final alice = GroupTestUser.create(
+          peerId: 'ke007-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'ke007-bob-peer',
+          username: 'Bob',
+          network: network,
+          requestGroupKeyRepair: repairRequests.add,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'ke007-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final keyUpdates = StreamController<ChatMessage>.broadcast();
+        final repairRetries = <GroupPendingKeyRepairRetryRequest>[];
+        late final GroupKeyUpdateListener keyUpdateListener;
+        addTearDown(() async {
+          keyUpdateListener.dispose();
+          await keyUpdates.close();
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-ke007-delayed-key';
+        const epochOneKey = 'ke007-smoke-key-1';
+        const epochTwoKey = 'ke007-smoke-key-2';
+        const messageId = 'ke007-first-post-rotation-message';
+        const messageText = 'KE-007 first message after delayed key';
+        final createdAt = DateTime.utc(2026, 5, 12, 10, 7);
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'KE-007 Fake Network',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+
+        Future<void> saveKey(GroupTestUser user, int epoch, String key) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: key,
+              createdAt: createdAt.add(Duration(minutes: epoch)),
+            ),
+          );
+        }
+
+        await Future.wait([
+          saveKey(alice, 1, epochOneKey),
+          saveKey(bob, 1, epochOneKey),
+          saveKey(charlie, 1, epochOneKey),
+        ]);
+
+        alice.start();
+        bob.start();
+
+        keyUpdateListener = GroupKeyUpdateListener(
+          groupKeyUpdateStream: keyUpdates.stream,
+          groupRepo: bob.groupRepo,
+          bridge: bob.bridge,
+          getOwnMlKemSecretKey: () async => 'mlkem-secret-${bob.deviceId}',
+          getOwnPeerId: () async => bob.peerId,
+          getOwnDeviceId: () async => bob.deviceId,
+          retryPendingGroupKeyRepairs: (request) async {
+            repairRetries.add(request);
+          },
+        );
+        keyUpdateListener.start();
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: createdAt.add(const Duration(minutes: 3)),
+        );
+        await pump();
+
+        expect(network.isSubscribed(groupId, bob.deviceId), isTrue);
+        expect(network.isSubscribed(groupId, charlie.deviceId), isFalse);
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': epochTwoKey,
+          'keyEpoch': 2,
+        };
+        alice.bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'ke007-key-rotated',
+          'topicPeers': 1,
+        };
+
+        String? delayedBobKeyUpdate;
+        final rotatedKey = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          perRecipientTimeout: const Duration(milliseconds: 20),
+          distributionTimeout: const Duration(milliseconds: 40),
+          sendP2PMessage: (transportPeerId, message) {
+            expect(transportPeerId, bob.deviceId);
+            delayedBobKeyUpdate = message;
+            return Future<bool>.value(true);
+          },
+        ).timeout(const Duration(seconds: 2));
+
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+        expect(delayedBobKeyUpdate, isNotNull);
+        expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
+        expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+
+        final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: messageText,
+          messageId: messageId,
+          timestamp: createdAt.add(const Duration(minutes: 4)),
+        );
+        expect(sendResult.name, 'success');
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.keyGeneration, 2);
+        await pump();
+
+        final bobMessages = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == messageId).toList();
+        expect(bobMessages, hasLength(1));
+        expect(bobMessages.single.keyGeneration, 2);
+        expect(bobMessages.single.text, messageText);
+        expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+        expect(repairRequests, hasLength(1));
+        expect(repairRequests.single.groupId, groupId);
+        expect(repairRequests.single.keyEpoch, 2);
+        expect(repairRequests.single.messageId, messageId);
+        expect(
+          repairRequests.single.reason,
+          groupKeyRepairReasonReceivedMessageEpochMissingLocalKey,
+        );
+
+        keyUpdates.add(
+          ChatMessage(
+            from: alice.deviceId,
+            to: bob.deviceId,
+            content: delayedBobKeyUpdate!,
+            timestamp: createdAt
+                .add(const Duration(minutes: 5))
+                .toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        await pump();
+
+        expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
+        expect(repairRetries, hasLength(1));
+        expect(repairRetries.single.groupId, groupId);
+        expect(repairRetries.single.keyEpoch, 2);
+
+        final bobFinalMessages = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == messageId).toList();
+        expect(bobFinalMessages, hasLength(1));
+        expect(bobFinalMessages.single.keyGeneration, 2);
+      },
+    );
+
+    test(
+      'KE-009 config-before-key member repairs first current-epoch message',
+      () async {
+        final repairRequests = <GroupKeyRepairRequest>[];
+        final repairRetries = <GroupPendingKeyRepairRetryRequest>[];
+        final alice = GroupTestUser.create(
+          peerId: 'ke009-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'ke009-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'ke009-charlie-peer',
+          username: 'Charlie',
+          network: network,
+          requestGroupKeyRepair: repairRequests.add,
+        );
+        final keyUpdates = StreamController<ChatMessage>.broadcast();
+        late final GroupKeyUpdateListener keyUpdateListener;
+        addTearDown(() async {
+          keyUpdateListener.dispose();
+          await keyUpdates.close();
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-ke009-config-before-key';
+        const epochOneKey = 'ke009-smoke-key-1';
+        const epochTwoKey = 'ke009-smoke-key-2';
+        const firstMessageId = 'ke009-first-current-message';
+        const followUpMessageId = 'ke009-follow-up-current-message';
+        final createdAt = DateTime.utc(2026, 5, 12, 11, 9);
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'KE-009 Fake Network',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+
+        Future<void> saveKey(GroupTestUser user, int epoch, String key) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: key,
+              createdAt: createdAt.add(Duration(minutes: epoch)),
+            ),
+          );
+        }
+
+        await Future.wait([
+          saveKey(alice, 1, epochOneKey),
+          saveKey(bob, 1, epochOneKey),
+        ]);
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(
+          await charlie.groupRepo.getMember(groupId, charlie.peerId),
+          isNotNull,
+          reason: 'Charlie has config/membership before the current key',
+        );
+        expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
+
+        alice.start();
+        charlie.start();
+
+        keyUpdateListener = GroupKeyUpdateListener(
+          groupKeyUpdateStream: keyUpdates.stream,
+          groupRepo: charlie.groupRepo,
+          bridge: charlie.bridge,
+          getOwnMlKemSecretKey: () async => 'mlkem-secret-${charlie.deviceId}',
+          getOwnPeerId: () async => charlie.peerId,
+          getOwnDeviceId: () async => charlie.deviceId,
+          retryPendingGroupKeyRepairs: (request) async {
+            repairRetries.add(request);
+          },
+        );
+        keyUpdateListener.start();
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': epochTwoKey,
+          'keyEpoch': 2,
+        };
+        alice.bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'ke009-key-rotated',
+          'topicPeers': 2,
+        };
+
+        String? delayedCharlieKeyUpdate;
+        final rotatedKey = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          perRecipientTimeout: const Duration(milliseconds: 20),
+          distributionTimeout: const Duration(milliseconds: 40),
+          sendP2PMessage: (transportPeerId, message) {
+            if (transportPeerId == charlie.deviceId) {
+              delayedCharlieKeyUpdate = message;
+            }
+            return Future<bool>.value(true);
+          },
+        ).timeout(const Duration(seconds: 2));
+
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+        expect(delayedCharlieKeyUpdate, isNotNull);
+        expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
+        expect(
+          await charlie.groupRepo.getLatestKey(groupId),
+          isNull,
+          reason: 'The config-before-key window remains active',
+        );
+
+        final firstSend = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'KE-009 first message during missing key',
+          messageId: firstMessageId,
+          timestamp: createdAt.add(const Duration(minutes: 3)),
+        );
+        expect(firstSend.$1.name, 'success');
+        expect(firstSend.$2, isNotNull);
+        expect(firstSend.$2!.keyGeneration, 2);
+        await pump();
+
+        final firstMessages = (await charlie.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == firstMessageId).toList();
+        expect(firstMessages, hasLength(1));
+        expect(firstMessages.single.keyGeneration, 2);
+        expect(
+          firstMessages.single.text,
+          'KE-009 first message during missing key',
+        );
+        expect(repairRequests, hasLength(1));
+        expect(repairRequests.single.groupId, groupId);
+        expect(repairRequests.single.keyEpoch, 2);
+        expect(repairRequests.single.messageId, firstMessageId);
+        expect(
+          repairRequests.single.reason,
+          groupKeyRepairReasonReceivedMessageEpochMissingLocalKey,
+        );
+
+        keyUpdates.add(
+          ChatMessage(
+            from: alice.deviceId,
+            to: charlie.deviceId,
+            content: delayedCharlieKeyUpdate!,
+            timestamp: createdAt
+                .add(const Duration(minutes: 4))
+                .toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        await pump();
+
+        expect(
+          (await charlie.groupRepo.getLatestKey(groupId))!.keyGeneration,
+          2,
+        );
+        expect(repairRetries, hasLength(1));
+        expect(repairRetries.single.groupId, groupId);
+        expect(repairRetries.single.keyEpoch, 2);
+
+        final followUpSend = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'KE-009 follow-up after delayed key',
+          messageId: followUpMessageId,
+          timestamp: createdAt.add(const Duration(minutes: 5)),
+        );
+        expect(followUpSend.$1.name, 'success');
+        expect(followUpSend.$2, isNotNull);
+        expect(followUpSend.$2!.keyGeneration, 2);
+        await pump();
+
+        final finalMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          finalMessages.where((message) => message.id == firstMessageId),
+          hasLength(1),
+        );
+        expect(
+          finalMessages.where((message) => message.id == followUpMessageId),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
       'KE-017 fake network higher epoch live delivery requests repair and keeps message',
       () async {
         const expectedReason = 'received_message_epoch_missing_local_key';

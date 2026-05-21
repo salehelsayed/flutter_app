@@ -10701,6 +10701,64 @@ void main() {
       );
     });
 
+    test(
+      'rejects private_online_remove without KE-007 first-message proof',
+      () {
+        final missingProof = _validPrivateOnlineRemoveVerdicts();
+        missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+          ..remove('ke007FirstPostRotationProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_online_remove',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('bob: missing KE-007 first-post-rotation proof fields'),
+        );
+      },
+    );
+
+    test(
+      'rejects private_online_remove Bob receiving first message before rotated key',
+      () {
+        final unordered = _validPrivateOnlineRemoveVerdicts();
+        unordered[1] = {
+          ...unordered[1],
+          'ke007FirstPostRotationProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              unordered[1]['ke007FirstPostRotationProof'] as Map,
+            ),
+            'receivedRotatedKeyBeforeFirstPostRemovalMessage': false,
+            'hasRotatedEpochBeforeFirstPostRemovalMessage': false,
+            'receivedAliceAfterRemovalAtRotatedEpoch': false,
+            'aliceMessageEpoch': 1,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_online_remove',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: unordered,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'receivedRotatedKeyBeforeFirstPostRemovalMessage must be true',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains('receivedAliceAfterRemovalAtRotatedEpoch must be true'),
+        );
+      },
+    );
+
     test('rejects private_offline_remove without ML-006 proof fields', () {
       final missingProof = _validPrivateOfflineRemoveVerdicts();
       missingProof[2] = Map<String, dynamic>.from(missingProof[2])
@@ -11417,6 +11475,60 @@ void main() {
         expect(
           rejected.detail,
           contains('charlie: missing KE-010 key-before-config proof fields'),
+        );
+      },
+    );
+
+    test(
+      'rejects private_readd_current without KE-009 config-before-key proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ke009ConfigBeforeKeyProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing KE-009 config-before-key proof fields'),
+        );
+      },
+    );
+
+    test(
+      'rejects private_readd_current KE-009 permanent gap proof failure',
+      () {
+        final gap = _validPrivateReaddCurrentVerdicts();
+        gap[2] = {
+          ...gap[2],
+          'ke009ConfigBeforeKeyProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              gap[2]['ke009ConfigBeforeKeyProof'] as Map,
+            ),
+            'noPermanentInvisibleGapAfterKeyArrives': false,
+            'receivedBobPostReaddAtCurrentEpoch': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: gap,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('noPermanentInvisibleGapAfterKeyArrives must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains('receivedBobPostReaddAtCurrentEpoch must be true'),
         );
       },
     );
@@ -21261,6 +21373,15 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'sentPostRemovalAtRotatedEpoch': true,
           'receivedBobAfterRemoval': true,
         },
+        'ke007FirstPostRotationProof': <String, Object?>{
+          'rowId': 'KE-007',
+          'rotatedKeyGenerated': true,
+          'rotatedEpoch': 2,
+          'waitedForBobRotatedKeyBeforeFirstPostRemovalSend': true,
+          'sentFirstPostRemovalAtRotatedEpoch': true,
+          'firstPostRemovalEpoch': 2,
+          'receivedBobAfterRemoval': true,
+        },
         'st006RotationBoundaryPublishProof': <String, Object?>{
           'rowId': 'ST-006',
           'removedCharlie': true,
@@ -21332,6 +21453,16 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'hasRotatedEpoch': true,
           'rotatedEpoch': 2,
           'receivedAliceAfterRemoval': true,
+          'sentPostRemovalAtRotatedEpoch': true,
+        },
+        'ke007FirstPostRotationProof': <String, Object?>{
+          'rowId': 'KE-007',
+          'receivedRotatedKeyBeforeFirstPostRemovalMessage': true,
+          'hasRotatedEpochBeforeFirstPostRemovalMessage': true,
+          'rotatedEpoch': 2,
+          'receivedAliceAfterRemoval': true,
+          'receivedAliceAfterRemovalAtRotatedEpoch': true,
+          'aliceMessageEpoch': 2,
           'sentPostRemovalAtRotatedEpoch': true,
         },
         'st006RotationBoundaryPublishProof': <String, Object?>{
@@ -22248,6 +22379,13 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'charlieAcknowledgedRejoinAtCurrentEpoch': true,
           'finalEpoch': 2,
         },
+        'ke009ConfigBeforeKeyProof': <String, Object?>{
+          'rowId': 'KE-009',
+          'configBeforeKeyOrderingCoveredByFakeNetwork': true,
+          'liveCurrentEpochDeliveryCovered': true,
+          'sentPostReaddAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
         'ke010KeyBeforeConfigProof': <String, Object?>{
           'rowId': 'KE-010',
           'keyBeforeConfigOrderingCoveredByFakeNetwork': true,
@@ -22499,6 +22637,15 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
         },
         'ke008ReaddActivationProof': <String, Object?>{
           'rowId': 'KE-008',
+          'observedCharlieReadded': true,
+          'receivedCharliePostReaddAtCurrentEpoch': true,
+          'sentBobPostReaddAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ke009ConfigBeforeKeyProof': <String, Object?>{
+          'rowId': 'KE-009',
+          'configBeforeKeyOrderingCoveredByFakeNetwork': true,
+          'liveCurrentEpochDeliveryCovered': true,
           'observedCharlieReadded': true,
           'receivedCharliePostReaddAtCurrentEpoch': true,
           'sentBobPostReaddAtCurrentEpoch': true,
@@ -22812,6 +22959,15 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'receivedBobPostReaddAtCurrentEpoch': true,
           'removedWindowPlaintextCount': 0,
           'hasStaleEpochAfterReadd': false,
+          'finalEpoch': 2,
+        },
+        'ke009ConfigBeforeKeyProof': <String, Object?>{
+          'rowId': 'KE-009',
+          'configBeforeKeyOrderingCoveredByFakeNetwork': true,
+          'liveCurrentEpochDeliveryCovered': true,
+          'noPermanentInvisibleGapAfterKeyArrives': true,
+          'receivedAlicePostReaddAtCurrentEpoch': true,
+          'receivedBobPostReaddAtCurrentEpoch': true,
           'finalEpoch': 2,
         },
         'ke010KeyBeforeConfigProof': <String, Object?>{

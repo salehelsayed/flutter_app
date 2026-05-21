@@ -1,6 +1,6 @@
 # INTEGRATE-KE-009 Integration Contract - Config Before Key Receive Gap
 
-Status: blocked_conflict
+Status: blocked_external_fixture
 
 Created: 2026-05-18
 
@@ -35,39 +35,42 @@ The source fake-network proof is `KE-009 config-before-key member repairs first 
 
 ## Target Reconciliation
 
-Current main has partial supporting infrastructure:
+KE-017 is now accepted in main, so the original conflict blocker is stale. Current main contains the higher-epoch normal receive repair contract KE-009 needs:
 
-- generic pending key repair queue and retry paths exist;
-- `private_readd_current` and KE-008 re-add activation proof are accepted in main;
-- related COMPLETE_1 rows such as `GM-014`, `GM-035`, `GE-011`, and `GE-020` cover adjacent re-add, no-deaf-member, fallback, and convergence behavior.
+- `groupKeyRepairReasonReceivedMessageEpochMissingLocalKey` is defined in `lib/features/groups/application/group_pending_key_repair_service.dart`.
+- `group_message_listener.dart` emits `GROUP_RECEIVED_MESSAGE_KEY_EPOCH_AHEAD_OF_LOCAL` and calls the received-message key-repair path when a normal received message is ahead of local key state.
+- KE-017 focused host/fake-network coverage is accepted in main.
 
-Current main does not have exact KE-009 artifacts:
+This pass imported only missing KE-009 row-owned proof artifacts:
 
-- no `KE-009` selector exists in the target smoke test;
-- no `ke009ConfigBeforeKeyProof` criteria or live-harness fields exist;
-- no `groupKeyRepairReasonReceivedMessageEpochMissingLocalKey` constant exists;
-- no `GROUP_RECEIVED_MESSAGE_KEY_EPOCH_AHEAD_OF_LOCAL` diagnostic exists;
-- the exact higher-epoch normal receive repair hook is absent.
+- `test/features/groups/integration/group_messaging_smoke_test.dart` adds `KE-009 config-before-key member repairs first current-epoch message`.
+- `integration_test/group_multi_party_device_real_harness.dart` emits `ke009ConfigBeforeKeyProof` on `private_readd_current`.
+- `integration_test/scripts/group_multi_party_device_criteria.dart` validates `ke009ConfigBeforeKeyProof`.
+- `test/integration/group_multi_party_device_criteria_test.dart` adds KE-009 missing-proof and permanent-gap negative criteria coverage and updates the valid fixture.
 
-That missing higher-epoch normal receive repair behavior is source row `KE-017` / target session `INTEGRATE-KE-017`, which remains pending. Importing the exact KE-009 host proof now would either fail or require importing KE-017 production behavior out of order. Importing only the `private_readd_current` criteria/live fields would overclaim KE-009 because the required fake-network ordering proof cannot pass in current main.
+The fake-network selector was reconciled to the accepted ST-013 acknowledgement contract: key sends are acknowledged, while Charlie's local key processing is delayed until the test releases the captured key update. This preserves real `P2PService.sendMessage` ack propagation and still proves the received-message repair retry path.
 
-## Conflict Block
+## External Fixture Block
 
-Verdict: `blocked_conflict`.
+Verdict: `blocked_external_fixture`.
 
-No code, tests, harness files, scripts, fixtures, or source matrix docs were modified for KE-009. The row is blocked before import because preserving both row contracts requires resolving the dependency between:
+The previous KE-017 dependency conflict is resolved. Focused host and criteria checks passed:
 
-- `INTEGRATE-KE-009`: config-before-key receive gap repair proof;
-- `INTEGRATE-KE-017`: received message epoch ahead of local key state triggers repair.
+- `flutter test test/features/groups/integration/group_messaging_smoke_test.dart --name "KE-007|KE-009|KE-017"` -> `+3: All tests passed!`
+- `flutter test test/integration/group_multi_party_device_criteria_test.dart --name "private_online_remove|private_readd_current|KE-007|KE-009|KE-008|KE-010"` -> `+63: All tests passed!`
 
-The existing `INTEGRATE-KE-007` conflict blocker is the same dependency family and remains preserved. Accepted `ML-007` and `KE-008` `private_readd_current` proof fields remain intact and were not broadened under KE-009.
+Required iOS 26.2 live proof remains blocked on the shared `private_readd_current` fixture before KE-009 verdict emission:
 
-Affected overlap rows checked for preservation context: `KE-007`, `KE-017`, `ML-007`, `KE-008`, COMPLETE_1 `GM-014`, `GM-035`, `GE-011`, and `GE-020`.
+- Failed run `1779398240276`, shared dir `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_readd_current_hkVYlv`: no `*verdict*.json`; Alice timed out waiting for `gmp_1779398240276_bob_delayed_old_config_checked`; Bob timed out in `_runGm006Bob`; Charlie timed out in `_runGm006Charlie`; logs included `peer_mismatch`, relay `NO_RESERVATION`, dial backoff, and direct dial deadline failures.
+- Clean rerun `1779398971688`, shared dir `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_readd_current_mFi4Ox`: no `*verdict*.json`; Bob timed out in `_runGm006Bob` at `integration_test/group_multi_party_device_real_harness.dart:19573`; Charlie timed out in `_runGm006Charlie` at `integration_test/group_multi_party_device_real_harness.dart:20308`; Alice timed out waiting for `gmp_1779398971688_bob_delayed_old_config_checked`; Alice logs showed relay `NO_RESERVATION`, direct dial deadline failures, missing peers, and discovery backoff after Bob/Charlie stopped.
+- Devices for both live attempts: Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`, all iOS 26.2 CoreSimulator devices.
 
-## Verification
+The blocker is the existing shared `private_readd_current` delayed-old-config fixture path, not a remaining KE-007/KE-009/KE-017 contract conflict. Accepted `ML-007`, `KE-008`, `KE-010`, `KE-011`, `KE-012`, PL, UP, and SV `private_readd_current` contracts are preserved and were not broadened under KE-009.
 
-No focused KE-009 tests or live iOS 26.2 proof were run because no row-owned code/test/harness delta was imported and the row is not accepted. Doc hygiene should be checked with scoped `git diff --check` after the ledger update.
+## Scope Guard
+
+No production code was changed for KE-009. Source docs, COMPLETE_1 docs, source worktree files, unrelated KE rows, ML rows, UI, media, notification, Android, and physical iOS stayed out of scope. The unrelated dirty `info.plist` was left unstaged and untouched.
 
 ## Safe Next Action
 
-Resolve `INTEGRATE-KE-017` first, or explicitly authorize a combined reconciliation that preserves KE-007, KE-009, and KE-017 row contracts. The controller may only proceed to `INTEGRATE-KE-010` after verifying dirty state safety, dependency independence from the KE-007/KE-009/KE-017 blockers, and recording this blocker in the integration breakdown.
+Repair or recover only the shared `private_readd_current` delayed-old-config live fixture path, then rerun the KE-009 iOS 26.2 `private_readd_current` proof. If that live proof passes and emits valid `ke009ConfigBeforeKeyProof` fields for Alice, Bob, and Charlie, reclassify KE-009 from `blocked_external_fixture` to `accepted`.
