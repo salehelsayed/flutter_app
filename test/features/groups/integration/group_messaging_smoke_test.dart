@@ -8753,6 +8753,98 @@ void main() {
     );
 
     test(
+      'SV-010 duplicate message id from different sender preserves trusted row',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'sv010-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv010-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv010-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-sv010-duplicate-id-conflict';
+        const sharedMessageId = 'sv010-shared-message-id';
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await alice.createGroup(groupId: groupId, name: 'SV-010 Guard');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'Trusted Alice row',
+          messageId: sharedMessageId,
+        );
+        await pump();
+
+        Future<void> expectTrustedRow(GroupTestUser user) async {
+          final message = await user.msgRepo.getMessage(sharedMessageId);
+          expect(
+            message,
+            isNotNull,
+            reason: '${user.username} has trusted row',
+          );
+          expect(message!.senderPeerId, alice.peerId);
+          expect(message.text, 'Trusted Alice row');
+          final matches = (await user.loadGroupMessages(
+            groupId,
+          )).where((m) => m.id == sharedMessageId).toList();
+          expect(matches, hasLength(1), reason: '${user.username} row count');
+        }
+
+        await expectTrustedRow(alice);
+        await expectTrustedRow(bob);
+        await expectTrustedRow(charlie);
+
+        await network.publish(groupId, bob.peerId, {
+          'groupId': groupId,
+          'senderId': bob.peerId,
+          'senderUsername': bob.username,
+          'keyEpoch': 0,
+          'text': 'Bob poison row',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': sharedMessageId,
+          'quotedMessageId': 'bob-quote-poison',
+        }, senderDeviceId: bob.deviceId);
+        await pump();
+
+        await expectTrustedRow(alice);
+        await expectTrustedRow(bob);
+        await expectTrustedRow(charlie);
+
+        expect(
+          flowEvents.where(
+            (event) =>
+                event['event'] ==
+                'GROUP_HANDLE_INCOMING_MSG_DUPLICATE_ID_CONFLICT_REJECTED',
+          ),
+          isNotEmpty,
+        );
+      },
+    );
+
+    test(
       'MS003 live skewed timestamps clamp far future and keep latest sane',
       () async {
         final alice = GroupTestUser.create(

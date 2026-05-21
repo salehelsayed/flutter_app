@@ -1551,6 +1551,74 @@ void main() {
     },
   );
 
+  test(
+    'SV-010 duplicate message id from different sender cannot overwrite valid row',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      const sharedMessageId = 'sv010-shared-message-id';
+      final originalTimestamp = DateTime.utc(2026, 5, 14, 4, 0);
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Trusted Alice row',
+        timestamp: originalTimestamp.toIso8601String(),
+        messageId: sharedMessageId,
+      );
+      expect(first, isNotNull);
+
+      final conflict = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-bob',
+        senderUsername: 'Bob',
+        keyEpoch: 0,
+        text: 'Bob poison row',
+        timestamp: originalTimestamp
+            .add(const Duration(minutes: 1))
+            .toIso8601String(),
+        messageId: sharedMessageId,
+        quotedMessageId: 'bob-quote-poison',
+      );
+
+      expect(conflict, isNull);
+      expect(msgRepo.count, 1);
+
+      final saved = await msgRepo.getMessage(sharedMessageId);
+      expect(saved, isNotNull);
+      expect(saved!.senderPeerId, 'peer-sender');
+      expect(saved.senderUsername, 'Sender');
+      expect(saved.text, 'Trusted Alice row');
+      expect(saved.timestamp, originalTimestamp);
+      expect(saved.quotedMessageId, isNull);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_DUPLICATE_ID_CONFLICT_REJECTED',
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('duplicate replay saves missing media attachments', () async {
     final mediaRepo = InMemoryMediaAttachmentRepository();
     const sharedMessageId = 'msg-media-repair';
