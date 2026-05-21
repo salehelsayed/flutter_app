@@ -1717,6 +1717,125 @@ void main() {
     );
 
     test(
+      'OB-010 group callback exceptions emit diagnostics and later events deliver',
+      () {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        final printed = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            printed.add(message);
+          }
+        };
+
+        var messageCalls = 0;
+        var reactionCalls = 0;
+        final deliveredMessageIds = <String>[];
+        final deliveredReactionIds = <String>[];
+
+        client.onGroupMessageReceived = (payload) {
+          messageCalls++;
+          if (messageCalls == 1) {
+            throw StateError('OB-010 message callback failed');
+          }
+          deliveredMessageIds.add(payload['messageId'] as String);
+        };
+        client.onGroupReactionReceived = (payload) {
+          reactionCalls++;
+          if (reactionCalls == 1) {
+            throw StateError('OB-010 reaction callback failed');
+          }
+          deliveredReactionIds.add(payload['reactionId'] as String);
+        };
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-ob010',
+              'senderId': 'peer-ob010',
+              'messageId': 'ob010-message-throws',
+              'text': 'throws first',
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_reaction:received',
+            'data': {
+              'groupId': 'group-ob010',
+              'senderId': 'peer-ob010',
+              'messageId': 'ob010-message-throws',
+              'reactionId': 'ob010-reaction-throws',
+              'emoji': '+1',
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-ob010',
+              'senderId': 'peer-ob010',
+              'messageId': 'ob010-message-delivered',
+              'text': 'delivered later',
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_reaction:received',
+            'data': {
+              'groupId': 'group-ob010',
+              'senderId': 'peer-ob010',
+              'messageId': 'ob010-message-delivered',
+              'reactionId': 'ob010-reaction-delivered',
+              'emoji': '+1',
+            },
+          }),
+        );
+
+        expect(messageCalls, 2);
+        expect(reactionCalls, 2);
+        expect(deliveredMessageIds, ['ob010-message-delivered']);
+        expect(deliveredReactionIds, ['ob010-reaction-delivered']);
+        expect(
+          printed,
+          contains(
+            contains(
+              '[GoBridgeClient] Error handling group message: '
+              'Bad state: OB-010 message callback failed',
+            ),
+          ),
+        );
+        expect(
+          printed,
+          contains(
+            contains(
+              '[GoBridgeClient] Error handling group reaction: '
+              'Bad state: OB-010 reaction callback failed',
+            ),
+          ),
+        );
+
+        final messageError = flowEvents.singleWhere(
+          (event) => event['event'] == 'GROUP_MESSAGE_CALLBACK_ERROR',
+        );
+        expect(
+          messageError['details'],
+          containsPair('error', 'Bad state: OB-010 message callback failed'),
+        );
+        final reactionError = flowEvents.singleWhere(
+          (event) => event['event'] == 'GROUP_REACTION_CALLBACK_ERROR',
+        );
+        expect(
+          reactionError['details'],
+          containsPair('error', 'Bad state: OB-010 reaction callback failed'),
+        );
+      },
+    );
+
+    test(
       'OB-007 EventChannel error marks failure and attempts reinit',
       () async {
         final eventChannelCalls = <String>[];

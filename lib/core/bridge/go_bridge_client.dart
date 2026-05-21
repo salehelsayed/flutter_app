@@ -597,9 +597,15 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupMessageReceived!(eventData);
             } catch (e) {
+              final error = sanitizeDiagnosticText(e);
               debugPrint(
                 '[GoBridgeClient] Error handling group message: '
-                '${sanitizeDiagnosticText(e)}',
+                '$error',
+              );
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_MESSAGE_CALLBACK_ERROR',
+                details: {'error': error},
               );
             }
           }
@@ -610,9 +616,15 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupReactionReceived!(eventData);
             } catch (e) {
+              final error = sanitizeDiagnosticText(e);
               debugPrint(
                 '[GoBridgeClient] Error handling group reaction: '
-                '${sanitizeDiagnosticText(e)}',
+                '$error',
+              );
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_REACTION_CALLBACK_ERROR',
+                details: {'error': error},
               );
             }
           }
