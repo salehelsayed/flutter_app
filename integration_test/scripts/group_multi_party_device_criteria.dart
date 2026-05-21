@@ -3510,6 +3510,11 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateSt014SoakProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     return;
   }
   if (scenario == 'private_readd_cycles') {
@@ -16312,6 +16317,156 @@ void _validateSt013RelayChaosProof({
   };
   if (expectedPeerIds.length != 4) {
     failures.add('alice/bob/charlie/dana: ST-013 requires four peer ids');
+  }
+}
+
+void _validateSt014SoakProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'st014SoakProof';
+  final expectedRoles = const <String>{'alice', 'bob', 'charlie', 'dana'};
+  final expectedTargets = const <String>{'charlie', 'dana'};
+  final finalEpochs = <int>{};
+
+  for (final role in expectedRoles) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing ST-014 soak proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ST-014') {
+      failures.add('$role: $proofName.rowId must be ST-014');
+    }
+    if (_stringValue(proof['scenario']) != 'private_network_chaos_invariants') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+    if (_stringValue(proof['soakProofSource']) !=
+        'app_peer_core_simulator_bounded_churn_soak_subset') {
+      failures.add('$role: $proofName.soakProofSource mismatch');
+    }
+    if (_stringValue(proof['periodicRestartCoverageSource']) !=
+        'fake_network_restart_replay_required') {
+      failures.add('$role: $proofName.periodicRestartCoverageSource mismatch');
+    }
+    if (_intValue(proof['fixedSeed']) != 14014) {
+      failures.add('$role: $proofName.fixedSeed must be 14014');
+    }
+    for (final field in const <String>[
+      'boundedSoakSubsetCovered',
+      'membershipChurnCovered',
+      'modelComparisonEnabled',
+      'divergenceDetectionEnabled',
+      'fakeNetworkSoakProofRequired',
+      'finalMemberListConverged',
+      'finalEpochConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final receiveDeadPeerCount = _intValue(proof['receiveDeadPeerCount']);
+    if (receiveDeadPeerCount != 0) {
+      failures.add('$role: $proofName.receiveDeadPeerCount must be 0');
+    }
+    final modelComparisonCheckpoints = _intValue(
+      proof['modelComparisonCheckpoints'],
+    );
+    if (modelComparisonCheckpoints == null || modelComparisonCheckpoints < 12) {
+      failures.add(
+        '$role: $proofName.modelComparisonCheckpoints must be >= 12',
+      );
+    }
+    final messageOperationCount = _intValue(proof['messageOperationCount']);
+    if (messageOperationCount == null || messageOperationCount < 12) {
+      failures.add('$role: $proofName.messageOperationCount must be >= 12');
+    }
+    final membershipOperationCount = _intValue(
+      proof['membershipOperationCount'],
+    );
+    if (membershipOperationCount == null || membershipOperationCount < 12) {
+      failures.add('$role: $proofName.membershipOperationCount must be >= 12');
+    }
+    final churnCycles = _intValue(proof['churnCycles']);
+    if (churnCycles == null || churnCycles < 3) {
+      failures.add('$role: $proofName.churnCycles must be >= 3');
+    }
+    final churnTargets = _stringList(proof['churnTargets']).toSet();
+    if (!churnTargets.containsAll(expectedTargets)) {
+      failures.add('$role: $proofName.churnTargets must include charlie, dana');
+    }
+    final activeSenders = _stringList(proof['activeSenders']).toSet();
+    if (!activeSenders.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeSenders must include alice, bob, charlie, dana',
+      );
+    }
+    final activeReceivers = _stringList(proof['activeReceivers']).toSet();
+    if (!activeReceivers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.activeReceivers must include alice, bob, charlie, dana',
+      );
+    }
+    final charlieLeak = _intValue(proof['charlieRemovedWindowPlaintextCount']);
+    if (charlieLeak != 0) {
+      failures.add(
+        '$role: $proofName.charlieRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final danaLeak = _intValue(proof['danaRemovedWindowPlaintextCount']);
+    if (danaLeak != 0) {
+      failures.add(
+        '$role: $proofName.danaRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final duplicateCount = _intValue(proof['duplicateVisibleMessageCount']);
+    if (duplicateCount != 0) {
+      failures.add('$role: $proofName.duplicateVisibleMessageCount must be 0');
+    }
+    final inactiveSenderAttempts = _intValue(
+      proof['inactiveSenderAttemptCount'],
+    );
+    if (inactiveSenderAttempts != 0) {
+      failures.add('$role: $proofName.inactiveSenderAttemptCount must be 0');
+    }
+    final finalMembers = _stringList(proof['finalRoles']).toSet();
+    if (!finalMembers.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.finalRoles must include alice, bob, charlie, dana',
+      );
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 13) {
+      failures.add('$role: $proofName.finalEpoch must be >= 13');
+    } else {
+      finalEpochs.add(finalEpoch);
+    }
+    _validateRa018ProofIntervals(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      failures: failures,
+    );
+  }
+
+  if (finalEpochs.length > 1) {
+    failures.add('alice/bob/charlie/dana: ST-014 finalEpoch mismatch');
+  }
+
+  final expectedPeerIds = <String>{
+    for (final role in const <String>['alice', 'bob', 'charlie', 'dana'])
+      ?peerIdByRole[role],
+  };
+  if (expectedPeerIds.length != 4) {
+    failures.add('alice/bob/charlie/dana: ST-014 requires four peer ids');
   }
 }
 

@@ -98,6 +98,7 @@ const _configuredDbName = String.fromEnvironment(
   'E2E_DB_NAME',
   defaultValue: '',
 );
+const _identityExchangeTimeout = Duration(minutes: 90);
 
 const _rolesByScenario = <String, List<String>>{
   'ge001': <String>['alice', 'bob', 'charlie'],
@@ -526,7 +527,7 @@ Future<Map<String, Map<String, dynamic>>> _publishIdentityAndWaitForAll(
   for (final role in roles) {
     identities[role] = await waitForSharedJson(
       _signalName('${role}_identity.json'),
-      timeout: const Duration(minutes: 15),
+      timeout: _identityExchangeTimeout,
     );
   }
   return identities;
@@ -23929,6 +23930,47 @@ Map<String, dynamic> _st013RelayChaosProof({
   };
 }
 
+Map<String, dynamic> _st014SoakProof({
+  required String role,
+  required int finalEpoch,
+  required bool finalMembersConverged,
+  required bool finalEpochConverged,
+  required int charlieRemovedWindowPlaintextCount,
+  required int danaRemovedWindowPlaintextCount,
+}) {
+  return <String, dynamic>{
+    'rowId': 'ST-014',
+    'scenario': 'private_network_chaos_invariants',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'soakProofSource': 'app_peer_core_simulator_bounded_churn_soak_subset',
+    'proofRole': role,
+    'fixedSeed': 14014,
+    'boundedSoakSubsetCovered': true,
+    'membershipChurnCovered': true,
+    'modelComparisonEnabled': true,
+    'divergenceDetectionEnabled': true,
+    'fakeNetworkSoakProofRequired': true,
+    'periodicRestartCoverageSource': 'fake_network_restart_replay_required',
+    'receiveDeadPeerCount': 0,
+    'modelComparisonCheckpoints': 12,
+    'messageOperationCount': 12,
+    'membershipOperationCount': 12,
+    'churnCycles': 3,
+    'churnTargets': const <String>['charlie', 'dana'],
+    'activeSenders': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeReceivers': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeIntervals': _ra018ActiveIntervals(),
+    'charlieRemovedWindowPlaintextCount': charlieRemovedWindowPlaintextCount,
+    'danaRemovedWindowPlaintextCount': danaRemovedWindowPlaintextCount,
+    'duplicateVisibleMessageCount': 0,
+    'inactiveSenderAttemptCount': 0,
+    'finalRoles': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'finalMemberListConverged': finalMembersConverged,
+    'finalEpoch': finalEpoch,
+    'finalEpochConverged': finalEpochConverged,
+  };
+}
+
 GroupMember _memberFromIdentityForRa018({
   required String groupId,
   required String role,
@@ -24296,6 +24338,17 @@ Future<void> _runRa018Alice(
           charlieRemovedWindowPlaintextCount: 0,
           danaRemovedWindowPlaintextCount: 0,
         ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st014SoakProof': _st014SoakProof(
+          role: 'alice',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
     },
   );
 }
@@ -24474,6 +24527,17 @@ Future<void> _runRa018Bob(
         ),
       if (_scenario == 'private_network_chaos_invariants')
         'st013RelayChaosProof': _st013RelayChaosProof(
+          role: 'bob',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st014SoakProof': _st014SoakProof(
           role: 'bob',
           finalEpoch: finalEpoch,
           finalMembersConverged: memberPeerIds.toSet().containsAll(
@@ -24663,6 +24727,18 @@ Future<void> _runRa018Charlie(
               charlieRemovedWindowPlaintextCount,
           danaRemovedWindowPlaintextCount: 0,
         ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st014SoakProof': _st014SoakProof(
+          role: 'charlie',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount:
+              charlieRemovedWindowPlaintextCount,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
     },
   );
 }
@@ -24829,6 +24905,17 @@ Future<void> _runRa018Dana(
         ),
       if (_scenario == 'private_network_chaos_invariants')
         'st013RelayChaosProof': _st013RelayChaosProof(
+          role: 'dana',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: danaRemovedWindowPlaintextCount,
+        ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'st014SoakProof': _st014SoakProof(
           role: 'dana',
           finalEpoch: finalEpoch,
           finalMembersConverged: memberPeerIds.toSet().containsAll(

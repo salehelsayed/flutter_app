@@ -11403,6 +11403,406 @@ void main() {
     );
 
     test(
+      'ST-014 bounded soak with churn and periodic restart replays catches divergence',
+      () async {
+        const seed = 14014;
+        final random = Random(seed);
+        final alice = GroupTestUser.create(
+          peerId: 'st014-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'st014-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'st014-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final dana = GroupTestUser.create(
+          peerId: 'st014-dana-peer',
+          username: 'Dana',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+          dana.dispose();
+        });
+
+        const groupId = 'group-st014-bounded-soak';
+        final createdAt = DateTime.utc(2026, 5, 14, 8, 14);
+        final allUsers = <GroupTestUser>[alice, bob, charlie, dana];
+        final usersByPeerId = {for (final user in allUsers) user.peerId: user};
+        final activePeerIds = <String>{
+          alice.peerId,
+          bob.peerId,
+          charlie.peerId,
+          dana.peerId,
+        };
+        final expectedVisibleIdsByPeerId = <String, Set<String>>{
+          for (final user in allUsers) user.peerId: <String>{},
+        };
+        final allSt014MessageIds = <String>{};
+        var epoch = 1;
+        var logicalStep = 10;
+        var modelComparisonCheckpoints = 0;
+        var restartReplayCount = 0;
+        var heldReplayCount = 0;
+        var duplicateReplayCount = 0;
+
+        List<GroupTestUser> activeUsers() => allUsers
+            .where((user) => activePeerIds.contains(user.peerId))
+            .toList(growable: false);
+
+        Future<void> saveKeyFor(
+          Iterable<GroupTestUser> users,
+          int keyEpoch,
+        ) async {
+          for (final user in users) {
+            await user.groupRepo.saveKey(
+              GroupKeyInfo(
+                groupId: groupId,
+                keyGeneration: keyEpoch,
+                encryptedKey: 'st014-soak-key-$keyEpoch',
+                createdAt: createdAt.add(Duration(minutes: keyEpoch)),
+              ),
+            );
+          }
+        }
+
+        Future<void> copyAliceStateTo(
+          Iterable<GroupTestUser> users, {
+          required int keyEpoch,
+        }) async {
+          final group = await alice.groupRepo.getGroup(groupId);
+          final members = await alice.groupRepo.getMembers(groupId);
+          expect(group, isNotNull);
+          for (final user in users) {
+            await user.groupRepo.saveGroup(
+              group!.copyWith(
+                myRole: user.peerId == alice.peerId
+                    ? GroupRole.admin
+                    : GroupRole.member,
+              ),
+            );
+            for (final member in members) {
+              await user.groupRepo.saveMember(member);
+            }
+          }
+          await saveKeyFor(users, keyEpoch);
+        }
+
+        Future<List<String>> collectModelDivergences(String checkpoint) async {
+          final failures = <String>[];
+          for (final user in allUsers) {
+            final messages = await user.loadGroupMessages(groupId);
+            final visibleIds = messages
+                .where((message) => allSt014MessageIds.contains(message.id))
+                .map((message) => message.id)
+                .toList(growable: false);
+            final visibleIdSet = visibleIds.toSet();
+            final expectedIds = expectedVisibleIdsByPeerId[user.peerId]!;
+            if (visibleIdSet.length != expectedIds.length ||
+                !visibleIdSet.containsAll(expectedIds)) {
+              final expected = expectedIds.toList()..sort();
+              final actual = visibleIdSet.toList()..sort();
+              failures.add(
+                '$checkpoint ${user.username} visible mismatch '
+                'expected=$expected actual=$actual',
+              );
+            }
+            for (final messageId in visibleIdSet) {
+              final count = visibleIds.where((id) => id == messageId).length;
+              if (count != 1) {
+                failures.add(
+                  '$checkpoint ${user.username} duplicate $messageId count=$count',
+                );
+              }
+            }
+
+            if (!activePeerIds.contains(user.peerId)) {
+              continue;
+            }
+            final memberPeerIds = (await user.groupRepo.getMembers(
+              groupId,
+            )).map((member) => member.peerId).toSet();
+            if (memberPeerIds.length != activePeerIds.length ||
+                !memberPeerIds.containsAll(activePeerIds)) {
+              final expected = activePeerIds.toList()..sort();
+              final actual = memberPeerIds.toList()..sort();
+              failures.add(
+                '$checkpoint ${user.username} member mismatch '
+                'expected=$expected actual=$actual',
+              );
+            }
+            final key = await user.groupRepo.getLatestKey(groupId);
+            if (key?.keyGeneration != epoch) {
+              failures.add(
+                '$checkpoint ${user.username} epoch mismatch '
+                'expected=$epoch actual=${key?.keyGeneration}',
+              );
+            }
+          }
+          return failures;
+        }
+
+        Future<void> expectNoDivergence(String checkpoint) async {
+          modelComparisonCheckpoints++;
+          final failures = await collectModelDivergences(checkpoint);
+          expect(failures, isEmpty, reason: failures.join('\n'));
+        }
+
+        Future<void> expectAbsentBeforeReplay({
+          required GroupTestUser user,
+          required String messageId,
+        }) async {
+          final ids = (await user.loadGroupMessages(
+            groupId,
+          )).map((message) => message.id).toSet();
+          expect(
+            ids,
+            isNot(contains(messageId)),
+            reason:
+                '${user.username} must not persist $messageId before replay',
+          );
+        }
+
+        Future<void> sendAndCompare({
+          required int cycle,
+          required String operation,
+          required GroupTestUser sender,
+          required String deliveryMode,
+          GroupTestUser? target,
+        }) async {
+          expect(activePeerIds, contains(sender.peerId));
+          logicalStep++;
+          final timestamp = createdAt.add(Duration(minutes: logicalStep));
+          final messageId = 'st014-c$cycle-$operation-${sender.peerId}';
+          final text = 'ST-014 seed $seed cycle $cycle $operation';
+          final recipientPeerIds = activePeerIds
+              .where((peerId) => peerId != sender.peerId)
+              .toSet();
+          final recipients = recipientPeerIds
+              .map((peerId) => usersByPeerId[peerId]!)
+              .toList(growable: false);
+
+          allSt014MessageIds.add(messageId);
+          expectedVisibleIdsByPeerId[sender.peerId]!.add(messageId);
+          for (final peerId in recipientPeerIds) {
+            expectedVisibleIdsByPeerId[peerId]!.add(messageId);
+          }
+
+          if (deliveryMode == 'restartReplay') {
+            expect(target, isNotNull);
+            expect(target!.peerId, isNot(sender.peerId));
+            expect(activePeerIds, contains(target.peerId));
+            target.unsubscribeFromGroup(groupId);
+            network.deliveryDelay = Duration(
+              milliseconds: 1 + random.nextInt(4),
+            );
+            restartReplayCount++;
+          } else if (deliveryMode == 'heldReplay') {
+            expect(target, isNotNull);
+            expect(target!.peerId, isNot(sender.peerId));
+            expect(activePeerIds, contains(target.peerId));
+            network.holdDeliveriesFor(target.deviceId);
+            heldReplayCount++;
+          } else if (deliveryMode == 'duplicate') {
+            network.duplicateOnDeliver = true;
+            duplicateReplayCount++;
+          }
+
+          final send = await sender.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: text,
+            messageId: messageId,
+            timestamp: timestamp,
+          );
+          expect(send.$1.name, 'success');
+          expect(send.$2, isNotNull);
+          expect(send.$2!.keyGeneration, epoch);
+          await pump();
+
+          if (deliveryMode == 'restartReplay') {
+            await expectAbsentBeforeReplay(user: target!, messageId: messageId);
+            target.subscribeToGroup(groupId);
+            network.duplicateOnDeliver = true;
+            await network.publish(groupId, sender.peerId, <String, dynamic>{
+              'groupId': groupId,
+              'senderId': sender.peerId,
+              'senderUsername': sender.username,
+              'keyEpoch': epoch,
+              'text': text,
+              'timestamp': timestamp.toIso8601String(),
+              'messageId': messageId,
+            }, senderDeviceId: sender.deviceId);
+          } else if (deliveryMode == 'heldReplay') {
+            await expectAbsentBeforeReplay(user: target!, messageId: messageId);
+            await network.releaseHeldDeliveriesFor(
+              target.deviceId,
+              reverse: random.nextBool(),
+            );
+          }
+
+          network.deliveryDelay = null;
+          network.duplicateOnDeliver = false;
+          await pump();
+
+          for (final inactive in allUsers.where(
+            (user) => !activePeerIds.contains(user.peerId),
+          )) {
+            await expectAbsentBeforeReplay(
+              user: inactive,
+              messageId: messageId,
+            );
+          }
+          expect(recipients, isNotEmpty);
+          await expectNoDivergence('cycle $cycle $operation');
+        }
+
+        Future<void> removeForCycle({
+          required int cycle,
+          required GroupTestUser target,
+        }) async {
+          final removedAt = createdAt.add(
+            Duration(minutes: logicalStep, seconds: cycle),
+          );
+          await alice.removeMember(
+            groupId: groupId,
+            memberPeerId: target.peerId,
+            memberUsername: target.username,
+            removedAt: removedAt,
+          );
+          activePeerIds.remove(target.peerId);
+          await pump();
+          epoch++;
+          await saveKeyFor(activeUsers(), epoch);
+          await expectNoDivergence('cycle $cycle ${target.username} removed');
+        }
+
+        Future<void> readdForCycle({
+          required int cycle,
+          required GroupTestUser target,
+        }) async {
+          final readdedAt = createdAt.add(
+            Duration(minutes: logicalStep, seconds: cycle),
+          );
+          await alice.addMember(
+            groupId: groupId,
+            invitee: target,
+            joinedAt: readdedAt,
+          );
+          await alice.broadcastMemberAdded(
+            groupId: groupId,
+            newMember: target,
+            eventAt: readdedAt,
+          );
+          activePeerIds.add(target.peerId);
+          await pump();
+          epoch++;
+          await copyAliceStateTo(allUsers, keyEpoch: epoch);
+          await expectNoDivergence('cycle $cycle ${target.username} readded');
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'ST-014 Bounded Soak',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: dana,
+          joinedAt: createdAt.add(const Duration(minutes: 3)),
+        );
+        await copyAliceStateTo(allUsers, keyEpoch: epoch);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        dana.start();
+        await expectNoDivergence('initial');
+
+        final restartTargets = <GroupTestUser>[bob, charlie, dana, alice];
+        for (var cycle = 1; cycle <= 4; cycle++) {
+          final restartTarget = restartTargets[cycle - 1];
+          await sendAndCompare(
+            cycle: cycle,
+            operation: 'pre-churn-restart',
+            sender: restartTarget == alice ? bob : alice,
+            deliveryMode: 'restartReplay',
+            target: restartTarget,
+          );
+
+          final churnTarget = cycle.isOdd ? charlie : dana;
+          await removeForCycle(cycle: cycle, target: churnTarget);
+          await sendAndCompare(
+            cycle: cycle,
+            operation: '${churnTarget.username.toLowerCase()}-removed-held',
+            sender: alice,
+            deliveryMode: 'heldReplay',
+            target: bob,
+          );
+
+          await readdForCycle(cycle: cycle, target: churnTarget);
+          await sendAndCompare(
+            cycle: cycle,
+            operation:
+                '${churnTarget.username.toLowerCase()}-readded-duplicate',
+            sender: churnTarget,
+            deliveryMode: 'duplicate',
+          );
+        }
+
+        expectedVisibleIdsByPeerId[bob.peerId]!.add('st014-synthetic-missing');
+        final syntheticDivergences = await collectModelDivergences(
+          'synthetic-detector',
+        );
+        expect(
+          syntheticDivergences.any(
+            (failure) =>
+                failure.contains('Bob') && failure.contains('visible mismatch'),
+          ),
+          isTrue,
+          reason: syntheticDivergences.join('\n'),
+        );
+        expectedVisibleIdsByPeerId[bob.peerId]!.remove(
+          'st014-synthetic-missing',
+        );
+        await expectNoDivergence('final');
+
+        expect(epoch, 9);
+        expect(allSt014MessageIds, hasLength(12));
+        expect(restartReplayCount, 4);
+        expect(heldReplayCount, 4);
+        expect(duplicateReplayCount, 4);
+        expect(modelComparisonCheckpoints, greaterThanOrEqualTo(21));
+        for (final user in allUsers) {
+          expect(
+            expectedVisibleIdsByPeerId[user.peerId],
+            isNotEmpty,
+            reason:
+                '${user.username} must stay receive-live during ST-014 soak',
+          );
+        }
+      },
+    );
+
+    test(
       'KE-010 key-before-config does not authorize pre-config plaintext',
       () async {
         final flowEvents = <Map<String, dynamic>>[];
