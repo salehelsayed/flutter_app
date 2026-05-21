@@ -27180,10 +27180,17 @@ Future<void> _runMl012Alice(
   await waitForSharedSignal(_signalName('bob_added_dana'));
   await waitForSharedSignal(_signalName('dana_group_joined'));
 
+  final danaPeerId = identities['dana']!['peerId'] as String;
+  await _waitForMemberInclusion(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: danaPeerId,
+  );
   await _removeCharlieAndPublish(
     stack: stack,
     groupId: groupId,
     charlieIdentity: identities['charlie']!,
+    additionalReplayRecipientPeerIds: <String>[danaPeerId],
   );
   writeSharedText(_signalName('alice_removed_charlie'), 'ok');
 
