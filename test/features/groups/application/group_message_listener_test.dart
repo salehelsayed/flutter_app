@@ -669,6 +669,83 @@ void main() {
   );
 
   test(
+    'OB-004 decryption diagnostic creates one repair workflow and dedupes repeats',
+    () async {
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final repairRequests = <GroupKeyRepairRequest>[];
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: repairRequests.add,
+      );
+      listener.start(sourceController.stream);
+      addTearDown(diagnostics.close);
+
+      final placeholderFuture = listener.groupMessageStream.first.timeout(
+        const Duration(seconds: 1),
+      );
+      final diagnostic = {
+        'event': 'group:decryption_failed',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'keyEpoch': 5,
+        'localKeyEpoch': 2,
+        'error': 'cipher auth failed',
+      };
+
+      diagnostics.add(diagnostic);
+
+      final placeholder = await placeholderFuture;
+      final repairId = liveGroupPendingKeyRepairId(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        keyEpoch: 5,
+        localKeyEpoch: 2,
+      );
+      expect(placeholder.id, repairId);
+      expect(placeholder.text, groupPendingKeyRepairPlaceholderText);
+      expect(placeholder.status, groupPendingKeyRepairStatusPendingKey);
+      expect(placeholder.keyGeneration, 5);
+      expect(await msgRepo.getMessage(repairId), isNotNull);
+
+      expect(pendingRepo.repairs, hasLength(1));
+      final repair = pendingRepo.repairs.values.single;
+      expect(repair.id, repairId);
+      expect(repair.status, groupPendingKeyRepairStatusPendingKey);
+      expect(repair.replayEnvelopeJson, isNull);
+      expect(repair.lastError, 'cipher auth failed');
+      expect(repair.triggerCount, 1);
+
+      expect(repairRequests, hasLength(1));
+      expect(repairRequests.single.groupId, 'group-1');
+      expect(repairRequests.single.keyEpoch, 5);
+      expect(repairRequests.single.reason, groupKeyRepairReasonLiveDiagnostic);
+      expect(repairRequests.single.messageId, repairId);
+
+      diagnostics.add(diagnostic);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(msgRepo.count, 1);
+      expect(pendingRepo.repairs, hasLength(1));
+      expect(repairRequests, hasLength(1));
+      final encodedFlowEvents = jsonEncode(flowEvents);
+      expect(
+        encodedFlowEvents,
+        contains('GROUP_LIVE_DECRYPTION_REPAIR_PLACEHOLDER_SAVED'),
+      );
+    },
+  );
+
+  test(
     'DE-014 decryption failure queues repair placeholder and later valid event still persists',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();

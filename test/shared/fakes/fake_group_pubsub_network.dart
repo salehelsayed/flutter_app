@@ -132,6 +132,35 @@ class FakeGroupPubSubNetwork {
     return controller;
   }
 
+  int emitDecryptionFailureDiagnostic({
+    required String receiverPeerOrDeviceId,
+    required String groupId,
+    required String senderPeerId,
+    required int keyEpoch,
+    int? localKeyEpoch,
+    String? messageId,
+    String? senderDeviceId,
+    String error = 'fake network decryption failure',
+  }) {
+    var emitted = 0;
+    for (final deviceId in _resolveKnownDeliveryIds(receiverPeerOrDeviceId)) {
+      final controller = _deviceDiagnosticControllers[deviceId];
+      if (controller == null || controller.isClosed) continue;
+      controller.add({
+        'event': 'group:decryption_failed',
+        'groupId': groupId,
+        'senderId': senderPeerId,
+        'senderDeviceId': ?senderDeviceId,
+        'keyEpoch': keyEpoch,
+        'localKeyEpoch': ?localKeyEpoch,
+        'messageId': ?messageId,
+        'error': error,
+      });
+      emitted++;
+    }
+    return emitted;
+  }
+
   int emitPayloadParseFailureDiagnostic({
     required String receiverPeerOrDeviceId,
     required String groupId,
