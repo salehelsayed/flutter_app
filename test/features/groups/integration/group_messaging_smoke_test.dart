@@ -13696,6 +13696,209 @@ void main() {
     );
 
     test(
+      'ST-003 fake-network randomized key epoch monotonicity keeps active epoch',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'st003-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'st003-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-st003-key-epoch-property';
+        const epochOneKey = 'st003-shared-key-1';
+        await alice.createGroup(groupId: groupId, name: 'ST-003');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await Future.wait([
+          alice.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: epochOneKey,
+              createdAt: DateTime.utc(2026, 5, 14, 7),
+            ),
+          ),
+          bob.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: epochOneKey,
+              createdAt: DateTime.utc(2026, 5, 14, 7),
+            ),
+          ),
+        ]);
+
+        final keyUpdateController = StreamController<ChatMessage>.broadcast();
+        final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+        final keyUpdateListener = GroupKeyUpdateListener(
+          groupKeyUpdateStream: keyUpdateController.stream,
+          groupRepo: bob.groupRepo,
+          bridge: bob.bridge,
+          getOwnMlKemSecretKey: () async => 'mlkem-secret-${bob.deviceId}',
+          getOwnPeerId: () async => bob.peerId,
+          getOwnDeviceId: () async => bob.deviceId,
+          retryPendingGroupKeyRepairs: (request) async {
+            repairCalls.add(request);
+          },
+        );
+        addTearDown(() async {
+          keyUpdateListener.dispose();
+          await keyUpdateController.close();
+        });
+        keyUpdateListener.start();
+
+        final random = Random(30030);
+        final epochs = <int>[
+          2,
+          4,
+          3,
+          4,
+          5,
+          2,
+          6,
+          6,
+          1,
+          7,
+          5,
+          8,
+          8,
+          ...List<int>.generate(24, (_) => 1 + random.nextInt(8)),
+        ];
+        final retainedMaterialByEpoch = <int, String>{1: epochOneKey};
+        var expectedLatestEpoch = 1;
+        var expectedUpdateKeyCount = 0;
+        var historicalOnlyEpochs = 0;
+        var duplicateUpdates = 0;
+        var sameEpochConflicts = 0;
+        final baseTime = DateTime.utc(2026, 5, 14, 7);
+
+        for (var index = 0; index < epochs.length; index++) {
+          final epoch = epochs[index];
+          final existingMaterial = retainedMaterialByEpoch[epoch];
+          final encryptedKey = existingMaterial == null
+              ? 'st003-key-$epoch-first-$index'
+              : (random.nextBool()
+                    ? existingMaterial
+                    : 'st003-key-$epoch-conflict-$index');
+
+          if (existingMaterial == null) {
+            retainedMaterialByEpoch[epoch] = encryptedKey;
+            if (epoch > expectedLatestEpoch) {
+              expectedLatestEpoch = epoch;
+              expectedUpdateKeyCount++;
+            } else {
+              historicalOnlyEpochs++;
+            }
+          } else if (encryptedKey == existingMaterial) {
+            duplicateUpdates++;
+          } else {
+            sameEpochConflicts++;
+          }
+          retainedMaterialByEpoch.removeWhere(
+            (generation, _) => generation < expectedLatestEpoch - 1,
+          );
+
+          final sourceEventId = 'st003-direct-key-update-$index';
+          keyUpdateController.add(
+            ChatMessage(
+              from: alice.deviceId,
+              to: bob.deviceId,
+              content: _directKeyUpdateEnvelope(
+                groupId: groupId,
+                source: alice,
+                recipient: bob,
+                keyGeneration: epoch,
+                encryptedKey: encryptedKey,
+                sourceEventId: sourceEventId,
+                eventAt: baseTime.add(Duration(minutes: index + 1)),
+              ),
+              timestamp: baseTime
+                  .add(Duration(minutes: index + 1))
+                  .toIso8601String(),
+              isIncoming: true,
+              confirmNonce: sourceEventId,
+            ),
+          );
+          await pump();
+
+          final latest = await bob.groupRepo.getLatestKey(groupId);
+          expect(latest, isNotNull, reason: 'after event $index epoch $epoch');
+          expect(latest!.keyGeneration, expectedLatestEpoch);
+          expect(
+            latest.encryptedKey,
+            retainedMaterialByEpoch[expectedLatestEpoch],
+          );
+          final stored = await bob.groupRepo.getKeyByGeneration(groupId, epoch);
+          final expectedStoredMaterial = retainedMaterialByEpoch[epoch];
+          if (expectedStoredMaterial == null) {
+            expect(stored, isNull);
+          } else {
+            expect(stored, isNotNull);
+            expect(stored!.encryptedKey, expectedStoredMaterial);
+          }
+          expect(
+            bob.bridge.commandLog.where((c) => c == 'group:updateKey'),
+            hasLength(expectedUpdateKeyCount),
+          );
+        }
+
+        expect(historicalOnlyEpochs, greaterThan(0));
+        expect(duplicateUpdates, greaterThan(0));
+        expect(sameEpochConflicts, greaterThan(0));
+        expect(repairCalls.map((request) => request.keyEpoch).toSet(), {
+          2,
+          4,
+          5,
+          6,
+          7,
+          8,
+        });
+
+        await alice.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: expectedLatestEpoch,
+            encryptedKey: retainedMaterialByEpoch[expectedLatestEpoch]!,
+            createdAt: DateTime.utc(2026, 5, 14, 8),
+          ),
+        );
+        alice.start();
+        bob.start();
+
+        final (sendResult, sentMessage) = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'ST-003 latest epoch after randomized key updates',
+          messageId: 'st003-latest-epoch-message',
+          timestamp: DateTime.utc(2026, 5, 14, 8, 1),
+        );
+        expect(sendResult.name, 'success');
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.keyGeneration, expectedLatestEpoch);
+
+        await pump();
+        final aliceMessages = await alice.loadGroupMessages(groupId);
+        final delivered = aliceMessages
+            .where((message) => message.id == 'st003-latest-epoch-message')
+            .toList();
+        expect(delivered, hasLength(1));
+        expect(delivered.single.isIncoming, isTrue);
+        expect(delivered.single.keyGeneration, expectedLatestEpoch);
+        expect(
+          delivered.single.text,
+          'ST-003 latest epoch after randomized key updates',
+        );
+      },
+    );
+
+    test(
       'DE-002 rapid 100 same-sender messages stay ordered for both recipients',
       () async {
         final alice = GroupTestUser.create(
