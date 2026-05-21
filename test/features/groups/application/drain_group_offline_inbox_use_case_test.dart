@@ -1535,6 +1535,129 @@ void main() {
   );
 
   test(
+    'ST-004 clock skew keeps cursor exact and timestamp fallback inclusive',
+    () async {
+      await saveDefaultReplayKey();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-local',
+          username: 'Local',
+          role: MemberRole.writer,
+          publicKey: 'pk-local',
+          joinedAt: DateTime.utc(2026, 5, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          publicKey: 'pk-sender',
+          joinedAt: DateTime.utc(2026, 5, 1),
+        ),
+      );
+
+      final relayBoundary = DateTime.utc(2026, 5, 16, 8, 4);
+      final relayBoundaryMs = relayBoundary.millisecondsSinceEpoch;
+      final futureSkew = relayBoundary.add(const Duration(minutes: 10));
+      final pastSkew = relayBoundary.subtract(const Duration(minutes: 7));
+
+      final firstBoundary =
+          await signedRelayMessage(
+              id: 'st004-boundary-first',
+              text: 'ST-004 boundary first with future skew',
+              timestamp: futureSkew,
+            )
+            ..['timestamp'] = relayBoundaryMs;
+      final cursorBoundary =
+          await signedRelayMessage(
+              id: 'st004-cursor-page-boundary',
+              text: 'ST-004 cursor page exact',
+              timestamp: pastSkew,
+            )
+            ..['timestamp'] = relayBoundaryMs;
+      bridge.addPage('group-1', '', [firstBoundary], 'st004-opaque-page-2');
+      bridge.addPage('group-1', 'st004-opaque-page-2', [cursorBoundary], '');
+
+      final firstDrain = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+
+      expect(firstDrain.isSuccessful, isTrue);
+      final boundaryCursor =
+          '$groupInboxSyntheticSinceCursorPrefix${relayBoundaryMs - 1}';
+      final futureSkewCursor =
+          '$groupInboxSyntheticSinceCursorPrefix${futureSkew.millisecondsSinceEpoch - 1}';
+      expect(await msgRepo.getInboxCursor('group-1'), boundaryCursor);
+      expect(await msgRepo.getInboxCursor('group-1'), isNot(futureSkewCursor));
+
+      final firstCursorCommands = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:inboxRetrieveCursor')
+          .toList(growable: false);
+      expect(firstCursorCommands, hasLength(2));
+      expect(firstCursorCommands[0]['payload']['cursor'], '');
+      expect(
+        firstCursorCommands[1]['payload']['cursor'],
+        'st004-opaque-page-2',
+      );
+
+      final secondBoundary =
+          await signedRelayMessage(
+              id: 'st004-boundary-second',
+              text: 'ST-004 same boundary after skew',
+              timestamp: pastSkew,
+            )
+            ..['timestamp'] = relayBoundaryMs;
+      final adjacent =
+          await signedRelayMessage(
+              id: 'st004-boundary-adjacent',
+              text: 'ST-004 adjacent millisecond after skew',
+              timestamp: futureSkew,
+            )
+            ..['timestamp'] = relayBoundaryMs + 1;
+      bridge.addPage('group-1', boundaryCursor, [
+        firstBoundary,
+        secondBoundary,
+        adjacent,
+      ], '');
+
+      final secondDrain = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+
+      expect(secondDrain.isSuccessful, isTrue);
+      final messages = await msgRepo.getMessagesPage('group-1');
+      for (final messageId in const [
+        'st004-boundary-first',
+        'st004-cursor-page-boundary',
+        'st004-boundary-second',
+        'st004-boundary-adjacent',
+      ]) {
+        expect(
+          messages.where((message) => message.id == messageId),
+          hasLength(1),
+          reason: messageId,
+        );
+      }
+      expect(
+        await msgRepo.getInboxCursor('group-1'),
+        '$groupInboxSyntheticSinceCursorPrefix$relayBoundaryMs',
+      );
+    },
+  );
+
+  test(
     'EK004 unsigned non envelope replay forms fail closed before mutation',
     () async {
       Future<void> runUnsignedCase({
