@@ -19558,19 +19558,21 @@ Future<void> _runGm006Bob(
 
   var keptActiveAfterDelayedOldConfig = false;
   if (isMl007) {
-    final delayedOldConfigIgnored = Completer<void>();
+    final delayedOldConfigPreserved = Completer<void>();
     debugSetFlowEventSink((payload) {
-      if (payload['event'] ==
-              'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED' &&
-          !delayedOldConfigIgnored.isCompleted) {
-        delayedOldConfigIgnored.complete();
+      final event = payload['event'];
+      if ((event == 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED' ||
+              event ==
+                  'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_REPAIRED') &&
+          !delayedOldConfigPreserved.isCompleted) {
+        delayedOldConfigPreserved.complete();
       }
     });
     try {
       await waitForSharedSignal(
         _signalName('alice_delivered_delayed_old_config_after_readd'),
       );
-      await delayedOldConfigIgnored.future.timeout(
+      await delayedOldConfigPreserved.future.timeout(
         const Duration(seconds: 120),
       );
       await waitForCondition(() async {
@@ -20293,19 +20295,21 @@ Future<void> _runGm006Charlie(
   int? epochAfterDelayedOldConfig;
   var keptFinalMembersAfterDelayedOldConfig = false;
   if (isMl007) {
-    final delayedOldConfigIgnored = Completer<void>();
+    final delayedOldConfigPreserved = Completer<void>();
     debugSetFlowEventSink((payload) {
-      if (payload['event'] ==
-              'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED' &&
-          !delayedOldConfigIgnored.isCompleted) {
-        delayedOldConfigIgnored.complete();
+      final event = payload['event'];
+      if ((event == 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED' ||
+              event ==
+                  'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_REPAIRED') &&
+          !delayedOldConfigPreserved.isCompleted) {
+        delayedOldConfigPreserved.complete();
       }
     });
     try {
       await waitForSharedSignal(
         _signalName('alice_delivered_delayed_old_config_after_readd'),
       );
-      await delayedOldConfigIgnored.future.timeout(
+      await delayedOldConfigPreserved.future.timeout(
         const Duration(seconds: 120),
       );
       await waitForCondition(() async {
