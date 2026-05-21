@@ -393,6 +393,10 @@ func (n *Node) UpdateGroupConfig(groupId string, config *GroupConfig) {
 		delete(n.groupConfigs, groupId)
 		return
 	}
+	if reason, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+		log.Printf("[PUBSUB] Rejecting group config update for %s: %s: %v", groupId, reason, err)
+		return
+	}
 
 	n.groupConfigs[groupId] = cloneGroupConfig(config)
 }
@@ -411,6 +415,9 @@ func (n *Node) RefreshJoinedGroupStateIfNewer(groupId string, config *GroupConfi
 	}
 	if keyInfo == nil {
 		return false, fmt.Errorf("missing group key info for group %s", groupId)
+	}
+	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+		return false, fmt.Errorf("invalid group config for group %s: %w", groupId, err)
 	}
 
 	current := n.groupKeys[groupId]
@@ -616,6 +623,9 @@ func groupMemberDeviceDedupKey(device GroupMemberDevice) string {
 }
 
 func validateGroupConfigIdentityUniqueness(config *GroupConfig) (string, error) {
+	if err := validateGroupConfigPeerIdentity(config); err != nil {
+		return "invalid_peer_identity", err
+	}
 	if err := validateGroupConfigSigningKeyUniqueness(config); err != nil {
 		return "ambiguous_signing_key", err
 	}
@@ -623,6 +633,64 @@ func validateGroupConfigIdentityUniqueness(config *GroupConfig) (string, error) 
 		return "ambiguous_transport_peer", err
 	}
 	return "", nil
+}
+
+func validateGroupConfigPeerIdentity(config *GroupConfig) error {
+	if config == nil {
+		return nil
+	}
+	seenMembers := make(map[string]string, len(config.Members))
+	seenTransportPeers := make(map[string]string)
+	for i, member := range config.Members {
+		memberKey, err := groupPeerIdentityKey(member.PeerId)
+		if err != nil {
+			return fmt.Errorf("member[%d] peerId: %w", i, err)
+		}
+		if existing, ok := seenMembers[memberKey]; ok && existing != member.PeerId {
+			return fmt.Errorf("member[%d] duplicate peer id variant %q conflicts with %q", i, member.PeerId, existing)
+		}
+		seenMembers[memberKey] = member.PeerId
+
+		for j, device := range member.Devices {
+			if device.TransportPeerId == "" {
+				continue
+			}
+			deviceKey, err := groupPeerIdentityKey(device.TransportPeerId)
+			if err != nil {
+				return fmt.Errorf("member[%d] device[%d] transportPeerId: %w", i, j, err)
+			}
+			if existing, ok := seenTransportPeers[deviceKey]; ok && existing != member.PeerId {
+				return fmt.Errorf("member[%d] device[%d] duplicate transport peer id variant conflicts with member %q", i, j, existing)
+			}
+			seenTransportPeers[deviceKey] = member.PeerId
+		}
+	}
+	return nil
+}
+
+func groupPeerIdentityKey(peerId string) (string, error) {
+	trimmed := strings.TrimSpace(peerId)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty peer id")
+	}
+	if trimmed != peerId {
+		return "", fmt.Errorf("non-canonical peer id")
+	}
+	if strings.IndexFunc(trimmed, func(r rune) bool {
+		return r <= 0x20 || r == 0x7f
+	}) >= 0 {
+		return "", fmt.Errorf("non-canonical peer id")
+	}
+
+	pid, err := peer.Decode(trimmed)
+	if err != nil {
+		return strings.ToLower(trimmed), nil
+	}
+	canonical := pid.String()
+	if canonical != trimmed {
+		return "", fmt.Errorf("non-canonical peer id")
+	}
+	return strings.ToLower(canonical), nil
 }
 
 func validateGroupConfigSigningKeyUniqueness(config *GroupConfig) error {

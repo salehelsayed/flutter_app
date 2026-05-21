@@ -150,5 +150,43 @@ void main() {
         expect(legacy, equals(sameMemberWithDevice));
       },
     );
+
+    test('SV-012 rejects noncanonical peer id text variants', () {
+      expect(groupMemberPeerIdRejectReason(' peer-1'), 'noncanonical_peer_id');
+      expect(groupMemberPeerIdRejectReason('peer-1 '), 'noncanonical_peer_id');
+      expect(groupMemberPeerIdRejectReason('peer\n1'), 'noncanonical_peer_id');
+      expect(groupMemberPeerIdRejectReason(''), 'invalid_peer_id');
+      expect(groupMemberPeerIdRejectReason(42), 'invalid_peer_id_type');
+      expect(groupMemberPeerIdRejectReason('peer-1'), isNull);
+    });
+
+    test('SV-012 detects case-equivalent duplicate member identities', () {
+      final existing = GroupMember(
+        groupId: 'group-1',
+        peerId: 'Peer-A',
+        role: MemberRole.writer,
+        joinedAt: DateTime.parse('2026-01-15T12:00:00.000Z'),
+      );
+      final variant = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-a',
+        role: MemberRole.writer,
+        joinedAt: DateTime.parse('2026-01-15T12:01:00.000Z'),
+      );
+
+      expect(
+        groupMemberDuplicatePeerIdVariantRejectReason([existing], variant),
+        'duplicate_peer_id_variant:peer-a',
+      );
+      expect(
+        groupConfigMemberKeyMaterialRejectReason({
+          'members': [
+            {'peerId': 'Peer-A', 'role': 'writer'},
+            {'peerId': 'peer-a', 'role': 'admin'},
+          ],
+        }),
+        'duplicate_peer_id_variant:peer-a',
+      );
+    });
   });
 }

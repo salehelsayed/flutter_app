@@ -74,6 +74,17 @@ class InMemoryGroupRepository
 
   @override
   Future<void> saveMember(GroupMember member) async {
+    final peerIdRejectReason = groupMemberPeerIdRejectReason(member.peerId);
+    if (peerIdRejectReason != null) {
+      throw ArgumentError.value(member.peerId, 'peerId', peerIdRejectReason);
+    }
+    final duplicateRejectReason = groupMemberDuplicatePeerIdVariantRejectReason(
+      _members[member.groupId]?.values ?? const <GroupMember>[],
+      member,
+    );
+    if (duplicateRejectReason != null) {
+      throw StateError(duplicateRejectReason);
+    }
     _members.putIfAbsent(member.groupId, () => {});
     _members[member.groupId]![member.peerId] = member;
   }
@@ -98,6 +109,10 @@ class InMemoryGroupRepository
     String peerId,
     MemberRole role,
   ) async {
+    final peerIdRejectReason = groupMemberPeerIdRejectReason(peerId);
+    if (peerIdRejectReason != null) {
+      throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
+    }
     final member = _members[groupId]?[peerId];
     if (member != null) {
       _members[groupId]![peerId] = member.copyWith(role: role);
@@ -106,6 +121,10 @@ class InMemoryGroupRepository
 
   @override
   Future<void> removeMember(String groupId, String peerId) async {
+    final peerIdRejectReason = groupMemberPeerIdRejectReason(peerId);
+    if (peerIdRejectReason != null) {
+      throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
+    }
     _members[groupId]?.remove(peerId);
   }
 

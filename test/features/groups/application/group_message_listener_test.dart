@@ -2850,6 +2850,88 @@ void main() {
       expect(bridge.commandLog, contains('group:updateConfig'));
     });
 
+    test(
+      'SV-012 member_added rejects peer id variants before send bypass',
+      () async {
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'PEER-SENDER',
+            'username': 'Sender Variant',
+            'role': 'admin',
+            'publicKey': 'pk-sender-variant',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'PEER-SENDER',
+                'role': 'admin',
+                'publicKey': 'pk-sender-variant',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'PEER-SENDER'), isNull);
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNotNull);
+        expect(await groupRepo.getMembers('group-1'), hasLength(2));
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(msgRepo.count, 0);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'sv012-valid-sender',
+          'text': 'valid sender message',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'PEER-SENDER',
+          'senderUsername': 'Sender Variant',
+          'keyEpoch': 0,
+          'messageId': 'sv012-variant-sender',
+          'text': 'variant sender message',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final messages = await msgRepo.getMessagesPage('group-1');
+        expect(messages.map((message) => message.id), ['sv012-valid-sender']);
+        expect(messages.single.senderPeerId, 'peer-sender');
+      },
+    );
+
     test('unauthorized member_added is ignored', () async {
       listener.start(sourceController.stream);
 
