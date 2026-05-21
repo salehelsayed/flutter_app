@@ -883,6 +883,58 @@ void main() {
   );
 
   test(
+    'SV-002 removed old-key publish does not mutate timeline or unread state',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final removedAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 10),
+      );
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-removed',
+        removedAt: removedAt,
+      );
+      await msgRepo.markAsRead('group-1');
+      final removalRow = await msgRepo.getLatestMessage('group-1');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 2,
+          encryptedKey: 'sv002-current-key',
+          createdAt: removedAt.add(const Duration(seconds: 1)),
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-removed',
+        senderUsername: 'Removed',
+        keyEpoch: 1,
+        text: 'SV-002 removed old-key publish',
+        timestamp: removedAt.add(const Duration(seconds: 2)).toIso8601String(),
+        messageId: 'sv002-removed-old-key',
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('sv002-removed-old-key'), isNull);
+      expect((await msgRepo.getLatestMessage('group-1'))!.id, removalRow!.id);
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
     'UP-004 excludes removed-window unread and clears post-readd unread on open',
     () async {
       final joinedAt = DateTime.now().toUtc().subtract(
