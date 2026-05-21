@@ -183,6 +183,99 @@ func TestBuildGroupInboxStoreRequest_PreservesOpaqueReplayEnvelope(t *testing.T)
 	}
 }
 
+func TestSV014GroupInboxStoreRequest_OmitsMembershipReplayPlaintext(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	cases := []struct {
+		name       string
+		plaintext  string
+		forbidden  []string
+		recipients []string
+	}{
+		{
+			name:      "member_added",
+			plaintext: `{"groupId":"group-sv014","senderId":"peer-admin","senderUsername":"Admin","text":"{\"__sys\":\"member_added\",\"member\":{\"peerId\":\"peer-dana-secret\",\"username\":\"Dana Secret\",\"role\":\"writer\",\"publicKey\":\"pk-dana-secret\",\"mlKemPublicKey\":\"mlkem-dana-secret\"},\"groupConfig\":{\"name\":\"SV014 Secret Group\",\"members\":[{\"peerId\":\"peer-admin\"},{\"peerId\":\"peer-dana-secret\"}]}}","timestamp":"2026-05-16T05:30:00Z","messageId":"sys-member_added:group-sv014:peer-dana-secret:1"}`,
+			forbidden: []string{
+				"__sys",
+				"member_added",
+				"sys-member_added",
+				"Dana Secret",
+				"pk-dana-secret",
+				"mlkem-dana-secret",
+				"SV014 Secret Group",
+			},
+			recipients: []string{"peer-bob", "peer-dana-secret"},
+		},
+		{
+			name:      "member_removed",
+			plaintext: `{"groupId":"group-sv014","senderId":"peer-admin","senderUsername":"Admin","text":"{\"__sys\":\"member_removed\",\"member\":{\"peerId\":\"peer-charlie-secret\",\"username\":\"Charlie Secret\"},\"removedAt\":\"2026-05-16T05:31:00Z\",\"groupConfig\":{\"name\":\"SV014 Secret Group\",\"members\":[{\"peerId\":\"peer-admin\"},{\"peerId\":\"peer-bob\"}]}}","timestamp":"2026-05-16T05:31:00Z","messageId":"sys-member_removed:group-sv014:peer-charlie-secret:2"}`,
+			forbidden: []string{
+				"__sys",
+				"member_removed",
+				"sys-member_removed",
+				"Charlie Secret",
+				"peer-charlie-secret",
+				"SV014 Secret Group",
+			},
+			recipients: []string{"peer-bob"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			envelope := buildTestEnvelopeWithPlaintext(
+				t,
+				"group-sv014",
+				"group_message",
+				"peer-admin",
+				privB64,
+				pubB64,
+				groupKey,
+				9,
+				tc.plaintext,
+			)
+			req := buildGroupInboxStoreRequest(
+				"group-sv014",
+				"peer-admin",
+				envelope,
+				tc.recipients,
+				"Membership changed",
+				"Secret preview",
+			)
+
+			raw, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			rawRequest := string(raw)
+			for _, fragment := range tc.forbidden {
+				if strings.Contains(rawRequest, fragment) {
+					t.Fatalf("relay-visible membership request leaked %q in %s", fragment, rawRequest)
+				}
+			}
+			if strings.Contains(rawRequest, "pushTitle") || strings.Contains(rawRequest, "pushBody") {
+				t.Fatalf("relay-visible membership request should omit push previews: %s", rawRequest)
+			}
+
+			var decoded map[string]interface{}
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if decoded["message"] != envelope {
+				t.Fatalf("message = %#v, want exact encrypted envelope", decoded["message"])
+			}
+			gotRecipients, ok := decoded["recipientPeerIds"].([]interface{})
+			if !ok || len(gotRecipients) != len(tc.recipients) {
+				t.Fatalf("recipientPeerIds = %#v, want %v", decoded["recipientPeerIds"], tc.recipients)
+			}
+		})
+	}
+}
+
 func TestGI001GroupInboxStoreRequiresStartedNodeBeforeRelayStream(t *testing.T) {
 	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {

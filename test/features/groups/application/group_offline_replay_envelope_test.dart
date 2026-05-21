@@ -209,6 +209,97 @@ void main() {
     },
   );
 
+  test(
+    'SV-014 hides membership replay event details from relay-visible payload',
+    () async {
+      bridge.responses['group.encrypt'] = {
+        'ok': true,
+        'ciphertext': 'sv014-membership-ciphertext',
+        'nonce': 'sv014-membership-nonce',
+      };
+
+      const systemMessageId = 'sys-member_added:group-1:peer-dana:42';
+      final plaintext = jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderDeviceId': 'device-sender',
+        'transportPeerId': 'transport-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 7,
+        'text': jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-dana',
+            'username': 'Dana Secret',
+            'role': 'writer',
+            'publicKey': 'pk-dana-secret',
+            'mlKemPublicKey': 'mlkem-dana-secret',
+          },
+          'groupConfig': {
+            'name': 'SV014 Secret Group',
+            'members': [
+              {'peerId': 'peer-sender', 'role': 'admin'},
+              {'peerId': 'peer-dana', 'role': 'writer'},
+            ],
+          },
+        }),
+        'timestamp': '2026-05-16T05:28:00.000Z',
+        'messageId': systemMessageId,
+      });
+
+      final retryPayload = await buildGroupOfflineReplayInboxRetryPayload(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: plaintext,
+        messageId: systemMessageId,
+        senderPeerId: 'peer-sender',
+        senderPublicKey: 'pk-sender',
+        senderPrivateKey: 'sk-sender',
+        senderDeviceId: 'device-sender',
+        senderTransportPeerId: 'transport-sender',
+        recipientPeerIds: const ['peer-bob', 'peer-charlie'],
+      );
+
+      final retry = jsonDecode(retryPayload) as Map<String, dynamic>;
+      expect(retry['groupId'], 'group-1');
+      expect(retry['recipientPeerIds'], ['peer-bob', 'peer-charlie']);
+
+      final envelope =
+          jsonDecode(retry['message'] as String) as Map<String, dynamic>;
+      expect(envelope.containsKey('messageId'), isFalse);
+      expect(envelope['recipientPeerIds'], ['peer-bob', 'peer-charlie']);
+      expect(envelope['recipientSetHash'], isA<String>());
+
+      final signedPayload =
+          jsonDecode(envelope['signedPayload'] as String)
+              as Map<String, dynamic>;
+      expect(signedPayload.containsKey('messageId'), isFalse);
+      expect(signedPayload['plaintextHash'], isA<String>());
+
+      for (final forbidden in const [
+        'sys-member_added',
+        'member_added',
+        '__sys',
+        'Dana Secret',
+        'pk-dana-secret',
+        'mlkem-dana-secret',
+        'SV014 Secret Group',
+      ]) {
+        expect(
+          retryPayload,
+          isNot(contains(forbidden)),
+          reason: 'relay-visible retry payload leaked $forbidden',
+        );
+      }
+      expect(
+        sha256.convert(utf8.encode(plaintext)).toString(),
+        signedPayload['plaintextHash'],
+      );
+    },
+  );
+
   test('GK-028 decode rejects senderPublicKey tamper before decrypt', () async {
     final rawEnvelope = await buildGroupOfflineReplayEnvelope(
       bridge: bridge,
