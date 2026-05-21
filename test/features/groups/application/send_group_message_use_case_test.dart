@@ -1769,6 +1769,67 @@ void main() {
   );
 
   test(
+    'UP-012 post-removal sends exclude removed members from durable notification recipients',
+    () async {
+      final joinedAt = DateTime.utc(2026, 5, 14, 2);
+      const activePeerId = 'peer-bob-up012';
+      const removedPeerId = 'peer-charlie-up012';
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: activePeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob-up012',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: removedPeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie-up012',
+          joinedAt: joinedAt.add(const Duration(minutes: 2)),
+        ),
+      );
+      await groupRepo.removeMember('group-1', removedPeerId);
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'UP-012 post-removal notification privacy',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'up012-post-removal',
+        timestamp: joinedAt.add(const Duration(minutes: 3)),
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.inboxStored, isTrue);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      final recipientPeerIds =
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>();
+      expect(recipientPeerIds, <String>[activePeerId]);
+      expect(recipientPeerIds, isNot(contains(removedPeerId)));
+      expect(inboxPayload.containsKey('pushTitle'), isFalse);
+      expect(inboxPayload.containsKey('pushBody'), isFalse);
+
+      final replay = _decodedGroupInboxReplayPayload(bridge);
+      expect(replay['messageId'], 'up012-post-removal');
+      expect(replay['text'], 'UP-012 post-removal notification privacy');
+    },
+  );
+
+  test(
     'GM-020 immediate post-removal durable recipients stay Bob-only for every send',
     () async {
       final failBridge = _InboxStoreFailBridge();

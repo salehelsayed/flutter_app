@@ -15234,7 +15234,7 @@ void main() {
     );
 
     test(
-      'removed member notifications stay off until rejoin becomes effective',
+      'UP-012 removed member receives no post-removal notifications until rejoin',
       () async {
         const groupId = 'grp-rejoin-notify-005';
         final charlieNotificationService = FakeNotificationService();
@@ -15278,6 +15278,7 @@ void main() {
           isEmpty,
           reason: 'Removed members must not receive local notifications',
         );
+        expect(charlieNotificationService.shownGeneric, isEmpty);
 
         await admin.addMember(groupId: groupId, invitee: charlie);
         await admin.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -15286,11 +15287,13 @@ void main() {
         expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
         expect(charlieNotificationService.shown, isEmpty);
+        expect(charlieNotificationService.shownGeneric, isEmpty);
 
         await admin.sendGroupMessage(groupId: groupId, text: 'After rejoin');
         await pump();
 
         expect(charlieNotificationService.shown, hasLength(1));
+        expect(charlieNotificationService.shownGeneric, isEmpty);
         expect(
           charlieNotificationService.shown.single.contactPeerId,
           'group:$groupId',
@@ -15310,6 +15313,16 @@ void main() {
             .toList();
         expect(charlieIncomingTexts, contains('After rejoin'));
         expect(charlieIncomingTexts, isNot(contains('While removed')));
+        expect(
+          charlieNotificationService.shown
+              .where(
+                (notification) =>
+                    notification.messageText.contains('While removed') ||
+                    notification.payload.contains('While removed'),
+              )
+              .toList(),
+          isEmpty,
+        );
 
         admin.dispose();
         charlie.dispose();

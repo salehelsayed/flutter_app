@@ -123,6 +123,11 @@ const _privateOfflineRemoveRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_offline_remove',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _privateRemovedNotificationPrivacyRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_removed_notification_privacy',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privateOfflineReaddRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_offline_readd',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -472,6 +477,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'private_offline_add': _privateOfflineAddRequirement,
   'private_online_remove': _privateOnlineRemoveRequirement,
   'private_offline_remove': _privateOfflineRemoveRequirement,
+  'private_removed_notification_privacy':
+      _privateRemovedNotificationPrivacyRequirement,
   'private_offline_readd': _privateOfflineReaddRequirement,
   'private_readd_current': _privateReaddCurrentRequirement,
   'private_readd_active_members': _privateReaddActiveMembersRequirement,
@@ -713,6 +720,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
             requirement.scenario == 'gm005' ||
             requirement.scenario == 'private_online_remove' ||
             requirement.scenario == 'private_offline_remove' ||
+            requirement.scenario == 'private_removed_notification_privacy' ||
             requirement.scenario ==
                 'private_background_resume_group_delivery' ||
             requirement.scenario == 'private_removed_reaction_rejected' ||
@@ -767,6 +775,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
         requirement.scenario == 'gm005' ||
         requirement.scenario == 'private_online_remove' ||
         requirement.scenario == 'private_offline_remove' ||
+        requirement.scenario == 'private_removed_notification_privacy' ||
         requirement.scenario == 'private_background_resume_group_delivery' ||
         requirement.scenario == 'private_removed_reaction_rejected' ||
         requirement.scenario == 'gm009' ||
@@ -2182,6 +2191,7 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
       ];
     case 'gm004':
     case 'private_online_remove':
+    case 'private_removed_notification_privacy':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceAfterCharlieRemove',
@@ -3154,6 +3164,14 @@ void _validateScenarioProofFields({
       failures: failures,
     );
     _validatePl006RemovedMediaProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_removed_notification_privacy') {
+    _validateUp012NotificationPrivacyProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -13671,6 +13689,136 @@ void _validateGe011PartialLivePeersInboxFallbackProof({
     byRole: byRole,
     failures: failures,
   );
+}
+
+void _validateUp012NotificationPrivacyProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up012NotificationPrivacyProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'UP-012') {
+      failures.add('$role: $proofName.rowId must be UP-012');
+    }
+  }
+
+  void requirePositiveNotificationCount({
+    required String role,
+    required Map<String, dynamic>? proof,
+    required String field,
+  }) {
+    if (proof == null) return;
+    final count = _intValue(proof[field]);
+    if (count == null || count < 1) {
+      failures.add('$role: $proofName.$field must be >= 1');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing UP-012 notification privacy proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'memberListExcludesCharlie',
+      'receivedBobAfterRemoval',
+      'legitimatePostRemovalNotificationShown',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    final expectedRemovedPeerId = peerIdByRole['charlie'];
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+    requirePositiveNotificationCount(
+      role: 'alice',
+      proof: aliceProof,
+      field: 'postRemovalNotificationCount',
+    );
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing UP-012 notification privacy proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListExcludesCharlie',
+      'receivedAliceAfterRemoval',
+      'sentPostRemovalAccepted',
+      'legitimatePostRemovalNotificationShown',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requirePositiveNotificationCount(
+      role: 'bob',
+      proof: bobProof,
+      field: 'postRemovalNotificationCount',
+    );
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing UP-012 notification privacy proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineBeforeRemoval',
+      'currentMemberBeforeRemoval',
+      'noLocalNotificationsAfterRemoval',
+      'noPostRemovalNotificationPreviews',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'groupPresentAfterRemoval',
+      'receivedAliceAfterRemoval',
+      'receivedBobAfterRemoval',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final notificationCount = _intValue(
+      charlieProof['postRemovalNotificationCount'],
+    );
+    if (notificationCount != 0) {
+      failures.add(
+        'charlie: $proofName.postRemovalNotificationCount must be 0',
+      );
+    }
+    final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+  }
 }
 
 void _validateGm005OfflineRemovalProof({

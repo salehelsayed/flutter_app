@@ -146,6 +146,7 @@ const _rolesByScenario = <String, List<String>>{
   'private_offline_add': <String>['alice', 'bob', 'charlie', 'dana'],
   'private_online_remove': <String>['alice', 'bob', 'charlie'],
   'private_offline_remove': <String>['alice', 'bob', 'charlie'],
+  'private_removed_notification_privacy': <String>['alice', 'bob', 'charlie'],
   'private_offline_readd': <String>['alice', 'bob', 'charlie'],
   'private_readd_current': <String>['alice', 'bob', 'charlie'],
   'private_late_leave_readd': <String>['alice', 'bob', 'charlie'],
@@ -223,6 +224,8 @@ String _flowScenario(String scenario) {
       return 'gm017';
     case 'private_invite_terminal_states':
       return 'gm018';
+    case 'private_removed_notification_privacy':
+      return 'gm004';
     case 'private_stale_invite_readd':
       return 'ml019';
     case 'private_late_leave_readd':
@@ -3109,6 +3112,39 @@ List<Map<String, dynamic>> _notificationSnapshots(
         'payload': notification.payload,
       },
   ];
+}
+
+bool _notificationSnapshotsContainAnyText({
+  required List<Map<String, dynamic>> snapshots,
+  required Iterable<String> texts,
+}) {
+  final needles = texts
+      .where((text) => text.trim().isNotEmpty)
+      .map((text) => text.trim())
+      .toList(growable: false);
+  if (needles.isEmpty) return false;
+  for (final snapshot in snapshots) {
+    final haystack = snapshot.values
+        .whereType<String>()
+        .join('\n')
+        .toLowerCase();
+    for (final text in needles) {
+      if (haystack.contains(text.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+Future<void> _waitForNotificationCountAtLeast({
+  required GroupMultiDeviceTestStack stack,
+  required int count,
+}) async {
+  await waitForCondition(
+    () async => _notificationCount(stack) >= count,
+    timeout: const Duration(seconds: 30),
+  );
 }
 
 Future<void> _runPrivateAbcCreateAlice(
@@ -17005,6 +17041,10 @@ Future<void> _runGm004Alice(
   );
   final pl006UploadedMedia = pl006MediaUpload?.$1;
   final pl006UploadProof = pl006MediaUpload?.$2;
+  if (_scenario == 'private_removed_notification_privacy') {
+    await _waitForNotificationCountAtLeast(stack: stack, count: 1);
+  }
+  final notificationSnapshots = _notificationSnapshots(stack);
 
   await _writeVerdict(
     stack: stack,
@@ -17073,6 +17113,24 @@ Future<void> _runGm004Alice(
               aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
           'bobReceiptSignalObserved': true,
         },
+      if (_scenario == 'private_removed_notification_privacy')
+        'up012NotificationPrivacyProof': <String, dynamic>{
+          'rowId': 'UP-012',
+          'removedCharlie': true,
+          'removedPeerId': identities['charlie']!['peerId'] as String,
+          'memberListExcludesCharlie': !(await _memberPeerIds(
+            stack,
+            groupId,
+          )).contains(identities['charlie']!['peerId'] as String),
+          'receivedBobAfterRemoval': true,
+          'legitimatePostRemovalNotificationShown':
+              _notificationSnapshotsContainAnyText(
+                snapshots: notificationSnapshots,
+                texts: <String>[bobSent['text'] as String],
+              ),
+          'postRemovalNotificationCount': _notificationCount(stack),
+          'notificationSnapshots': notificationSnapshots,
+        },
     },
   );
 }
@@ -17132,6 +17190,10 @@ Future<void> _runGm004Bob(
     key: 'bobAfterCharlieRemove',
     text: bobText,
   );
+  if (_scenario == 'private_removed_notification_privacy') {
+    await _waitForNotificationCountAtLeast(stack: stack, count: 1);
+  }
+  final notificationSnapshots = _notificationSnapshots(stack);
 
   await _writeVerdict(
     stack: stack,
@@ -17191,6 +17253,23 @@ Future<void> _runGm004Bob(
           'mediaBlobId': pl006AliceAttachments.isEmpty
               ? null
               : pl006AliceAttachments.single.id,
+        },
+      if (_scenario == 'private_removed_notification_privacy')
+        'up012NotificationPrivacyProof': <String, dynamic>{
+          'rowId': 'UP-012',
+          'memberListExcludesCharlie': !(await _memberPeerIds(
+            stack,
+            groupId,
+          )).contains(charliePeerId),
+          'receivedAliceAfterRemoval': true,
+          'sentPostRemovalAccepted': bobSent['outcome'] == 'success',
+          'legitimatePostRemovalNotificationShown':
+              _notificationSnapshotsContainAnyText(
+                snapshots: notificationSnapshots,
+                texts: <String>[aliceSent['text'] as String],
+              ),
+          'postRemovalNotificationCount': _notificationCount(stack),
+          'notificationSnapshots': notificationSnapshots,
         },
     },
   );
@@ -17260,6 +17339,12 @@ Future<void> _runGm004Charlie(
   );
   final keyEpochAfterRemoval = await _keyEpoch(stack, groupId);
   final postRemovalPlaintextCount = aliceLeakCount + bobLeakCount;
+  final notificationSnapshots = _notificationSnapshots(stack);
+  final postRemovalNotificationPreviewLeaked =
+      _notificationSnapshotsContainAnyText(
+        snapshots: notificationSnapshots,
+        texts: <String>[aliceSent['text'] as String, bobSent['text'] as String],
+      );
   var pl006MediaRowsAfterRemoval = 0;
   var pl006PendingDownloadsAfterRemoval = 0;
   if (_scenario == 'private_online_remove') {
@@ -17293,6 +17378,22 @@ Future<void> _runGm004Charlie(
         'receivedBobAfterRemoval': bobLeakCount > 0,
         'postRemovalPlaintextCount': postRemovalPlaintextCount,
       },
+      if (_scenario == 'private_removed_notification_privacy')
+        'up012NotificationPrivacyProof': <String, dynamic>{
+          'rowId': 'UP-012',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
+          'groupPresentAfterRemoval':
+              await stack.groupRepo.getGroup(groupId) != null,
+          'receivedAliceAfterRemoval': aliceLeakCount > 0,
+          'receivedBobAfterRemoval': bobLeakCount > 0,
+          'postRemovalPlaintextCount': postRemovalPlaintextCount,
+          'postRemovalNotificationCount': _notificationCount(stack),
+          'noLocalNotificationsAfterRemoval': _notificationCount(stack) == 0,
+          'noPostRemovalNotificationPreviews':
+              !postRemovalNotificationPreviewLeaked,
+          'notificationSnapshots': notificationSnapshots,
+        },
       if (_scenario == 'private_online_remove')
         'ml005OnlineRemovalProof': <String, dynamic>{
           'rowId': 'ML-005',
@@ -37469,7 +37570,9 @@ Future<void> _runScenarioRole() async {
       return;
     }
 
-    if (_scenario == 'gm004' || _scenario == 'private_online_remove') {
+    if (_scenario == 'gm004' ||
+        _scenario == 'private_online_remove' ||
+        _scenario == 'private_removed_notification_privacy') {
       if (_role == 'alice') {
         await _runGm004Alice(stack, identities);
       } else if (_role == 'bob') {

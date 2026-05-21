@@ -39,6 +39,7 @@ void main() {
           'pl012',
           'private_abc_create',
           'private_online_add',
+          'private_removed_notification_privacy',
           'private_offline_readd',
           'private_readd_current',
           'private_readd_active_members',
@@ -224,6 +225,16 @@ void main() {
       ]);
       expect(
         scenarioRequirement('private_online_remove').requiredDeviceCount,
+        3,
+      );
+      expect(
+        scenarioRequirement('private_removed_notification_privacy').roles,
+        ['alice', 'bob', 'charlie'],
+      );
+      expect(
+        scenarioRequirement(
+          'private_removed_notification_privacy',
+        ).requiredDeviceCount,
         3,
       );
       expect(scenarioRequirement('private_offline_remove').roles, [
@@ -5023,6 +5034,79 @@ void main() {
         ),
       );
     });
+
+    test('UP-012 accepts private_removed_notification_privacy verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_notification_privacy',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateRemovedNotificationPrivacyVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_removed_notification_privacy verdicts valid'),
+      );
+    });
+
+    test(
+      'UP-012 rejects private_removed_notification_privacy without row proof',
+      () {
+        final missingProof = _validPrivateRemovedNotificationPrivacyVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('up012NotificationPrivacyProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_removed_notification_privacy',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing UP-012 notification privacy proof fields'),
+        );
+      },
+    );
+
+    test(
+      'UP-012 rejects private_removed_notification_privacy notification leakage',
+      () {
+        final leaked = _validPrivateRemovedNotificationPrivacyVerdicts();
+        leaked[2] = {
+          ...leaked[2],
+          'up012NotificationPrivacyProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              leaked[2]['up012NotificationPrivacyProof'] as Map,
+            ),
+            'postRemovalNotificationCount': 1,
+            'noLocalNotificationsAfterRemoval': false,
+            'noPostRemovalNotificationPreviews': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_removed_notification_privacy',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: leaked,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: up012NotificationPrivacyProof.noLocalNotificationsAfterRemoval must be true',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: up012NotificationPrivacyProof.postRemovalNotificationCount must be 0',
+          ),
+        );
+      },
+    );
 
     test('accepts private_offline_remove ML-006 and IR-004 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
@@ -19760,6 +19844,113 @@ List<Map<String, dynamic>> _validGm004Verdicts() {
           'receivedAliceAfterRemoval': false,
           'receivedBobAfterRemoval': false,
           'postRemovalPlaintextCount': 0,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateRemovedNotificationPrivacyVerdicts() {
+  const scenario = 'private_removed_notification_privacy';
+  const groupId = 'private-removed-notification-privacy-group';
+  const remainingMembers = <String>['alice-peer', 'bob-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterCharlieRemove',
+          'messageId': 'up012-a-after',
+          'text': 'alice after charlie remove',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobAfterCharlieRemove',
+          'up012-b-after',
+          'bob after charlie remove',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'bobAfterCharlieRemove': 1},
+      extra: const <String, Object?>{
+        'up012NotificationPrivacyProof': <String, Object?>{
+          'rowId': 'UP-012',
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListExcludesCharlie': true,
+          'receivedBobAfterRemoval': true,
+          'legitimatePostRemovalNotificationShown': true,
+          'postRemovalNotificationCount': 1,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterCharlieRemove',
+          'messageId': 'up012-b-after',
+          'text': 'bob after charlie remove',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterCharlieRemove',
+          'up012-a-after',
+          'alice after charlie remove',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceAfterCharlieRemove': 1},
+      extra: const <String, Object?>{
+        'up012NotificationPrivacyProof': <String, Object?>{
+          'rowId': 'UP-012',
+          'memberListExcludesCharlie': true,
+          'receivedAliceAfterRemoval': true,
+          'sentPostRemovalAccepted': true,
+          'legitimatePostRemovalNotificationShown': true,
+          'postRemovalNotificationCount': 1,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: const <String>[],
+      keyEpoch: 0,
+      extra: const <String, Object?>{
+        'up012NotificationPrivacyProof': <String, Object?>{
+          'rowId': 'UP-012',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': true,
+          'groupPresentAfterRemoval': false,
+          'receivedAliceAfterRemoval': false,
+          'receivedBobAfterRemoval': false,
+          'postRemovalPlaintextCount': 0,
+          'postRemovalNotificationCount': 0,
+          'noLocalNotificationsAfterRemoval': true,
+          'noPostRemovalNotificationPreviews': true,
         },
       },
     ),
