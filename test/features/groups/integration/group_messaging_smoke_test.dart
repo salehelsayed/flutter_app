@@ -393,6 +393,85 @@ void main() {
     );
 
     test(
+      'SV-001 never-member fake-network publish is rejected by all recipients',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'sv001-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv001-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv001-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final dana = GroupTestUser.create(
+          peerId: 'sv001-dana-never-member',
+          username: 'Dana',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+          dana.dispose();
+        });
+
+        const groupId = 'group-sv001-never-member';
+        await alice.createGroup(groupId: groupId, name: 'SV-001 Private ABC');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        dana.start();
+
+        await network.publish(groupId, dana.peerId, {
+          'groupId': groupId,
+          'senderId': dana.peerId,
+          'senderUsername': dana.username,
+          'keyEpoch': 1,
+          'text': 'SV-001 forged never-member message',
+          'timestamp': DateTime.utc(2026, 5, 14, 1, 1).toIso8601String(),
+          'messageId': 'sv001-forged-never-member',
+          'transportPeerId': dana.deviceId,
+        }, senderDeviceId: dana.deviceId);
+        await pump();
+
+        for (final recipient in [alice, bob, charlie]) {
+          expect(
+            await recipient.msgRepo.getMessage('sv001-forged-never-member'),
+            isNull,
+            reason: '${recipient.username} must not persist Dana injection',
+          );
+          expect(
+            (await recipient.loadGroupMessages(
+              groupId,
+            )).where((message) => message.senderPeerId == dana.peerId).toList(),
+            isEmpty,
+            reason: '${recipient.username} must not render Dana injection',
+          );
+        }
+        expect(
+          network.deliveryRecords
+              .where(
+                (record) =>
+                    record['messageId'] == 'sv001-forged-never-member' &&
+                    record['senderPeerId'] == dana.peerId,
+              )
+              .toList(),
+          hasLength(3),
+        );
+      },
+    );
+
+    test(
       'NW-001 full-mesh online A/B/C delivery works without relay fallback',
       () async {
         final flowEvents = <Map<String, dynamic>>[];

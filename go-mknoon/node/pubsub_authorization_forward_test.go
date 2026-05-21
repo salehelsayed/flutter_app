@@ -27,6 +27,143 @@ func TestRP017RemovedPeerContinuedPublishesAreRejectedBeforeAcceptAndForward(t *
 	runRemovedPeerRawPubSubRejectsBeforeAcceptAndForward(t, "rp017", "RP017")
 }
 
+func TestSV001NeverMemberRawPubSubRejectsBeforeAcceptAndForward(t *testing.T) {
+	attackerPriv, attackerPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeX := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+	nodeCCapture := &testEventCollector{}
+	nodeC := startLocalNodeForMultiRelayTestWithCollector(t, nodeCCapture)
+
+	groupId := "sv001-never-member-raw-pubsub-forward"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	authoritativeConfig := &GroupConfig{
+		Name:      "SV-001 Private Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeB.PeerId(), Role: GroupRoleAdmin, PublicKey: "nodeBPubKey"},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: "nodeCPubKey"},
+		},
+		CreatedBy: nodeB.PeerId(),
+	}
+
+	if err := nodeX.JoinGroupTopic(groupId, authoritativeConfig, keyInfo); err != nil {
+		t.Fatalf("nodeX JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, authoritativeConfig, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+	if err := nodeC.JoinGroupTopic(groupId, authoritativeConfig, keyInfo); err != nil {
+		t.Fatalf("nodeC JoinGroupTopic: %v", err)
+	}
+
+	connectLocalGroupNodes(t, nodeX, nodeB)
+	connectLocalGroupNodes(t, nodeB, nodeC)
+	waitForGroupTopicPeerCount(t, nodeX, groupId, 1, 3*time.Second)
+	waitForGroupTopicPeerCount(t, nodeB, groupId, 2, 3*time.Second)
+	waitForGroupTopicPeerCount(t, nodeC, groupId, 1, 3*time.Second)
+
+	nodeCID, err := peer.Decode(nodeC.PeerId())
+	if err != nil {
+		t.Fatalf("decode node C peer ID: %v", err)
+	}
+	if got := nodeX.Host().Network().Connectedness(nodeCID); got == network.Connected {
+		t.Fatal("node X must not be directly connected to node C; C absence would not prove B suppressed forwarding")
+	}
+
+	if _, _, err := nodeX.PublishGroupMessage(
+		groupId,
+		attackerPriv,
+		nodeX.PeerId(),
+		attackerPub,
+		"SV001 Attacker",
+		"SV001 local publish must fail closed",
+		"sv001-local-publish",
+		nil,
+	); err == nil {
+		t.Fatal("never-member local PublishGroupMessage succeeded")
+	} else {
+		message := err.Error()
+		if !strings.Contains(message, "not allowed to write") {
+			t.Fatalf("local publish error = %q, want not allowed to write", message)
+		}
+		for _, fragment := range []string{groupId, nodeX.PeerId(), attackerPub} {
+			if strings.Contains(message, fragment) {
+				t.Fatalf("local publish error leaked %q in %q", fragment, message)
+			}
+		}
+	}
+
+	forgedLocalConfig := cloneGroupConfig(authoritativeConfig)
+	forgedLocalConfig.Members = append(forgedLocalConfig.Members, GroupMember{
+		PeerId:    nodeX.PeerId(),
+		Role:      GroupRoleWriter,
+		PublicKey: attackerPub,
+	})
+	nodeX.mu.Lock()
+	nodeX.groupConfigs[groupId] = forgedLocalConfig
+	nodeX.mu.Unlock()
+
+	logs := captureLP002ValidatorLogs(t)
+	plaintext := `{"text":"SV001-PLAINTEXT-SENTINEL","timestamp":"2026-05-14T00:00:00Z","username":"SV001-ATTACKER-SENTINEL"}`
+	beforeRejects := countLP002RejectLogs(logs.String(), "non_member")
+	envelopeJSON := buildTestEnvelopeWithPlaintext(
+		t,
+		groupId,
+		"group_message",
+		nodeX.PeerId(),
+		attackerPriv,
+		attackerPub,
+		groupKey,
+		keyInfo.KeyEpoch,
+		plaintext,
+	)
+	env, err := internal.ParseGroupEnvelope(envelopeJSON)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+
+	publishRawGroupEnvelope(t, nodeX, groupId, envelopeJSON)
+	waitForLP002RejectLogCount(t, logs, "non_member", beforeRejects+1, 2*time.Second)
+	time.Sleep(400 * time.Millisecond)
+
+	if got := countLP002RejectLogs(logs.String(), "non_member") - beforeRejects; got != 1 {
+		t.Fatalf("validator reject diagnostics after publish = %d, want exactly 1 from node B only; logs:\n%s", got, logs.String())
+	}
+	assertLP002NoAcceptedGroupEvents(t, "node B", nodeBCapture)
+	assertLP002NoAcceptedGroupEvents(t, "node C", nodeCCapture)
+	assertLP002LogsOmitSensitive(t, logs, []string{
+		plaintext,
+		"SV001-PLAINTEXT-SENTINEL",
+		"SV001-ATTACKER-SENTINEL",
+		groupId,
+		nodeX.PeerId(),
+		nodeB.PeerId(),
+		nodeC.PeerId(),
+		attackerPriv,
+		attackerPub,
+		env.Signature,
+		env.Encrypted.Ciphertext,
+		env.Encrypted.Nonce,
+	})
+	for _, marker := range []string{
+		"authorization reject",
+		"reason=non_member",
+		"groupHash=",
+		"senderHash=",
+		"transportPeerHash=",
+	} {
+		if !strings.Contains(logs.String(), marker) {
+			t.Fatalf("diagnostic missing useful marker %q in logs:\n%s", marker, logs.String())
+		}
+	}
+}
+
 func TestGA002NonMemberCannotPublishValidEnvelope(t *testing.T) {
 	nonMemberPriv, nonMemberPub := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()

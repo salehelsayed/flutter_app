@@ -186,7 +186,7 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 
 	// Check write permission.
 	if !isAllowedWriter(config, senderPeerId) {
-		return "", 0, fmt.Errorf("sender %s not allowed to write in group %s", senderPeerId, groupId)
+		return "", 0, fmt.Errorf("sender not allowed to write in group")
 	}
 
 	// 1. Build GroupMessagePayload.
@@ -318,7 +318,7 @@ func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, sender
 	// Check membership (any member can react, regardless of group type).
 	member := findMember(config, senderPeerId)
 	if member == nil {
-		return fmt.Errorf("sender %s not a member of group %s", senderPeerId, groupId)
+		return fmt.Errorf("sender not a member of group")
 	}
 
 	// Encrypt reaction payload with group key.

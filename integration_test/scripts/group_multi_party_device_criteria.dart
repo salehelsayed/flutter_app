@@ -74,6 +74,11 @@ const _privateRemovedReactionRejectedRequirement =
       scenario: 'private_removed_reaction_rejected',
       roles: <String>['alice', 'bob', 'charlie'],
     );
+const _privateNeverMemberPublishRejectedRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_never_member_publish_rejected',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
 const _privateFullMeshOnlineRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_full_mesh_online',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -463,6 +468,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'private_reaction_roundtrip': _privateReactionRoundtripRequirement,
   'private_removed_reaction_rejected':
       _privateRemovedReactionRejectedRequirement,
+  'private_never_member_publish_rejected':
+      _privateNeverMemberPublishRejectedRequirement,
   'private_full_mesh_online': _privateFullMeshOnlineRequirement,
   'private_relay_only_delivery': _privateRelayOnlyDeliveryRequirement,
   'private_partition_readd_heal': _privatePartitionReaddHealRequirement,
@@ -769,7 +776,29 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
       .whereType<String>()
       .toSet();
   if (expectedPeerIds.length == requirement.roles.length) {
-    if (requirement.scenario == 'ge002' ||
+    if (requirement.scenario == 'private_never_member_publish_rejected') {
+      final memberPeerIds = <String>{
+        peerIdByRole['alice']!,
+        peerIdByRole['bob']!,
+        peerIdByRole['charlie']!,
+      };
+      final neverMemberPeerId = peerIdByRole['dana']!;
+      for (final role in requirement.roles) {
+        final verdict = byRole[role];
+        if (verdict == null) continue;
+        final members = _activeMemberPeerIds(verdict).toSet();
+        final missingMembers = memberPeerIds.difference(members);
+        if (missingMembers.isNotEmpty) {
+          failures.add(
+            '$role: incomplete SV-001 membership, missing '
+            '${missingMembers.join(', ')}',
+          );
+        }
+        if (members.contains(neverMemberPeerId)) {
+          failures.add('$role: SV-001 membership includes never-member dana');
+        }
+      }
+    } else if (requirement.scenario == 'ge002' ||
         requirement.scenario == 'ge003' ||
         requirement.scenario == 'gm004' ||
         requirement.scenario == 'gm005' ||
@@ -1714,6 +1743,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceReactionTargetBeforeRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_never_member_publish_rejected':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceInitial',
           senderRole: 'alice',
           receiverRoles: <String>['bob', 'charlie'],
         ),
@@ -2817,6 +2854,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_removed_reaction_rejected') {
     _validatePl010RemovedReactionProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_never_member_publish_rejected') {
+    _validateSv001NeverMemberPublishProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -5026,6 +5071,102 @@ void _validatePl010RemovedReactionProof({
         failures.add(
           '$role: PL-010 rejected app-peer attempt must not store a local reaction',
         );
+      }
+    }
+  }
+}
+
+void _validateSv001NeverMemberPublishProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  final danaPeerId = peerIdByRole['dana'];
+  final memberPeerIds = <String>{
+    if (peerIdByRole['alice'] != null) peerIdByRole['alice']!,
+    if (peerIdByRole['bob'] != null) peerIdByRole['bob']!,
+    if (peerIdByRole['charlie'] != null) peerIdByRole['charlie']!,
+  };
+
+  for (final role in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    final verdict = byRole[role];
+    if (verdict == null) {
+      continue;
+    }
+    final proof = _mapValue(verdict['sv001NeverMemberPublishProof']);
+    if (proof == null) {
+      failures.add('$role: missing sv001NeverMemberPublishProof');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'SV-001') {
+      failures.add('$role: sv001NeverMemberPublishProof.rowId must be SV-001');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_never_member_publish_rejected') {
+      failures.add('$role: sv001NeverMemberPublishProof scenario mismatch');
+    }
+    if (_stringValue(proof['neverMemberRole']) != 'dana') {
+      failures.add('$role: SV-001 neverMemberRole must be dana');
+    }
+    if (danaPeerId != null &&
+        _stringValue(proof['neverMemberPeerId']) != danaPeerId) {
+      failures.add('$role: SV-001 neverMemberPeerId mismatch');
+    }
+    if (proof['normalAliceDeliveryStillWorks'] != true) {
+      failures.add(
+        '$role: SV-001 must prove normal A to B/C delivery still works',
+      );
+    }
+    if (proof['visibleNeverMemberMessageCount'] != 0) {
+      failures.add(
+        '$role: SV-001 visible never-member message count must be zero',
+      );
+    }
+    if (proof['neverMemberInActiveConfig'] == true) {
+      failures.add('$role: SV-001 active config must exclude Dana');
+    }
+
+    final verdictMembers = _activeMemberPeerIds(verdict).toSet();
+    final missing = memberPeerIds.difference(verdictMembers);
+    if (missing.isNotEmpty) {
+      failures.add(
+        '$role: SV-001 active member set missing ${missing.join(', ')}',
+      );
+    }
+    if (danaPeerId != null && verdictMembers.contains(danaPeerId)) {
+      failures.add('$role: SV-001 verdict active members include Dana');
+    }
+
+    if (role == 'dana') {
+      if (proof['attemptedNativePublish'] != true) {
+        failures.add('dana: SV-001 must attempt native publish');
+      }
+      if (proof['publishAccepted'] == true) {
+        failures.add('dana: SV-001 never-member publish was accepted');
+      }
+      if (_stringValue(proof['publishOutcome']) != 'GROUP_ERROR') {
+        failures.add('dana: SV-001 publishOutcome must be GROUP_ERROR');
+      }
+      if (proof['safeError'] != true ||
+          proof['groupIdLeakInError'] == true ||
+          proof['peerIdLeakInError'] == true) {
+        failures.add(
+          'dana: SV-001 publish rejection error must be non-identifying',
+        );
+      }
+      if (proof['storedLocalMessage'] == true) {
+        failures.add(
+          'dana: SV-001 rejected publish must not store local message',
+        );
+      }
+    } else {
+      if (proof['observedDanaAttemptRejected'] != true) {
+        failures.add(
+          '$role: SV-001 active member did not observe Dana rejection',
+        );
+      }
+      if (proof['receivedDanaMessage'] == true) {
+        failures.add('$role: SV-001 active member received Dana injection');
       }
     }
   }

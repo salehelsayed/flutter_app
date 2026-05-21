@@ -806,6 +806,57 @@ void main() {
   );
 
   test(
+    'SV-001 never-member message is quarantined before stream storage or notification',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+      final emitted = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(emitted.add);
+      addTearDown(subscription.cancel);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-never-member',
+        'senderUsername': 'Never Member',
+        'keyEpoch': 1,
+        'text': 'SV-001 forged message',
+        'timestamp': DateTime.utc(2026, 5, 14, 1).toIso8601String(),
+        'messageId': 'sv001-never-member-forged',
+        'transportPeerId': 'peer-never-member',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await msgRepo.getMessage('sv001-never-member-forged'), isNull);
+      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+      expect(emitted, isEmpty);
+      expect(notifService.shown, isEmpty);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_MESSAGE_LISTENER_MEMBERSHIP_DEPENDENT_CONTENT_BUFFERED',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
     'GM-014 member_added event time becomes Charlie re-add joinedAt and removed-window sender traffic stays rejected',
     () async {
       final flowEvents = <Map<String, dynamic>>[];
