@@ -1322,13 +1322,40 @@ Future<String> callGroupDecrypt(
         .timeout(timeout);
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
+    if (response['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_DECRYPT_RESPONSE',
+        details: {'ok': false, 'errorCode': response['errorCode']},
+      );
+      throw BridgeCommandException(
+        'group.decrypt',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
+
+    final plaintext = response['plaintext'];
+    if (plaintext is! String) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_DECRYPT_RESPONSE',
+        details: {'ok': false, 'errorCode': 'INVALID_RESPONSE'},
+      );
+      throw BridgeCommandException(
+        'group.decrypt',
+        'INVALID_RESPONSE',
+        'Bridge decrypt response did not include a plaintext string.',
+      );
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_FL_BRIDGE_DECRYPT_RESPONSE',
-      details: {'ok': response['ok']},
+      details: {'ok': true},
     );
 
-    return response['plaintext'] as String;
+    return plaintext;
   } on TimeoutException {
     emitFlowEvent(
       layer: 'FL',
