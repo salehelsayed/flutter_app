@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
@@ -87,9 +89,11 @@ void main() {
         'is_incoming': 1,
         'created_at': '2026-01-01T00:00:00.000Z',
       });
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['default-test']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['default-test'],
+      )).first;
       expect(row['inbox_stored'], 0);
     });
 
@@ -132,9 +136,11 @@ void main() {
       // Now run migration 041
       await runGroupMessageReliabilityColumnsMigration(freshDb);
 
-      final row = (await freshDb.query('group_messages',
-              where: 'id = ?', whereArgs: ['pre-existing']))
-          .first;
+      final row = (await freshDb.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['pre-existing'],
+      )).first;
       expect(row['text'], 'before migration');
       expect(row['wire_envelope'], isNull);
       expect(row['inbox_stored'], 0);
@@ -155,45 +161,56 @@ void main() {
       expect(results, isEmpty);
     });
 
-    test('returns only outgoing sending messages older than threshold',
-        () async {
-      final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
-      final recentTs = DateTime.utc(2026, 6, 1).toIso8601String();
+    test(
+      'returns only outgoing sending messages older than threshold',
+      () async {
+        final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
+        final recentTs = DateTime.utc(2026, 6, 1).toIso8601String();
 
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'old-sending',
-        status: 'sending',
-        isIncoming: 0,
-        timestamp: oldTs,
-        createdAt: oldTs,
-      ));
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'recent-sending',
-        status: 'sending',
-        isIncoming: 0,
-        timestamp: recentTs,
-        createdAt: recentTs,
-      ));
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'old-sending',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: oldTs,
+            createdAt: oldTs,
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'recent-sending',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: recentTs,
+            createdAt: recentTs,
+          ),
+        );
 
-      final threshold = DateTime.utc(2026, 3, 1);
-      final results = await dbLoadStuckSendingGroupMessages(
-        db,
-        olderThan: threshold,
-      );
-      expect(results.length, 1);
-      expect(results[0]['id'], 'old-sending');
-    });
+        final threshold = DateTime.utc(2026, 3, 1);
+        final results = await dbLoadStuckSendingGroupMessages(
+          db,
+          olderThan: threshold,
+        );
+        expect(results.length, 1);
+        expect(results[0]['id'], 'old-sending');
+      },
+    );
 
     test('excludes incoming messages', () async {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
 
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'incoming-sending',
-        status: 'sending',
-        isIncoming: 1,
-        timestamp: oldTs,
-        createdAt: oldTs,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'incoming-sending',
+          status: 'sending',
+          isIncoming: 1,
+          timestamp: oldTs,
+          createdAt: oldTs,
+        ),
+      );
 
       final threshold = DateTime.utc(2026, 3, 1);
       final results = await dbLoadStuckSendingGroupMessages(
@@ -207,13 +224,16 @@ void main() {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
 
       for (final status in ['sent', 'delivered', 'failed', 'pending']) {
-        await dbInsertGroupMessage(db, makeRow(
-          id: 'msg-$status',
-          status: status,
-          isIncoming: 0,
-          timestamp: oldTs,
-          createdAt: oldTs,
-        ));
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'msg-$status',
+            status: status,
+            isIncoming: 0,
+            timestamp: oldTs,
+            createdAt: oldTs,
+          ),
+        );
       }
 
       final threshold = DateTime.utc(2026, 3, 1);
@@ -230,18 +250,36 @@ void main() {
       final ts3 = DateTime.utc(2026, 1, 3).toIso8601String();
 
       // Insert in reverse order to ensure ORDER BY is applied.
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'msg-3', status: 'sending', isIncoming: 0,
-        timestamp: ts3, createdAt: ts3,
-      ));
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'msg-1', status: 'sending', isIncoming: 0,
-        timestamp: ts1, createdAt: ts1,
-      ));
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'msg-2', status: 'sending', isIncoming: 0,
-        timestamp: ts2, createdAt: ts2,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'msg-3',
+          status: 'sending',
+          isIncoming: 0,
+          timestamp: ts3,
+          createdAt: ts3,
+        ),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'msg-1',
+          status: 'sending',
+          isIncoming: 0,
+          timestamp: ts1,
+          createdAt: ts1,
+        ),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'msg-2',
+          status: 'sending',
+          isIncoming: 0,
+          timestamp: ts2,
+          createdAt: ts2,
+        ),
+      );
 
       final threshold = DateTime.utc(2026, 6, 1);
       final results = await dbLoadStuckSendingGroupMessages(
@@ -258,13 +296,16 @@ void main() {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
 
       for (var i = 0; i < 5; i++) {
-        await dbInsertGroupMessage(db, makeRow(
-          id: 'msg-$i',
-          status: 'sending',
-          isIncoming: 0,
-          timestamp: DateTime.utc(2026, 1, 1 + i).toIso8601String(),
-          createdAt: oldTs,
-        ));
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'msg-$i',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: DateTime.utc(2026, 1, 1 + i).toIso8601String(),
+            createdAt: oldTs,
+          ),
+        );
       }
 
       final threshold = DateTime.utc(2026, 6, 1);
@@ -281,16 +322,14 @@ void main() {
 
   group('dbLoadFailedOutgoingGroupMessages', () {
     test('returns only failed outgoing messages', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'failed-out',
-        status: 'failed',
-        isIncoming: 0,
-      ));
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'sent-out',
-        status: 'sent',
-        isIncoming: 0,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(id: 'failed-out', status: 'failed', isIncoming: 0),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeRow(id: 'sent-out', status: 'sent', isIncoming: 0),
+      );
 
       final results = await dbLoadFailedOutgoingGroupMessages(db);
       expect(results.length, 1);
@@ -298,11 +337,10 @@ void main() {
     });
 
     test('does not return failed incoming messages', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'failed-in',
-        status: 'failed',
-        isIncoming: 1,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(id: 'failed-in', status: 'failed', isIncoming: 1),
+      );
 
       final results = await dbLoadFailedOutgoingGroupMessages(db);
       expect(results, isEmpty);
@@ -312,20 +350,26 @@ void main() {
       final ts1 = DateTime.utc(2026, 1, 1).toIso8601String();
       final ts2 = DateTime.utc(2026, 1, 2).toIso8601String();
 
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'failed-2',
-        status: 'failed',
-        isIncoming: 0,
-        timestamp: ts2,
-        createdAt: ts2,
-      ));
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'failed-1',
-        status: 'failed',
-        isIncoming: 0,
-        timestamp: ts1,
-        createdAt: ts1,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'failed-2',
+          status: 'failed',
+          isIncoming: 0,
+          timestamp: ts2,
+          createdAt: ts2,
+        ),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'failed-1',
+          status: 'failed',
+          isIncoming: 0,
+          timestamp: ts1,
+          createdAt: ts1,
+        ),
+      );
 
       final results = await dbLoadFailedOutgoingGroupMessages(db);
       expect(results.length, 2);
@@ -335,13 +379,16 @@ void main() {
 
     test('respects limit', () async {
       for (var i = 0; i < 5; i++) {
-        await dbInsertGroupMessage(db, makeRow(
-          id: 'failed-$i',
-          status: 'failed',
-          isIncoming: 0,
-          timestamp: DateTime.utc(2026, 1, 1 + i).toIso8601String(),
-          createdAt: DateTime.utc(2026, 1, 1 + i).toIso8601String(),
-        ));
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'failed-$i',
+            status: 'failed',
+            isIncoming: 0,
+            timestamp: DateTime.utc(2026, 1, 1 + i).toIso8601String(),
+            createdAt: DateTime.utc(2026, 1, 1 + i).toIso8601String(),
+          ),
+        );
       }
 
       final results = await dbLoadFailedOutgoingGroupMessages(db, limit: 2);
@@ -352,70 +399,136 @@ void main() {
   // ─── dbLoadGroupMessagesWithFailedInboxStore Tests (16-20) ───────────
 
   group('dbLoadGroupMessagesWithFailedInboxStore', () {
-    test('returns sent messages with inbox_stored=0 and inbox_retry_payload set',
-        () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'inbox-fail',
-        status: 'sent',
-        isIncoming: 0,
-        inboxStored: 0,
-        inboxRetryPayload: '{"groupId":"g1"}',
-      ));
+    test(
+      'returns sent messages with inbox_stored=0 and inbox_retry_payload set',
+      () async {
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'inbox-fail',
+            status: 'sent',
+            isIncoming: 0,
+            inboxStored: 0,
+            inboxRetryPayload: '{"groupId":"g1"}',
+          ),
+        );
 
-      final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
-      expect(results.length, 1);
-      expect(results[0]['id'], 'inbox-fail');
-    });
+        final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
+        expect(results.length, 1);
+        expect(results[0]['id'], 'inbox-fail');
+      },
+    );
 
     test('excludes messages where inbox_stored=1', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'inbox-ok',
-        status: 'sent',
-        isIncoming: 0,
-        inboxStored: 1,
-        inboxRetryPayload: '{"groupId":"g1"}',
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'inbox-ok',
+          status: 'sent',
+          isIncoming: 0,
+          inboxStored: 1,
+          inboxRetryPayload: '{"groupId":"g1"}',
+        ),
+      );
 
       final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
       expect(results, isEmpty);
     });
 
     test('excludes messages with null inbox_retry_payload', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'no-payload',
-        status: 'sent',
-        isIncoming: 0,
-        inboxStored: 0,
-        inboxRetryPayload: null,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'no-payload',
+          status: 'sent',
+          isIncoming: 0,
+          inboxStored: 0,
+          inboxRetryPayload: null,
+        ),
+      );
 
       final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
       expect(results, isEmpty);
     });
 
-    test('includes pending messages with inbox_stored=0 and retry payload set',
-        () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'pending-inbox-fail',
-        status: 'pending',
-        isIncoming: 0,
-        inboxStored: 0,
-        inboxRetryPayload: '{"groupId":"g1"}',
-      ));
+    test(
+      'includes pending messages with inbox_stored=0 and retry payload set',
+      () async {
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'pending-inbox-fail',
+            status: 'pending',
+            isIncoming: 0,
+            inboxStored: 0,
+            inboxRetryPayload: '{"groupId":"g1"}',
+          ),
+        );
 
-      final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
-      expect(results.length, 1);
-      expect(results[0]['id'], 'pending-inbox-fail');
-    });
+        final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
+        expect(results.length, 1);
+        expect(results[0]['id'], 'pending-inbox-fail');
+      },
+    );
+
+    test(
+      'UP-008 pending outbound retry row survives database restart and stays eligible',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'up008_group_messages_',
+        );
+        final dbPath = '${dir.path}/group_messages.db';
+        Database? fileDb;
+
+        try {
+          fileDb = await openDatabase(dbPath, version: 1);
+          await runGroupMessagesTablesMigration(fileDb);
+          await runGroupQuotedMessageIdMigration(fileDb);
+          await runGroupMessageReliabilityColumnsMigration(fileDb);
+          await dbInsertGroupMessage(
+            fileDb,
+            makeRow(
+              id: 'up008-pending-after-restart',
+              status: 'pending',
+              isIncoming: 0,
+              inboxStored: 0,
+              wireEnvelope: '{"cmd":"group:publish"}',
+              inboxRetryPayload:
+                  '{"groupId":"group-1","message":"up008-replay"}',
+            ),
+          );
+          await fileDb.close();
+          fileDb = null;
+
+          fileDb = await openDatabase(dbPath, version: 1);
+          final results = await dbLoadGroupMessagesWithFailedInboxStore(fileDb);
+
+          expect(results, hasLength(1));
+          final loaded = GroupMessage.fromMap(results.single);
+          expect(loaded.id, 'up008-pending-after-restart');
+          expect(loaded.status, 'pending');
+          expect(loaded.isIncoming, isFalse);
+          expect(loaded.inboxStored, isFalse);
+          expect(loaded.inboxRetryPayload, isNotNull);
+          expect(loaded.wireEnvelope, '{"cmd":"group:publish"}');
+        } finally {
+          await fileDb?.close();
+          await dir.delete(recursive: true);
+        }
+      },
+    );
 
     test('excludes incoming messages', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'incoming-inbox-fail',
-        status: 'sent',
-        isIncoming: 1,
-        inboxStored: 0,
-        inboxRetryPayload: '{"groupId":"g1"}',
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'incoming-inbox-fail',
+          status: 'sent',
+          isIncoming: 1,
+          inboxStored: 0,
+          inboxRetryPayload: '{"groupId":"g1"}',
+        ),
+      );
 
       final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
       expect(results, isEmpty);
@@ -428,13 +541,16 @@ void main() {
     test('transitions old sending messages to failed', () async {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
 
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'stuck',
-        status: 'sending',
-        isIncoming: 0,
-        timestamp: oldTs,
-        createdAt: oldTs,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'stuck',
+          status: 'sending',
+          isIncoming: 0,
+          timestamp: oldTs,
+          createdAt: oldTs,
+        ),
+      );
 
       final count = await dbTransitionGroupSendingToFailed(
         db,
@@ -442,22 +558,27 @@ void main() {
       );
       expect(count, 1);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['stuck']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['stuck'],
+      )).first;
       expect(row['status'], 'failed');
     });
 
     test('does not touch recent sending messages', () async {
       final recentTs = DateTime.utc(2026, 6, 1).toIso8601String();
 
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'recent',
-        status: 'sending',
-        isIncoming: 0,
-        timestamp: recentTs,
-        createdAt: recentTs,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'recent',
+          status: 'sending',
+          isIncoming: 0,
+          timestamp: recentTs,
+          createdAt: recentTs,
+        ),
+      );
 
       final count = await dbTransitionGroupSendingToFailed(
         db,
@@ -465,22 +586,27 @@ void main() {
       );
       expect(count, 0);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['recent']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['recent'],
+      )).first;
       expect(row['status'], 'sending');
     });
 
     test('does not touch incoming messages', () async {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
 
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'incoming-stuck',
-        status: 'sending',
-        isIncoming: 1,
-        timestamp: oldTs,
-        createdAt: oldTs,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'incoming-stuck',
+          status: 'sending',
+          isIncoming: 1,
+          timestamp: oldTs,
+          createdAt: oldTs,
+        ),
+      );
 
       final count = await dbTransitionGroupSendingToFailed(
         db,
@@ -488,9 +614,11 @@ void main() {
       );
       expect(count, 0);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['incoming-stuck']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['incoming-stuck'],
+      )).first;
       expect(row['status'], 'sending');
     });
 
@@ -498,23 +626,28 @@ void main() {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
       const envelope = '{"groupId":"g1","text":"hello"}';
 
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'with-env',
-        status: 'sending',
-        isIncoming: 0,
-        timestamp: oldTs,
-        createdAt: oldTs,
-        wireEnvelope: envelope,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'with-env',
+          status: 'sending',
+          isIncoming: 0,
+          timestamp: oldTs,
+          createdAt: oldTs,
+          wireEnvelope: envelope,
+        ),
+      );
 
       await dbTransitionGroupSendingToFailed(
         db,
         olderThan: DateTime.utc(2026, 3, 1),
       );
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['with-env']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['with-env'],
+      )).first;
       expect(row['status'], 'failed');
       expect(row['wire_envelope'], envelope);
     });
@@ -523,22 +656,28 @@ void main() {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
 
       for (var i = 0; i < 3; i++) {
-        await dbInsertGroupMessage(db, makeRow(
-          id: 'stuck-$i',
-          status: 'sending',
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'stuck-$i',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: oldTs,
+            createdAt: oldTs,
+          ),
+        );
+      }
+      // One non-matching message.
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'sent-msg',
+          status: 'sent',
           isIncoming: 0,
           timestamp: oldTs,
           createdAt: oldTs,
-        ));
-      }
-      // One non-matching message.
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'sent-msg',
-        status: 'sent',
-        isIncoming: 0,
-        timestamp: oldTs,
-        createdAt: oldTs,
-      ));
+        ),
+      );
 
       final count = await dbTransitionGroupSendingToFailed(
         db,
@@ -552,32 +691,34 @@ void main() {
 
   group('update helpers', () {
     test('dbUpdateGroupMessageInboxStored sets to 1', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'inbox-test',
-        isIncoming: 0,
-        inboxStored: 0,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(id: 'inbox-test', isIncoming: 0, inboxStored: 0),
+      );
 
       await dbUpdateGroupMessageInboxStored(db, 'inbox-test', stored: true);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['inbox-test']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['inbox-test'],
+      )).first;
       expect(row['inbox_stored'], 1);
     });
 
     test('dbUpdateGroupMessageInboxStored sets back to 0', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'inbox-test',
-        isIncoming: 0,
-        inboxStored: 1,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(id: 'inbox-test', isIncoming: 0, inboxStored: 1),
+      );
 
       await dbUpdateGroupMessageInboxStored(db, 'inbox-test', stored: false);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['inbox-test']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['inbox-test'],
+      )).first;
       expect(row['inbox_stored'], 0);
     });
 
@@ -587,24 +728,31 @@ void main() {
       const payload = '{"groupId":"g1","recipientPeerIds":["p1"]}';
       await dbUpdateGroupMessageInboxRetryPayload(db, 'retry-test', payload);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['retry-test']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['retry-test'],
+      )).first;
       expect(row['inbox_retry_payload'], payload);
     });
 
     test('dbUpdateGroupMessageInboxRetryPayload clears with null', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'retry-clear',
-        isIncoming: 0,
-        inboxRetryPayload: '{"data":"value"}',
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'retry-clear',
+          isIncoming: 0,
+          inboxRetryPayload: '{"data":"value"}',
+        ),
+      );
 
       await dbUpdateGroupMessageInboxRetryPayload(db, 'retry-clear', null);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['retry-clear']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['retry-clear'],
+      )).first;
       expect(row['inbox_retry_payload'], isNull);
     });
 
@@ -614,46 +762,53 @@ void main() {
       const envelope = '{"groupId":"g1","text":"hello","senderPeerId":"p1"}';
       await dbUpdateGroupMessageWireEnvelope(db, 'env-test', envelope);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['env-test']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['env-test'],
+      )).first;
       expect(row['wire_envelope'], envelope);
     });
 
     test('dbUpdateGroupMessageWireEnvelope clears with null', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'env-clear',
-        isIncoming: 0,
-        wireEnvelope: '{"data":"value"}',
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'env-clear',
+          isIncoming: 0,
+          wireEnvelope: '{"data":"value"}',
+        ),
+      );
 
       await dbUpdateGroupMessageWireEnvelope(db, 'env-clear', null);
 
-      final row = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['env-clear']))
-          .first;
+      final row = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['env-clear'],
+      )).first;
       expect(row['wire_envelope'], isNull);
     });
 
     test('does not affect other rows', () async {
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'target',
-        isIncoming: 0,
-        inboxStored: 0,
-      ));
-      await dbInsertGroupMessage(db, makeRow(
-        id: 'bystander',
-        isIncoming: 0,
-        inboxStored: 0,
-      ));
+      await dbInsertGroupMessage(
+        db,
+        makeRow(id: 'target', isIncoming: 0, inboxStored: 0),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeRow(id: 'bystander', isIncoming: 0, inboxStored: 0),
+      );
 
       await dbUpdateGroupMessageInboxStored(db, 'target', stored: true);
       await dbUpdateGroupMessageWireEnvelope(db, 'target', '{"x":1}');
       await dbUpdateGroupMessageInboxRetryPayload(db, 'target', '{"y":2}');
 
-      final bystander = (await db.query('group_messages',
-              where: 'id = ?', whereArgs: ['bystander']))
-          .first;
+      final bystander = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: ['bystander'],
+      )).first;
       expect(bystander['inbox_stored'], 0);
       expect(bystander['wire_envelope'], isNull);
       expect(bystander['inbox_retry_payload'], isNull);

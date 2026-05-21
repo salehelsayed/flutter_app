@@ -6640,6 +6640,151 @@ void main() {
       );
 
       test(
+        'UP-008 pending outbound group message survives restart and reconciles through inbox retry',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            inboxStoreFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-up008-restart-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final liveReader = GroupTestUser.create(
+            peerId: 'reader-up008-live-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final inboxReader = GroupTestUser.create(
+            peerId: 'reader-up008-inbox-peer',
+            username: 'Carol',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final inboxBridge = inboxReader.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-up008-pending-restart';
+          const messageId = 'up008-pending-restart-id';
+          const text = 'UP-008 pending restart recovery';
+          await admin.createGroup(groupId: groupId, name: 'UP-008 Restart');
+          await admin.addMember(groupId: groupId, invitee: liveReader);
+          await admin.addMember(groupId: groupId, invitee: inboxReader);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(liveReader, groupId, 1, 'k1');
+          await _saveKey(inboxReader, groupId, 1, 'k1');
+          network.unsubscribe(groupId, inboxReader.peerId);
+
+          admin.start();
+          liveReader.start();
+          inboxReader.start();
+
+          final (initialResult, initialMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: text,
+                messageId: messageId,
+              );
+
+          expect(initialResult, SendGroupMessageResult.success);
+          expect(initialMessage, isNotNull);
+          expect(initialMessage!.id, messageId);
+          expect(initialMessage.status, 'pending');
+          expect(initialMessage.inboxStored, isFalse);
+          expect(initialMessage.inboxRetryPayload, isNotNull);
+          expect(
+            (await admin.msgRepo.getMessagesWithFailedInboxStore()).map(
+              (row) => row.id,
+            ),
+            [messageId],
+          );
+
+          await pump();
+          final liveBeforeRestart = await liveReader.loadGroupMessages(groupId);
+          expect(
+            liveBeforeRestart.where((message) => message.id == messageId),
+            hasLength(1),
+          );
+          expect(await inboxReader.loadGroupMessages(groupId), isEmpty);
+
+          admin.groupMessageListener.dispose();
+          var resumeRetryCount = 0;
+          await simulateBackgroundForegroundCycle(
+            bridge: admin.bridge,
+            p2pService: FakeP2PService(),
+            messageRepo: InMemoryMessageRepository(),
+            groupMsgRepo: admin.msgRepo,
+            retryFailedGroupInboxStoresFn: () async {
+              final retried = await retryFailedGroupInboxStores(
+                bridge: admin.bridge,
+                msgRepo: admin.msgRepo,
+              );
+              resumeRetryCount += retried;
+              if (retried > 0) {
+                _injectInboxMessageFromLatestStore(
+                  senderBridge: admin.bridge,
+                  receiverBridge: inboxBridge,
+                  receiverPeerId: inboxReader.peerId,
+                  groupId: groupId,
+                );
+              }
+              return retried;
+            },
+          );
+
+          expect(resumeRetryCount, 1);
+          await drainGroupOfflineInbox(
+            bridge: inboxReader.bridge,
+            groupRepo: inboxReader.groupRepo,
+            msgRepo: inboxReader.msgRepo,
+          );
+
+          final finalMessage = await admin.msgRepo.getMessage(messageId);
+          expect(finalMessage, isNotNull);
+          expect(finalMessage!.status, 'sent');
+          expect(finalMessage.inboxStored, isTrue);
+          expect(finalMessage.inboxRetryPayload, isNull);
+          expect(
+            (await admin.loadGroupMessages(groupId)).where(
+              (message) =>
+                  !message.isIncoming &&
+                  message.id == messageId &&
+                  (message.status == 'pending' || message.status == 'failed'),
+            ),
+            isEmpty,
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            hasLength(1),
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(2),
+          );
+
+          final liveAfterRestart = await liveReader.loadGroupMessages(groupId);
+          expect(
+            liveAfterRestart.where((message) => message.id == messageId),
+            hasLength(1),
+          );
+          final inboxAfterRestart = await inboxReader.loadGroupMessages(
+            groupId,
+          );
+          expect(
+            inboxAfterRestart.where((message) => message.id == messageId),
+            hasLength(1),
+          );
+
+          admin.dispose();
+          liveReader.dispose();
+          inboxReader.dispose();
+        },
+      );
+
+      test(
         'IR-008 failed inbox retrieve retries same cursor and drains missed fake-network message once',
         () async {
           final admin = GroupTestUser.create(
