@@ -1598,6 +1598,128 @@ void main() {
     );
 
     test(
+      'OB-007 EventChannel error marks failure and attempts reinit',
+      () async {
+        final eventChannelCalls = <String>[];
+        final flowEvents = <Map<String, dynamic>>[];
+        final pushLogs = <String>[];
+        installMockGoBridgeEventChannel(calls: eventChannelCalls);
+        debugSetFlowEventSink(flowEvents.add);
+
+        await runZoned(
+          () async {
+            await client.initialize();
+            expect(client.isInitialized, isTrue);
+            expect(
+              eventChannelCalls.where((call) => call == 'listen'),
+              hasLength(1),
+            );
+
+            await sendMockGoBridgeEventError(
+              'event channel died secretKey=ob007-hidden',
+            );
+            await waitForCondition(
+              () =>
+                  eventChannelCalls.where((call) => call == 'listen').length >=
+                  2,
+              description: 'OB-007 EventChannel error reinit attempt',
+            );
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (_, _, _, line) {
+              pushLogs.add(line);
+            },
+          ),
+        );
+
+        expect(client.isInitialized, isTrue);
+        expect(eventChannelCalls, contains('cancel'));
+        expect(
+          flowEvents.map((event) => event['event']),
+          containsAllInOrder([
+            'GO_BRIDGE_EVENT_STREAM_ERROR',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_REQUESTED',
+            'GO_BRIDGE_REINIT_START',
+            'GO_BRIDGE_INIT_SUCCESS',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_SUCCESS',
+          ]),
+        );
+
+        final errorEvent = flowEvents.firstWhere(
+          (event) => event['event'] == 'GO_BRIDGE_EVENT_STREAM_ERROR',
+        );
+        final encodedError = jsonEncode(errorEvent);
+        expect(encodedError, contains('event channel died'));
+        expect(encodedError, isNot(contains('secretKey=ob007-hidden')));
+        expect(
+          pushLogs.any(
+            (line) =>
+                line.startsWith('[PUSH_DIAG] go_bridge_event_stream_error') &&
+                line.contains('recovery=requested') &&
+                !line.contains('secretKey=ob007-hidden'),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'OB-007 EventChannel done marks failure and attempts reinit',
+      () async {
+        final eventChannelCalls = <String>[];
+        final flowEvents = <Map<String, dynamic>>[];
+        final pushLogs = <String>[];
+        installMockGoBridgeEventChannel(calls: eventChannelCalls);
+        debugSetFlowEventSink(flowEvents.add);
+
+        await runZoned(
+          () async {
+            await client.initialize();
+            expect(client.isInitialized, isTrue);
+            expect(
+              eventChannelCalls.where((call) => call == 'listen'),
+              hasLength(1),
+            );
+
+            await closeMockGoBridgeEventChannel();
+            await waitForCondition(
+              () =>
+                  eventChannelCalls.where((call) => call == 'listen').length >=
+                  2,
+              description: 'OB-007 EventChannel done reinit attempt',
+            );
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (_, _, _, line) {
+              pushLogs.add(line);
+            },
+          ),
+        );
+
+        expect(client.isInitialized, isTrue);
+        expect(eventChannelCalls, contains('cancel'));
+        expect(
+          flowEvents.map((event) => event['event']),
+          containsAllInOrder([
+            'GO_BRIDGE_EVENT_STREAM_DONE',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_REQUESTED',
+            'GO_BRIDGE_REINIT_START',
+            'GO_BRIDGE_INIT_SUCCESS',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_SUCCESS',
+          ]),
+        );
+        expect(
+          pushLogs.any(
+            (line) =>
+                line.startsWith('[PUSH_DIAG] go_bridge_event_stream_done') &&
+                line.contains('recovery=requested'),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
       'media:upload_progress push event forwards to upload stream',
       () async {
         final eventFuture = mediaUploadProgressStream.first.timeout(

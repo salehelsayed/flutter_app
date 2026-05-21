@@ -76,6 +76,24 @@ void main() {
       expect(p2pService.lastReadinessTrigger, 'bridge_reinitialize');
     });
 
+    test(
+      'OB-007 unhealthy bridge from EventChannel failure reinitializes on resume',
+      () async {
+        bridge.checkHealthResult = false;
+
+        final result = await handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+        );
+
+        expect(result, isFalse);
+        expect(bridge.checkHealthCallCount, equals(1));
+        expect(bridge.reinitializeCallCount, equals(1));
+        expect(p2pService.noteTransportSessionResetCallCount, equals(1));
+        expect(p2pService.lastReadinessTrigger, 'bridge_reinitialize');
+      },
+    );
+
     test('calls performImmediateHealthCheck on p2pService', () async {
       await handleAppResumed(bridge: bridge, p2pService: p2pService);
 
