@@ -143,13 +143,9 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       final results = await Future.wait<Object>([contactsFuture, groupsFuture]);
 
       final contacts = results[0] as List<ContactModel>;
-      final groups = (results[1] as List<GroupModel>)
-          .where(
-            (group) =>
-                group.type != GroupType.announcement ||
-                group.myRole == GroupRole.admin,
-          )
-          .toList();
+      final groups = await _filterWritableGroups(
+        results[1] as List<GroupModel>,
+      );
 
       if (!mounted) {
         return;
@@ -226,6 +222,54 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     });
   }
 
+  Future<List<GroupModel>> _filterWritableGroups(
+    List<GroupModel> candidates,
+  ) async {
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null || candidates.isEmpty) {
+      return const <GroupModel>[];
+    }
+    final identity = await widget.identityRepo.loadIdentity();
+    final ownPeerId = identity?.peerId.trim();
+    if (ownPeerId == null || ownPeerId.isEmpty) {
+      return const <GroupModel>[];
+    }
+
+    final writableGroups = <GroupModel>[];
+    for (final group in candidates) {
+      if (await _isWritableGroupTarget(
+        groupRepository: groupRepository,
+        group: group,
+        ownPeerId: ownPeerId,
+      )) {
+        writableGroups.add(group);
+      }
+    }
+    return writableGroups;
+  }
+
+  Future<bool> _isWritableGroupTarget({
+    required GroupRepository groupRepository,
+    required GroupModel group,
+    required String ownPeerId,
+  }) async {
+    if (group.isArchived || group.isDissolved) {
+      return false;
+    }
+    if (group.type == GroupType.announcement &&
+        group.myRole != GroupRole.admin) {
+      return false;
+    }
+
+    final latestKey = await groupRepository.getLatestKey(group.id);
+    if (latestKey == null) {
+      return false;
+    }
+
+    final members = await groupRepository.getMembers(group.id);
+    return members.any((member) => member.peerId == ownPeerId);
+  }
+
   List<ShareTargetSelection> get _selectedTargets {
     return [
       ..._contacts
@@ -241,8 +285,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     if (_isSending) {
       return;
     }
-    final targets = _selectedTargets;
-    if (targets.isEmpty) {
+    if (_selectedContactPeerIds.isEmpty && _selectedGroupIds.isEmpty) {
       return;
     }
 
@@ -255,6 +298,15 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
         await preSendReady();
       }
       await _qualityPreferencesReady;
+      final targets = await _resolveSelectedTargetsForDelivery();
+      if (!mounted) {
+        return;
+      }
+      _syncSelectedGroupsToTargets(targets);
+      if (targets.isEmpty) {
+        setState(() => _isSending = false);
+        return;
+      }
       final result = await _resolveBatchShareCoordinator().deliver(
         shareIntent: _buildComposedShareIntent(),
         targets: targets,
@@ -329,6 +381,60 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
           ),
         );
     }
+  }
+
+  Future<List<ShareTargetSelection>>
+  _resolveSelectedTargetsForDelivery() async {
+    final targets = <ShareTargetSelection>[
+      ..._contacts
+          .where((contact) => _selectedContactPeerIds.contains(contact.peerId))
+          .map(ShareTargetSelection.contact),
+    ];
+
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null || _selectedGroupIds.isEmpty) {
+      return targets;
+    }
+
+    final identity = await widget.identityRepo.loadIdentity();
+    final ownPeerId = identity?.peerId.trim();
+    if (ownPeerId == null || ownPeerId.isEmpty) {
+      return targets;
+    }
+
+    for (final group in _groups.where(
+      (group) => _selectedGroupIds.contains(group.id),
+    )) {
+      final latestGroup = await groupRepository.getGroup(group.id);
+      if (latestGroup == null) {
+        continue;
+      }
+      final canShare = await _isWritableGroupTarget(
+        groupRepository: groupRepository,
+        group: latestGroup,
+        ownPeerId: ownPeerId,
+      );
+      if (canShare) {
+        targets.add(ShareTargetSelection.group(latestGroup));
+      }
+    }
+    return targets;
+  }
+
+  void _syncSelectedGroupsToTargets(List<ShareTargetSelection> targets) {
+    final validGroupIds = targets
+        .where((target) => target.kind == ShareTargetSelectionKind.group)
+        .map((target) => target.requireGroup.id)
+        .toSet();
+    if (validGroupIds.length == _selectedGroupIds.length &&
+        _selectedGroupIds.containsAll(validGroupIds)) {
+      return;
+    }
+    setState(() {
+      _selectedGroupIds
+        ..clear()
+        ..addAll(validGroupIds);
+    });
   }
 
   ShareBatchDeliveryCoordinator _resolveBatchShareCoordinator() {
