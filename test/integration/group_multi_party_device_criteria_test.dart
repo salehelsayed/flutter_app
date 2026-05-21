@@ -809,6 +809,99 @@ void main() {
       );
     });
 
+    test('SV-001 accepts never-member publish rejection verdicts', () {
+      expect(
+        scenarioRequirement('private_never_member_publish_rejected').roles,
+        ['alice', 'bob', 'charlie', 'dana'],
+      );
+      expect(
+        scenarioRequirement(
+          'private_never_member_publish_rejected',
+        ).requiredDeviceCount,
+        4,
+      );
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_never_member_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateNeverMemberPublishRejectedVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_never_member_publish_rejected verdicts valid'),
+      );
+    });
+
+    test('SV-001 rejects accepted never-member publish', () {
+      final verdicts = _validPrivateNeverMemberPublishRejectedVerdicts();
+      verdicts[3] = _withSv001ProofOverrides(
+        verdicts[3],
+        const <String, Object?>{
+          'publishOutcome': 'success',
+          'publishAccepted': true,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_never_member_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('dana: SV-001 never-member publish was accepted'),
+      );
+    });
+
+    test('SV-001 rejects visible never-member messages', () {
+      final verdicts = _validPrivateNeverMemberPublishRejectedVerdicts();
+      verdicts[1] = _withSv001ProofOverrides(
+        verdicts[1],
+        const <String, Object?>{
+          'visibleNeverMemberMessageCount': 1,
+          'receivedDanaMessage': true,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_never_member_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: SV-001 active member received Dana injection'),
+      );
+    });
+
+    test('SV-001 rejects unsafe never-member error evidence', () {
+      final verdicts = _validPrivateNeverMemberPublishRejectedVerdicts();
+      verdicts[3] = _withSv001ProofOverrides(
+        verdicts[3],
+        const <String, Object?>{'safeError': false, 'groupIdLeakInError': true},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_never_member_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'dana: SV-001 publish rejection error must be non-identifying',
+        ),
+      );
+    });
+
     test('accepts valid GM-001 A/B/C receiver persistence verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm001',
@@ -19019,6 +19112,133 @@ Map<String, dynamic> _withPl010ProofOverrides(
     ...verdict,
     'pl010RemovedReactionProof': <String, Object?>{
       ...Map<String, Object?>.from(verdict['pl010RemovedReactionProof'] as Map),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateNeverMemberPublishRejectedVerdicts() {
+  const scenario = 'private_never_member_publish_rejected';
+  const groupId = 'group-sv001';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const danaPeerId = 'dana-peer';
+  const activeMembers = <String>[alicePeerId, bobPeerId, charliePeerId];
+  const aliceMessage = <String, Object?>{
+    'key': 'aliceInitial',
+    'messageId': 'msg-sv001-alice',
+    'groupId': groupId,
+    'text': 'SV-001 Alice normal fanout',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-13T00:00:00.000Z',
+    'accepted': true,
+  };
+
+  Map<String, Object?> proofFor(
+    String role, {
+    bool danaAttempted = false,
+    bool localMessageStored = false,
+  }) {
+    return <String, Object?>{
+      'rowId': 'SV-001',
+      'scenario': scenario,
+      'observedByRole': role,
+      'neverMemberRole': 'dana',
+      'neverMemberPeerId': danaPeerId,
+      'activeMemberPeerIds': activeMembers,
+      'neverMemberInActiveConfig': false,
+      'normalAliceDeliveryStillWorks': true,
+      'visibleNeverMemberMessageCount': 0,
+      'attemptedNativePublish': danaAttempted,
+      'publishOutcome': danaAttempted ? 'GROUP_ERROR' : 'not_observed',
+      'publishAccepted': false,
+      'safeError': true,
+      'groupIdLeakInError': false,
+      'peerIdLeakInError': false,
+      'storedLocalMessage': localMessageStored,
+      'observedDanaAttemptRejected': !danaAttempted,
+      'receivedDanaMessage': false,
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[aliceMessage],
+      extra: <String, Object?>{
+        'sv001NeverMemberPublishProof': proofFor('alice'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceInitial',
+          'msg-sv001-alice',
+          'SV-001 Alice normal fanout',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceInitial': 1},
+      extra: <String, Object?>{'sv001NeverMemberPublishProof': proofFor('bob')},
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceInitial',
+          'msg-sv001-alice',
+          'SV-001 Alice normal fanout',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceInitial': 1},
+      extra: <String, Object?>{
+        'sv001NeverMemberPublishProof': proofFor('charlie'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'dana',
+      peerId: danaPeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      extra: <String, Object?>{
+        'sv001NeverMemberPublishProof': proofFor('dana', danaAttempted: true),
+      },
+    ),
+  ];
+}
+
+Map<String, dynamic> _withSv001ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'sv001NeverMemberPublishProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['sv001NeverMemberPublishProof'] as Map,
+      ),
       ...overrides,
     },
   };

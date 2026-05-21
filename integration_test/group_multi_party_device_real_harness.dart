@@ -130,6 +130,12 @@ const _rolesByScenario = <String, List<String>>{
   'pl012': <String>['alice', 'bob', 'charlie'],
   'private_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
   'private_removed_reaction_rejected': <String>['alice', 'bob', 'charlie'],
+  'private_never_member_publish_rejected': <String>[
+    'alice',
+    'bob',
+    'charlie',
+    'dana',
+  ],
   'private_abc_create': <String>['alice', 'bob', 'charlie'],
   'private_full_mesh_online': <String>['alice', 'bob', 'charlie'],
   'private_relay_only_delivery': <String>['alice', 'bob', 'charlie'],
@@ -3085,6 +3091,178 @@ Future<void> _writeVerdict({
   };
   writeSharedJson(_signalName('${_role}_verdict.json'), verdict);
   stdout.writeln(jsonEncode(verdict));
+}
+
+String _sv001DanaText() => 'SV-001 Dana never-member publish $_runId';
+
+Future<Map<String, dynamic>> _sv001NoDanaMessageProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String danaPeerId,
+  required bool normalAliceDeliveryStillWorks,
+  required Map<String, dynamic>? danaAttempt,
+}) async {
+  await Future<void>.delayed(const Duration(seconds: 5));
+  final texts = await _timelineTexts(stack: stack, groupId: groupId);
+  final members = await _memberPeerIds(stack, groupId);
+  final visibleCount = texts.where((text) => text == _sv001DanaText()).length;
+  return <String, dynamic>{
+    'rowId': 'SV-001',
+    'scenario': 'private_never_member_publish_rejected',
+    'neverMemberRole': 'dana',
+    'neverMemberPeerId': danaPeerId,
+    'normalAliceDeliveryStillWorks': normalAliceDeliveryStillWorks,
+    'observedDanaAttemptRejected': danaAttempt?['publishAccepted'] == false,
+    'receivedDanaMessage': visibleCount > 0,
+    'visibleNeverMemberMessageCount': visibleCount,
+    'neverMemberInActiveConfig': members.contains(danaPeerId),
+  };
+}
+
+Future<void> _runSv001Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'SV-001 Private ABC',
+  );
+  writeSharedJson(_signalName('group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+
+  await waitForSharedSignal(_signalName('bob_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+
+  final sent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceInitial',
+    text: 'SV-001 alice normal fanout $_runId',
+  );
+  await waitForSharedSignal(_signalName('bob_received_aliceInitial.json'));
+  await waitForSharedSignal(_signalName('charlie_received_aliceInitial.json'));
+  final danaAttempt = await waitForSharedJson(
+    _signalName('dana_sv001_attempt.json'),
+  );
+  final proof = await _sv001NoDanaMessageProof(
+    stack: stack,
+    groupId: groupId,
+    danaPeerId: identities['dana']!['peerId'] as String,
+    normalAliceDeliveryStillWorks: sent['accepted'] == true,
+    danaAttempt: danaAttempt,
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[sent],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{'sv001NeverMemberPublishProof': proof},
+  );
+}
+
+Future<void> _runSv001Receiver(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('${_role}_group_joined'), 'ok');
+
+  final sent = await waitForSharedJson(
+    _signalName('alice_sent_aliceInitial.json'),
+  );
+  final received = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceInitial',
+    text: sent['text'] as String,
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+  writeSharedJson(_signalName('${_role}_received_aliceInitial.json'), received);
+
+  final danaAttempt = await waitForSharedJson(
+    _signalName('dana_sv001_attempt.json'),
+  );
+  final proof = await _sv001NoDanaMessageProof(
+    stack: stack,
+    groupId: groupId,
+    danaPeerId: identities['dana']!['peerId'] as String,
+    normalAliceDeliveryStillWorks: received['persistedCount'] == 1,
+    danaAttempt: danaAttempt,
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: <Map<String, dynamic>>[received],
+    extra: <String, dynamic>{'sv001NeverMemberPublishProof': proof},
+  );
+}
+
+Future<void> _runSv001Dana(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = (fixture['group'] as Map)['id'] as String;
+  await waitForSharedSignal(_signalName('bob_received_aliceInitial.json'));
+  await waitForSharedSignal(_signalName('charlie_received_aliceInitial.json'));
+
+  await importJoinedGroupFixture(stack: stack, fixture: fixture);
+  final response = await callGroupPublish(
+    stack.bridge,
+    groupId: groupId,
+    text: _sv001DanaText(),
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    messageId: 'sv001-never-member-$_runId',
+    timestamp: DateTime.now().toUtc(),
+  );
+  final errorMessage = response['errorMessage'] as String? ?? '';
+  final visibleCount = (await _timelineTexts(
+    stack: stack,
+    groupId: groupId,
+  )).where((text) => text == _sv001DanaText()).length;
+  final proof = <String, dynamic>{
+    'rowId': 'SV-001',
+    'scenario': 'private_never_member_publish_rejected',
+    'neverMemberRole': 'dana',
+    'neverMemberPeerId': stack.identity.peerId,
+    'normalAliceDeliveryStillWorks': true,
+    'attemptedNativePublish': true,
+    'publishAccepted': response['ok'] == true,
+    'publishOutcome': response['errorCode'] as String? ?? 'unknown',
+    'safeError':
+        !errorMessage.contains(groupId) &&
+        !errorMessage.contains(stack.identity.peerId),
+    'groupIdLeakInError': errorMessage.contains(groupId),
+    'peerIdLeakInError': errorMessage.contains(stack.identity.peerId),
+    'storedLocalMessage': visibleCount > 0,
+    'visibleNeverMemberMessageCount': visibleCount,
+    'neverMemberInActiveConfig': (await _memberPeerIds(
+      stack,
+      groupId,
+    )).contains(stack.identity.peerId),
+  };
+  writeSharedJson(_signalName('dana_sv001_attempt.json'), proof);
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{'sv001NeverMemberPublishProof': proof},
+  );
 }
 
 int _notificationCount(GroupMultiDeviceTestStack stack) {
@@ -37092,6 +37270,17 @@ Future<void> _runScenarioRole() async {
       await _addPeerContacts(stack, identities);
     }
     final flowScenario = _flowScenario(_scenario);
+
+    if (_scenario == 'private_never_member_publish_rejected') {
+      if (_role == 'alice') {
+        await _runSv001Alice(stack, identities);
+      } else if (_role == 'bob' || _role == 'charlie') {
+        await _runSv001Receiver(stack, identities);
+      } else {
+        await _runSv001Dana(stack, identities);
+      }
+      return;
+    }
 
     if (_scenario == 'ge001') {
       if (_role == 'alice') {
