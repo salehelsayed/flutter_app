@@ -6991,6 +6991,360 @@ void main() {
     );
 
     test(
+      'ST-002 permutes remove re-add key config and message ordering',
+      () async {
+        final removeAt = DateTime.parse('2026-04-05T12:01:00.000Z');
+        final removedWindowAt = DateTime.parse('2026-04-05T12:01:30.000Z');
+        final readdAt = DateTime.parse('2026-04-05T12:03:00.000Z');
+        final postReaddMessageAt = DateTime.parse('2026-04-05T12:03:05.000Z');
+        final staleConfigAt = DateTime.parse('2026-04-05T12:00:30.000Z');
+
+        final permutations = <({String name, List<String> operations})>[
+          (
+            name: 'canonical',
+            operations: [
+              'remove',
+              'key2',
+              'removedWindowMessage',
+              'readd',
+              'key3',
+              'postReaddMessage',
+              'staleConfig',
+            ],
+          ),
+          (
+            name: 'message-buffered-before-readd',
+            operations: [
+              'remove',
+              'key2',
+              'postReaddMessage',
+              'removedWindowMessage',
+              'readd',
+              'key3',
+              'staleConfig',
+            ],
+          ),
+          (
+            name: 'persisted-before-delayed-remove',
+            operations: [
+              'key3',
+              'postReaddMessage',
+              'removedWindowMessage',
+              'remove',
+              'key2',
+              'readd',
+              'staleConfig',
+            ],
+          ),
+          (
+            name: 'readd-before-delayed-remove',
+            operations: [
+              'key3',
+              'readd',
+              'postReaddMessage',
+              'remove',
+              'staleConfig',
+            ],
+          ),
+          (
+            name: 'stale-config-first',
+            operations: [
+              'staleConfig',
+              'remove',
+              'postReaddMessage',
+              'key2',
+              'readd',
+              'key3',
+              'removedWindowMessage',
+            ],
+          ),
+          (
+            name: 'late-key-after-content',
+            operations: [
+              'remove',
+              'postReaddMessage',
+              'readd',
+              'removedWindowMessage',
+              'staleConfig',
+              'key2',
+              'key3',
+            ],
+          ),
+        ];
+
+        Map<String, dynamic> memberMap({
+          required String peerId,
+          required String username,
+          required String role,
+          required String publicKey,
+        }) {
+          return {
+            'peerId': peerId,
+            'username': username,
+            'role': role,
+            'publicKey': publicKey,
+          };
+        }
+
+        for (final permutation in permutations) {
+          final caseGroupRepo = InMemoryGroupRepository();
+          final caseMsgRepo = InMemoryGroupMessageRepository();
+          final caseBridge = FakeBridge();
+          final caseListener = GroupMessageListener(
+            groupRepo: caseGroupRepo,
+            msgRepo: caseMsgRepo,
+            bridge: caseBridge,
+          );
+          try {
+            const groupId = 'group-1';
+            const postMessageId = 'st002-post-readd-message';
+            const removedWindowMessageId = 'st002-removed-window-message';
+            final admin = memberMap(
+              peerId: 'peer-admin',
+              username: 'Admin',
+              role: 'admin',
+              publicKey: 'pk-admin',
+            );
+            final sender = memberMap(
+              peerId: 'peer-sender',
+              username: 'Sender',
+              role: 'writer',
+              publicKey: 'pk-sender',
+            );
+            final charlie = memberMap(
+              peerId: 'peer-charlie',
+              username: 'Charlie',
+              role: 'writer',
+              publicKey: 'pk-charlie',
+            );
+
+            await caseGroupRepo.saveGroup(testGroup);
+            await caseGroupRepo.saveMember(
+              GroupMember(
+                groupId: groupId,
+                peerId: 'peer-admin',
+                username: 'Admin',
+                role: MemberRole.admin,
+                publicKey: 'pk-admin',
+                joinedAt: initialMemberJoinedAt,
+              ),
+            );
+            await caseGroupRepo.saveMember(
+              GroupMember(
+                groupId: groupId,
+                peerId: 'peer-sender',
+                username: 'Sender',
+                role: MemberRole.writer,
+                publicKey: 'pk-sender',
+                joinedAt: initialMemberJoinedAt,
+              ),
+            );
+            await caseGroupRepo.saveMember(
+              GroupMember(
+                groupId: groupId,
+                peerId: 'peer-charlie',
+                username: 'Charlie',
+                role: MemberRole.writer,
+                publicKey: 'pk-charlie',
+                joinedAt: initialMemberJoinedAt,
+              ),
+            );
+            await caseGroupRepo.saveKey(
+              GroupKeyInfo(
+                groupId: groupId,
+                keyGeneration: 1,
+                encryptedKey: 'st002-key-1',
+                createdAt: initialGroupCreatedAt,
+              ),
+            );
+
+            Map<String, dynamic> groupConfig(
+              List<Map<String, dynamic>> members,
+            ) {
+              return {
+                'name': 'Test Group',
+                'groupType': 'chat',
+                'members': members,
+                'createdBy': 'peer-admin',
+                'createdAt': initialGroupCreatedAt.toIso8601String(),
+              };
+            }
+
+            Map<String, dynamic> envelope({
+              required String text,
+              required DateTime timestamp,
+              required String messageId,
+              String senderId = 'peer-admin',
+              String senderUsername = 'Admin',
+              int keyEpoch = 0,
+            }) {
+              return {
+                'groupId': groupId,
+                'senderId': senderId,
+                'senderUsername': senderUsername,
+                'keyEpoch': keyEpoch,
+                'messageId': messageId,
+                'text': text,
+                'timestamp': timestamp.toUtc().toIso8601String(),
+              };
+            }
+
+            Future<void> saveKey(int epoch, DateTime createdAt) {
+              return caseGroupRepo.saveKey(
+                GroupKeyInfo(
+                  groupId: groupId,
+                  keyGeneration: epoch,
+                  encryptedKey: 'st002-key-$epoch',
+                  createdAt: createdAt,
+                ),
+              );
+            }
+
+            final removeEvent = envelope(
+              messageId: 'st002-remove',
+              timestamp: removeAt,
+              text: jsonEncode({
+                '__sys': 'member_removed',
+                'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+                'removedAt': removeAt.toUtc().toIso8601String(),
+                'groupConfig': groupConfig([admin, sender]),
+              }),
+            );
+            final readdEvent = envelope(
+              messageId: 'st002-readd',
+              timestamp: readdAt,
+              text: jsonEncode({
+                '__sys': 'member_added',
+                'member': charlie,
+                'groupConfig': groupConfig([admin, sender, charlie]),
+              }),
+            );
+            final staleConfigEvent = envelope(
+              messageId: 'st002-stale-config',
+              timestamp: staleConfigAt,
+              text: jsonEncode({
+                '__sys': 'member_added',
+                'member': sender,
+                'groupConfig': groupConfig([admin, sender]),
+              }),
+            );
+            final removedWindowEvent = envelope(
+              messageId: removedWindowMessageId,
+              senderId: 'peer-charlie',
+              senderUsername: 'Charlie',
+              keyEpoch: 2,
+              timestamp: removedWindowAt,
+              text: 'ST-002 removed-window message',
+            );
+            final postReaddEvent = envelope(
+              messageId: postMessageId,
+              senderId: 'peer-charlie',
+              senderUsername: 'Charlie',
+              keyEpoch: 3,
+              timestamp: postReaddMessageAt,
+              text: 'ST-002 post-re-add message',
+            );
+
+            Future<void> replayEnvelope(Map<String, dynamic> event) {
+              return caseListener.handleReplayEnvelope(
+                event,
+                allowMembershipBuffer: true,
+              );
+            }
+
+            Future<void> replayKeyRotated(int epoch, DateTime timestamp) {
+              return replayEnvelope(
+                envelope(
+                  messageId: 'st002-key-rotated-$epoch',
+                  timestamp: timestamp,
+                  text: jsonEncode({
+                    '__sys': 'key_rotated',
+                    'newKeyEpoch': epoch,
+                  }),
+                ),
+              );
+            }
+
+            for (final operation in permutation.operations) {
+              switch (operation) {
+                case 'remove':
+                  await replayEnvelope(removeEvent);
+                  break;
+                case 'readd':
+                  await replayEnvelope(readdEvent);
+                  break;
+                case 'staleConfig':
+                  await replayEnvelope(staleConfigEvent);
+                  break;
+                case 'removedWindowMessage':
+                  await replayEnvelope(removedWindowEvent);
+                  break;
+                case 'postReaddMessage':
+                  await replayEnvelope(postReaddEvent);
+                  break;
+                case 'key2':
+                  await saveKey(2, removeAt);
+                  await replayKeyRotated(2, removeAt);
+                  break;
+                case 'key3':
+                  await saveKey(3, readdAt);
+                  await replayKeyRotated(3, readdAt);
+                  break;
+                default:
+                  fail('Unexpected ST-002 operation $operation');
+              }
+            }
+
+            final group = await caseGroupRepo.getGroup(groupId);
+            expect(group, isNotNull, reason: permutation.name);
+            expect(
+              group!.lastMembershipEventAt,
+              readdAt.toUtc(),
+              reason: permutation.name,
+            );
+            final members = await caseGroupRepo.getMembers(groupId);
+            expect(
+              members.map((member) => member.peerId).toSet(),
+              {'peer-admin', 'peer-sender', 'peer-charlie'},
+              reason: permutation.name,
+            );
+            expect(
+              (await caseGroupRepo.getMember(
+                groupId,
+                'peer-charlie',
+              ))!.joinedAt,
+              readdAt.toUtc(),
+              reason: permutation.name,
+            );
+            final latestKey = await caseGroupRepo.getLatestKey(groupId);
+            expect(latestKey, isNotNull, reason: permutation.name);
+            expect(latestKey!.keyGeneration, 3, reason: permutation.name);
+
+            final postMessages = (await caseMsgRepo.getMessagesPage(
+              groupId,
+            )).where((message) => message.id == postMessageId).toList();
+            expect(postMessages, hasLength(1), reason: permutation.name);
+            expect(postMessages.single.keyGeneration, 3);
+            expect(
+              await caseMsgRepo.getMessage(removedWindowMessageId),
+              isNull,
+              reason: permutation.name,
+            );
+            expect(
+              caseBridge.commandLog
+                  .where((command) => command == 'group:updateConfig')
+                  .isNotEmpty,
+              isTrue,
+              reason: permutation.name,
+            );
+          } finally {
+            caseListener.dispose();
+          }
+        }
+      },
+    );
+
+    test(
       'ML-012 concurrent remove C and add D merge regardless delivery order',
       () async {
         listener.start(sourceController.stream);

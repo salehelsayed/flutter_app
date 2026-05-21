@@ -554,6 +554,39 @@ Future<void> dbDeleteGroupMessage(DatabaseExecutor db, String id) async {
   }
 }
 
+/// Deletes a group message for internal membership-window repair without
+/// recording a local deletion tombstone.
+Future<void> dbDeleteGroupMessageForMembershipRepair(
+  DatabaseExecutor db,
+  String id,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_MESSAGES_DB_MEMBERSHIP_REPAIR_DELETE_START',
+    details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+  );
+
+  try {
+    await db.delete('group_messages', where: 'id = ?', whereArgs: [id]);
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MESSAGES_DB_MEMBERSHIP_REPAIR_DELETE_SUCCESS',
+      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MESSAGES_DB_MEMBERSHIP_REPAIR_DELETE_ERROR',
+      details: {
+        'id': id.length > 8 ? id.substring(0, 8) : id,
+        'error': e.toString(),
+      },
+    );
+    rethrow;
+  }
+}
+
 /// Loads outgoing group messages stuck in 'sending' status older than [olderThan].
 ///
 /// Returns raw row maps ordered by timestamp ASC, limited to [limit].

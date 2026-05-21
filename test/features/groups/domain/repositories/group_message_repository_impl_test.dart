@@ -59,6 +59,8 @@ void main() {
         dbMarkGroupMessagesAsRead: (groupId) =>
             dbMarkGroupMessagesAsRead(executor, groupId),
         dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
+        dbDeleteGroupMessageForMembershipRepairFn: (id) =>
+            dbDeleteGroupMessageForMembershipRepair(executor, id),
         dbExistsGroupMessageByContent:
             (groupId, senderPeerId, text, timestamp) =>
                 dbExistsGroupMessageByContent(
@@ -176,6 +178,30 @@ void main() {
     test('returns null for non-existent', () async {
       final result = await repo.getMessage('non-existent');
       expect(result, isNull);
+    });
+
+    test(
+      'ST-002 membership repair delete does not block same-id re-save',
+      () async {
+        final msg = makeMessage(id: 'st002-repair-delete');
+        await repo.saveMessage(msg);
+        await repo.deleteMessageForMembershipRepair(msg.id);
+        expect(await repo.getMessage(msg.id), isNull);
+
+        await repo.saveMessage(msg.copyWith(text: 'restored after re-add'));
+
+        expect((await repo.getMessage(msg.id))!.text, 'restored after re-add');
+      },
+    );
+
+    test('local delete still blocks same-id replay', () async {
+      final msg = makeMessage(id: 'st002-local-delete');
+      await repo.saveMessage(msg);
+      await repo.deleteMessage(msg.id);
+
+      await repo.saveMessage(msg.copyWith(text: 'should stay deleted'));
+
+      expect(await repo.getMessage(msg.id), isNull);
     });
   });
 
