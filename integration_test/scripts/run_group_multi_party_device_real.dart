@@ -9,6 +9,8 @@ import 'group_multi_party_device_criteria.dart';
 const _harnessPath =
     'integration_test/group_multi_party_device_real_harness.dart';
 const _iosRunnerBundleId = 'com.mknoon.app';
+const _roleIdentityTimeout = Duration(minutes: 90);
+const _roleVerdictTimeout = Duration(minutes: 15);
 
 class _ProcessExit {
   const _ProcessExit(this.exitCode);
@@ -73,7 +75,7 @@ Future<Map<String, dynamic>> _waitForVerdictOrExit({
 }) async {
   final file = File(path);
   final result = await Future.any<Object>([
-    _waitForJson(path, timeout: const Duration(minutes: 15)),
+    _waitForJson(path, timeout: _roleVerdictTimeout),
     process.exitCode.then<Object>((exitCode) => _ProcessExit(exitCode)),
   ]);
   if (result is Map<String, dynamic>) {
@@ -100,7 +102,7 @@ Future<Map<String, dynamic>> _waitForIdentityOrExit({
   required String logPath,
 }) async {
   final result = await Future.any<Object>([
-    _waitForJson(path, timeout: const Duration(minutes: 15)),
+    _waitForJson(path, timeout: _roleIdentityTimeout),
     process.exitCode.then<Object>((exitCode) => _ProcessExit(exitCode)),
   ]);
   if (result is Map<String, dynamic>) {

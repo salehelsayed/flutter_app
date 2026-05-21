@@ -6748,6 +6748,77 @@ void main() {
       );
     });
 
+    test('ST-014 accepts private_network_chaos_invariants soak proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_network_chaos_invariants',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateNetworkChaosInvariantVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_network_chaos_invariants verdicts valid'),
+      );
+    });
+
+    test('ST-014 rejects missing soak proof fields', () {
+      final missingProof = _validPrivateNetworkChaosInvariantVerdicts();
+      missingProof[3] = Map<String, dynamic>.from(missingProof[3])
+        ..remove('st014SoakProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_network_chaos_invariants',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('dana: missing ST-014 soak proof fields'),
+      );
+    });
+
+    test('ST-014 rejects weak soak proof', () {
+      final weakProof = _validPrivateNetworkChaosInvariantVerdicts();
+      weakProof[0] =
+          _withSt014ProofOverrides(weakProof[0], const <String, Object?>{
+            'soakProofSource': 'generic_churn',
+            'divergenceDetectionEnabled': false,
+            'fakeNetworkSoakProofRequired': false,
+            'receiveDeadPeerCount': 1,
+            'modelComparisonCheckpoints': 3,
+            'periodicRestartCoverageSource': 'none',
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_network_chaos_invariants',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: weakProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('soakProofSource mismatch'));
+      expect(
+        rejected.detail,
+        contains('divergenceDetectionEnabled must be true'),
+      );
+      expect(
+        rejected.detail,
+        contains('fakeNetworkSoakProofRequired must be true'),
+      );
+      expect(rejected.detail, contains('receiveDeadPeerCount must be 0'));
+      expect(
+        rejected.detail,
+        contains('modelComparisonCheckpoints must be >= 12'),
+      );
+      expect(
+        rejected.detail,
+        contains('periodicRestartCoverageSource mismatch'),
+      );
+    });
+
     test('accepts private_readd_cycles ML-008 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_readd_cycles',
@@ -30275,12 +30346,33 @@ List<Map<String, dynamic>> _validPrivateNetworkChaosInvariantVerdicts() {
           'messageOperationCount': 12,
           'membershipOperationCount': 12,
         };
+        final st014Proof = <String, Object?>{
+          ...raProof,
+          'rowId': 'ST-014',
+          'scenario': 'private_network_chaos_invariants',
+          'appPeerPlatform': 'ios_26_2_core_simulator',
+          'soakProofSource':
+              'app_peer_core_simulator_bounded_churn_soak_subset',
+          'fixedSeed': 14014,
+          'boundedSoakSubsetCovered': true,
+          'membershipChurnCovered': true,
+          'modelComparisonEnabled': true,
+          'divergenceDetectionEnabled': true,
+          'fakeNetworkSoakProofRequired': true,
+          'periodicRestartCoverageSource':
+              'fake_network_restart_replay_required',
+          'receiveDeadPeerCount': 0,
+          'modelComparisonCheckpoints': 12,
+          'messageOperationCount': 12,
+          'membershipOperationCount': 12,
+        };
         return <String, dynamic>{
           ...verdict,
           'scenario': 'private_network_chaos_invariants',
           'nw014ChaosInvariantProof': nw014Proof,
           'st001ModelOracleProof': st001Proof,
           'st013RelayChaosProof': st013Proof,
+          'st014SoakProof': st014Proof,
         };
       })
       .toList(growable: false);
@@ -30320,6 +30412,19 @@ Map<String, dynamic> _withSt013ProofOverrides(
     ...verdict,
     'st013RelayChaosProof': <String, Object?>{
       ...Map<String, Object?>.from(verdict['st013RelayChaosProof'] as Map),
+      ...overrides,
+    },
+  };
+}
+
+Map<String, dynamic> _withSt014ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'st014SoakProof': <String, Object?>{
+      ...Map<String, Object?>.from(verdict['st014SoakProof'] as Map),
       ...overrides,
     },
   };
