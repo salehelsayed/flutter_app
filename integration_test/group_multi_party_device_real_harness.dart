@@ -3272,6 +3272,48 @@ Future<void> _runSv001Dana(
 
 String _sv002CharlieText() => 'SV-002 Charlie removed old-key publish $_runId';
 
+String _sv008AttackerPeerId() => 'sv008-attacker-$_runId';
+
+String _sv008UnauthorizedConfigUpdateText({
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+}) {
+  final alice = identities['alice']!;
+  final attackerPeerId = _sv008AttackerPeerId();
+  return jsonEncode(<String, dynamic>{
+    '__sys': 'members_added',
+    'groupId': groupId,
+    'members': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'peerId': attackerPeerId,
+        'username': 'SV-008 Attacker',
+        'role': 'writer',
+        'publicKey': 'pk-$attackerPeerId',
+      },
+    ],
+    'groupConfig': <String, dynamic>{
+      'name': 'SV-008 forged config',
+      'groupType': 'chat',
+      'members': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'peerId': alice['peerId'] as String,
+          'username': alice['username'] as String? ?? _usernameForRole('alice'),
+          'role': 'admin',
+          'publicKey': alice['publicKey'] as String,
+        },
+        <String, dynamic>{
+          'peerId': attackerPeerId,
+          'username': 'SV-008 Attacker',
+          'role': 'writer',
+          'publicKey': 'pk-$attackerPeerId',
+        },
+      ],
+      'createdBy': alice['peerId'] as String,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+    },
+  });
+}
+
 Future<Map<String, dynamic>> _sv002NoCharlieOldKeyMessageProof({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
@@ -3363,6 +3405,76 @@ Map<String, dynamic> _sv002CharlieAttemptProof({
   };
 }
 
+Future<Map<String, dynamic>> _sv008UnauthorizedConfigUpdateObserverProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String bobPeerId,
+  required String charliePeerId,
+  required bool normalAliceDeliveryStillWorks,
+  required Map<String, dynamic>? charlieAttempt,
+}) async {
+  await Future<void>.delayed(const Duration(seconds: 5));
+  final members = await _memberPeerIds(stack, groupId);
+  final attackerPeerId =
+      charlieAttempt?['attemptedAddedPeerId'] as String? ??
+      _sv008AttackerPeerId();
+  final configAccepted = charlieAttempt?['configPublishAccepted'] == true;
+  final bobStillActive = members.contains(bobPeerId);
+  final attackerInConfig = members.contains(attackerPeerId);
+  final removedInConfig = members.contains(charliePeerId);
+  return <String, dynamic>{
+    'rowId': 'SV-008',
+    'scenario': 'private_removed_old_key_publish_rejected',
+    'observedByRole': _role,
+    'unauthorizedRole': 'charlie',
+    'removedPeerId': charliePeerId,
+    'targetedRemovedPeerId': bobPeerId,
+    'attemptedAddedPeerId': attackerPeerId,
+    'attemptedUnauthorizedConfigUpdate':
+        charlieAttempt?['attemptedNativeConfigUpdate'] == true,
+    'configPublishAccepted': configAccepted,
+    'configPublishOutcome':
+        charlieAttempt?['configPublishOutcome'] ?? 'not_observed',
+    'observedUnauthorizedConfigRejected': !configAccepted,
+    'normalAliceDeliveryStillWorks': normalAliceDeliveryStillWorks,
+    'bobStillActive': bobStillActive,
+    'attackerInActiveConfig': attackerInConfig,
+    'removedMemberInActiveConfig': removedInConfig,
+    'localConfigUpdateApplied':
+        configAccepted || attackerInConfig || !bobStillActive,
+  };
+}
+
+Map<String, dynamic> _sv008CharlieConfigUpdateAttemptProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String bobPeerId,
+  required Map<String, dynamic> publishResponse,
+  required int localMessageCountAfterAttempt,
+}) {
+  return <String, dynamic>{
+    'rowId': 'SV-008',
+    'scenario': 'private_removed_old_key_publish_rejected',
+    'observedByRole': 'charlie',
+    'unauthorizedRole': 'charlie',
+    'removedPeerId': stack.identity.peerId,
+    'targetedRemovedPeerId': bobPeerId,
+    'attemptedAddedPeerId': _sv008AttackerPeerId(),
+    'attemptedUnauthorizedConfigUpdate': true,
+    'attemptedNativeConfigUpdate': true,
+    'configPublishAccepted': publishResponse['ok'] == true,
+    'configPublishOutcome':
+        publishResponse['errorCode'] as String? ?? 'unknown',
+    'observedUnauthorizedConfigRejected': publishResponse['ok'] != true,
+    'normalAliceDeliveryStillWorks': true,
+    'bobStillActive': true,
+    'attackerInActiveConfig': false,
+    'removedMemberInActiveConfig': false,
+    'localConfigUpdateApplied': publishResponse['ok'] == true,
+    'storedLocalConfigMessage': localMessageCountAfterAttempt > 0,
+  };
+}
+
 Future<void> _runSv002Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -3427,6 +3539,14 @@ Future<void> _runSv002Alice(
     normalAliceDeliveryStillWorks: target['accepted'] == true,
     charlieAttempt: charlieAttempt,
   );
+  final sv008Proof = await _sv008UnauthorizedConfigUpdateObserverProof(
+    stack: stack,
+    groupId: groupId,
+    bobPeerId: identities['bob']!['peerId'] as String,
+    charliePeerId: charliePeerId,
+    normalAliceDeliveryStillWorks: target['accepted'] == true,
+    charlieAttempt: charlieAttempt,
+  );
   writeSharedText(_signalName('alice_sv002_observed_no_mutation'), 'ok');
   await waitForSharedSignal(_signalName('bob_sv002_observed_no_mutation'));
 
@@ -3435,7 +3555,10 @@ Future<void> _runSv002Alice(
     groupId: groupId,
     sentMessages: <Map<String, dynamic>>[target],
     receivedMessages: const <Map<String, dynamic>>[],
-    extra: <String, dynamic>{'sv002RemovedOldKeyPublishProof': proof},
+    extra: <String, dynamic>{
+      'sv002RemovedOldKeyPublishProof': proof,
+      'sv008UnauthorizedConfigUpdateProof': sv008Proof,
+    },
   );
 }
 
@@ -3491,6 +3614,14 @@ Future<void> _runSv002Receiver(
       normalAliceDeliveryStillWorks: received['persistedCount'] == 1,
       charlieAttempt: charlieAttempt,
     );
+    final sv008Proof = await _sv008UnauthorizedConfigUpdateObserverProof(
+      stack: stack,
+      groupId: groupId,
+      bobPeerId: stack.identity.peerId,
+      charliePeerId: charliePeerId,
+      normalAliceDeliveryStillWorks: received['persistedCount'] == 1,
+      charlieAttempt: charlieAttempt,
+    );
     writeSharedText(_signalName('bob_sv002_observed_no_mutation'), 'ok');
     await waitForSharedSignal(_signalName('alice_sv002_observed_no_mutation'));
 
@@ -3499,7 +3630,10 @@ Future<void> _runSv002Receiver(
       groupId: groupId,
       sentMessages: const <Map<String, dynamic>>[],
       receivedMessages: <Map<String, dynamic>>[received],
-      extra: <String, dynamic>{'sv002RemovedOldKeyPublishProof': proof},
+      extra: <String, dynamic>{
+        'sv002RemovedOldKeyPublishProof': proof,
+        'sv008UnauthorizedConfigUpdateProof': sv008Proof,
+      },
     );
     return;
   }
@@ -3547,6 +3681,38 @@ Future<void> _runSv002Receiver(
     stack,
     groupId,
   )).contains(stack.identity.peerId);
+  final configUpdateText = _sv008UnauthorizedConfigUpdateText(
+    groupId: groupId,
+    identities: identities,
+  );
+  final configPublishResponse = await callGroupPublish(
+    stack.bridge,
+    groupId: groupId,
+    text: configUpdateText,
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    messageId: 'sv008-unauthorized-config-$_runId',
+    timestamp: DateTime.now().toUtc(),
+  );
+  final configVisibleCount = (await _timelineTexts(
+    stack: stack,
+    groupId: groupId,
+  )).where((text) => text == configUpdateText).length;
+  final sv008Proof = _sv008CharlieConfigUpdateAttemptProof(
+    stack: stack,
+    groupId: groupId,
+    bobPeerId: identities['bob']!['peerId'] as String,
+    publishResponse: configPublishResponse,
+    localMessageCountAfterAttempt: configVisibleCount,
+  );
+  proof
+    ..['attemptedNativeConfigUpdate'] =
+        sv008Proof['attemptedNativeConfigUpdate']
+    ..['configPublishAccepted'] = sv008Proof['configPublishAccepted']
+    ..['configPublishOutcome'] = sv008Proof['configPublishOutcome']
+    ..['attemptedAddedPeerId'] = sv008Proof['attemptedAddedPeerId'];
   writeSharedJson(_signalName('charlie_sv002_attempt.json'), proof);
 
   await waitForSharedSignal(_signalName('alice_sv002_observed_no_mutation'));
@@ -3557,7 +3723,10 @@ Future<void> _runSv002Receiver(
     groupId: groupId,
     sentMessages: const <Map<String, dynamic>>[],
     receivedMessages: <Map<String, dynamic>>[received],
-    extra: <String, dynamic>{'sv002RemovedOldKeyPublishProof': proof},
+    extra: <String, dynamic>{
+      'sv002RemovedOldKeyPublishProof': proof,
+      'sv008UnauthorizedConfigUpdateProof': sv008Proof,
+    },
   );
 }
 

@@ -2913,6 +2913,11 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateSv008UnauthorizedConfigUpdateProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     return;
   }
   if (scenario == 'private_full_mesh_online') {
@@ -5329,6 +5334,104 @@ void _validateSv002RemovedOldKeyPublishProof({
           '$role: SV-002 active member did not observe Charlie rejection',
         );
       }
+    }
+  }
+}
+
+void _validateSv008UnauthorizedConfigUpdateProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  final bobPeerId = peerIdByRole['bob'];
+  final charliePeerId = peerIdByRole['charlie'];
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final verdict = byRole[role];
+    if (verdict == null) {
+      continue;
+    }
+    final proof = _mapValue(verdict['sv008UnauthorizedConfigUpdateProof']);
+    if (proof == null) {
+      failures.add('$role: missing sv008UnauthorizedConfigUpdateProof');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'SV-008') {
+      failures.add(
+        '$role: sv008UnauthorizedConfigUpdateProof.rowId must be SV-008',
+      );
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_removed_old_key_publish_rejected') {
+      failures.add(
+        '$role: sv008UnauthorizedConfigUpdateProof scenario mismatch',
+      );
+    }
+    if (_stringValue(proof['unauthorizedRole']) != 'charlie') {
+      failures.add('$role: SV-008 unauthorized role must be charlie');
+    }
+    if (charliePeerId != null &&
+        _stringValue(proof['removedPeerId']) != charliePeerId) {
+      failures.add('$role: SV-008 removedPeerId mismatch');
+    }
+    if (bobPeerId != null &&
+        _stringValue(proof['targetedRemovedPeerId']) != bobPeerId) {
+      failures.add('$role: SV-008 targetedRemovedPeerId must be Bob');
+    }
+    if (_stringValue(proof['attemptedAddedPeerId']) == null ||
+        _stringValue(proof['attemptedAddedPeerId'])!.isEmpty) {
+      failures.add('$role: SV-008 missing attemptedAddedPeerId');
+    }
+    if (proof['attemptedUnauthorizedConfigUpdate'] != true) {
+      failures.add('$role: SV-008 must attempt unauthorized config update');
+    }
+    if (proof['configPublishAccepted'] == true ||
+        proof['localConfigUpdateApplied'] == true) {
+      failures.add(
+        '$role: SV-008 unauthorized config update must not be accepted or applied',
+      );
+    }
+    if (proof['normalAliceDeliveryStillWorks'] != true) {
+      failures.add('$role: SV-008 must preserve normal Alice delivery');
+    }
+    if (proof['bobStillActive'] != true) {
+      failures.add('$role: SV-008 Bob must remain active after forged removal');
+    }
+    if (proof['attackerInActiveConfig'] == true) {
+      failures.add('$role: SV-008 attacker must not enter active config');
+    }
+    if (proof['removedMemberInActiveConfig'] == true) {
+      failures.add('$role: SV-008 removed Charlie must remain excluded');
+    }
+
+    final verdictMembers = _activeMemberPeerIds(verdict).toSet();
+    if (bobPeerId != null &&
+        role != 'charlie' &&
+        !verdictMembers.contains(bobPeerId)) {
+      failures.add('$role: SV-008 verdict active members must include Bob');
+    }
+    if (charliePeerId != null && verdictMembers.contains(charliePeerId)) {
+      failures.add('$role: SV-008 verdict active members include Charlie');
+    }
+
+    if (role == 'charlie') {
+      if (proof['attemptedNativeConfigUpdate'] != true) {
+        failures.add('charlie: SV-008 must attempt native config publish');
+      }
+      if (_stringValue(proof['configPublishOutcome']) != 'GROUP_ERROR') {
+        failures.add(
+          'charlie: SV-008 configPublishOutcome must be GROUP_ERROR',
+        );
+      }
+      if (proof['storedLocalConfigMessage'] == true) {
+        failures.add(
+          'charlie: SV-008 rejected config update must not store local system message',
+        );
+      }
+    } else if (proof['observedUnauthorizedConfigRejected'] != true) {
+      failures.add(
+        '$role: SV-008 active observer did not record unauthorized config rejection',
+      );
     }
   }
 }

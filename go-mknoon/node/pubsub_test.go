@@ -1972,6 +1972,108 @@ func TestSV007GroupTopicValidatorRejectsEnvelopeGroupMismatch(t *testing.T) {
 	}
 }
 
+func TestSV008UnauthorizedConfigUpdateRejectsBeforeApply(t *testing.T) {
+	_, adminPub := generateEd25519KeyPair(t)
+	bobPriv, bobPub := generateEd25519KeyPair(t)
+	removedPriv, removedPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "sv008-config-update-guard"
+
+	config := &GroupConfig{
+		Name:      "SV-008 Config Guard",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-admin", Role: GroupRoleAdmin, PublicKey: adminPub},
+			{PeerId: "peer-bob", Role: GroupRoleWriter, PublicKey: bobPub},
+		},
+		CreatedBy: "peer-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	n := NewNode()
+	n.groupConfigs = map[string]*GroupConfig{groupId: cloneGroupConfig(config)}
+	n.groupKeys = map[string]*GroupKeyInfo{groupId: keyInfo}
+	validator := n.groupTopicValidator(groupId)
+
+	cases := []struct {
+		name        string
+		senderId    string
+		privateKey  string
+		publicKey   string
+		plaintext   string
+		wantReject  string
+		transportID peer.ID
+	}{
+		{
+			name:        "removed member adds attacker",
+			senderId:    "peer-charlie-removed",
+			privateKey:  removedPriv,
+			publicKey:   removedPub,
+			plaintext:   `{"__sys":"members_added","members":[{"peerId":"peer-attacker","role":"writer","publicKey":"pk-attacker"}],"groupConfig":{"name":"SV-008 Config Guard","groupType":"chat","members":[{"peerId":"peer-admin","role":"admin","publicKey":"` + adminPub + `"},{"peerId":"peer-attacker","role":"writer","publicKey":"pk-attacker"}],"createdBy":"peer-admin"}}`,
+			wantReject:  "reject:non_member",
+			transportID: peer.ID("peer-charlie-removed"),
+		},
+		{
+			name:        "unknown member removes bob",
+			senderId:    "peer-x",
+			privateKey:  removedPriv,
+			publicKey:   removedPub,
+			plaintext:   `{"__sys":"member_removed","member":{"peerId":"peer-bob"},"groupConfig":{"name":"SV-008 Config Guard","groupType":"chat","members":[{"peerId":"peer-admin","role":"admin","publicKey":"` + adminPub + `"}],"createdBy":"peer-admin"}}`,
+			wantReject:  "reject:non_member",
+			transportID: peer.ID("peer-x"),
+		},
+		{
+			name:        "active non-admin config update remains forward-only",
+			senderId:    "peer-bob",
+			privateKey:  bobPriv,
+			publicKey:   bobPub,
+			plaintext:   `{"__sys":"members_added","members":[{"peerId":"peer-attacker","role":"writer","publicKey":"pk-attacker"}],"groupConfig":{"name":"SV-008 Config Guard","groupType":"chat","members":[{"peerId":"peer-admin","role":"admin","publicKey":"` + adminPub + `"},{"peerId":"peer-bob","role":"writer","publicKey":"` + bobPub + `"},{"peerId":"peer-attacker","role":"writer","publicKey":"pk-attacker"}],"createdBy":"peer-admin"}}`,
+			wantReject:  "accept",
+			transportID: peer.ID("peer-bob"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			envelopeJSON := buildTestEnvelopeWithPlaintext(
+				t,
+				groupId,
+				"group_message",
+				tc.senderId,
+				tc.privateKey,
+				tc.publicKey,
+				groupKey,
+				1,
+				tc.plaintext,
+			)
+			if got := validateGroupEnvelope(envelopeJSON, groupId, config, keyInfo); got != tc.wantReject {
+				t.Fatalf("pure validator = %s, want %s", got, tc.wantReject)
+			}
+
+			if tc.wantReject != "accept" {
+				msg := &pubsub.Message{Message: &pb.Message{Data: []byte(envelopeJSON)}}
+				if result := validator(context.Background(), tc.transportID, msg); result != pubsub.ValidationReject {
+					t.Fatalf("validator result = %v, want ValidationReject", result)
+				}
+			}
+
+			storedConfig := n.groupConfigs[groupId]
+			if storedConfig == nil {
+				t.Fatal("group config disappeared after unauthorized config update attempt")
+			}
+			if findMember(storedConfig, "peer-attacker") != nil {
+				t.Fatal("unauthorized config update added attacker to native config")
+			}
+			if findMember(storedConfig, "peer-bob") == nil {
+				t.Fatal("unauthorized config update removed Bob from native config")
+			}
+		})
+	}
+}
+
 func TestGroupTopicValidator_NilKeyRejectsNoKeyAndDecryptReportsMissingKey(t *testing.T) {
 	privB64, pubB64 := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()
