@@ -89,6 +89,10 @@ const _restoreIdentityPath = String.fromEnvironment(
   'GROUP_MULTI_PARTY_RESTORE_IDENTITY_PATH',
   defaultValue: '',
 );
+const _reuseExistingIdentity = bool.fromEnvironment(
+  'GROUP_MULTI_PARTY_REUSE_EXISTING_IDENTITY',
+  defaultValue: false,
+);
 const _configuredDbName = String.fromEnvironment(
   'E2E_DB_NAME',
   defaultValue: '',
@@ -153,6 +157,7 @@ const _rolesByScenario = <String, List<String>>{
     'charlie',
   ],
   'private_long_offline_epoch_churn': <String>['alice', 'bob', 'charlie'],
+  'private_process_death_matrix': <String>['alice', 'bob', 'charlie'],
   'private_online_add': <String>['alice', 'bob', 'charlie', 'dana'],
   'private_offline_add': <String>['alice', 'bob', 'charlie', 'dana'],
   'private_online_remove': <String>['alice', 'bob', 'charlie'],
@@ -37361,6 +37366,527 @@ Future<void> _runGm035Charlie(
   );
 }
 
+bool _st007SignalExists(String name) {
+  return File('$_sharedDir/${_signalName(name)}').existsSync();
+}
+
+Future<void> _waitForSt007ProcessKill(String stage) async {
+  stdout.writeln('[GMP][$_role] ST-007 $stage state persisted; awaiting kill');
+  await Completer<void>().future.timeout(const Duration(minutes: 20));
+}
+
+Map<String, dynamic> _st007ProcessDeathProof({
+  required String role,
+  required int finalEpoch,
+  required List<String> memberPeerIds,
+  required bool addRecovered,
+  required bool removeRecovered,
+  required bool readdRecovered,
+  required bool activeDeliveryAfterRestart,
+  required int removedWindowPlaintextCount,
+}) {
+  return <String, dynamic>{
+    'rowId': 'ST-007',
+    'checkpoints': const <String>[
+      'local_db_write',
+      'bridge_update',
+      'key_generation',
+      'invite_send',
+      'inbox_store',
+      'ack',
+    ],
+    'killedRoles': const <String>['charlie:add', 'bob:remove', 'charlie:readd'],
+    'role': role,
+    'addRecovered': addRecovered,
+    'removeRecovered': removeRecovered,
+    'readdRecovered': readdRecovered,
+    'noGhostMembership': memberPeerIds.isNotEmpty,
+    'activeMemberDeliveryAfterRestart': activeDeliveryAfterRestart,
+    'removedWindowPlaintextCount': removedWindowPlaintextCount,
+    'finalEpoch': finalEpoch,
+  };
+}
+
+Future<void> _runSt007Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob'],
+    name: 'ST-007 Process Death Matrix',
+  );
+  writeSharedJson(_signalName('st007_initial_group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+
+  await waitForSharedSignal(_signalName('bob_st007_group_joined'));
+
+  final charlieContact = await stack.contactRepo.getContact(charliePeerId);
+  if (charlieContact == null) {
+    throw StateError('ST-007 Alice missing Charlie contact');
+  }
+  final charlieTransportPeerId =
+      identities['charlie']!['transportPeerId'] as String? ??
+      charlieContact.peerId;
+  GroupMember charlieMember() {
+    return GroupMember(
+      groupId: groupId,
+      peerId: charlieContact.peerId,
+      username: charlieContact.username,
+      role: MemberRole.writer,
+      publicKey: charlieContact.publicKey,
+      mlKemPublicKey: charlieContact.mlKemPublicKey,
+      devices: <GroupMemberDeviceIdentity>[
+        GroupMemberDeviceIdentity(
+          deviceId: charlieTransportPeerId,
+          transportPeerId: charlieTransportPeerId,
+          deviceSigningPublicKey: charlieContact.publicKey,
+          mlKemPublicKey: charlieContact.mlKemPublicKey,
+          keyPackageId: 'st007-charlie-key-package-$_runId',
+          keyPackagePublicMaterial: 'st007-charlie-key-package-public-$_runId',
+        ),
+      ],
+      joinedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  await addGroupMember(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    newMember: charlieMember(),
+    selfPeerId: stack.identity.peerId,
+  );
+  await _publishMembersAddedSystemPayload(
+    stack: stack,
+    groupId: groupId,
+    danaMember: (await stack.groupRepo.getMember(groupId, charliePeerId))!,
+  );
+  writeSharedJson(
+    _signalName('st007_add_group_fixture.json'),
+    buildGroupFixture(
+      group: (await stack.groupRepo.getGroup(groupId))!,
+      keyInfo: (await stack.groupRepo.getLatestKey(groupId))!,
+      members: await stack.groupRepo.getMembers(groupId),
+    ),
+  );
+  await waitForSharedJson(
+    _signalName('charlie_st007_add_state_persisted.json'),
+  );
+  await waitForSharedSignal(_signalName('charlie_st007_add_recovered'));
+
+  final addSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceAfterAddCrash',
+    text: 'ST-007 Alice after Charlie add crash $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceAfterAddCrash.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceAfterAddCrash.json'),
+  );
+
+  await _removeCharlieAndPublish(
+    stack: stack,
+    groupId: groupId,
+    charlieIdentity: identities['charlie']!,
+  );
+  await waitForSharedSignal(_signalName('charlie_st007_self_removed'));
+  await waitForSharedJson(_signalName('bob_st007_remove_state_persisted.json'));
+  await waitForSharedSignal(_signalName('bob_st007_remove_recovered'));
+
+  final rejoinKey = await rotateAndDistributeGroupKey(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    selfPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    sourceDeviceId: stack.p2pService.currentState.peerId,
+    sendP2PMessage: (peerId, message) async {
+      await stack.p2pService.sendMessage(peerId, message);
+      return true;
+    },
+  );
+  if (rejoinKey == null) {
+    throw StateError('ST-007 Alice key rotation failed after remove restart');
+  }
+  writeSharedJson(_signalName('st007_rejoin_key.json'), <String, dynamic>{
+    'keyEpoch': rejoinKey.keyGeneration,
+    'groupKey': rejoinKey.encryptedKey,
+  });
+  await waitForSharedSignal(_signalName('bob_st007_rotated_key'));
+
+  final removedSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceAfterRemoveCrash',
+    text: 'ST-007 Alice after Bob remove crash $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceAfterRemoveCrash.json'),
+  );
+
+  await addGroupMember(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    newMember: charlieMember(),
+    selfPeerId: stack.identity.peerId,
+  );
+  await _publishMembersAddedSystemPayload(
+    stack: stack,
+    groupId: groupId,
+    danaMember: (await stack.groupRepo.getMember(groupId, charliePeerId))!,
+  );
+  writeSharedJson(
+    _signalName('st007_readd_group_fixture.json'),
+    buildGroupFixture(
+      group: (await stack.groupRepo.getGroup(groupId))!,
+      keyInfo: (await stack.groupRepo.getLatestKey(groupId))!,
+      members: await stack.groupRepo.getMembers(groupId),
+    ),
+  );
+  await waitForSharedSignal(_signalName('bob_st007_membership_readded'));
+  await waitForSharedJson(
+    _signalName('charlie_st007_readd_state_persisted.json'),
+  );
+  await waitForSharedSignal(_signalName('charlie_st007_readd_recovered'));
+
+  final afterReaddSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceAfterReaddCrash',
+    text: 'ST-007 Alice after Charlie readd crash $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceAfterReaddCrash.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceAfterReaddCrash.json'),
+  );
+
+  final charlieSent = await waitForSharedJson(
+    _signalName('charlie_sent_charlieAfterReaddCrash.json'),
+  );
+  final charlieReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'charlieAfterReaddCrash',
+    text: charlieSent['text'] as String,
+    senderPeerId: charliePeerId,
+  );
+  writeSharedText(_signalName('alice_received_charlieAfterReaddCrash'), 'ok');
+
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalEpoch = await _keyEpoch(stack, groupId);
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[addSent, removedSent, afterReaddSent],
+    receivedMessages: <Map<String, dynamic>>[charlieReceived],
+    extra: <String, dynamic>{
+      'st007ProcessDeathMatrixProof': _st007ProcessDeathProof(
+        role: 'alice',
+        finalEpoch: finalEpoch,
+        memberPeerIds: memberPeerIds,
+        addRecovered: true,
+        removeRecovered: true,
+        readdRecovered: true,
+        activeDeliveryAfterRestart:
+            memberPeerIds.contains(bobPeerId) &&
+            memberPeerIds.contains(charliePeerId),
+        removedWindowPlaintextCount: 0,
+      ),
+    },
+  );
+}
+
+Future<void> _runSt007Bob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(
+    _signalName('st007_initial_group_fixture.json'),
+  );
+  final groupId = (fixture['group'] as Map)['id'] as String;
+  final alicePeerId = identities['alice']!['peerId'] as String;
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+
+  if (!_st007SignalExists('bob_st007_remove_crash_complete')) {
+    await _importGm004JoinedGroupFixture(stack: stack, fixture: fixture);
+    writeSharedText(_signalName('bob_st007_group_joined'), 'ok');
+    await _waitForMemberInclusion(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: charliePeerId,
+    );
+
+    final addSent = await waitForSharedJson(
+      _signalName('alice_sent_aliceAfterAddCrash.json'),
+    );
+    await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'aliceAfterAddCrash',
+      text: addSent['text'] as String,
+      senderPeerId: alicePeerId,
+    );
+    writeSharedText(_signalName('bob_received_aliceAfterAddCrash'), 'ok');
+
+    await _waitForMemberExclusion(
+      stack: stack,
+      groupId: groupId,
+      removedPeerId: charliePeerId,
+    );
+    writeSharedJson(_signalName('bob_st007_remove_state_persisted.json'), {
+      'memberListExcludesCharlie': true,
+      'keyEpoch': await _keyEpoch(stack, groupId),
+    });
+    await _waitForSt007ProcessKill('remove');
+    return;
+  }
+
+  await _waitForMemberExclusion(
+    stack: stack,
+    groupId: groupId,
+    removedPeerId: charliePeerId,
+  );
+  writeSharedText(_signalName('bob_st007_remove_recovered'), 'ok');
+
+  final rotated = await waitForSharedJson(_signalName('st007_rejoin_key.json'));
+  final rotatedEpoch = rotated['keyEpoch'] as int;
+  await _waitForKeyEpoch(
+    stack: stack,
+    groupId: groupId,
+    keyEpoch: rotatedEpoch,
+  );
+  writeSharedText(_signalName('bob_st007_rotated_key'), 'ok');
+
+  final removedSent = await waitForSharedJson(
+    _signalName('alice_sent_aliceAfterRemoveCrash.json'),
+  );
+  final addReceived = await waitForSharedJson(
+    _signalName('bob_received_aliceAfterAddCrash.json'),
+  );
+  final removedReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceAfterRemoveCrash',
+    text: removedSent['text'] as String,
+    senderPeerId: alicePeerId,
+  );
+  writeSharedText(_signalName('bob_received_aliceAfterRemoveCrash'), 'ok');
+
+  await _waitForMemberInclusion(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: charliePeerId,
+  );
+  writeSharedText(_signalName('bob_st007_membership_readded'), 'ok');
+
+  final afterReaddSent = await waitForSharedJson(
+    _signalName('alice_sent_aliceAfterReaddCrash.json'),
+  );
+  final afterReaddReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceAfterReaddCrash',
+    text: afterReaddSent['text'] as String,
+    senderPeerId: alicePeerId,
+  );
+  writeSharedText(_signalName('bob_received_aliceAfterReaddCrash'), 'ok');
+
+  final charlieSent = await waitForSharedJson(
+    _signalName('charlie_sent_charlieAfterReaddCrash.json'),
+  );
+  final charlieReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'charlieAfterReaddCrash',
+    text: charlieSent['text'] as String,
+    senderPeerId: charliePeerId,
+  );
+  writeSharedText(_signalName('bob_received_charlieAfterReaddCrash'), 'ok');
+
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalEpoch = await _keyEpoch(stack, groupId);
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: <Map<String, dynamic>>[
+      addReceived,
+      removedReceived,
+      afterReaddReceived,
+      charlieReceived,
+    ],
+    extra: <String, dynamic>{
+      'st007ProcessDeathMatrixProof': _st007ProcessDeathProof(
+        role: 'bob',
+        finalEpoch: finalEpoch,
+        memberPeerIds: memberPeerIds,
+        addRecovered: true,
+        removeRecovered: true,
+        readdRecovered: true,
+        activeDeliveryAfterRestart:
+            memberPeerIds.contains(alicePeerId) &&
+            memberPeerIds.contains(charliePeerId),
+        removedWindowPlaintextCount: 0,
+      ),
+    },
+  );
+}
+
+Future<void> _runSt007Charlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final addFixture = await waitForSharedJson(
+    _signalName('st007_add_group_fixture.json'),
+  );
+  final groupId = (addFixture['group'] as Map)['id'] as String;
+  final alicePeerId = identities['alice']!['peerId'] as String;
+  final bobPeerId = identities['bob']!['peerId'] as String;
+
+  if (!_st007SignalExists('charlie_st007_add_crash_complete')) {
+    await _importGm004JoinedGroupFixture(stack: stack, fixture: addFixture);
+    writeSharedJson(_signalName('charlie_st007_add_state_persisted.json'), {
+      'memberListIncludesSelf': (await _memberPeerIds(
+        stack,
+        groupId,
+      )).contains(stack.identity.peerId),
+      'keyEpoch': await _keyEpoch(stack, groupId),
+    });
+    await _waitForSt007ProcessKill('add');
+    return;
+  }
+
+  if (!_st007SignalExists('charlie_st007_readd_crash_complete')) {
+    await _waitForMemberInclusion(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+    );
+    writeSharedText(_signalName('charlie_st007_add_recovered'), 'ok');
+
+    final addSent = await waitForSharedJson(
+      _signalName('alice_sent_aliceAfterAddCrash.json'),
+    );
+    await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'aliceAfterAddCrash',
+      text: addSent['text'] as String,
+      senderPeerId: alicePeerId,
+    );
+    writeSharedText(_signalName('charlie_received_aliceAfterAddCrash'), 'ok');
+
+    await _waitForSelfRemovalOrRetainedExclusion(
+      stack: stack,
+      groupId: groupId,
+    );
+    writeSharedText(_signalName('charlie_st007_self_removed'), 'ok');
+
+    final removedSent = await waitForSharedJson(
+      _signalName('alice_sent_aliceAfterRemoveCrash.json'),
+    );
+    await Future<void>.delayed(const Duration(seconds: 5));
+    final removedWindowCount = await _proofMessageCount(
+      stack: stack,
+      groupId: groupId,
+      text: removedSent['text'] as String,
+      senderPeerId: alicePeerId,
+    );
+    if (removedWindowCount != 0) {
+      throw StateError(
+        'ST-007 Charlie saw removed-window plaintext before re-add',
+      );
+    }
+
+    final readdFixture = await waitForSharedJson(
+      _signalName('st007_readd_group_fixture.json'),
+    );
+    await _importGm004JoinedGroupFixture(stack: stack, fixture: readdFixture);
+    writeSharedJson(_signalName('charlie_st007_readd_state_persisted.json'), {
+      'memberListIncludesSelf': (await _memberPeerIds(
+        stack,
+        groupId,
+      )).contains(stack.identity.peerId),
+      'keyEpoch': await _keyEpoch(stack, groupId),
+      'removedWindowPlaintextCount': removedWindowCount,
+    });
+    await _waitForSt007ProcessKill('readd');
+    return;
+  }
+
+  await _waitForMemberInclusion(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: stack.identity.peerId,
+  );
+  writeSharedText(_signalName('charlie_st007_readd_recovered'), 'ok');
+
+  final afterReaddSent = await waitForSharedJson(
+    _signalName('alice_sent_aliceAfterReaddCrash.json'),
+  );
+  final addReceived = await waitForSharedJson(
+    _signalName('charlie_received_aliceAfterAddCrash.json'),
+  );
+  final afterReaddReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceAfterReaddCrash',
+    text: afterReaddSent['text'] as String,
+    senderPeerId: alicePeerId,
+  );
+  writeSharedText(_signalName('charlie_received_aliceAfterReaddCrash'), 'ok');
+
+  final charlieSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'charlieAfterReaddCrash',
+    text: 'ST-007 Charlie after readd crash $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('alice_received_charlieAfterReaddCrash'),
+  );
+  await waitForSharedSignal(_signalName('bob_received_charlieAfterReaddCrash'));
+
+  final readdState = await waitForSharedJson(
+    _signalName('charlie_st007_readd_state_persisted.json'),
+  );
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalEpoch = await _keyEpoch(stack, groupId);
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[charlieSent],
+    receivedMessages: <Map<String, dynamic>>[addReceived, afterReaddReceived],
+    extra: <String, dynamic>{
+      'st007ProcessDeathMatrixProof': _st007ProcessDeathProof(
+        role: 'charlie',
+        finalEpoch: finalEpoch,
+        memberPeerIds: memberPeerIds,
+        addRecovered: true,
+        removeRecovered: true,
+        readdRecovered: true,
+        activeDeliveryAfterRestart:
+            memberPeerIds.contains(alicePeerId) &&
+            memberPeerIds.contains(bobPeerId),
+        removedWindowPlaintextCount:
+            readdState['removedWindowPlaintextCount'] as int? ?? 0,
+      ),
+    },
+  );
+}
+
 Future<void> _runRa013Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -37971,6 +38497,8 @@ Future<void> _runScenarioRole() async {
     cliPeerFixture: null,
     restoreMnemonic: _restoreMnemonic.isEmpty ? null : _restoreMnemonic,
     restoreIdentity: _restoreIdentityFixture(),
+    deleteExistingDb: !_reuseExistingIdentity,
+    reuseExistingIdentity: _reuseExistingIdentity,
     useFreshTransportIdentityForRestoredAccount:
         (_scenario == 'ge012' || _scenario == 'ge013') &&
         _restoreMnemonic.isNotEmpty,
@@ -38490,6 +39018,17 @@ Future<void> _runScenarioRole() async {
         await _runNw012Bob(stack, identities);
       } else {
         await _runNw012Charlie(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_process_death_matrix') {
+      if (_role == 'alice') {
+        await _runSt007Alice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runSt007Bob(stack, identities);
+      } else {
+        await _runSt007Charlie(stack, identities);
       }
       return;
     }

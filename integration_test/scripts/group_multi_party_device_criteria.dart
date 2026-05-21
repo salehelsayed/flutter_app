@@ -117,6 +117,11 @@ const _privateLongOfflineEpochChurnRequirement =
       scenario: 'private_long_offline_epoch_churn',
       roles: <String>['alice', 'bob', 'charlie'],
     );
+const _privateProcessDeathMatrixRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_process_death_matrix',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privateOnlineAddRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_online_add',
   roles: <String>['alice', 'bob', 'charlie', 'dana'],
@@ -487,6 +492,7 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'private_background_resume_group_delivery':
       _privateBackgroundResumeGroupDeliveryRequirement,
   'private_long_offline_epoch_churn': _privateLongOfflineEpochChurnRequirement,
+  'private_process_death_matrix': _privateProcessDeathMatrixRequirement,
   'private_online_add': _privateOnlineAddRequirement,
   'private_offline_add': _privateOfflineAddRequirement,
   'private_online_remove': _privateOnlineRemoveRequirement,
@@ -1925,6 +1931,29 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['alice', 'bob'],
         ),
       ];
+    case 'private_process_death_matrix':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceAfterAddCrash',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterRemoveCrash',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterReaddCrash',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieAfterReaddCrash',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
     case 'de002':
       return List<_ExpectedProofMessage>.generate(
         100,
@@ -2971,6 +3000,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_long_offline_epoch_churn') {
     _validateNw012LongOfflineEpochConvergenceProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_process_death_matrix') {
+    _validateSt007ProcessDeathMatrixProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -12557,6 +12594,94 @@ void _validatePl006RemovedMediaProof({
     if (_intValue(charlieProof['pendingDownloadsAfterRemoval']) != 0) {
       failures.add(
         'charlie: $proofName.pendingDownloadsAfterRemoval must be 0',
+      );
+    }
+  }
+}
+
+void _validateSt007ProcessDeathMatrixProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'st007ProcessDeathMatrixProof';
+  const expectedCheckpoints = <String>{
+    'local_db_write',
+    'bridge_update',
+    'key_generation',
+    'invite_send',
+    'inbox_store',
+    'ack',
+  };
+  const expectedKilledRoles = <String>{
+    'charlie:add',
+    'bob:remove',
+    'charlie:readd',
+  };
+  final expectedFinalMembers = <String>{
+    if (peerIdByRole['alice'] != null) peerIdByRole['alice']!,
+    if (peerIdByRole['bob'] != null) peerIdByRole['bob']!,
+    if (peerIdByRole['charlie'] != null) peerIdByRole['charlie']!,
+  };
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing ST-007 process-death matrix proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ST-007') {
+      failures.add('$role: $proofName.rowId must be ST-007');
+    }
+    final proofRole = _stringValue(proof['role']);
+    if (proofRole != role) {
+      failures.add('$role: $proofName.role must match verdict role');
+    }
+    final checkpoints = _stringList(proof['checkpoints']).toSet();
+    if (!checkpoints.containsAll(expectedCheckpoints)) {
+      failures.add(
+        '$role: $proofName.checkpoints must include ${expectedCheckpoints.join(', ')}',
+      );
+    }
+    final killedRoles = _stringList(proof['killedRoles']).toSet();
+    if (!killedRoles.containsAll(expectedKilledRoles)) {
+      failures.add(
+        '$role: $proofName.killedRoles must include ${expectedKilledRoles.join(', ')}',
+      );
+    }
+    for (final field in const <String>[
+      'addRecovered',
+      'removeRecovered',
+      'readdRecovered',
+      'noGhostMembership',
+      'activeMemberDeliveryAfterRestart',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(proof['removedWindowPlaintextCount']);
+    if (plaintextCount != 0) {
+      failures.add('$role: $proofName.removedWindowPlaintextCount must be 0');
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+    final verdictEpoch = _intValue(byRole[role]?['keyEpoch']);
+    if (verdictEpoch != null &&
+        finalEpoch != null &&
+        finalEpoch != verdictEpoch) {
+      failures.add('$role: $proofName.finalEpoch must match verdict keyEpoch');
+    }
+    final memberPeerIds = _stringList(byRole[role]?['memberPeerIds']).toSet();
+    if (!memberPeerIds.containsAll(expectedFinalMembers)) {
+      failures.add(
+        '$role: final memberPeerIds must include A/B/C after re-add',
       );
     }
   }

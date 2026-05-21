@@ -8,8 +8,10 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 
+import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
@@ -4748,6 +4750,253 @@ void main() {
         );
         expect(bobSaved!.keyGeneration, 1);
         expect(aliceSaved!.keyGeneration, 2);
+      },
+    );
+
+    test(
+      'ST-007 process-death checkpoints resume without ghost members or deaf active recipients',
+      () async {
+        final checkpointEvidence = <String, Map<String, Object?>>{};
+
+        GroupMember member(String peerId, String username) {
+          return GroupMember(
+            groupId: 'group-1',
+            peerId: peerId,
+            username: username,
+            role: MemberRole.writer,
+            publicKey: 'pk-$peerId',
+            mlKemPublicKey: 'mlkem-$peerId',
+            joinedAt: DateTime.now().toUtc(),
+          );
+        }
+
+        List<String> inboxRecipients(String messageId, FakeBridge source) {
+          final inboxMessages = source.sentMessages
+              .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:inboxStore');
+          for (final message in inboxMessages) {
+            final payload = (message['payload'] as Map).cast<String, dynamic>();
+            final envelope =
+                jsonDecode(payload['message'] as String)
+                    as Map<String, dynamic>;
+            if (envelope['messageId'] == messageId) {
+              return (payload['recipientPeerIds'] as List<dynamic>)
+                  .cast<String>()
+                  .toList(growable: false);
+            }
+          }
+          fail('Missing group:inboxStore payload for $messageId');
+        }
+
+        Future<GroupMessage> sendCheckpointMessage({
+          required String checkpoint,
+          required FakeBridge sourceBridge,
+          required Set<String> expectedRecipients,
+        }) async {
+          sourceBridge.responses['group:publish'] = {
+            'ok': true,
+            'messageId': 'st007-$checkpoint',
+            'topicPeers': expectedRecipients.length,
+          };
+          final (result, message) = await sendGroupMessage(
+            bridge: sourceBridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'ST-007 $checkpoint active delivery',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'st007-$checkpoint',
+          );
+          expect(result, SendGroupMessageResult.success);
+          expect(message, isNotNull);
+          expect(inboxRecipients('st007-$checkpoint', sourceBridge).toSet(), {
+            ...expectedRecipients,
+          });
+          return message!;
+        }
+
+        await groupRepo.saveMember(member('peer-bob', 'Bob'));
+
+        final rollbackBridge = FakeBridge();
+        rollbackBridge.responses['group:updateConfig'] = {
+          'ok': false,
+          'errorCode': 'ST007_CONFIG_SYNC_FAILED',
+          'errorMessage': 'crash after local db write',
+        };
+        await expectLater(
+          addGroupMember(
+            bridge: rollbackBridge,
+            groupRepo: groupRepo,
+            groupId: 'group-1',
+            newMember: member('peer-charlie', 'Charlie'),
+            selfPeerId: 'peer-1',
+          ),
+          throwsA(isA<Exception>()),
+        );
+        checkpointEvidence['local_db_write'] = <String, Object?>{
+          'rolledBackGhostMember':
+              await groupRepo.getMember('group-1', 'peer-charlie') == null,
+          'activeBobStillPresent':
+              await groupRepo.getMember('group-1', 'peer-bob') != null,
+        };
+
+        await addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: member('peer-charlie', 'Charlie'),
+          selfPeerId: 'peer-1',
+        );
+        final bridgeUpdateMessage = await sendCheckpointMessage(
+          checkpoint: 'bridge_update',
+          sourceBridge: bridge,
+          expectedRecipients: {'peer-bob', 'peer-charlie'},
+        );
+        checkpointEvidence['bridge_update'] = <String, Object?>{
+          'charliePresentAfterRestart':
+              await groupRepo.getMember('group-1', 'peer-charlie') != null,
+          'deliveryEpoch': bridgeUpdateMessage.keyGeneration,
+        };
+
+        bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'st007-key-generation-draft',
+          'keyEpoch': 2,
+        };
+        final failedDistribution = await rotateAndDistributeGroupKey(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          selfPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          sendP2PMessage: (peerId, message) async => peerId == 'peer-bob',
+        );
+        expect(failedDistribution, isNull);
+        final pendingDraft = await groupRepo.getPendingKeyRotation('group-1');
+        expect(pendingDraft, isNotNull);
+        expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 1);
+
+        final retryBridge = FakeBridge();
+        retryBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'st007-key-rotated',
+        };
+        final retryRotation = await rotateAndDistributeGroupKey(
+          bridge: retryBridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          selfPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          sendP2PMessage: (peerId, message) async => true,
+        );
+        expect(retryRotation, isNotNull);
+        expect(retryRotation!.encryptedKey, pendingDraft!.encryptedKey);
+        final keyGenerationMessage = await sendCheckpointMessage(
+          checkpoint: 'key_generation',
+          sourceBridge: retryBridge,
+          expectedRecipients: {'peer-bob', 'peer-charlie'},
+        );
+        checkpointEvidence['key_generation'] = <String, Object?>{
+          'reusedPendingDraft':
+              retryRotation.encryptedKey == 'st007-key-generation-draft',
+          'deliveryEpoch': keyGenerationMessage.keyGeneration,
+        };
+
+        await removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-charlie',
+          selfPeerId: 'peer-1',
+        );
+        final removeMessage = await sendCheckpointMessage(
+          checkpoint: 'invite_send',
+          sourceBridge: bridge,
+          expectedRecipients: {'peer-bob'},
+        );
+        checkpointEvidence['invite_send'] = <String, Object?>{
+          'charlieGhostAbsent':
+              await groupRepo.getMember('group-1', 'peer-charlie') == null,
+          'activeBobReceivedByInboxTarget': inboxRecipients(
+            'st007-invite_send',
+            bridge,
+          ).contains('peer-bob'),
+          'removedWindowEpoch': removeMessage.keyGeneration,
+        };
+
+        await addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: member('peer-charlie', 'Charlie'),
+          selfPeerId: 'peer-1',
+        );
+        final inboxRetryBridge = _FailFirstNInboxStoreBridge(failCount: 1);
+        inboxRetryBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'st007-inbox_store',
+          'topicPeers': 2,
+        };
+        final (inboxResult, inboxMessage) = await sendGroupMessage(
+          bridge: inboxRetryBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'ST-007 inbox store retry after restart',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'st007-inbox_store',
+        );
+        expect(inboxResult, SendGroupMessageResult.success);
+        expect(inboxMessage, isNotNull);
+        expect(inboxMessage!.inboxRetryPayload, isNotNull);
+        final retriedInboxStores = await retryFailedGroupInboxStores(
+          bridge: inboxRetryBridge,
+          msgRepo: msgRepo,
+        );
+        final recoveredInboxMessage = await msgRepo.getMessage(
+          'st007-inbox_store',
+        );
+        checkpointEvidence['inbox_store'] = <String, Object?>{
+          'retryPromotedPendingRow': retriedInboxStores == 1,
+          'inboxStoredAfterRestart': recoveredInboxMessage?.inboxStored == true,
+        };
+
+        final ackMessage = await sendCheckpointMessage(
+          checkpoint: 'ack',
+          sourceBridge: bridge,
+          expectedRecipients: {'peer-bob', 'peer-charlie'},
+        );
+        checkpointEvidence['ack'] = <String, Object?>{
+          'finalActiveMembers': (await groupRepo.getMembers(
+            'group-1',
+          )).map((member) => member.peerId).toSet(),
+          'finalDeliveryEpoch': ackMessage.keyGeneration,
+        };
+
+        expect(checkpointEvidence.keys.toSet(), {
+          'local_db_write',
+          'bridge_update',
+          'key_generation',
+          'invite_send',
+          'inbox_store',
+          'ack',
+        });
+        expect(
+          checkpointEvidence.values.every(
+            (evidence) => evidence.values.every((value) => value != false),
+          ),
+          isTrue,
+        );
       },
     );
   });

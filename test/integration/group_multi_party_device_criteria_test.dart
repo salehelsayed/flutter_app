@@ -45,6 +45,7 @@ void main() {
           'private_readd_active_members',
           'private_readd_alternating_churn',
           'private_network_chaos_invariants',
+          'private_process_death_matrix',
           'private_rotated_device_readd',
           'private_same_user_multi_device_readd',
           'private_readd_cycles',
@@ -175,6 +176,15 @@ void main() {
         scenarioRequirement(
           'private_long_offline_epoch_churn',
         ).requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_process_death_matrix').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_process_death_matrix').requiredDeviceCount,
         3,
       );
       expect(scenarioRequirement('private_online_add').roles, [
@@ -5779,6 +5789,74 @@ void main() {
       expect(verdict.ok, isTrue);
       expect(verdict.detail, contains('private_readd_current verdicts valid'));
     });
+
+    test('accepts private_process_death_matrix ST-007 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_process_death_matrix',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateProcessDeathMatrixVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_process_death_matrix verdicts valid'),
+      );
+    });
+
+    test('rejects private_process_death_matrix without ST-007 proof', () {
+      final missingProof = _validPrivateProcessDeathMatrixVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('st007ProcessDeathMatrixProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_process_death_matrix',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing ST-007 process-death matrix proof fields'),
+      );
+    });
+
+    test(
+      'rejects private_process_death_matrix missing checkpoint and leaking removed window',
+      () {
+        final invalid = _validPrivateProcessDeathMatrixVerdicts();
+        invalid[2] = {
+          ...invalid[2],
+          'st007ProcessDeathMatrixProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              invalid[2]['st007ProcessDeathMatrixProof'] as Map,
+            ),
+            'checkpoints': const <String>[
+              'local_db_write',
+              'bridge_update',
+              'key_generation',
+              'invite_send',
+              'ack',
+            ],
+            'removedWindowPlaintextCount': 1,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_process_death_matrix',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: invalid,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('checkpoints must include'));
+        expect(
+          rejected.detail,
+          contains('removedWindowPlaintextCount must be 0'),
+        );
+      },
+    );
 
     test('accepts private_readd_current RA-014 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
@@ -19290,6 +19368,171 @@ Map<String, Object?> _ml001InviteeProof() {
     'readableSelfJoinTimeline': true,
     'receivedAliceInitialAfterInviteAccept': true,
   };
+}
+
+List<Map<String, dynamic>> _validPrivateProcessDeathMatrixVerdicts() {
+  const scenario = 'private_process_death_matrix';
+  const groupId = 'group-st007-process-death';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const checkpoints = <String>[
+    'local_db_write',
+    'bridge_update',
+    'key_generation',
+    'invite_send',
+    'inbox_store',
+    'ack',
+  ];
+  const killedRoles = <String>['charlie:add', 'bob:remove', 'charlie:readd'];
+
+  Map<String, Object?> proof(String role) {
+    return <String, Object?>{
+      'rowId': 'ST-007',
+      'checkpoints': checkpoints,
+      'killedRoles': killedRoles,
+      'role': role,
+      'addRecovered': true,
+      'removeRecovered': true,
+      'readdRecovered': true,
+      'noGhostMembership': true,
+      'activeMemberDeliveryAfterRestart': true,
+      'removedWindowPlaintextCount': 0,
+      'finalEpoch': 2,
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterAddCrash',
+          'messageId': 'st007-a-add',
+          'text': 'alice after add crash',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 1,
+        },
+        {
+          'key': 'aliceAfterRemoveCrash',
+          'messageId': 'st007-a-remove',
+          'text': 'alice after remove crash',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceAfterReaddCrash',
+          'messageId': 'st007-a-readd',
+          'text': 'alice after readd crash',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'charlieAfterReaddCrash',
+          'st007-c-readd',
+          'charlie after readd crash',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'charlieAfterReaddCrash': 1},
+      extra: <String, Object?>{'st007ProcessDeathMatrixProof': proof('alice')},
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterAddCrash',
+          'st007-a-add',
+          'alice after add crash',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+        _received(
+          'aliceAfterRemoveCrash',
+          'st007-a-remove',
+          'alice after remove crash',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterReaddCrash',
+          'st007-a-readd',
+          'alice after readd crash',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieAfterReaddCrash',
+          'st007-c-readd',
+          'charlie after readd crash',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterAddCrash': 1,
+        'aliceAfterRemoveCrash': 1,
+        'aliceAfterReaddCrash': 1,
+        'charlieAfterReaddCrash': 1,
+      },
+      extra: <String, Object?>{'st007ProcessDeathMatrixProof': proof('bob')},
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charlieAfterReaddCrash',
+          'messageId': 'st007-c-readd',
+          'text': 'charlie after readd crash',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterAddCrash',
+          'st007-a-add',
+          'alice after add crash',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+        _received(
+          'aliceAfterReaddCrash',
+          'st007-a-readd',
+          'alice after readd crash',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterAddCrash': 1,
+        'aliceAfterReaddCrash': 1,
+      },
+      extra: <String, Object?>{
+        'st007ProcessDeathMatrixProof': proof('charlie'),
+      },
+    ),
+  ];
 }
 
 List<Map<String, dynamic>> _validPrivateReactionRoundtripVerdicts() {
