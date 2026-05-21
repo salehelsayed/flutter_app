@@ -6079,6 +6079,136 @@ void main() {
       expect(timing['details']['groupId'], 'group-1');
     });
 
+    test(
+      'OB-003 zero-peer publish explains durable fallback choices',
+      () async {
+        final joinedAt = DateTime.now().toUtc();
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-ob003-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-ob003-bob',
+            joinedAt: joinedAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-ob003-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-ob003-charlie',
+            joinedAt: joinedAt.add(const Duration(seconds: 1)),
+          ),
+        );
+
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'ob003-zero-peer-durable',
+          'topicPeers': 0,
+        };
+
+        late SendGroupMessageResult durableResult;
+        late GroupMessage? durableMessage;
+        final durableEvents = await captureFlowEvents(() async {
+          (durableResult, durableMessage) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'OB-003 zero peers durable fallback',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'ob003-zero-peer-durable',
+            timestamp: joinedAt.add(const Duration(minutes: 1)),
+          );
+        });
+
+        expect(durableResult, SendGroupMessageResult.successNoPeers);
+        expect(durableMessage, isNotNull);
+        expect(durableMessage!.status, 'sent');
+        final durableEvent = durableEvents.singleWhere(
+          (event) =>
+              event['event'] == 'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
+        );
+        final durableDetails = durableEvent['details'] as Map<String, dynamic>;
+        expect(durableDetails['topicPeers'], 0);
+        expect(durableDetails['expectedRecipientCount'], 2);
+        expect(durableDetails['liveFanoutState'], 'zero_peers');
+        expect(durableDetails['inboxStored'], isTrue);
+        expect(durableDetails['inboxPending'], isFalse);
+        expect(durableDetails['recipientReceiptClaimed'], isFalse);
+
+        final durableTiming = durableEvents.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final durableTimingDetails =
+            durableTiming['details'] as Map<String, dynamic>;
+        expect(durableTimingDetails['outcome'], 'success_no_peers');
+        expect(durableTimingDetails['status'], 'sent');
+        expect(durableTimingDetails['liveFanoutState'], 'zero_peers');
+
+        final failBridge = _InboxStoreFailBridge();
+        failBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'ob003-zero-peer-inbox-failed',
+          'topicPeers': 0,
+        };
+
+        late SendGroupMessageResult failedResult;
+        late GroupMessage? failedMessage;
+        final failedEvents = await captureFlowEvents(() async {
+          (failedResult, failedMessage) = await sendGroupMessage(
+            bridge: failBridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'OB-003 zero peers inbox failed',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'ob003-zero-peer-inbox-failed',
+            timestamp: joinedAt.add(const Duration(minutes: 2)),
+          );
+        });
+
+        expect(failedResult, SendGroupMessageResult.error);
+        expect(failedMessage, isNotNull);
+        expect(failedMessage!.status, 'failed');
+        expect(
+          failedEvents.any(
+            (event) => event['event'] == 'GROUP_SEND_MSG_INBOX_STORE_FAILED',
+          ),
+          isTrue,
+        );
+        final failedEvent = failedEvents.singleWhere(
+          (event) =>
+              event['event'] ==
+              'GROUP_SEND_MSG_USE_CASE_ZERO_PEERS_INBOX_FAILED',
+        );
+        final failedDetails = failedEvent['details'] as Map<String, dynamic>;
+        expect(failedDetails['topicPeers'], 0);
+        expect(failedDetails['expectedRecipientCount'], 2);
+        expect(failedDetails['liveFanoutState'], 'zero_peers');
+        expect(failedDetails['inboxStored'], isFalse);
+        expect(failedDetails['inboxPending'], isFalse);
+        expect(failedDetails['recipientReceiptClaimed'], isFalse);
+
+        final failedTiming = failedEvents.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final failedTimingDetails =
+            failedTiming['details'] as Map<String, dynamic>;
+        expect(failedTimingDetails['outcome'], 'zero_peers_inbox_failed');
+        expect(failedTimingDetails['liveFanoutState'], 'zero_peers');
+      },
+    );
+
     test('peers > 0 + inbox OK → success, both payloads cleared', () async {
       bridge.responses['group:publish'] = {
         'ok': true,
