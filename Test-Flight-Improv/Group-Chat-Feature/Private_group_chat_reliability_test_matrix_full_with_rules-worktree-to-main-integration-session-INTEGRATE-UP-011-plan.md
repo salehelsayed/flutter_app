@@ -1,6 +1,6 @@
 # INTEGRATE-UP-011 Worktree-to-Main Integration Contract
 
-Status: blocked_external_fixture
+Status: accepted
 
 Source of truth:
 - Source worktree: `/Users/I560101/Project-Sat/mknoon-2/worktrees/full-rules-pipeline`
@@ -31,6 +31,13 @@ Verification evidence:
 - Scoped `git diff --check` over the six touched Dart files - pass.
 - Required iOS 26.2 `private_timeline_truth` live proof failed before UP-011 verdict: run `1779329038402`, shared dir `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_timeline_truth_DCCOPs`, Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`. Charlie repeatedly skipped offline inbox decode with `Bad state: Missing group replay key for group cd0631ff-a811-4597-a06b-b5503fd03693 at epoch 1`, then timed out waiting for self-removal; Bob timed out waiting for `gmp_1779329038402_rejoin_key.json`; Alice timed out waiting for `gmp_1779329038402_charlie_self_removed`; the orchestrator exited with `Bad state: charlie exited with code 1 before writing a verdict`.
 
+Recovery evidence:
+- Focused `private_timeline_truth` recovery repaired only the shared ML-015 live fixture wait: `_runMl015Charlie` now uses existing `_waitForRetainedSelfRemoval`, matching current retained-history behavior after self-removal and avoiding the stale expectation that the group row is deleted.
+- Required iOS 26.2 proof run `1779393410061` passed in shared dir `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_timeline_truth_zlpp8m`, using Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, and Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`.
+- Orchestrator verdict: `private_timeline_truth proof passed: private_timeline_truth verdicts valid for alice, bob, charlie`.
+- Bob verdict file `gmp_1779393410061_bob_verdict.json` contains valid `up011MutedDeliveryProof` fields proving muted delivery, unread update, notification suppression, final membership, and final epoch `2`.
+- Focused recovery preservation passed: row-owned format union, UP-011 mute persistence selector, UP-011 listener notification selector, UP-002/UP-004/UP-006/UP-011/GM-024 fake-network membership-smoke selectors, `private_timeline_truth` criteria selectors including UP-011, scoped analyzer over 19 affected files, and `git diff --check`.
+
 Controller status:
-- The row is `blocked_external_fixture`. Row-owned host, integration, criteria, format, analyzer, and diff evidence passed, but required iOS 26.2 `private_timeline_truth` live proof could not reach UP-011 verdict because the shared self-removal/rejoin fixture failed before the row-owned proof.
-- Safe next action is `INTEGRATE-UP-012` after ledger sanity and dirty-state safety checks because UP-012 is an independent removed-member notification privacy row, while preserving the shared `private_timeline_truth` blocker evidence.
+- The row is `accepted`. Row-owned host, integration, criteria, format, analyzer, diff, and required iOS 26.2 `private_timeline_truth` proof evidence passed after the focused shared-fixture recovery.
+- No row scope was broadened; unrelated `info.plist` stayed unstaged and untouched.

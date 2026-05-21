@@ -28973,7 +28973,7 @@ Future<void> _runMl015Charlie(
   );
   await stack.groupMsgRepo.markAsRead(groupId);
 
-  await _waitForSelfRemoval(stack: stack, groupId: groupId);
+  await _waitForRetainedSelfRemoval(stack: stack, groupId: groupId);
   writeSharedText(_signalName('charlie_self_removed'), 'ok');
   await stack.groupMsgRepo.markAsRead(groupId);
 
