@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -1532,6 +1533,38 @@ func isSupportedBridgeGroupType(groupType string) bool {
 	}
 }
 
+func validateBridgeGroupConfigMemberKeyMaterial(config node.GroupConfig) error {
+	for _, member := range config.Members {
+		if member.PublicKey != "" && malformedBridgeKeyMaterial(member.PublicKey) {
+			return fmt.Errorf("invalid member public key for peer %s", member.PeerId)
+		}
+		if member.MlKemPublicKey != "" && malformedBridgeKeyMaterial(member.MlKemPublicKey) {
+			return fmt.Errorf("invalid member ML-KEM public key for peer %s", member.PeerId)
+		}
+		for _, device := range member.Devices {
+			if malformedBridgeKeyMaterial(device.DeviceSigningPublicKey) {
+				return fmt.Errorf("invalid device signing public key for peer %s", member.PeerId)
+			}
+			if device.MlKemPublicKey != "" && malformedBridgeKeyMaterial(device.MlKemPublicKey) {
+				return fmt.Errorf("invalid device ML-KEM public key for peer %s", member.PeerId)
+			}
+			if device.KeyPackagePublicMaterial != "" && malformedBridgeKeyMaterial(device.KeyPackagePublicMaterial) {
+				return fmt.Errorf("invalid key package public material for peer %s", member.PeerId)
+			}
+		}
+	}
+	return nil
+}
+
+func malformedBridgeKeyMaterial(value string) bool {
+	if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+		return true
+	}
+	return strings.IndexFunc(value, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) >= 0
+}
+
 // GroupJoinTopic joins an existing group topic.
 // Input JSON: { "groupId": "...", "groupConfig": {...}, "groupKey": "...", "keyEpoch": N }
 // Returns JSON: { "ok": true }
@@ -1562,6 +1595,9 @@ func GroupJoinTopic(paramsJSON string) (result string) {
 
 	if params.GroupId == "" || params.GroupKey == "" {
 		return errJSON("INVALID_INPUT", "missing groupId or groupKey")
+	}
+	if err := validateBridgeGroupConfigMemberKeyMaterial(params.GroupConfig); err != nil {
+		return errJSON("INVALID_JOIN_MATERIAL", err.Error())
 	}
 
 	keyInfo := &node.GroupKeyInfo{
@@ -1826,6 +1862,9 @@ func GroupUpdateConfig(paramsJSON string) (result string) {
 
 	if params.GroupId == "" {
 		return errJSON("INVALID_INPUT", "missing groupId")
+	}
+	if err := validateBridgeGroupConfigMemberKeyMaterial(params.GroupConfig); err != nil {
+		return errJSON("INVALID_INPUT", err.Error())
 	}
 
 	n.UpdateGroupConfig(params.GroupId, &params.GroupConfig)

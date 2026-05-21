@@ -202,6 +202,26 @@ Future<void> addGroupMember({
     requestedAdditionalMembers: 1,
   );
 
+  final keyMaterialRejectReason = groupMemberKeyMaterialRejectReason(
+    memberToAdd,
+  );
+  if (keyMaterialRejectReason != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_USE_CASE_INVALID_KEY_MATERIAL',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'peerId': memberToAdd.peerId.length > 8
+            ? memberToAdd.peerId.substring(0, 8)
+            : memberToAdd.peerId,
+        'reason': keyMaterialRejectReason,
+      },
+    );
+    throw ArgumentError(
+      'Invalid group member key material: $keyMaterialRejectReason',
+    );
+  }
+
   // 2. Save member to repo
   await groupRepo.saveMember(memberToAdd);
 

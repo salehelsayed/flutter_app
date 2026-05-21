@@ -1723,6 +1723,161 @@ void main() {
       },
     );
 
+    test(
+      'SV-009 malformed member keys never activate and later valid add still syncs',
+      () async {
+        const groupId = 'grp-sv009-key-material-guard';
+
+        final admin = GroupTestUser.create(
+          peerId: 'sv009-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv009-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv009-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          admin.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        await admin.createGroup(groupId: groupId, name: 'SV-009 Guard');
+        await admin.addMember(groupId: groupId, invitee: bob);
+
+        admin.start();
+        bob.start();
+
+        admin.bridge.commandLog.clear();
+        bob.bridge.commandLog.clear();
+
+        final malformedAt = DateTime.utc(2026, 5, 14, 5, 59);
+        final malformedAdd = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': charlie.peerId,
+            'username': charlie.username,
+            'role': 'writer',
+            'publicKey': 'pk ${charlie.peerId}',
+            'mlKemPublicKey': charlie.mlKemPublicKey,
+          },
+          'groupConfig': {
+            'name': 'SV-009 Guard',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': admin.peerId,
+                'username': admin.username,
+                'role': 'admin',
+                'publicKey': admin.publicKey,
+              },
+              {
+                'peerId': bob.peerId,
+                'username': bob.username,
+                'role': 'writer',
+                'publicKey': bob.publicKey,
+              },
+              {
+                'peerId': charlie.peerId,
+                'username': charlie.username,
+                'role': 'writer',
+                'publicKey': 'pk ${charlie.peerId}',
+                'mlKemPublicKey': charlie.mlKemPublicKey,
+              },
+            ],
+            'createdBy': admin.peerId,
+            'createdAt': malformedAt.toIso8601String(),
+          },
+        });
+        await network.publish(groupId, admin.peerId, {
+          'groupId': groupId,
+          'senderId': admin.peerId,
+          'senderUsername': admin.username,
+          'keyEpoch': 0,
+          'text': malformedAdd,
+          'timestamp': malformedAt.toIso8601String(),
+          'messageId': 'sv009-malformed-add',
+        }, senderDeviceId: admin.deviceId);
+        await pump();
+
+        expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
+        expect(await bob.loadGroupMessages(groupId), isEmpty);
+        expect(bob.bridge.commandLog, isNot(contains('group:updateConfig')));
+
+        final validAt = malformedAt.add(const Duration(minutes: 1));
+        final validAdd = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': charlie.peerId,
+            'username': charlie.username,
+            'role': 'writer',
+            'publicKey': charlie.publicKey,
+            'mlKemPublicKey': charlie.mlKemPublicKey,
+          },
+          'groupConfig': {
+            'name': 'SV-009 Guard',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': admin.peerId,
+                'username': admin.username,
+                'role': 'admin',
+                'publicKey': admin.publicKey,
+              },
+              {
+                'peerId': bob.peerId,
+                'username': bob.username,
+                'role': 'writer',
+                'publicKey': bob.publicKey,
+              },
+              {
+                'peerId': charlie.peerId,
+                'username': charlie.username,
+                'role': 'writer',
+                'publicKey': charlie.publicKey,
+                'mlKemPublicKey': charlie.mlKemPublicKey,
+              },
+            ],
+            'createdBy': admin.peerId,
+            'createdAt': validAt.toIso8601String(),
+          },
+        });
+        await network.publish(groupId, admin.peerId, {
+          'groupId': groupId,
+          'senderId': admin.peerId,
+          'senderUsername': admin.username,
+          'keyEpoch': 0,
+          'text': validAdd,
+          'timestamp': validAt.toIso8601String(),
+          'messageId': 'sv009-valid-add',
+        }, senderDeviceId: admin.deviceId);
+        await waitUntil(
+          () async =>
+              await bob.groupRepo.getMember(groupId, charlie.peerId) != null,
+          maxTicks: 40,
+        );
+
+        final savedCharlie = await bob.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        expect(savedCharlie, isNotNull);
+        expect(savedCharlie!.publicKey, charlie.publicKey);
+        expect(bob.bridge.commandLog, contains('group:updateConfig'));
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.map((message) => message.text), [
+          'Admin added Charlie',
+        ]);
+      },
+    );
+
     // -----------------------------------------------------------------------
     // 3. Self-removal — removed user calls leaveGroup and cleans up.
     // -----------------------------------------------------------------------

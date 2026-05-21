@@ -2029,6 +2029,96 @@ func TestGroupJoinTopic_BB006RejectsLegacyTopicNameOnlyPayload(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestSV009GroupJoinAndUpdateConfigRejectMalformedMemberKeys(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	startResult := StartNode(startNodeJSON(t, generateTestKeyHex(t)))
+	assertOk(t, parseJSON(t, startResult))
+
+	groupConfig := func(member map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{
+			"name":      "SV-009 Guard",
+			"groupType": "chat",
+			"members": []map[string]interface{}{
+				{
+					"peerId":    "sv009-admin",
+					"role":      "admin",
+					"publicKey": "pk-sv009-admin",
+				},
+				member,
+			},
+			"createdBy": "sv009-admin",
+			"createdAt": "2026-05-14T00:00:00Z",
+		}
+	}
+
+	cases := []struct {
+		name   string
+		member map[string]interface{}
+	}{
+		{
+			name: "malformed signing key",
+			member: map[string]interface{}{
+				"peerId":         "sv009-bad-signing",
+				"role":           "writer",
+				"publicKey":      "bad signing key",
+				"mlKemPublicKey": "mlkem-sv009-bad-signing",
+			},
+		},
+		{
+			name: "malformed ML-KEM key",
+			member: map[string]interface{}{
+				"peerId":         "sv009-bad-mlkem",
+				"role":           "writer",
+				"publicKey":      "pk-sv009-bad-mlkem",
+				"mlKemPublicKey": "mlkem\nsv009-bad-mlkem",
+			},
+		},
+		{
+			name: "malformed device signing key",
+			member: map[string]interface{}{
+				"peerId":         "sv009-bad-device",
+				"role":           "writer",
+				"publicKey":      "pk-sv009-bad-device",
+				"mlKemPublicKey": "mlkem-sv009-bad-device",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":               "sv009-bad-device-phone",
+						"transportPeerId":        "sv009-bad-device-phone",
+						"deviceSigningPublicKey": "pk sv009 bad device",
+						"mlKemPublicKey":         "mlkem-sv009-bad-device-phone",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		config := groupConfig(tc.member)
+		joinInput, _ := json.Marshal(map[string]interface{}{
+			"groupId":     "sv009-" + strings.ReplaceAll(tc.name, " ", "-"),
+			"groupConfig": config,
+			"groupKey":    "sv009-group-key",
+			"keyEpoch":    1,
+		})
+		joinMap := parseJSON(t, GroupJoinTopic(string(joinInput)))
+		assertNotOk(t, joinMap, "INVALID_JOIN_MATERIAL")
+		if message, _ := joinMap["errorMessage"].(string); !strings.Contains(message, "invalid") {
+			t.Fatalf("join errorMessage = %q, want invalid key material reason", message)
+		}
+
+		updateInput, _ := json.Marshal(map[string]interface{}{
+			"groupId":     "sv009-update",
+			"groupConfig": config,
+		})
+		updateMap := parseJSON(t, GroupUpdateConfig(string(updateInput)))
+		assertNotOk(t, updateMap, "INVALID_INPUT")
+		if message, _ := updateMap["errorMessage"].(string); !strings.Contains(message, "invalid") {
+			t.Fatalf("update errorMessage = %q, want invalid key material reason", message)
+		}
+	}
+}
+
 func TestGroupLeaveTopic_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupLeaveTopic("not valid json")

@@ -112,6 +112,14 @@ void _validateFullJoinMaterial({
   if (members is! List || members.isEmpty) {
     _throwInvalidJoinMaterial('group config missing members');
   }
+  final keyMaterialRejectReason = groupConfigMemberKeyMaterialRejectReason(
+    groupConfig,
+  );
+  if (keyMaterialRejectReason != null) {
+    _throwInvalidJoinMaterial(
+      'invalid group member key material: $keyMaterialRejectReason',
+    );
+  }
 
   Map<dynamic, dynamic>? selfMember;
   for (final rawMember in members) {
