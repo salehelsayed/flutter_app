@@ -1465,6 +1465,125 @@ void main() {
     );
 
     test(
+      'OB-009 unknown and malformed native events are counted and sanitized',
+      () async {
+        final debugLogs = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            debugLogs.add(message);
+          }
+        };
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink((payload) {
+          flowEvents.add(Map<String, dynamic>.from(payload));
+        });
+
+        final receivedMessages = <Map<String, dynamic>>[];
+        client.onGroupMessageReceived = receivedMessages.add;
+        final pushLogs = <String>[];
+
+        await runZoned(
+          () async {
+            client.debugHandleEventForTest(
+              jsonEncode({
+                'event':
+                    'group:future_probe privateKey=sk-ob009-secret '
+                    '/ip4/10.0.0.9/tcp/4001/p2p/peer-ob009-secret',
+                'data': {
+                  'privateKey': 'sk-ob009-secret',
+                  'relayAddresses': [
+                    '/ip4/10.0.0.9/tcp/4001/p2p/peer-ob009-secret',
+                  ],
+                  'safeField': 'safe',
+                },
+              }),
+            );
+            client.debugHandleEventForTest(
+              '{"event":"group:bad","privateKey":"sk-ob009-secret"',
+            );
+            client.debugHandleEventForTest(
+              jsonEncode({
+                'data': {'privateKey': 'sk-ob009-secret'},
+              }),
+            );
+            client.debugHandleEventForTest(
+              jsonEncode({'event': ' ', 'data': <String, dynamic>{}}),
+            );
+            client.debugHandleEventForTest(
+              jsonEncode({
+                'event': 'group:bad_data',
+                'data': 'privateKey=sk-ob009-secret',
+              }),
+            );
+            client.debugHandleEventForTest(
+              jsonEncode({
+                'event': 'group_message:received',
+                'data': {
+                  'groupId': 'group-ob009',
+                  'messageId': 'message-ob009',
+                  'senderId': 'peer-ob009',
+                  'keyEpoch': 1,
+                  'payload': {'text': 'known after malformed events'},
+                },
+              }),
+            );
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (_, _, _, line) {
+              pushLogs.add(line);
+            },
+          ),
+        );
+
+        expect(client.debugUnknownPushEventCountForTest, 1);
+        expect(client.debugMalformedPushEventCountForTest, 4);
+        expect(receivedMessages, hasLength(1));
+        expect(receivedMessages.single['messageId'], 'message-ob009');
+
+        final malformedEvents = flowEvents
+            .where(
+              (event) => event['event'] == 'GO_BRIDGE_MALFORMED_PUSH_EVENT',
+            )
+            .map((event) => event['details'] as Map<String, dynamic>)
+            .toList(growable: false);
+        expect(malformedEvents, hasLength(4));
+        expect(
+          malformedEvents.map((event) => event['reason']),
+          containsAll([
+            'invalid_json',
+            'missing_event_name',
+            'malformed_event_data',
+          ]),
+        );
+        expect(
+          malformedEvents.map((event) => event['count']).toList(),
+          orderedEquals([1, 2, 3, 4]),
+        );
+
+        final unknown =
+            flowEvents.singleWhere(
+                  (event) => event['event'] == 'GO_BRIDGE_UNKNOWN_PUSH_EVENT',
+                )['details']
+                as Map<String, dynamic>;
+        expect(unknown['count'], 1);
+        expect(unknown['reason'], 'unknown_event');
+        expect(unknown['event'], contains('group:future_probe'));
+        expect(unknown['event'], isNot(contains('sk-ob009-secret')));
+        expect(unknown['event'], isNot(contains('peer-ob009-secret')));
+        expect(unknown['dataKeyCount'], 3);
+
+        final allDiagnostics = jsonEncode({
+          'debugLogs': debugLogs,
+          'flowEvents': flowEvents,
+          'pushLogs': pushLogs,
+        });
+        expect(allDiagnostics, isNot(contains('sk-ob009-secret')));
+        expect(allDiagnostics, isNot(contains('10.0.0.9')));
+        expect(allDiagnostics, isNot(contains('peer-ob009-secret')));
+      },
+    );
+
+    test(
       'DE-019 EventChannel error emits diagnostics, recovers, and preserves group callback',
       () async {
         final eventChannelCalls = <String>[];
