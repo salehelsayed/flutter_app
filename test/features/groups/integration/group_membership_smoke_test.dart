@@ -12631,6 +12631,217 @@ void main() {
     );
 
     test(
+      'SV-014 fake-network membership replay store hides relay-visible event details',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'peer-alice-sv014',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob-sv014',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie-sv014',
+          username: 'Charlie Secret',
+          network: network,
+          publicKey: 'pk-charlie-secret',
+          mlKemPublicKey: 'mlkem-charlie-secret',
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-sv014-fake';
+        await alice.createGroup(groupId: groupId, name: 'SV014 Secret Group');
+        await alice.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'sv014-group-key',
+            createdAt: DateTime.utc(2026, 5, 16, 5, 30),
+          ),
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+
+        Map<String, dynamic> lastInboxPayload() {
+          final raw = alice.bridge.sentMessages.lastWhere(
+            (message) =>
+                (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+                'group:inboxStore',
+          );
+          return (jsonDecode(raw) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+        }
+
+        Future<Map<String, dynamic>> storeMembershipReplay({
+          required String messageId,
+          required String systemType,
+          required List<String> recipientPeerIds,
+          required String ciphertext,
+          required DateTime eventAt,
+        }) async {
+          final members = await alice.groupRepo.getMembers(groupId);
+          final group = await alice.groupRepo.getGroup(groupId);
+          final sysText = jsonEncode({
+            '__sys': systemType,
+            'member': {
+              'peerId': charlie.peerId,
+              'username': charlie.username,
+              'role': 'writer',
+              'publicKey': charlie.publicKey,
+              'mlKemPublicKey': charlie.mlKemPublicKey,
+              'devices': [charlie.deviceIdentity.toJson()],
+            },
+            if (systemType == 'member_removed')
+              'removedAt': eventAt.toIso8601String(),
+            'groupConfig': {
+              'name': group!.name,
+              'groupType': group.type.toValue(),
+              'members': members
+                  .map((member) => member.toConfigJson())
+                  .toList(),
+              'createdBy': group.createdBy,
+              'createdAt': group.createdAt.toUtc().toIso8601String(),
+            },
+          });
+          final inboxPayload = jsonEncode({
+            'groupId': groupId,
+            'senderId': alice.peerId,
+            'senderUsername': alice.username,
+            'keyEpoch': 1,
+            'text': sysText,
+            'timestamp': eventAt.toIso8601String(),
+            'messageId': messageId,
+          });
+
+          alice.bridge.responses['group.encrypt'] = {
+            'ok': true,
+            'ciphertext': ciphertext,
+            'nonce': '$ciphertext-nonce',
+          };
+          await storeGroupOfflineReplayEnvelope(
+            bridge: alice.bridge,
+            groupRepo: alice.groupRepo,
+            groupId: groupId,
+            payloadType: groupOfflineReplayPayloadTypeMessage,
+            plaintext: inboxPayload,
+            senderPeerId: alice.peerId,
+            senderPublicKey: alice.publicKey,
+            senderPrivateKey: alice.privateKey,
+            messageId: messageId,
+            recipientPeerIds: recipientPeerIds,
+          );
+          return lastInboxPayload();
+        }
+
+        void expectRelayVisibleMembershipPrivacy(
+          Map<String, dynamic> payload,
+          List<String> expectedRecipients,
+        ) {
+          expect(payload['groupId'], groupId);
+          expect(payload['recipientPeerIds'], expectedRecipients);
+          final envelope =
+              jsonDecode(payload['message'] as String) as Map<String, dynamic>;
+          expect(envelope.containsKey('messageId'), isFalse);
+          expect(envelope['recipientPeerIds'], expectedRecipients);
+          final signedPayload =
+              jsonDecode(envelope['signedPayload'] as String)
+                  as Map<String, dynamic>;
+          expect(signedPayload.containsKey('messageId'), isFalse);
+
+          final rawPayload = jsonEncode(payload);
+          for (final forbidden in const [
+            '__sys',
+            'member_added',
+            'member_removed',
+            'sys-member_added',
+            'sys-member_removed',
+            'Charlie Secret',
+            'pk-charlie-secret',
+            'mlkem-charlie-secret',
+            'SV014 Secret Group',
+          ]) {
+            expect(
+              rawPayload,
+              isNot(contains(forbidden)),
+              reason: 'relay-visible membership replay leaked $forbidden',
+            );
+          }
+        }
+
+        final addedAt = DateTime.utc(2026, 5, 16, 5, 31);
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: addedAt,
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: addedAt,
+        );
+        await pump();
+        expectRelayVisibleMembershipPrivacy(
+          await storeMembershipReplay(
+            messageId: 'sys-member_added:$groupId:${charlie.peerId}:1',
+            systemType: 'member_added',
+            recipientPeerIds: [bob.peerId, charlie.peerId],
+            ciphertext: 'sv014-add-ciphertext',
+            eventAt: addedAt,
+          ),
+          [bob.peerId, charlie.peerId],
+        );
+
+        final removedAt = DateTime.utc(2026, 5, 16, 5, 32);
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await pump();
+        expectRelayVisibleMembershipPrivacy(
+          await storeMembershipReplay(
+            messageId: 'sys-member_removed:$groupId:${charlie.peerId}:2',
+            systemType: 'member_removed',
+            recipientPeerIds: [bob.peerId],
+            ciphertext: 'sv014-remove-ciphertext',
+            eventAt: removedAt,
+          ),
+          [bob.peerId],
+        );
+
+        final readdedAt = DateTime.utc(2026, 5, 16, 5, 33);
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: readdedAt,
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: readdedAt,
+        );
+        await pump();
+        expectRelayVisibleMembershipPrivacy(
+          await storeMembershipReplay(
+            messageId: 'sys-member_added:$groupId:${charlie.peerId}:3',
+            systemType: 'member_added',
+            recipientPeerIds: [bob.peerId, charlie.peerId],
+            ciphertext: 'sv014-readd-ciphertext',
+            eventAt: readdedAt,
+          ),
+          [bob.peerId, charlie.peerId],
+        );
+      },
+    );
+
+    test(
       'GM-035 re-added Charlie first send drains from durable zero-peer fallback exactly once',
       () async {
         const groupId = 'grp-gm035-readd-zero-peer-first-send';

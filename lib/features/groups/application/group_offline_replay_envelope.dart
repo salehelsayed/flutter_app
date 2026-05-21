@@ -89,6 +89,9 @@ Future<String> buildGroupOfflineReplayEnvelope({
   final normalizedTransportPeerId =
       _trimToNull(senderTransportPeerId) ?? normalizedDeviceId;
   final normalizedMessageId = _trimToNull(messageId);
+  final relayVisibleMessageId = _relayVisibleReplayMessageId(
+    normalizedMessageId,
+  );
   final normalizedRecipientPeerIds = _normalizedRecipientPeerIds(
     recipientPeerIds,
   );
@@ -103,7 +106,7 @@ Future<String> buildGroupOfflineReplayEnvelope({
     ciphertext: ciphertext,
     nonce: nonce,
     plaintext: plaintext,
-    messageId: normalizedMessageId,
+    messageId: relayVisibleMessageId,
     senderPeerId: resolvedSenderPeerId,
     senderDeviceId: normalizedDeviceId,
     senderTransportPeerId: normalizedTransportPeerId,
@@ -127,7 +130,7 @@ Future<String> buildGroupOfflineReplayEnvelope({
     'groupId': groupId,
     'payloadType': payloadType,
     'keyEpoch': resolvedKey.keyGeneration,
-    'messageId': ?normalizedMessageId,
+    'messageId': ?relayVisibleMessageId,
     'senderPeerId': resolvedSenderPeerId,
     'senderDeviceId': normalizedDeviceId,
     'senderTransportPeerId': normalizedTransportPeerId,
@@ -725,6 +728,26 @@ String? _trimToNull(String? value) {
   final trimmed = value?.trim();
   if (trimmed == null || trimmed.isEmpty) return null;
   return trimmed;
+}
+
+String? _relayVisibleReplayMessageId(String? messageId) {
+  if (messageId == null || _isMembershipReplayMessageId(messageId)) {
+    return null;
+  }
+  return messageId;
+}
+
+bool _isMembershipReplayMessageId(String messageId) {
+  final normalized = messageId.trim().toLowerCase();
+  const membershipPrefixes = <String>[
+    'sys-member_',
+    'member_added:',
+    'members_added:',
+    'member_joined:',
+    'member_removed:',
+    'member_role_updated:',
+  ];
+  return membershipPrefixes.any(normalized.startsWith);
 }
 
 Future<GroupKeyInfo> _loadReplayKey(

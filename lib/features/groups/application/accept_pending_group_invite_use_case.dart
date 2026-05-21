@@ -629,6 +629,7 @@ Future<void> _publishAcceptedJoinTimelineIfPossible({
     'senderUsername': senderUsername ?? '',
     'text': sysText,
     'timestamp': joinedAt.toIso8601String(),
+    'messageId': timelineMessage.id,
   });
 
   try {
