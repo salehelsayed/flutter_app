@@ -1936,6 +1936,42 @@ func TestGroupTopicValidator_ValidMessage(t *testing.T) {
 	}
 }
 
+func TestSV007GroupTopicValidatorRejectsEnvelopeGroupMismatch(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	topicGroupId := "sv007-topic-group-a"
+	payloadGroupId := "sv007-payload-group-b"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "SV-007 Topic Group A",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "sender-1", Role: GroupRoleAdmin, PublicKey: pubB64},
+		},
+		CreatedBy: "sender-1",
+	}
+	envelopeJSON := buildTestEnvelope(
+		t,
+		payloadGroupId,
+		"sender-1",
+		privB64,
+		pubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"SV-007 wrong topic payload",
+	)
+
+	if result := validateGroupEnvelope(envelopeJSON, payloadGroupId, config, keyInfo); result != "accept" {
+		t.Fatalf("payload group validation = %s, want accept", result)
+	}
+	if result := validateGroupEnvelope(envelopeJSON, topicGroupId, config, keyInfo); result != "reject:group_mismatch" {
+		t.Fatalf("topic group validation = %s, want reject:group_mismatch", result)
+	}
+}
+
 func TestGroupTopicValidator_NilKeyRejectsNoKeyAndDecryptReportsMissingKey(t *testing.T) {
 	privB64, pubB64 := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()

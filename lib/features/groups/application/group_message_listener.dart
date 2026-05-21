@@ -462,6 +462,7 @@ class GroupMessageListener {
 
       final msgRepo = msgRepoOverride ?? _msgRepo;
       final groupId = data['groupId'] as String? ?? '';
+      final topicGroupId = data['topicGroupId'] as String?;
       final senderId = data['senderId'] as String? ?? '';
       final senderUsername = data['senderUsername'] as String? ?? '';
       final keyEpoch = data['keyEpoch'] as int? ?? 0;
@@ -479,6 +480,21 @@ class GroupMessageListener {
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_MALFORMED',
           details: {'groupId': groupId, 'senderId': senderId},
+        );
+        return;
+      }
+
+      if (topicGroupId != null &&
+          topicGroupId.isNotEmpty &&
+          topicGroupId != groupId) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_TOPIC_GROUP_MISMATCH_REJECTED',
+          details: {
+            'groupId': _membershipFlowId(groupId),
+            'topicGroupId': _membershipFlowId(topicGroupId),
+            'senderId': _membershipFlowId(senderId),
+          },
         );
         return;
       }

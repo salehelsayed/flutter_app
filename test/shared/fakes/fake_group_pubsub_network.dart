@@ -321,6 +321,7 @@ class FakeGroupPubSubNetwork {
       }
 
       final deliveredEnvelope = Map<String, dynamic>.from(envelope)
+        ..putIfAbsent('topicGroupId', () => groupId)
         ..putIfAbsent('senderDeviceId', () => senderDeviceId ?? senderPeerId)
         ..putIfAbsent('transportPeerId', () => senderDeviceId ?? senderPeerId);
       final senderRouteMode = routeModeFor(senderDeviceId ?? senderPeerId);

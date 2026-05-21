@@ -809,6 +809,80 @@ void main() {
   );
 
   test(
+    'SV-007 topic group mismatch is rejected before listener persistence',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-2',
+          name: 'Other Group',
+          type: GroupType.chat,
+          topicName: 'group-topic-2',
+          createdAt: initialGroupCreatedAt,
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          joinedAt: initialMemberJoinedAt,
+        ),
+      );
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'topicGroupId': 'group-1',
+        'groupId': 'group-2',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'SV-007 wrong topic payload',
+        'timestamp': DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 10))
+            .toIso8601String(),
+        'messageId': 'sv007-topic-mismatch',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await msgRepo.getMessage('sv007-topic-mismatch'), isNull);
+      expect(await msgRepo.getMessagesPage('group-1'), isEmpty);
+      expect(await msgRepo.getMessagesPage('group-2'), isEmpty);
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+              'GROUP_MESSAGE_LISTENER_TOPIC_GROUP_MISMATCH_REJECTED',
+        ),
+        isNotEmpty,
+      );
+
+      sourceController.add({
+        'topicGroupId': 'group-1',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'SV-007 valid same-topic payload',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'sv007-valid-follow-up',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final saved = await msgRepo.getMessage('sv007-valid-follow-up');
+      expect(saved, isNotNull);
+      expect(saved!.groupId, 'group-1');
+      expect(saved.text, 'SV-007 valid same-topic payload');
+    },
+  );
+
+  test(
     'GO-003 sender-visible validation feedback marks outgoing row failed and retryable',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();

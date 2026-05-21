@@ -4662,6 +4662,152 @@ void main() {
     );
 
     test(
+      'SV-007 fake-network topic mismatch is rejected from both groups',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        final alice = GroupTestUser.create(
+          peerId: 'sv007-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv007-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        addTearDown(() {
+          debugSetFlowEventSink(null);
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const topicGroupId = 'group-sv007-topic-a';
+        const payloadGroupId = 'group-sv007-payload-b';
+        const mismatchMessageId = 'sv007-topic-mismatch';
+        const validTopicMessageId = 'sv007-valid-topic-a';
+        const validPayloadMessageId = 'sv007-valid-payload-b';
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 20),
+        );
+
+        Future<void> saveKey(
+          GroupTestUser user,
+          String groupId,
+          String encryptedKey,
+        ) {
+          return user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await alice.createGroup(
+          groupId: topicGroupId,
+          name: 'SV-007 Topic Group',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: topicGroupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.createGroup(
+          groupId: payloadGroupId,
+          name: 'SV-007 Payload Group',
+          createdAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await alice.addMember(
+          groupId: payloadGroupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 3)),
+        );
+        await Future.wait([
+          saveKey(alice, topicGroupId, 'sv007-topic-key'),
+          saveKey(bob, topicGroupId, 'sv007-topic-key'),
+          saveKey(alice, payloadGroupId, 'sv007-payload-key'),
+          saveKey(bob, payloadGroupId, 'sv007-payload-key'),
+        ]);
+
+        alice.start();
+        bob.start();
+        network.resetCounters();
+
+        await network.publish(topicGroupId, alice.peerId, {
+          'groupId': payloadGroupId,
+          'senderId': alice.peerId,
+          'senderUsername': alice.username,
+          'keyEpoch': 1,
+          'text': 'SV-007 wrong topic payload',
+          'timestamp': createdAt
+              .add(const Duration(minutes: 4))
+              .toIso8601String(),
+          'messageId': mismatchMessageId,
+        }, senderDeviceId: alice.deviceId);
+        await pump();
+
+        expect(
+          network.deliveryRecords
+              .where((record) => record['messageId'] == mismatchMessageId)
+              .single['payloadGroupId'],
+          payloadGroupId,
+        );
+        expect(await bob.msgRepo.getMessage(mismatchMessageId), isNull);
+        expect(
+          (await bob.loadGroupMessages(
+            topicGroupId,
+          )).where((message) => message.id == mismatchMessageId),
+          isEmpty,
+        );
+        expect(
+          (await bob.loadGroupMessages(
+            payloadGroupId,
+          )).where((message) => message.id == mismatchMessageId),
+          isEmpty,
+        );
+        expect(
+          flowEvents.where(
+            (event) =>
+                event['event'] ==
+                'GROUP_MESSAGE_LISTENER_TOPIC_GROUP_MISMATCH_REJECTED',
+          ),
+          isNotEmpty,
+        );
+
+        final validTopicSend = await alice.sendGroupMessageViaBridge(
+          groupId: topicGroupId,
+          text: 'SV-007 valid topic group',
+          messageId: validTopicMessageId,
+          timestamp: createdAt.add(const Duration(minutes: 5)),
+        );
+        expect(validTopicSend.$1.name, 'success');
+        final validPayloadSend = await alice.sendGroupMessageViaBridge(
+          groupId: payloadGroupId,
+          text: 'SV-007 valid payload group',
+          messageId: validPayloadMessageId,
+          timestamp: createdAt.add(const Duration(minutes: 6)),
+        );
+        expect(validPayloadSend.$1.name, 'success');
+        await pump();
+
+        final topicVisible = (await bob.loadGroupMessages(
+          topicGroupId,
+        )).where((message) => message.id == validTopicMessageId).toList();
+        final payloadVisible = (await bob.loadGroupMessages(
+          payloadGroupId,
+        )).where((message) => message.id == validPayloadMessageId).toList();
+        expect(topicVisible, hasLength(1));
+        expect(topicVisible.single.text, 'SV-007 valid topic group');
+        expect(payloadVisible, hasLength(1));
+        expect(payloadVisible.single.text, 'SV-007 valid payload group');
+      },
+    );
+
+    test(
       'GE-008 simultaneous send storm during remove/re-add keeps entitlement windows exact',
       () async {
         final alice = GroupTestUser.create(
