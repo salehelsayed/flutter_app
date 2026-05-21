@@ -4824,6 +4824,193 @@ void main() {
     );
 
     test(
+      'ST-004 clock skew fake-network replay keeps relay boundary exact',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'admin-st004-boundary',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'reader-st004-boundary',
+          username: 'Bob',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final bobBridge = bob.bridge as _CursorInboxBridge;
+        addTearDown(() {
+          admin.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-st004-boundary';
+        final relayBoundary = DateTime.utc(2026, 5, 16, 8, 4);
+        final relayBoundaryMs = relayBoundary.millisecondsSinceEpoch;
+        final futureSkew = relayBoundary.add(const Duration(minutes: 10));
+        final pastSkew = relayBoundary.subtract(const Duration(minutes: 7));
+
+        await admin.createGroup(groupId: groupId, name: 'ST004 Boundary');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await bob.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: admin.peerId,
+            username: admin.username,
+            role: MemberRole.admin,
+            publicKey: admin.publicKey,
+            joinedAt: DateTime.utc(2026, 5, 1),
+          ),
+        );
+        await bob.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: bob.peerId,
+            username: bob.username,
+            role: MemberRole.writer,
+            publicKey: bob.publicKey,
+            joinedAt: DateTime.utc(2026, 5, 1),
+          ),
+        );
+        await _saveKey(admin, groupId, 1, 'k1');
+        await _saveKey(bob, groupId, 1, 'k1');
+        network.unsubscribe(groupId, bob.peerId);
+
+        admin.start();
+        bob.start();
+
+        final firstBoundary =
+            await _signedReplayRelayMessage(
+                bridge: admin.bridge,
+                groupRepo: bob.groupRepo,
+                groupId: groupId,
+                payload: {
+                  'groupId': groupId,
+                  'senderId': admin.peerId,
+                  'senderUsername': admin.username,
+                  'keyEpoch': 1,
+                  'text': 'ST-004 boundary first with future skew',
+                  'timestamp': futureSkew.toIso8601String(),
+                  'messageId': 'st004-boundary-first',
+                },
+                senderPeerId: admin.peerId,
+                senderPublicKey: admin.publicKey,
+                senderPrivateKey: admin.privateKey,
+              )
+              ..['timestamp'] = relayBoundaryMs;
+        final cursorBoundary =
+            await _signedReplayRelayMessage(
+                bridge: admin.bridge,
+                groupRepo: bob.groupRepo,
+                groupId: groupId,
+                payload: {
+                  'groupId': groupId,
+                  'senderId': admin.peerId,
+                  'senderUsername': admin.username,
+                  'keyEpoch': 1,
+                  'text': 'ST-004 cursor page exact',
+                  'timestamp': pastSkew.toIso8601String(),
+                  'messageId': 'st004-cursor-page-boundary',
+                },
+                senderPeerId: admin.peerId,
+                senderPublicKey: admin.publicKey,
+                senderPrivateKey: admin.privateKey,
+              )
+              ..['timestamp'] = relayBoundaryMs;
+        bobBridge.addPage(groupId, '', [firstBoundary], 'st004-opaque-page-2');
+        bobBridge.addPage(groupId, 'st004-opaque-page-2', [cursorBoundary], '');
+
+        final firstDrain = await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          selfPeerId: bob.peerId,
+        );
+
+        expect(firstDrain.isSuccessful, isTrue);
+        final boundaryCursor =
+            '$groupInboxSyntheticSinceCursorPrefix${relayBoundaryMs - 1}';
+        expect(await bob.msgRepo.getInboxCursor(groupId), boundaryCursor);
+        final cursorCommands = bobBridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:inboxRetrieveCursor')
+            .toList(growable: false);
+        expect(cursorCommands, hasLength(2));
+        expect(cursorCommands[0]['payload']['cursor'], '');
+        expect(cursorCommands[1]['payload']['cursor'], 'st004-opaque-page-2');
+
+        final secondBoundary =
+            await _signedReplayRelayMessage(
+                bridge: admin.bridge,
+                groupRepo: bob.groupRepo,
+                groupId: groupId,
+                payload: {
+                  'groupId': groupId,
+                  'senderId': admin.peerId,
+                  'senderUsername': admin.username,
+                  'keyEpoch': 1,
+                  'text': 'ST-004 same boundary after skew',
+                  'timestamp': pastSkew.toIso8601String(),
+                  'messageId': 'st004-boundary-second',
+                },
+                senderPeerId: admin.peerId,
+                senderPublicKey: admin.publicKey,
+                senderPrivateKey: admin.privateKey,
+              )
+              ..['timestamp'] = relayBoundaryMs;
+        final adjacent =
+            await _signedReplayRelayMessage(
+                bridge: admin.bridge,
+                groupRepo: bob.groupRepo,
+                groupId: groupId,
+                payload: {
+                  'groupId': groupId,
+                  'senderId': admin.peerId,
+                  'senderUsername': admin.username,
+                  'keyEpoch': 1,
+                  'text': 'ST-004 adjacent millisecond after skew',
+                  'timestamp': futureSkew.toIso8601String(),
+                  'messageId': 'st004-boundary-adjacent',
+                },
+                senderPeerId: admin.peerId,
+                senderPublicKey: admin.publicKey,
+                senderPrivateKey: admin.privateKey,
+              )
+              ..['timestamp'] = relayBoundaryMs + 1;
+        bobBridge.addPage(groupId, boundaryCursor, [
+          firstBoundary,
+          secondBoundary,
+          adjacent,
+        ], '');
+
+        final secondDrain = await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          selfPeerId: bob.peerId,
+        );
+
+        expect(secondDrain.isSuccessful, isTrue);
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        for (final messageId in const [
+          'st004-boundary-first',
+          'st004-cursor-page-boundary',
+          'st004-boundary-second',
+          'st004-boundary-adjacent',
+        ]) {
+          expect(
+            bobMessages.where((message) => message.id == messageId),
+            hasLength(1),
+            reason: messageId,
+          );
+        }
+        expect(
+          await bob.msgRepo.getInboxCursor(groupId),
+          '$groupInboxSyntheticSinceCursorPrefix$relayBoundaryMs',
+        );
+      },
+    );
+
+    test(
       'watchdog restart rejoins topics and receives subsequent live messages',
       () async {
         final alice = GroupTestUser.create(
