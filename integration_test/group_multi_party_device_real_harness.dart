@@ -24040,8 +24040,7 @@ Future<GroupKeyInfo> _rotateRa018Key({
     stack: stack,
     groupId: groupId,
     sendP2PMessage: (peerId, message) async {
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
+      return stack.p2pService.sendMessage(peerId, message);
     },
   );
 }
