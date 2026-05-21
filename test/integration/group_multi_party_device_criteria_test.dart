@@ -6485,6 +6485,65 @@ void main() {
       },
     );
 
+    test(
+      'ST-001 accepts private_network_chaos_invariants model oracle proof',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_network_chaos_invariants',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateNetworkChaosInvariantVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_network_chaos_invariants verdicts valid'),
+        );
+      },
+    );
+
+    test('ST-001 rejects missing model oracle proof fields', () {
+      final missingProof = _validPrivateNetworkChaosInvariantVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('st001ModelOracleProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_network_chaos_invariants',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing ST-001 model oracle proof fields'),
+      );
+    });
+
+    test('ST-001 rejects weak model oracle proof', () {
+      final weakProof = _validPrivateNetworkChaosInvariantVerdicts();
+      weakProof[0] =
+          _withSt001ProofOverrides(weakProof[0], const <String, Object?>{
+            'deliveredAndReplayedMessagesMatchOracle': false,
+            'oracleMessageCount': 3,
+            'modelInvariant': 'presence_only',
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_network_chaos_invariants',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: weakProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('modelInvariant mismatch'));
+      expect(rejected.detail, contains('oracleMessageCount must be >= 12'));
+      expect(
+        rejected.detail,
+        contains('deliveredAndReplayedMessagesMatchOracle must be true'),
+      );
+    });
+
     test('accepts private_readd_cycles ML-008 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_readd_cycles',
@@ -29594,10 +29653,27 @@ List<Map<String, dynamic>> _validPrivateNetworkChaosInvariantVerdicts() {
           'membershipOperationCount': 12,
           'fakeNetworkChaosProofRequired': true,
         };
+        final st001Proof = <String, Object?>{
+          ...raProof,
+          'rowId': 'ST-001',
+          'scenario': 'private_network_chaos_invariants',
+          'appPeerPlatform': 'ios_26_2_core_simulator',
+          'oracleProofSource': 'app_peer_core_simulator_model_oracle',
+          'fixedSeed': 14014,
+          'modelInvariant': 'active_recipient_set_exactly_once',
+          'messageOperationCount': 12,
+          'membershipOperationCount': 12,
+          'oracleMessageCount': 12,
+          'deliveredAndReplayedMessagesMatchOracle': true,
+          'duplicateDeliveryCovered': true,
+          'restartStyleReconnectCovered': true,
+          'replayPathCovered': true,
+        };
         return <String, dynamic>{
           ...verdict,
           'scenario': 'private_network_chaos_invariants',
           'nw014ChaosInvariantProof': nw014Proof,
+          'st001ModelOracleProof': st001Proof,
         };
       })
       .toList(growable: false);
@@ -29611,6 +29687,19 @@ Map<String, dynamic> _withNw014ProofOverrides(
     ...verdict,
     'nw014ChaosInvariantProof': <String, Object?>{
       ...Map<String, Object?>.from(verdict['nw014ChaosInvariantProof'] as Map),
+      ...overrides,
+    },
+  };
+}
+
+Map<String, dynamic> _withSt001ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'st001ModelOracleProof': <String, Object?>{
+      ...Map<String, Object?>.from(verdict['st001ModelOracleProof'] as Map),
       ...overrides,
     },
   };

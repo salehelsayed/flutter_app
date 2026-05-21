@@ -10203,6 +10203,424 @@ void main() {
     );
 
     test(
+      'ST-001 model-based membership oracle matches delivered and replayed recipient sets',
+      () async {
+        const seed = 1001;
+        final random = Random(seed);
+        final alice = GroupTestUser.create(
+          peerId: 'st001-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'st001-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'st001-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final dana = GroupTestUser.create(
+          peerId: 'st001-dana-peer',
+          username: 'Dana',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+          dana.dispose();
+        });
+
+        const groupId = 'group-st001-recipient-oracle';
+        final createdAt = DateTime.utc(2026, 5, 14, 8, 20);
+        final allUsers = <GroupTestUser>[alice, bob, charlie, dana];
+        final usersByPeerId = {for (final user in allUsers) user.peerId: user};
+        final roleByPeerId = {
+          alice.peerId: 'alice',
+          bob.peerId: 'bob',
+          charlie.peerId: 'charlie',
+          dana.peerId: 'dana',
+        };
+        final activePeerIds = <String>{
+          alice.peerId,
+          bob.peerId,
+          charlie.peerId,
+          dana.peerId,
+        };
+        final expectedVisibleIdsByPeerId = <String, Set<String>>{
+          for (final user in allUsers) user.peerId: <String>{},
+        };
+        final oracleRows = <Map<String, Object?>>[];
+        var logicalStep = 0;
+        var epoch = 1;
+
+        Future<void> saveKeyFor(
+          Iterable<GroupTestUser> users,
+          int keyEpoch,
+        ) async {
+          for (final user in users) {
+            await user.groupRepo.saveKey(
+              GroupKeyInfo(
+                groupId: groupId,
+                keyGeneration: keyEpoch,
+                encryptedKey: 'st001-oracle-key-$keyEpoch',
+                createdAt: createdAt.add(Duration(minutes: keyEpoch)),
+              ),
+            );
+          }
+        }
+
+        Future<void> copyAliceStateTo(
+          Iterable<GroupTestUser> users, {
+          required int keyEpoch,
+        }) async {
+          final group = await alice.groupRepo.getGroup(groupId);
+          final members = await alice.groupRepo.getMembers(groupId);
+          expect(group, isNotNull);
+          for (final user in users) {
+            await user.groupRepo.saveGroup(
+              group!.copyWith(
+                myRole: user.peerId == alice.peerId
+                    ? GroupRole.admin
+                    : GroupRole.member,
+              ),
+            );
+            for (final member in members) {
+              await user.groupRepo.saveMember(member);
+            }
+          }
+          await saveKeyFor(users, keyEpoch);
+        }
+
+        GroupTestUser randomActiveSender({GroupTestUser? not}) {
+          final candidates = allUsers
+              .where(
+                (user) => activePeerIds.contains(user.peerId) && user != not,
+              )
+              .toList(growable: false);
+          expect(candidates, isNotEmpty);
+          return candidates[random.nextInt(candidates.length)];
+        }
+
+        Future<void> expectOutgoingOnce({
+          required GroupTestUser sender,
+          required String messageId,
+          required String text,
+          required int keyEpoch,
+        }) async {
+          final matches = (await sender.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == messageId).toList();
+          expect(matches, hasLength(1), reason: sender.username);
+          expect(matches.single.isIncoming, isFalse, reason: sender.username);
+          expect(matches.single.text, text, reason: sender.username);
+          expect(
+            matches.single.keyGeneration,
+            keyEpoch,
+            reason: sender.username,
+          );
+        }
+
+        Future<void> expectIncomingOnce({
+          required GroupTestUser recipient,
+          required String messageId,
+          required String text,
+          required GroupTestUser sender,
+          required int keyEpoch,
+        }) async {
+          final matches = (await recipient.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == messageId).toList();
+          expect(
+            matches,
+            hasLength(1),
+            reason:
+                '${recipient.username} should match ST-001 oracle for $messageId',
+          );
+          final message = matches.single;
+          expect(message.isIncoming, isTrue, reason: recipient.username);
+          expect(message.text, text, reason: recipient.username);
+          expect(
+            message.senderPeerId,
+            sender.peerId,
+            reason: recipient.username,
+          );
+          expect(message.keyGeneration, keyEpoch, reason: recipient.username);
+        }
+
+        Future<void> expectAbsent({
+          required GroupTestUser user,
+          required String messageId,
+        }) async {
+          final ids = (await user.loadGroupMessages(
+            groupId,
+          )).map((message) => message.id).toSet();
+          expect(
+            ids,
+            isNot(contains(messageId)),
+            reason: '${user.username} must not persist non-oracle $messageId',
+          );
+        }
+
+        Future<void> sendAndCheckOracle({
+          required String operation,
+          required GroupTestUser sender,
+          String deliveryMode = 'normal',
+          GroupTestUser? target,
+        }) async {
+          expect(activePeerIds, contains(sender.peerId));
+          logicalStep++;
+          final timestamp = createdAt.add(Duration(minutes: logicalStep));
+          final messageId = 'st001-$logicalStep-$operation-${sender.peerId}';
+          final text = 'ST-001 seed $seed $operation from ${sender.username}';
+          final recipientPeerIds = activePeerIds
+              .where((peerId) => peerId != sender.peerId)
+              .toSet();
+          final recipients = recipientPeerIds
+              .map((peerId) => usersByPeerId[peerId]!)
+              .toList(growable: false);
+          final inactiveUsers = allUsers
+              .where((user) => !activePeerIds.contains(user.peerId))
+              .toList(growable: false);
+
+          expectedVisibleIdsByPeerId[sender.peerId]!.add(messageId);
+          for (final peerId in recipientPeerIds) {
+            expectedVisibleIdsByPeerId[peerId]!.add(messageId);
+          }
+          oracleRows.add(<String, Object?>{
+            'messageId': messageId,
+            'operation': operation,
+            'sender': roleByPeerId[sender.peerId],
+            'activeRoles': activePeerIds
+                .map((peerId) => roleByPeerId[peerId]!)
+                .toList(growable: false),
+            'recipientRoles': recipientPeerIds
+                .map((peerId) => roleByPeerId[peerId]!)
+                .toList(growable: false),
+            'keyEpoch': epoch,
+            'deliveryMode': deliveryMode,
+          });
+
+          if (deliveryMode == 'restartReplay') {
+            expect(target, isNotNull);
+            target!.unsubscribeFromGroup(groupId);
+          } else if (deliveryMode == 'heldReplay') {
+            expect(target, isNotNull);
+            network.holdDeliveriesFor(target!.deviceId);
+          } else if (deliveryMode == 'duplicate') {
+            network.duplicateOnDeliver = true;
+          }
+
+          final send = await sender.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: text,
+            messageId: messageId,
+            timestamp: timestamp,
+          );
+          expect(send.$1.name, 'success');
+          expect(send.$2, isNotNull);
+          expect(send.$2!.keyGeneration, epoch);
+          await pump();
+
+          if (deliveryMode == 'restartReplay') {
+            await expectAbsent(user: target!, messageId: messageId);
+            target.subscribeToGroup(groupId);
+            network.duplicateOnDeliver = true;
+            await network.publish(groupId, sender.peerId, <String, dynamic>{
+              'groupId': groupId,
+              'senderId': sender.peerId,
+              'senderUsername': sender.username,
+              'keyEpoch': epoch,
+              'text': text,
+              'timestamp': timestamp.toIso8601String(),
+              'messageId': messageId,
+            }, senderDeviceId: sender.deviceId);
+          } else if (deliveryMode == 'heldReplay') {
+            await expectAbsent(user: target!, messageId: messageId);
+            await network.releaseHeldDeliveriesFor(
+              target.deviceId,
+              reverse: random.nextBool(),
+            );
+          }
+
+          network.duplicateOnDeliver = false;
+          await pump();
+
+          await expectOutgoingOnce(
+            sender: sender,
+            messageId: messageId,
+            text: text,
+            keyEpoch: epoch,
+          );
+          for (final recipient in recipients) {
+            await expectIncomingOnce(
+              recipient: recipient,
+              messageId: messageId,
+              text: text,
+              sender: sender,
+              keyEpoch: epoch,
+            );
+          }
+          for (final inactiveUser in inactiveUsers) {
+            await expectAbsent(user: inactiveUser, messageId: messageId);
+          }
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'ST-001 Recipient Oracle',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: dana,
+          joinedAt: createdAt.add(const Duration(minutes: 3)),
+        );
+        await copyAliceStateTo(allUsers, keyEpoch: epoch);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        dana.start();
+
+        await sendAndCheckOracle(
+          operation: 'initial-all-active',
+          sender: randomActiveSender(),
+          deliveryMode: 'duplicate',
+        );
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: createdAt.add(const Duration(minutes: 10)),
+        );
+        activePeerIds.remove(charlie.peerId);
+        await pump();
+        epoch++;
+        await saveKeyFor([alice, bob, dana], epoch);
+        await sendAndCheckOracle(
+          operation: 'charlie-removed-bob-restart-replay',
+          sender: randomActiveSender(not: bob),
+          deliveryMode: 'restartReplay',
+          target: bob,
+        );
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 15)),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: createdAt.add(const Duration(minutes: 15)),
+        );
+        activePeerIds.add(charlie.peerId);
+        await pump();
+        epoch++;
+        await copyAliceStateTo(allUsers, keyEpoch: epoch);
+        await sendAndCheckOracle(
+          operation: 'charlie-readded-duplicate',
+          sender: randomActiveSender(),
+          deliveryMode: 'duplicate',
+        );
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: dana.peerId,
+          memberUsername: dana.username,
+          removedAt: createdAt.add(const Duration(minutes: 20)),
+        );
+        activePeerIds.remove(dana.peerId);
+        await pump();
+        epoch++;
+        await saveKeyFor([alice, bob, charlie], epoch);
+        await sendAndCheckOracle(
+          operation: 'dana-removed-held-alice',
+          sender: randomActiveSender(not: alice),
+          deliveryMode: 'heldReplay',
+          target: alice,
+        );
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: dana,
+          joinedAt: createdAt.add(const Duration(minutes: 25)),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: dana,
+          eventAt: createdAt.add(const Duration(minutes: 25)),
+        );
+        activePeerIds.add(dana.peerId);
+        await pump();
+        epoch++;
+        await copyAliceStateTo(allUsers, keyEpoch: epoch);
+        await sendAndCheckOracle(
+          operation: 'dana-readded-charlie-restart-replay',
+          sender: randomActiveSender(not: charlie),
+          deliveryMode: 'restartReplay',
+          target: charlie,
+        );
+
+        for (final user in allUsers) {
+          final memberPeerIds = (await user.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId).toSet();
+          expect(memberPeerIds, activePeerIds, reason: user.username);
+          final key = await user.groupRepo.getLatestKey(groupId);
+          expect(key, isNotNull, reason: user.username);
+          expect(key!.keyGeneration, epoch, reason: user.username);
+
+          final visibleIds = (await user.loadGroupMessages(groupId))
+              .where(
+                (message) =>
+                    oracleRows.any((row) => row['messageId'] == message.id),
+              )
+              .map((message) => message.id)
+              .toList(growable: false);
+          expect(
+            visibleIds.toSet(),
+            expectedVisibleIdsByPeerId[user.peerId],
+            reason: '${user.username} final ST-001 recipient oracle',
+          );
+          for (final messageId in visibleIds.toSet()) {
+            expect(
+              visibleIds.where((id) => id == messageId),
+              hasLength(1),
+              reason: '${user.username} duplicate ST-001 $messageId',
+            );
+          }
+        }
+
+        expect(oracleRows, hasLength(5));
+        expect(
+          oracleRows.map((row) => row['deliveryMode']).toSet().containsAll({
+            'duplicate',
+            'restartReplay',
+            'heldReplay',
+          }),
+          isTrue,
+        );
+        expect(epoch, 5);
+      },
+    );
+
+    test(
       'NW-014 deterministic network chaos run maintains model invariants',
       () async {
         const seed = 14014;
