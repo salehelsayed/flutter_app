@@ -64,6 +64,167 @@ void main() {
     bridge = FakeBridge();
   });
 
+  test(
+    'OB-001 core group helpers emit request and response flow events',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink((payload) {
+        flowEvents.add(Map<String, dynamic>.from(payload));
+      });
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      bridge.responses
+        ..['group:create'] = {
+          'ok': true,
+          'groupId': 'ob001-group',
+          'topicName': '/mknoon/group/ob001-group',
+        }
+        ..['group:join'] = {'ok': true}
+        ..['group:publish'] = {
+          'ok': true,
+          'messageId': 'ob001-message',
+          'topicPeers': 1,
+        }
+        ..['group:updateConfig'] = {'ok': true}
+        ..['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'ob001-next-key',
+          'keyEpoch': 2,
+        }
+        ..['group:updateKey'] = {'ok': true}
+        ..['group:inboxStore'] = {'ok': true}
+        ..['group:inboxRetrieve'] = {
+          'ok': true,
+          'messages': <Map<String, dynamic>>[],
+        }
+        ..['group:historyRepairRange'] = {
+          'ok': true,
+          'messages': <Map<String, dynamic>>[],
+          'rangeHash': 'ob001-range-hash',
+          'headMessageId': 'ob001-head',
+        }
+        ..['group:leave'] = {'ok': true};
+
+      await callGroupCreate(
+        bridge,
+        name: 'OB-001 Group',
+        type: 'chat',
+        creatorPeerId: 'peer-ob001-alice',
+        creatorPublicKey: 'pk-ob001-alice',
+      );
+      await callGroupJoinWithConfig(
+        bridge,
+        groupId: 'ob001-group',
+        groupConfig: {'name': 'OB-001 Group', 'members': <Object>[]},
+        groupKey: 'ob001-key',
+        keyEpoch: 1,
+      );
+      await callGroupPublish(
+        bridge,
+        groupId: 'ob001-group',
+        text: 'OB-001 publish',
+        senderPeerId: 'peer-ob001-alice',
+        senderPublicKey: 'pk-ob001-alice',
+        senderPrivateKey: 'sk-ob001-alice',
+      );
+      await callGroupUpdateConfig(
+        bridge,
+        groupId: 'ob001-group',
+        groupConfig: {'name': 'OB-001 Group', 'members': <Object>[]},
+      );
+      await callGroupGenerateNextKey(bridge, 'ob001-group');
+      await callGroupUpdateKey(
+        bridge,
+        groupId: 'ob001-group',
+        groupKey: 'ob001-next-key',
+        keyEpoch: 2,
+      );
+      await callGroupInboxStore(
+        bridge,
+        'ob001-group',
+        'ob001-replay-envelope',
+        recipientPeerIds: ['peer-ob001-bob'],
+      );
+      await callGroupInboxRetrieve(bridge, 'ob001-group', 0);
+      await callGroupHistoryRepairRange(
+        bridge,
+        gap: GroupInboxHistoryGap(
+          groupId: 'ob001-group',
+          gapId: 'ob001-gap',
+          missingAfterMessageId: 'ob001-before',
+          missingBeforeMessageId: 'ob001-after',
+          expectedRangeHash: 'ob001-range-hash',
+          expectedHeadMessageId: 'ob001-head',
+          candidateSourcePeerIds: ['peer-ob001-bob'],
+        ),
+        sourcePeerId: 'peer-ob001-bob',
+      );
+      await callGroupLeave(bridge, 'ob001-group');
+
+      const expectedEvents = <String, ({String request, String response})>{
+        'create': (
+          request: 'GROUP_FL_BRIDGE_CREATE_REQUEST',
+          response: 'GROUP_FL_BRIDGE_CREATE_RESPONSE',
+        ),
+        'join': (
+          request: 'GROUP_FL_BRIDGE_JOIN_CONFIG_REQUEST',
+          response: 'GROUP_FL_BRIDGE_JOIN_CONFIG_RESPONSE',
+        ),
+        'publish': (
+          request: 'GROUP_FL_BRIDGE_PUBLISH_REQUEST',
+          response: 'GROUP_FL_BRIDGE_PUBLISH_RESPONSE',
+        ),
+        'updateConfig': (
+          request: 'GROUP_FL_BRIDGE_UPDATE_CONFIG_REQUEST',
+          response: 'GROUP_FL_BRIDGE_UPDATE_CONFIG_RESPONSE',
+        ),
+        'generateKey': (
+          request: 'GROUP_FL_BRIDGE_GENERATE_NEXT_KEY_REQUEST',
+          response: 'GROUP_FL_BRIDGE_GENERATE_NEXT_KEY_RESPONSE',
+        ),
+        'updateKey': (
+          request: 'GROUP_FL_BRIDGE_UPDATE_KEY_REQUEST',
+          response: 'GROUP_FL_BRIDGE_UPDATE_KEY_RESPONSE',
+        ),
+        'inboxStore': (
+          request: 'GROUP_FL_BRIDGE_INBOX_STORE_REQUEST',
+          response: 'GROUP_FL_BRIDGE_INBOX_STORE_RESPONSE',
+        ),
+        'inboxRetrieve': (
+          request: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_REQUEST',
+          response: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_RESPONSE',
+        ),
+        'historyRepair': (
+          request: 'GROUP_FL_BRIDGE_HISTORY_REPAIR_RANGE_REQUEST',
+          response: 'GROUP_FL_BRIDGE_HISTORY_REPAIR_RANGE_RESPONSE',
+        ),
+        'leave': (
+          request: 'GROUP_FL_BRIDGE_LEAVE_REQUEST',
+          response: 'GROUP_FL_BRIDGE_LEAVE_RESPONSE',
+        ),
+      };
+
+      Map<String, dynamic> eventNamed(String eventName) {
+        return flowEvents.singleWhere(
+          (payload) => payload['event'] == eventName,
+          orElse: () => fail('missing flow event $eventName'),
+        );
+      }
+
+      for (final entry in expectedEvents.entries) {
+        final request = eventNamed(entry.value.request);
+        final response = eventNamed(entry.value.response);
+        expect(DateTime.parse(request['ts'] as String).isUtc, isTrue);
+        expect(DateTime.parse(response['ts'] as String).isUtc, isTrue);
+        expect(request['layer'], 'FL', reason: entry.key);
+        expect(response['layer'], 'FL', reason: entry.key);
+        expect(request['details'], isA<Map<String, dynamic>>());
+        final responseDetails = response['details'] as Map<String, dynamic>;
+        expect(responseDetails['ok'], isTrue, reason: entry.key);
+      }
+    },
+  );
+
   group('BB-002 NOT_INITIALIZED', () {
     Map<String, dynamic> notInitialized() => {
       'ok': false,

@@ -986,6 +986,53 @@ void main() {
     );
 
     test(
+      'OB-001 private group commands emit send and timing flow events',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink((payload) {
+          flowEvents.add(Map<String, dynamic>.from(payload));
+        });
+
+        for (final entry in helperCommandMethods.entries) {
+          flowEvents.clear();
+          lastCall = null;
+          final payload = {
+            'ob001Command': entry.key,
+            'sentinel': 'flow-event-coverage',
+          };
+          final response = await client.send(
+            jsonEncode({'cmd': entry.key, 'payload': payload}),
+          );
+          final decoded = jsonDecode(response) as Map<String, dynamic>;
+
+          expect(decoded['ok'], isTrue, reason: entry.key);
+          expect(lastCall?.method, entry.value, reason: entry.key);
+
+          final sendEvent = flowEvents.singleWhere(
+            (payload) => payload['event'] == 'GO_BRIDGE_SEND',
+            orElse: () => fail('missing GO_BRIDGE_SEND for ${entry.key}'),
+          );
+          final sendDetails = sendEvent['details'] as Map<String, dynamic>;
+          expect(sendEvent['layer'], 'FL', reason: entry.key);
+          expect(DateTime.parse(sendEvent['ts'] as String).isUtc, isTrue);
+          expect(sendDetails['cmd'], entry.key, reason: entry.key);
+          expect(sendDetails['method'], entry.value, reason: entry.key);
+
+          final timingEvent = flowEvents.singleWhere(
+            (payload) => payload['event'] == 'BRIDGE_CALL_TIMING',
+            orElse: () => fail('missing BRIDGE_CALL_TIMING for ${entry.key}'),
+          );
+          final timingDetails = timingEvent['details'] as Map<String, dynamic>;
+          expect(timingEvent['layer'], 'FL', reason: entry.key);
+          expect(DateTime.parse(timingEvent['ts'] as String).isUtc, isTrue);
+          expect(timingDetails['cmd'], entry.key, reason: entry.key);
+          expect(timingDetails['bridgeMs'], isA<int>(), reason: entry.key);
+          expect(timingDetails['outcome'], 'success', reason: entry.key);
+        }
+      },
+    );
+
+    test(
       'BB-014 missing native private-group helper commands return MISSING_PLUGIN',
       () async {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
