@@ -12172,6 +12172,84 @@ void main() {
       },
     );
 
+    test(
+      'UP-004 accepts private_timeline_truth unread churn proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateTimelineTruthVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_timeline_truth verdicts valid'),
+        );
+      },
+    );
+
+    test(
+      'UP-004 rejects private_timeline_truth without unread churn proof',
+      () {
+        final missingProof = _validPrivateTimelineTruthVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('up004UnreadChurnProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing UP-004 unread churn proof fields'),
+        );
+      },
+    );
+
+    test(
+      'UP-004 rejects private_timeline_truth removed-window unread leakage',
+      () {
+        final leaked = _validPrivateTimelineTruthVerdicts();
+        leaked[2] = {
+          ...leaked[2],
+          'up004UnreadChurnProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              leaked[2]['up004UnreadChurnProof'] as Map,
+            ),
+            'removedWindowUnreadExcluded': false,
+            'removedWindowUnreadCount': 1,
+            'finalUnreadCountAfterOpen': 1,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: leaked,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('removedWindowUnreadExcluded must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: up004UnreadChurnProof.removedWindowUnreadCount must be 0',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains('finalUnreadCountAfterOpen must be 0'),
+        );
+      },
+    );
+
     test('rejects private_timeline_truth without ML-015 proof fields', () {
       final missingProof = _validPrivateTimelineTruthVerdicts();
       missingProof[1] = Map<String, dynamic>.from(missingProof[1])
@@ -21648,6 +21726,17 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'finalStateMatchesTimeline': true,
           'finalEpoch': 3,
         },
+        'up004UnreadChurnProof': <String, Object?>{
+          'rowId': 'UP-004',
+          'role': 'alice',
+          'liveThreePartyProof': true,
+          'preRemovalUnreadCount': 0,
+          'removedWindowUnreadCount': 0,
+          'postReaddUnreadCount': 2,
+          'postReaddUnreadIncluded': true,
+          'readClearOnOpen': true,
+          'finalUnreadCountAfterOpen': 0,
+        },
       },
     ),
     _baseVerdict(
@@ -21732,6 +21821,19 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'finalStateMatchesTimeline': true,
           'finalEpoch': 3,
         },
+        'up004UnreadChurnProof': <String, Object?>{
+          'rowId': 'UP-004',
+          'role': 'bob',
+          'liveThreePartyProof': true,
+          'preRemovalUnreadCovered': true,
+          'preRemovalUnreadCount': 1,
+          'removedWindowActiveRecipientUnreadCovered': true,
+          'removedWindowUnreadCount': 1,
+          'postReaddUnreadCount': 2,
+          'postReaddUnreadIncluded': true,
+          'readClearOnOpen': true,
+          'finalUnreadCountAfterOpen': 0,
+        },
       },
     ),
     _baseVerdict(
@@ -21809,6 +21911,20 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalStateMatchesTimeline': true,
           'finalEpoch': 3,
+        },
+        'up004UnreadChurnProof': <String, Object?>{
+          'rowId': 'UP-004',
+          'role': 'charlie',
+          'liveThreePartyProof': true,
+          'preRemovalUnreadCovered': true,
+          'preRemovalUnreadCount': 1,
+          'removedWindowUnreadExcluded': true,
+          'removedWindowUnreadCount': 0,
+          'removedWindowPlaintextCount': 0,
+          'postReaddUnreadCount': 2,
+          'postReaddUnreadIncluded': true,
+          'readClearOnOpen': true,
+          'finalUnreadCountAfterOpen': 0,
         },
       },
     ),

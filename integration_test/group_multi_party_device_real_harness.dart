@@ -26979,6 +26979,9 @@ Future<void> _runMl015Alice(
   await waitForSharedSignal(
     _signalName('charlie_received_aliceBeforeTimelineRemoval'),
   );
+  final alicePreRemovalUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
 
   final removedAt = await _removeCharlieAndPublish(
     stack: stack,
@@ -27030,6 +27033,10 @@ Future<void> _runMl015Alice(
   await waitForSharedSignal(
     _signalName('bob_received_aliceDuringTimelineRemoval'),
   );
+  final aliceRemovedWindowUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
+  await stack.groupMsgRepo.markAsRead(groupId);
 
   final charlieContact = await stack.contactRepo.getContact(
     identities['charlie']!['peerId'] as String,
@@ -27087,6 +27094,7 @@ Future<void> _runMl015Alice(
   await waitForSharedSignal(
     _signalName('charlie_received_alicePostTimelineReadd'),
   );
+  await stack.groupMsgRepo.markAsRead(groupId);
 
   final bobSent = await waitForSharedJson(
     _signalName('bob_sent_bobPostTimelineReadd.json'),
@@ -27111,6 +27119,13 @@ Future<void> _runMl015Alice(
     senderPeerId: identities['charlie']!['peerId'] as String,
   );
   writeSharedText(_signalName('alice_received_charliePostTimelineReadd'), 'ok');
+  final alicePostReaddUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
+  await stack.groupMsgRepo.markAsRead(groupId);
+  final aliceFinalUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
 
   final removalTimelineText = _ml015RemovalTimelineText(identities);
   final readdTimelineText = _ml015ReaddTimelineText(identities);
@@ -27168,6 +27183,17 @@ Future<void> _runMl015Alice(
         identities: identities,
         role: 'alice',
       ),
+      'up004UnreadChurnProof': <String, dynamic>{
+        'rowId': 'UP-004',
+        'role': 'alice',
+        'liveThreePartyProof': true,
+        'preRemovalUnreadCount': alicePreRemovalUnreadCount,
+        'removedWindowUnreadCount': aliceRemovedWindowUnreadCount,
+        'postReaddUnreadCount': alicePostReaddUnreadCount,
+        'postReaddUnreadIncluded': alicePostReaddUnreadCount >= 1,
+        'readClearOnOpen': aliceFinalUnreadCount == 0,
+        'finalUnreadCountAfterOpen': aliceFinalUnreadCount,
+      },
     },
   );
 }
@@ -27212,6 +27238,10 @@ Future<void> _runMl015Bob(
     senderPeerId: alicePeerId,
   );
   writeSharedText(_signalName('bob_received_aliceBeforeTimelineRemoval'), 'ok');
+  final bobPreRemovalUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
+  await stack.groupMsgRepo.markAsRead(groupId);
 
   await _waitForMemberExclusion(
     stack: stack,
@@ -27239,6 +27269,10 @@ Future<void> _runMl015Bob(
     senderPeerId: alicePeerId,
   );
   writeSharedText(_signalName('bob_received_aliceDuringTimelineRemoval'), 'ok');
+  final bobRemovedWindowUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
+  await stack.groupMsgRepo.markAsRead(groupId);
 
   await _waitForMemberInclusion(
     stack: stack,
@@ -27281,6 +27315,11 @@ Future<void> _runMl015Bob(
     senderPeerId: charliePeerId,
   );
   writeSharedText(_signalName('bob_received_charliePostTimelineReadd'), 'ok');
+  final bobPostReaddUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
+  await stack.groupMsgRepo.markAsRead(groupId);
+  final bobFinalUnreadCount = await stack.groupMsgRepo.getUnreadCount(groupId);
 
   final removalTimelineText = _ml015RemovalTimelineText(identities);
   final readdTimelineText = _ml015ReaddTimelineText(identities);
@@ -27338,6 +27377,20 @@ Future<void> _runMl015Bob(
         identities: identities,
         role: 'bob',
       ),
+      'up004UnreadChurnProof': <String, dynamic>{
+        'rowId': 'UP-004',
+        'role': 'bob',
+        'liveThreePartyProof': true,
+        'preRemovalUnreadCovered': bobPreRemovalUnreadCount >= 1,
+        'preRemovalUnreadCount': bobPreRemovalUnreadCount,
+        'removedWindowActiveRecipientUnreadCovered':
+            bobRemovedWindowUnreadCount >= 1,
+        'removedWindowUnreadCount': bobRemovedWindowUnreadCount,
+        'postReaddUnreadCount': bobPostReaddUnreadCount,
+        'postReaddUnreadIncluded': bobPostReaddUnreadCount >= 1,
+        'readClearOnOpen': bobFinalUnreadCount == 0,
+        'finalUnreadCountAfterOpen': bobFinalUnreadCount,
+      },
     },
   );
 }
@@ -27383,9 +27436,14 @@ Future<void> _runMl015Charlie(
     _signalName('charlie_received_aliceBeforeTimelineRemoval'),
     'ok',
   );
+  final charliePreRemovalUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
+  await stack.groupMsgRepo.markAsRead(groupId);
 
   await _waitForSelfRemoval(stack: stack, groupId: groupId);
   writeSharedText(_signalName('charlie_self_removed'), 'ok');
+  await stack.groupMsgRepo.markAsRead(groupId);
 
   final removedSent = await waitForSharedJson(
     _signalName('alice_sent_aliceDuringTimelineRemoval.json'),
@@ -27397,12 +27455,15 @@ Future<void> _runMl015Charlie(
     text: removedSent['text'] as String,
     senderPeerId: alicePeerId,
   );
+  final charlieRemovedWindowUnreadCount = await stack.groupMsgRepo
+      .getUnreadCount(groupId);
 
   final readdFixture = await waitForSharedJson(
     _signalName('charlie_readd_group_fixture.json'),
   );
   await _importGm004JoinedGroupFixture(stack: stack, fixture: readdFixture);
   writeSharedText(_signalName('charlie_group_rejoined'), 'ok');
+  await stack.groupMsgRepo.markAsRead(groupId);
 
   final afterSent = await waitForSharedJson(
     _signalName('alice_sent_alicePostTimelineReadd.json'),
@@ -27427,6 +27488,13 @@ Future<void> _runMl015Charlie(
     senderPeerId: bobPeerId,
   );
   writeSharedText(_signalName('charlie_received_bobPostTimelineReadd'), 'ok');
+  final charliePostReaddUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
+  await stack.groupMsgRepo.markAsRead(groupId);
+  final charlieFinalUnreadCount = await stack.groupMsgRepo.getUnreadCount(
+    groupId,
+  );
 
   final charlieSent = await _sendProofMessage(
     stack: stack,
@@ -27502,6 +27570,22 @@ Future<void> _runMl015Charlie(
         identities: identities,
         role: 'charlie',
       ),
+      'up004UnreadChurnProof': <String, dynamic>{
+        'rowId': 'UP-004',
+        'role': 'charlie',
+        'liveThreePartyProof': true,
+        'preRemovalUnreadCovered': charliePreRemovalUnreadCount >= 1,
+        'preRemovalUnreadCount': charliePreRemovalUnreadCount,
+        'removedWindowUnreadExcluded': charlieRemovedWindowUnreadCount == 0,
+        'removedWindowUnreadCount': charlieRemovedWindowUnreadCount,
+        'removedWindowPlaintextCount':
+            removedWindowPlaintextBeforeReadd +
+            removedWindowPlaintextAfterReadd,
+        'postReaddUnreadCount': charliePostReaddUnreadCount,
+        'postReaddUnreadIncluded': charliePostReaddUnreadCount >= 1,
+        'readClearOnOpen': charlieFinalUnreadCount == 0,
+        'finalUnreadCountAfterOpen': charlieFinalUnreadCount,
+      },
     },
   );
 }
