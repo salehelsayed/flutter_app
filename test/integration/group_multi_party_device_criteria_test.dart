@@ -12323,6 +12323,80 @@ void main() {
       );
     });
 
+    test(
+      'UP-009 accepts private_timeline_truth re-add sender identity proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateTimelineTruthVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_timeline_truth verdicts valid'),
+        );
+      },
+    );
+
+    test(
+      'UP-009 rejects private_timeline_truth without re-add sender identity proof',
+      () {
+        final missingProof = _validPrivateTimelineTruthVerdicts();
+        missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+          ..remove('up009ReaddSenderIdentityProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('bob: missing UP-009 sender identity proof fields'),
+        );
+      },
+    );
+
+    test(
+      'UP-009 rejects private_timeline_truth stale rendered sender label',
+      () {
+        final stale = _validPrivateTimelineTruthVerdicts();
+        stale[0] = {
+          ...stale[0],
+          'up009ReaddSenderIdentityProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              stale[0]['up009ReaddSenderIdentityProof'] as Map,
+            ),
+            'currentMemberUsername': 'Readded Charlie',
+            'renderedSenderDisplayName': 'Old Charlie',
+            'renderedLabelMatchesCurrentMember': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: stale,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('renderedLabelMatchesCurrentMember must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'renderedSenderDisplayName must match currentMemberUsername',
+          ),
+        );
+      },
+    );
+
     test('rejects private_timeline_truth without ML-015 proof fields', () {
       final missingProof = _validPrivateTimelineTruthVerdicts();
       missingProof[1] = Map<String, dynamic>.from(missingProof[1])
@@ -21827,6 +21901,28 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalEpoch': 3,
         },
+        'up009ReaddSenderIdentityProof': <String, Object?>{
+          'rowId': 'UP-009',
+          'role': 'alice',
+          'liveThreePartyProof': true,
+          'readdMemberPresent': true,
+          'charliePostReaddMessageVisible': true,
+          'charliePostReaddMessageIncoming': true,
+          'charlieOwnMessageStoredAsSent': false,
+          'senderPeerIdMatchesCharlie': true,
+          'messageId': 'ml015-c-after',
+          'storedSenderUsername': 'Charlie',
+          'currentMemberUsername': 'Charlie',
+          'renderedSenderDisplayName': 'Charlie',
+          'renderedLabelNonBlank': true,
+          'renderedLabelMatchesCurrentMember': true,
+          'renderedLabelNotPeerFallback': true,
+          'renderedLabelNotUnknown': true,
+          'contactIndependentResolution': true,
+          'memberListIncludesCharlie': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -21941,6 +22037,28 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalEpoch': 3,
         },
+        'up009ReaddSenderIdentityProof': <String, Object?>{
+          'rowId': 'UP-009',
+          'role': 'bob',
+          'liveThreePartyProof': true,
+          'readdMemberPresent': true,
+          'charliePostReaddMessageVisible': true,
+          'charliePostReaddMessageIncoming': true,
+          'charlieOwnMessageStoredAsSent': false,
+          'senderPeerIdMatchesCharlie': true,
+          'messageId': 'ml015-c-after',
+          'storedSenderUsername': 'Charlie',
+          'currentMemberUsername': 'Charlie',
+          'renderedSenderDisplayName': 'Charlie',
+          'renderedLabelNonBlank': true,
+          'renderedLabelMatchesCurrentMember': true,
+          'renderedLabelNotPeerFallback': true,
+          'renderedLabelNotUnknown': true,
+          'contactIndependentResolution': true,
+          'memberListIncludesCharlie': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -22046,6 +22164,28 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'latestCharlieTimelineIsReadd': true,
           'staleRemovedStateReused': false,
           'stalePendingInviteStateReused': false,
+          'memberListIncludesCharlie': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
+        'up009ReaddSenderIdentityProof': <String, Object?>{
+          'rowId': 'UP-009',
+          'role': 'charlie',
+          'liveThreePartyProof': true,
+          'readdMemberPresent': true,
+          'charliePostReaddMessageVisible': true,
+          'charliePostReaddMessageIncoming': false,
+          'charlieOwnMessageStoredAsSent': true,
+          'senderPeerIdMatchesCharlie': true,
+          'messageId': 'ml015-c-after',
+          'storedSenderUsername': 'Charlie',
+          'currentMemberUsername': 'Charlie',
+          'renderedSenderDisplayName': 'Charlie',
+          'renderedLabelNonBlank': true,
+          'renderedLabelMatchesCurrentMember': true,
+          'renderedLabelNotPeerFallback': true,
+          'renderedLabelNotUnknown': true,
+          'contactIndependentResolution': true,
           'memberListIncludesCharlie': true,
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalEpoch': 3,
