@@ -2537,6 +2537,50 @@ void main() {
       );
     });
 
+    test('OB-011 accepts app-peer release telemetry proof fields', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_background_resume_group_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateBackgroundResumeGroupDeliveryVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+    });
+
+    test('OB-011 rejects incomplete app-peer telemetry proof', () {
+      final verdicts = _validPrivateBackgroundResumeGroupDeliveryVerdicts();
+      verdicts[1] = _withOb011ProofOverrides(
+        verdicts[1],
+        const <String, Object?>{
+          'rowId': 'NW-010',
+          'appPeerPlatform': 'ios_26_4_core_simulator',
+          'unknownCount': 1,
+          'hostCanonicalCauseCoverageRequired': <String>['transport'],
+          'missedDiagnostics': <Map<String, Object?>>[
+            <String, Object?>{
+              'messageKey': 'aliceDuringBackgroundBeforeEdit',
+              'recipientRole': 'bob',
+              'cause': 'transport',
+              'sourceEvent': 'APP_PEER_BACKGROUND_PAUSE',
+            },
+          ],
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_background_resume_group_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('rowId must be OB-011'));
+      expect(rejected.detail, contains('appPeerPlatform'));
+      expect(rejected.detail, contains('unknownCount must be 0'));
+      expect(rejected.detail, contains('hostCanonicalCauseCoverageRequired'));
+      expect(rejected.detail, contains('diagnostic missing resolution'));
+    });
+
     test(
       'NW-010 rejects missing row id and non-app-peer background source',
       () {
@@ -18707,6 +18751,7 @@ _validPrivateBackgroundResumeGroupDeliveryVerdicts() {
         persistedMessageCounts: countsFor(role),
         extra: <String, Object?>{
           'activeMemberPeerIds': remainingMembers,
+          'ob011ReleaseTelemetryProof': _ob011Nw010ProofForRole(role, scenario),
           'nw010BackgroundResumeDeliveryProof': proofForRole(role),
         },
       ),
@@ -18725,6 +18770,84 @@ Map<String, dynamic> _withNw010ProofOverrides(
       ),
       ...overrides,
     },
+  };
+}
+
+Map<String, dynamic> _withOb011ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'ob011ReleaseTelemetryProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['ob011ReleaseTelemetryProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+Map<String, Object?> _ob011Nw010ProofForRole(String role, String scenario) {
+  final diagnostics = <Map<String, Object?>>[];
+  if (role == 'bob') {
+    diagnostics.addAll(const <Map<String, Object?>>[
+      <String, Object?>{
+        'messageKey': 'aliceDuringBackgroundBeforeEdit',
+        'recipientRole': 'bob',
+        'cause': 'transport',
+        'sourceEvent': 'APP_PEER_BACKGROUND_PAUSE',
+        'resolution': 'offline_replay_drained',
+      },
+      <String, Object?>{
+        'messageKey': 'aliceDuringBackgroundAfterEdit',
+        'recipientRole': 'bob',
+        'cause': 'replay',
+        'sourceEvent': 'GROUP_REJOIN_AND_DRAIN',
+        'resolution': 'offline_replay_drained',
+      },
+    ]);
+  } else if (role == 'charlie') {
+    diagnostics.addAll(const <Map<String, Object?>>[
+      <String, Object?>{
+        'messageKey': 'aliceDuringBackgroundAfterEdit',
+        'recipientRole': 'charlie',
+        'cause': 'membership',
+        'sourceEvent': 'CHARLIE_SELF_REMOVAL_OBSERVED',
+        'resolution': 'not_entitled_after_removal',
+      },
+      <String, Object?>{
+        'messageKey': 'aliceDuringBackgroundAfterEdit',
+        'recipientRole': 'charlie',
+        'cause': 'ui_filter',
+        'sourceEvent': 'ENTITLEMENT_FILTER_PRESERVED',
+        'resolution': 'filtered_removed_member_window',
+      },
+    ]);
+  }
+  final covered =
+      diagnostics
+          .map((entry) => entry['cause'] as String)
+          .toSet()
+          .toList(growable: false)
+        ..sort();
+  return <String, Object?>{
+    'rowId': 'OB-011',
+    'scenario': scenario,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'releaseTelemetryProofSource': 'app_peer_background_resume_verdict',
+    'proofRole': role,
+    'missedDiagnostics': diagnostics,
+    'coveredCauseClasses': covered,
+    'unknownCount': 0,
+    'hostCanonicalCauseCoverageRequired': const <String>[
+      'dispatcher',
+      'key',
+      'membership',
+      'replay',
+      'transport',
+      'ui_filter',
+    ],
   };
 }
 

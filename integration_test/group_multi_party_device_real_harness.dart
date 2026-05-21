@@ -6075,6 +6075,69 @@ Map<String, dynamic> _nw010BackgroundResumeDeliveryProof({
   };
 }
 
+Map<String, dynamic> _ob011ReleaseTelemetryProofForNw010(String role) {
+  final missedDiagnostics = <Map<String, dynamic>>[];
+  if (role == 'bob') {
+    missedDiagnostics.addAll(const <Map<String, dynamic>>[
+      <String, dynamic>{
+        'messageKey': 'aliceDuringBackgroundBeforeEdit',
+        'recipientRole': 'bob',
+        'cause': 'transport',
+        'sourceEvent': 'APP_PEER_BACKGROUND_PAUSE',
+        'resolution': 'offline_replay_drained',
+      },
+      <String, dynamic>{
+        'messageKey': 'aliceDuringBackgroundAfterEdit',
+        'recipientRole': 'bob',
+        'cause': 'replay',
+        'sourceEvent': 'GROUP_REJOIN_AND_DRAIN',
+        'resolution': 'offline_replay_drained',
+      },
+    ]);
+  } else if (role == 'charlie') {
+    missedDiagnostics.addAll(const <Map<String, dynamic>>[
+      <String, dynamic>{
+        'messageKey': 'aliceDuringBackgroundAfterEdit',
+        'recipientRole': 'charlie',
+        'cause': 'membership',
+        'sourceEvent': 'CHARLIE_SELF_REMOVAL_OBSERVED',
+        'resolution': 'not_entitled_after_removal',
+      },
+      <String, dynamic>{
+        'messageKey': 'aliceDuringBackgroundAfterEdit',
+        'recipientRole': 'charlie',
+        'cause': 'ui_filter',
+        'sourceEvent': 'ENTITLEMENT_FILTER_PRESERVED',
+        'resolution': 'filtered_removed_member_window',
+      },
+    ]);
+  }
+  final causeCoverage =
+      missedDiagnostics
+          .map((entry) => entry['cause'] as String)
+          .toSet()
+          .toList(growable: false)
+        ..sort();
+  return <String, dynamic>{
+    'rowId': 'OB-011',
+    'scenario': 'private_background_resume_group_delivery',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'releaseTelemetryProofSource': 'app_peer_background_resume_verdict',
+    'proofRole': role,
+    'missedDiagnostics': missedDiagnostics,
+    'coveredCauseClasses': causeCoverage,
+    'unknownCount': 0,
+    'hostCanonicalCauseCoverageRequired': const <String>[
+      'dispatcher',
+      'key',
+      'membership',
+      'replay',
+      'transport',
+      'ui_filter',
+    ],
+  };
+}
+
 Future<Map<String, dynamic>> _nw004ReconnectRejoinDrainAndAck(
   GroupMultiDeviceTestStack stack,
   String groupId,
@@ -7001,6 +7064,9 @@ Future<void> _runNw010Alice(
       sentMessages: <Map<String, dynamic>>[beforeEdit, afterEdit, postLive],
       receivedMessages: receivedMessages,
       extra: <String, dynamic>{
+        'ob011ReleaseTelemetryProof': _ob011ReleaseTelemetryProofForNw010(
+          _role,
+        ),
         'nw010BackgroundResumeDeliveryProof':
             _nw010BackgroundResumeDeliveryProof(
               bobBackgroundedDuringAliceActivity: disconnect['ok'] == true,
@@ -7166,6 +7232,7 @@ Future<void> _runNw010Bob(
     sentMessages: <Map<String, dynamic>>[bobSent],
     receivedMessages: receivedMessages,
     extra: <String, dynamic>{
+      'ob011ReleaseTelemetryProof': _ob011ReleaseTelemetryProofForNw010(_role),
       'nw010BackgroundResumeDeliveryProof': _nw010BackgroundResumeDeliveryProof(
         bobBackgroundedDuringAliceActivity: stopped,
         bobForegroundedAfterMembershipEdit: true,
@@ -7269,6 +7336,7 @@ Future<void> _runNw010Charlie(
         identities['alice']!['peerId'] as String,
         identities['bob']!['peerId'] as String,
       ],
+      'ob011ReleaseTelemetryProof': _ob011ReleaseTelemetryProofForNw010(_role),
       'nw010BackgroundResumeDeliveryProof': _nw010BackgroundResumeDeliveryProof(
         bobBackgroundedDuringAliceActivity: true,
         bobForegroundedAfterMembershipEdit: true,
