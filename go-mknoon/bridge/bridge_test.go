@@ -2479,6 +2479,197 @@ func TestGroupInboxRetrieveCursor_MissingGroupId(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestST010GroupBridgeRejectsMalformedPayloadsWithoutPanicOrStateMutation(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startResult := StartNode(startNodeJSON(t, identity.PrivateKeyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":                  "ST-010 Stable Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity.PeerId,
+		"creatorPublicKey":      identity.PublicKey,
+		"creatorMlKemPublicKey": "st010-mlkem-creator",
+	})
+	createMap := parseJSON(t, GroupCreate(string(createInput)))
+	assertOk(t, createMap)
+	groupId := createMap["groupId"].(string)
+
+	callWithoutPanic := func(t *testing.T, name string, call func(string) string, input string) map[string]interface{} {
+		t.Helper()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("%s panicked for input %q: %v", name, input, r)
+			}
+		}()
+		return parseJSON(t, call(input))
+	}
+
+	assertSafeInvalidInput := func(t *testing.T, name string, result map[string]interface{}) {
+		t.Helper()
+		assertNotOk(t, result, "INVALID_INPUT")
+		successArtifacts := []string{
+			"groupId",
+			"groupKey",
+			"keyEpoch",
+			"groupConfig",
+			"topicName",
+			"topicPeers",
+			"messageId",
+			"ciphertext",
+			"nonce",
+			"plaintext",
+			"messages",
+			"cursor",
+			"historyGaps",
+			"entries",
+			"replayEnvelopes",
+		}
+		for _, key := range successArtifacts {
+			if _, exists := result[key]; exists {
+				t.Fatalf("%s failure response carried success artifact %q: %#v", name, key, result)
+			}
+		}
+	}
+
+	cases := []struct {
+		name      string
+		call      func(string) string
+		malformed string
+		missing   string
+	}{
+		{
+			name:      "group:create",
+			call:      GroupCreate,
+			malformed: `{"name":[],"groupType":"chat","creatorPeerId":"peer","creatorPublicKey":"pk","creatorMlKemPublicKey":"mlkem"}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:join",
+			call:      GroupJoinTopic,
+			malformed: `{"groupId":"st010","groupConfig":[],"groupKey":"key","keyEpoch":1}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:leave",
+			call:      GroupLeaveTopic,
+			malformed: `{"groupId":123}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:publish",
+			call:      GroupPublish,
+			malformed: `{"groupId":"st010","text":[],"senderPeerId":"peer","senderPublicKey":"pk","senderPrivateKey":"sk"}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:publishReaction",
+			call:      GroupPublishReaction,
+			malformed: `{"groupId":"st010","senderPeerId":"peer","senderPublicKey":"pk","senderPrivateKey":"sk","reactionPayload":{}}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:updateConfig",
+			call:      GroupUpdateConfig,
+			malformed: `{"groupId":"st010","groupConfig":[]}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:rotateKey",
+			call:      GroupRotateKey,
+			malformed: `{"groupId":123}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:generateNextKey",
+			call:      GroupGenerateNextKey,
+			malformed: `{"groupId":123}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:updateKey",
+			call:      GroupUpdateKey,
+			malformed: `{"groupId":"st010","groupKey":[],"keyEpoch":2}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group.encrypt",
+			call:      GroupEncryptMessage,
+			malformed: `{"groupKey":[],"plaintext":"hello"}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group.decrypt",
+			call:      GroupDecryptMessage,
+			malformed: `{"groupKey":"key","ciphertext":[],"nonce":"nonce"}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:inboxStore",
+			call:      GroupInboxStore,
+			malformed: `{"groupId":"st010","message":[],"recipientPeerIds":["peer"]}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:inboxRetrieve",
+			call:      GroupInboxRetrieve,
+			malformed: `{"groupId":"st010","sinceTimestamp":"bad"}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:inboxRetrieveCursor",
+			call:      GroupInboxRetrieveCursor,
+			malformed: `{"groupId":"st010","cursor":[],"limit":"bad"}`,
+			missing:   `{}`,
+		},
+		{
+			name:      "group:historyRepairRange",
+			call:      GroupHistoryRepairRange,
+			malformed: `{"groupId":123,"gapId":"gap","sourcePeerId":"peer"}`,
+			missing:   `{}`,
+		},
+	}
+
+	for _, tc := range cases {
+		for _, input := range []struct {
+			name string
+			body string
+		}{
+			{name: "invalid-json", body: "{not-json"},
+			{name: "malformed-payload", body: tc.malformed},
+			{name: "missing-required", body: tc.missing},
+		} {
+			t.Run(tc.name+"/"+input.name, func(t *testing.T) {
+				result := callWithoutPanic(t, tc.name, tc.call, input.body)
+				assertSafeInvalidInput(t, tc.name, result)
+			})
+		}
+	}
+
+	nextKeyInput, _ := json.Marshal(map[string]interface{}{"groupId": groupId})
+	nextKeyMap := callWithoutPanic(t, "group:generateNextKey", GroupGenerateNextKey, string(nextKeyInput))
+	assertOk(t, nextKeyMap)
+	if got := nextKeyMap["keyEpoch"]; got != float64(2) {
+		t.Fatalf("keyEpoch after malformed payloads = %v, want 2", got)
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "ST-010 bridge remains usable",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "ST-010 Creator",
+	})
+	publishMap := callWithoutPanic(t, "group:publish", GroupPublish, string(publishInput))
+	assertOk(t, publishMap)
+	if messageId, ok := publishMap["messageId"].(string); !ok || messageId == "" {
+		t.Fatalf("messageId after malformed payloads = %v, want non-empty string", publishMap["messageId"])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Full lifecycle test
 // ---------------------------------------------------------------------------
