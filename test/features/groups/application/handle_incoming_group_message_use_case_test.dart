@@ -1775,6 +1775,128 @@ void main() {
     },
   );
 
+  test(
+    'SV-006 replay dedupes same epoch and rejects removed-interval after readd',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      const duplicateMessageId = 'sv006-same-epoch-replay';
+      const removedReplayMessageId = 'sv006-removed-window-replay';
+      const currentMessageId = 'sv006-current-after-readd';
+      const selfPeerId = 'peer-recipient';
+      final originalAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 20),
+      );
+      final removedAt = originalAt.add(const Duration(minutes: 3));
+      final rejoinedAt = removedAt.add(const Duration(minutes: 2));
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: selfPeerId,
+          username: 'Recipient',
+          role: MemberRole.writer,
+          joinedAt: originalAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'SV-006 original same epoch',
+        timestamp: originalAt.toIso8601String(),
+        messageId: duplicateMessageId,
+        selfPeerId: selfPeerId,
+      );
+      expect(first, isNotNull);
+
+      final replay = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'SV-006 conflicting replay body',
+        timestamp: originalAt.add(const Duration(minutes: 1)).toIso8601String(),
+        messageId: duplicateMessageId,
+        selfPeerId: selfPeerId,
+      );
+      expect(replay, isNull);
+
+      final savedDuplicate = await msgRepo.getMessage(duplicateMessageId);
+      expect(savedDuplicate, isNotNull);
+      expect(savedDuplicate!.text, 'SV-006 original same epoch');
+      expect(savedDuplicate.timestamp, originalAt);
+      expect(
+        (await msgRepo.getMessagesPage(
+          'group-1',
+        )).where((message) => message.id == duplicateMessageId),
+        hasLength(1),
+      );
+
+      await saveRemovalCutoff(removedPeerId: selfPeerId, removedAt: removedAt);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: selfPeerId,
+          username: 'Recipient',
+          role: MemberRole.writer,
+          joinedAt: rejoinedAt,
+        ),
+      );
+
+      final removedReplay = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 2,
+        text: 'SV-006 removed-window replay',
+        timestamp: removedAt.add(const Duration(seconds: 30)).toIso8601String(),
+        messageId: removedReplayMessageId,
+        selfPeerId: selfPeerId,
+      );
+      expect(removedReplay, isNull);
+      expect(await msgRepo.getMessage(removedReplayMessageId), isNull);
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+                  'GROUP_HANDLE_INCOMING_MSG_LOCAL_REMOVED_INTERVAL_REPLAY_REJECTED' ||
+              event['event'] ==
+                  'GROUP_HANDLE_INCOMING_MSG_SELF_REMOVED_WINDOW_AFTER_REJOIN',
+        ),
+        isNotEmpty,
+      );
+
+      final current = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 3,
+        text: 'SV-006 current after readd',
+        timestamp: rejoinedAt.add(const Duration(seconds: 1)).toIso8601String(),
+        messageId: currentMessageId,
+        selfPeerId: selfPeerId,
+      );
+      expect(current, isNotNull);
+      expect(
+        (await msgRepo.getMessage(currentMessageId))!.text,
+        'SV-006 current after readd',
+      );
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // Media attachment tests
   // ---------------------------------------------------------------------------

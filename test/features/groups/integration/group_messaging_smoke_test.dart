@@ -4477,6 +4477,191 @@ void main() {
     );
 
     test(
+      'SV-006 fake-network replay duplicate and removed-interval delivery stay deduped',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        final alice = GroupTestUser.create(
+          peerId: 'sv006-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv006-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv006-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          debugSetFlowEventSink(null);
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-sv006-replay';
+        const duplicateMessageId = 'sv006-duplicate-live';
+        const removedReplayMessageId = 'sv006-removed-window-replay';
+        const currentMessageId = 'sv006-current-after-readd';
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 20),
+        );
+        final removedAt = createdAt.add(const Duration(minutes: 3));
+        final readdAt = createdAt.add(const Duration(minutes: 5));
+
+        Future<void> saveKey(
+          GroupTestUser user,
+          int epoch,
+          String encryptedKey,
+        ) {
+          return user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt.add(Duration(minutes: epoch)),
+            ),
+          );
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'SV-006 Replay',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await Future.wait([
+          saveKey(alice, 1, 'sv006-key-1'),
+          saveKey(bob, 1, 'sv006-key-1'),
+          saveKey(charlie, 1, 'sv006-key-1'),
+        ]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        network.resetCounters();
+        network.duplicateOnDeliver = true;
+        final duplicateSend = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'SV-006 duplicate live delivery',
+          messageId: duplicateMessageId,
+          timestamp: createdAt.add(const Duration(minutes: 2, seconds: 10)),
+        );
+        expect(duplicateSend.$1.name, 'success');
+        expect(duplicateSend.$2, isNotNull);
+        expect(duplicateSend.$2!.keyGeneration, 1);
+        await pump();
+        network.duplicateOnDeliver = false;
+
+        expect(network.totalDeliveries, 4);
+        expect(
+          network.deliveryRecords.where(
+            (record) => record['messageId'] == duplicateMessageId,
+          ),
+          hasLength(2),
+        );
+        for (final recipient in [bob, charlie]) {
+          final matches = (await recipient.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == duplicateMessageId).toList();
+          expect(matches, hasLength(1), reason: recipient.username);
+          expect(matches.single.text, 'SV-006 duplicate live delivery');
+          expect(matches.single.keyGeneration, 1);
+        }
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await pump();
+        expect(
+          await charlie.groupRepo.getMember(groupId, charlie.peerId),
+          isNull,
+        );
+
+        await Future.wait([
+          saveKey(alice, 2, 'sv006-key-2'),
+          saveKey(bob, 2, 'sv006-key-2'),
+        ]);
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: readdAt,
+        );
+        await saveKey(charlie, 2, 'sv006-key-2');
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: readdAt,
+        );
+        await pump();
+        expect(
+          await charlie.groupRepo.getMember(groupId, charlie.peerId),
+          isNotNull,
+        );
+
+        final removedReplay = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'SV-006 removed-window replay',
+          messageId: removedReplayMessageId,
+          timestamp: removedAt.add(const Duration(seconds: 30)),
+        );
+        expect(removedReplay.$1.name, 'success');
+        expect(removedReplay.$2, isNotNull);
+        expect(removedReplay.$2!.keyGeneration, 2);
+        await pump();
+
+        final charlieRemovedReplay = (await charlie.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == removedReplayMessageId);
+        expect(charlieRemovedReplay, isEmpty);
+        expect(
+          flowEvents.where(
+            (event) =>
+                event['event'] ==
+                    'GROUP_HANDLE_INCOMING_MSG_LOCAL_REMOVED_INTERVAL_REPLAY_REJECTED' ||
+                event['event'] ==
+                    'GROUP_HANDLE_INCOMING_MSG_SELF_REMOVED_WINDOW_AFTER_REJOIN',
+          ),
+          isNotEmpty,
+        );
+
+        final currentSend = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'SV-006 current after readd',
+          messageId: currentMessageId,
+          timestamp: readdAt.add(const Duration(seconds: 1)),
+        );
+        expect(currentSend.$1.name, 'success');
+        expect(currentSend.$2, isNotNull);
+        expect(currentSend.$2!.keyGeneration, 2);
+        await pump();
+
+        final currentForCharlie = (await charlie.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == currentMessageId).toList();
+        expect(currentForCharlie, hasLength(1));
+        expect(currentForCharlie.single.text, 'SV-006 current after readd');
+      },
+    );
+
+    test(
       'GE-008 simultaneous send storm during remove/re-add keeps entitlement windows exact',
       () async {
         final alice = GroupTestUser.create(

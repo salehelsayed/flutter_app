@@ -5798,6 +5798,49 @@ func TestLP013DuplicateWireEnvelopeWithDistinctPubSubSeqnosPreservesApplicationM
 	t.Logf("same encrypted wire envelope published twice produced %d app event(s); PubSub suppressed before app when count is one", len(events))
 }
 
+func TestSV006ReplayedWireEnvelopePreservesApplicationMessageIdForDedupe(t *testing.T) {
+	groupId := "test-sv006-replayed-wire-envelope"
+	messageId := "sv006-wire-replay"
+	messageText := "SV-006 replayed wire body"
+	harness := setupLP013TwoNodeGroup(t, groupId)
+	envelopeJSON := buildLP013GroupMessageEnvelope(
+		t,
+		harness,
+		groupId,
+		messageId,
+		messageText,
+		"2026-05-14T04:50:00.000Z",
+	)
+
+	publishLP013RawGroupEnvelope(t, harness.nodeA, groupId, envelopeJSON)
+	publishLP013RawGroupEnvelope(t, harness.nodeA, groupId, envelopeJSON)
+
+	events := waitForCollectedEventCount(t, harness.nodeBCapture, "group_message:received", 1, 5*time.Second)
+	deadline := time.Now().Add(750 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		events = harness.nodeBCapture.collectEvents("group_message:received")
+		if len(events) >= 2 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if len(events) < 1 || len(events) > 2 {
+		t.Fatalf("same replayed wire envelope produced %d events, want explicit one-or-two app event outcome", len(events))
+	}
+
+	for i, event := range events {
+		if got, _ := event["messageId"].(string); got != messageId {
+			t.Fatalf("event %d messageId = %q, want %q", i+1, got, messageId)
+		}
+		if got, _ := event["text"].(string); got != messageText {
+			t.Fatalf("event %d text = %q, want %q", i+1, got, messageText)
+		}
+		if got := int(event["keyEpoch"].(float64)); got != harness.keyInfo.KeyEpoch {
+			t.Fatalf("event %d keyEpoch = %d, want %d", i+1, got, harness.keyInfo.KeyEpoch)
+		}
+	}
+}
+
 func TestLP013ConflictingApplicationDuplicatePubSubPayloadsPreserveFirstWriterInputsForDartDedupe(t *testing.T) {
 	groupId := "test-lp013-conflicting-app-duplicate"
 	messageId := "lp013-conflicting-dup"
