@@ -473,6 +473,160 @@ void main() {
     );
 
     test(
+      'SV-011 valid-key nonmember fake-network publish is rejected by all recipients',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        final alice = GroupTestUser.create(
+          peerId: 'sv011-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv011-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv011-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final dana = GroupTestUser.create(
+          peerId: 'sv011-dana-key-holder',
+          username: 'Dana',
+          network: network,
+        );
+        addTearDown(() {
+          debugSetFlowEventSink(null);
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+          dana.dispose();
+        });
+
+        const groupId = 'group-sv011-valid-key-nonmember';
+        const messageId = 'sv011-valid-key-nonmember-injection';
+        final createdAt = DateTime.utc(2026, 5, 14, 4, 5);
+        final group = await alice.createGroup(
+          groupId: groupId,
+          name: 'SV-011 Private ABC',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        dana.start();
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await pump();
+
+        Future<void> saveCurrentKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'sv011-current-shared-key',
+              createdAt: createdAt.add(const Duration(minutes: 1)),
+            ),
+          );
+        }
+
+        await Future.wait([
+          saveCurrentKey(alice),
+          saveCurrentKey(bob),
+          saveCurrentKey(charlie),
+        ]);
+        await dana.groupRepo.saveGroup(
+          group.copyWith(myRole: GroupRole.member),
+        );
+        await saveCurrentKey(dana);
+        dana.subscribeToGroup(groupId);
+        expect((await dana.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+
+        for (final recipient in [alice, bob, charlie]) {
+          final members = await recipient.groupRepo.getMembers(groupId);
+          expect(
+            members.map((member) => member.peerId).toSet(),
+            isNot(contains(dana.peerId)),
+            reason: '${recipient.username} active config excludes Dana',
+          );
+        }
+
+        await network.publish(groupId, dana.peerId, {
+          'groupId': groupId,
+          'senderId': dana.peerId,
+          'senderUsername': dana.username,
+          'keyEpoch': 1,
+          'text': 'SV-011 Dana has key but is not a member',
+          'timestamp': createdAt
+              .add(const Duration(minutes: 2))
+              .toIso8601String(),
+          'messageId': messageId,
+          'transportPeerId': dana.deviceId,
+        }, senderDeviceId: dana.deviceId);
+        await pump();
+
+        for (final recipient in [alice, bob, charlie]) {
+          expect(
+            await recipient.msgRepo.getMessage(messageId),
+            isNull,
+            reason:
+                '${recipient.username} must not persist valid-key nonmember traffic',
+          );
+          expect(
+            (await recipient.loadGroupMessages(groupId))
+                .where(
+                  (message) =>
+                      message.id == messageId ||
+                      message.senderPeerId == dana.peerId,
+                )
+                .toList(),
+            isEmpty,
+            reason:
+                '${recipient.username} must not render valid-key nonmember traffic',
+          );
+        }
+        expect(
+          flowEvents
+              .where(
+                (event) =>
+                    event['event'] ==
+                        'GROUP_HANDLE_INCOMING_MSG_UNKNOWN_SENDER_REJECTED' &&
+                    (event['details'] as Map<String, dynamic>)['keyEpoch'] == 1,
+              )
+              .length,
+          greaterThanOrEqualTo(3),
+        );
+        expect(
+          network.deliveryRecords
+              .where(
+                (record) =>
+                    record['messageId'] == messageId &&
+                    record['senderPeerId'] == dana.peerId,
+              )
+              .toList(),
+          hasLength(3),
+        );
+      },
+    );
+
+    test(
       'SV-004 forged sender identity is rejected by all fake-network recipients',
       () async {
         final flowEvents = <Map<String, dynamic>>[];
