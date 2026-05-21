@@ -8564,6 +8564,49 @@ void main() {
       },
     );
 
+    test(
+      'UP-011 muted group persists unread delivery without local notification',
+      () async {
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+
+        await groupRepo.updateGroup(testGroup.copyWith(isMuted: true));
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-admin',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'UP-011 muted delivery',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'up011-muted-delivery',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(notifService.shown, isEmpty);
+        expect(notifService.shownGeneric, isEmpty);
+        expect(msgRepo.count, 1);
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+        final latest = await msgRepo.getLatestMessage('group-1');
+        expect(latest, isNotNull);
+        expect(latest!.text, 'UP-011 muted delivery');
+
+        notifListener.dispose();
+      },
+    );
+
     test('does not notify for own messages', () async {
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();

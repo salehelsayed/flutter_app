@@ -43,6 +43,7 @@ import 'package:flutter_app/features/groups/application/rotate_and_distribute_gr
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
@@ -3081,6 +3082,33 @@ Future<void> _writeVerdict({
   };
   writeSharedJson(_signalName('${_role}_verdict.json'), verdict);
   stdout.writeln(jsonEncode(verdict));
+}
+
+int _notificationCount(GroupMultiDeviceTestStack stack) {
+  return stack.notificationService.shown.length +
+      stack.notificationService.shownGeneric.length;
+}
+
+List<Map<String, dynamic>> _notificationSnapshots(
+  GroupMultiDeviceTestStack stack,
+) {
+  return <Map<String, dynamic>>[
+    for (final notification in stack.notificationService.shown)
+      <String, dynamic>{
+        'kind': 'message',
+        'contactPeerId': notification.contactPeerId,
+        'senderUsername': notification.senderUsername,
+        'messageText': notification.messageText,
+        'payload': notification.payload,
+      },
+    for (final notification in stack.notificationService.shownGeneric)
+      <String, dynamic>{
+        'kind': 'generic',
+        'title': notification.title,
+        'body': notification.body,
+        'payload': notification.payload,
+      },
+  ];
 }
 
 Future<void> _runPrivateAbcCreateAlice(
@@ -27429,6 +27457,19 @@ Future<void> _runMl015Bob(
   );
   writeSharedText(_signalName('bob_group_joined'), 'ok');
 
+  var up011BobMuteApplied = false;
+  var up011NotificationCountBefore = 0;
+  if (_scenario == 'private_timeline_truth') {
+    await setGroupMuted(
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      isMuted: true,
+    );
+    up011BobMuteApplied =
+        (await stack.groupRepo.getGroup(groupId))?.isMuted == true;
+    up011NotificationCountBefore = _notificationCount(stack);
+  }
+
   final alicePeerId = identities['alice']!['peerId'] as String;
   final charliePeerId = identities['charlie']!['peerId'] as String;
   final initialAddTimelineText = _ml015ReaddTimelineText(identities);
@@ -27538,6 +27579,8 @@ Future<void> _runMl015Bob(
   final bobPostReaddUnreadCount = await stack.groupMsgRepo.getUnreadCount(
     groupId,
   );
+  final up011NotificationCountAfter = _notificationCount(stack);
+  final up011NotificationSnapshots = _notificationSnapshots(stack);
   await stack.groupMsgRepo.markAsRead(groupId);
   final bobFinalUnreadCount = await stack.groupMsgRepo.getUnreadCount(groupId);
 
@@ -27631,6 +27674,37 @@ Future<void> _runMl015Bob(
         role: 'bob',
         charlieMessageId: charlieSent['messageId'] as String,
       ),
+      'up011MutedDeliveryProof': <String, dynamic>{
+        'rowId': 'UP-011',
+        'role': 'bob',
+        'liveThreePartyProof': true,
+        'muteProofSource': 'app_peer_core_simulator',
+        'groupMutedBeforeTraffic': up011BobMuteApplied,
+        'receivedPreRemovalMessage': beforeReceived['persistedCount'] == 1,
+        'receivedRemovedWindowMessage': removedReceived['persistedCount'] == 1,
+        'receivedAlicePostReaddMessage': afterReceived['persistedCount'] == 1,
+        'receivedCharliePostReaddMessage':
+            charlieReceived['persistedCount'] == 1,
+        'preRemovalUnreadCount': bobPreRemovalUnreadCount,
+        'removedWindowUnreadCount': bobRemovedWindowUnreadCount,
+        'postReaddUnreadCount': bobPostReaddUnreadCount,
+        'deliveryUnreadStateUpdated':
+            bobPreRemovalUnreadCount >= 1 &&
+            bobRemovedWindowUnreadCount >= 1 &&
+            bobPostReaddUnreadCount >= 1,
+        'notificationCountBeforeMutedTraffic': up011NotificationCountBefore,
+        'notificationCountAfterMutedTraffic': up011NotificationCountAfter,
+        'mutedNotificationDelta':
+            up011NotificationCountAfter - up011NotificationCountBefore,
+        'mutedNotificationsSuppressed':
+            up011NotificationCountAfter == up011NotificationCountBefore,
+        'notificationSnapshotsAfterMutedTraffic': up011NotificationSnapshots,
+        'finalMemberListIncludesAliceBobCharlie':
+            memberPeerIds.contains(alicePeerId) &&
+            memberPeerIds.contains(stack.identity.peerId) &&
+            memberPeerIds.contains(charliePeerId),
+        'finalEpoch': finalEpoch,
+      },
     },
   );
 }

@@ -12465,6 +12465,75 @@ void main() {
       );
     });
 
+    test(
+      'UP-011 accepts private_timeline_truth muted delivery proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateTimelineTruthVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_timeline_truth verdicts valid'),
+        );
+      },
+    );
+
+    test('UP-011 rejects private_timeline_truth without muted proof', () {
+      final missingProof = _validPrivateTimelineTruthVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('up011MutedDeliveryProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing UP-011 muted delivery proof fields'),
+      );
+    });
+
+    test(
+      'UP-011 rejects private_timeline_truth muted notification leakage',
+      () {
+        final leaked = _validPrivateTimelineTruthVerdicts();
+        leaked[1] = {
+          ...leaked[1],
+          'up011MutedDeliveryProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              leaked[1]['up011MutedDeliveryProof'] as Map,
+            ),
+            'notificationCountAfterMutedTraffic': 1,
+            'mutedNotificationDelta': 1,
+            'mutedNotificationsSuppressed': false,
+            'notificationSnapshotsAfterMutedTraffic': const <Object?>[
+              <String, Object?>{'messageText': 'Alice: leaked while muted'},
+            ],
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: leaked,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('mutedNotificationsSuppressed must be true'),
+        );
+        expect(rejected.detail, contains('mutedNotificationDelta must be 0'));
+      },
+    );
+
     test('rejects private_timeline_truth without ML-015 proof fields', () {
       final missingProof = _validPrivateTimelineTruthVerdicts();
       missingProof[1] = Map<String, dynamic>.from(missingProof[1])
@@ -22164,6 +22233,28 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'restoredLocalMemberAfterProbe': true,
           'postReaddMessageVisible': true,
           'messageVisibilityMatchesMembership': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
+        'up011MutedDeliveryProof': <String, Object?>{
+          'rowId': 'UP-011',
+          'role': 'bob',
+          'liveThreePartyProof': true,
+          'muteProofSource': 'app_peer_core_simulator',
+          'groupMutedBeforeTraffic': true,
+          'receivedPreRemovalMessage': true,
+          'receivedRemovedWindowMessage': true,
+          'receivedAlicePostReaddMessage': true,
+          'receivedCharliePostReaddMessage': true,
+          'preRemovalUnreadCount': 1,
+          'removedWindowUnreadCount': 1,
+          'postReaddUnreadCount': 2,
+          'deliveryUnreadStateUpdated': true,
+          'notificationCountBeforeMutedTraffic': 0,
+          'notificationCountAfterMutedTraffic': 0,
+          'mutedNotificationDelta': 0,
+          'mutedNotificationsSuppressed': true,
+          'notificationSnapshotsAfterMutedTraffic': <Object?>[],
           'finalMemberListIncludesAliceBobCharlie': true,
           'finalEpoch': 3,
         },

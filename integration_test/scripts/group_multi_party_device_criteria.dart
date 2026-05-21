@@ -3034,6 +3034,7 @@ void _validateScenarioProofFields({
     _validateUp006ReaddUiStateProof(byRole: byRole, failures: failures);
     _validateUp009ReaddSenderIdentityProof(byRole: byRole, failures: failures);
     _validateUp010NotificationRouteProof(byRole: byRole, failures: failures);
+    _validateUp011MutedDeliveryProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_non_friend_member_delivery') {
@@ -7045,6 +7046,86 @@ void _validateUp010NotificationRouteProof({
   }
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: UP-010 finalEpoch mismatch');
+  }
+}
+
+void _validateUp011MutedDeliveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up011MutedDeliveryProof';
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  if (bobProof == null) {
+    failures.add('bob: missing UP-011 muted delivery proof fields');
+    return;
+  }
+  if (_stringValue(bobProof['rowId']) != 'UP-011') {
+    failures.add('bob: $proofName.rowId must be UP-011');
+  }
+  if (_stringValue(bobProof['role']) != 'bob') {
+    failures.add('bob: $proofName.role must be bob');
+  }
+  if (_stringValue(bobProof['muteProofSource']) != 'app_peer_core_simulator') {
+    failures.add(
+      'bob: $proofName.muteProofSource must be app_peer_core_simulator',
+    );
+  }
+  for (final field in const <String>[
+    'liveThreePartyProof',
+    'groupMutedBeforeTraffic',
+    'receivedPreRemovalMessage',
+    'receivedRemovedWindowMessage',
+    'receivedAlicePostReaddMessage',
+    'receivedCharliePostReaddMessage',
+    'deliveryUnreadStateUpdated',
+    'mutedNotificationsSuppressed',
+    'finalMemberListIncludesAliceBobCharlie',
+  ]) {
+    _requireTrueProof(
+      role: 'bob',
+      proofName: proofName,
+      proof: bobProof,
+      field: field,
+      failures: failures,
+    );
+  }
+
+  for (final field in const <String>[
+    'preRemovalUnreadCount',
+    'removedWindowUnreadCount',
+    'postReaddUnreadCount',
+  ]) {
+    final count = _intValue(bobProof[field]);
+    if (count == null || count < 1) {
+      failures.add('bob: $proofName.$field must be >= 1');
+    }
+  }
+  final beforeCount = _intValue(
+    bobProof['notificationCountBeforeMutedTraffic'],
+  );
+  final afterCount = _intValue(bobProof['notificationCountAfterMutedTraffic']);
+  final delta = _intValue(bobProof['mutedNotificationDelta']);
+  if (beforeCount == null || afterCount == null || delta == null) {
+    failures.add('bob: $proofName notification counts must be numeric');
+  } else if (afterCount - beforeCount != delta) {
+    failures.add('bob: $proofName.mutedNotificationDelta must match counts');
+  } else if (delta != 0) {
+    failures.add('bob: $proofName.mutedNotificationDelta must be 0');
+  }
+
+  final snapshots = bobProof['notificationSnapshotsAfterMutedTraffic'];
+  if (snapshots is List && snapshots.isNotEmpty && delta == 0) {
+    final before = beforeCount ?? 0;
+    if (snapshots.length > before) {
+      failures.add(
+        'bob: $proofName.notificationSnapshotsAfterMutedTraffic must not grow while muted',
+      );
+    }
+  }
+
+  final finalEpoch = _intValue(bobProof['finalEpoch']);
+  if (finalEpoch == null || finalEpoch < 2) {
+    failures.add('bob: $proofName.finalEpoch must be >= 2');
   }
 }
 
