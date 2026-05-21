@@ -968,6 +968,80 @@ void main() {
       },
     );
 
+    test(
+      'UP-005 invited but unjoined members stay pending or failed until joined evidence',
+      () async {
+        p2pService = _PerRecipientInviteP2PService(
+          failingPeerIds: {'peer-dave'},
+        );
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactBob, contactCharlie, contactDave],
+          type: GroupType.chat,
+          name: 'UP-005 Invite States',
+          inviteDeliveryAttemptRepo: inviteStatusRepo,
+        );
+
+        expect(result.membersAdded, 3);
+        expect(result.invitesSent, 2);
+        expect(result.hasWarnings, isTrue);
+
+        final members = await groupRepo.getMembers('test-group-id');
+        expect(members.map((member) => member.peerId).toSet(), {
+          'peer-admin',
+          'peer-bob',
+          'peer-charlie',
+          'peer-dave',
+        });
+
+        Future<GroupInviteDeliveryStatus> statusFor(String peerId) {
+          return inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: peerId,
+          );
+        }
+
+        expect(await statusFor('peer-bob'), GroupInviteDeliveryStatus.sent);
+        expect(await statusFor('peer-charlie'), GroupInviteDeliveryStatus.sent);
+        expect(
+          await statusFor('peer-dave'),
+          GroupInviteDeliveryStatus.needsResend,
+        );
+        expect(
+          (await inviteStatusRepo.getAttemptsForGroup(
+            'test-group-id',
+          )).map((attempt) => attempt.status),
+          isNot(contains(GroupInviteDeliveryStatus.joined)),
+        );
+
+        await inviteStatusRepo.markJoined(
+          groupId: 'test-group-id',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          joinedAt: DateTime.utc(2026, 5, 13, 12),
+        );
+
+        expect(await statusFor('peer-bob'), GroupInviteDeliveryStatus.joined);
+        expect(await statusFor('peer-charlie'), GroupInviteDeliveryStatus.sent);
+        expect(
+          await statusFor('peer-dave'),
+          GroupInviteDeliveryStatus.needsResend,
+        );
+        final daveAttempt = await inviteStatusRepo.getAttempt(
+          groupId: 'test-group-id',
+          peerId: 'peer-dave',
+        );
+        expect(daveAttempt, isNotNull);
+        expect(daveAttempt!.status, isNot(GroupInviteDeliveryStatus.joined));
+        expect(daveAttempt.lastError, 'send_failed');
+      },
+    );
+
     test('succeeds locally even when P2P invite fails', () async {
       // Make P2P fail
       p2pService.sendMessageResult = false;

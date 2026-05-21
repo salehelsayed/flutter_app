@@ -1203,6 +1203,137 @@ void main() {
       },
     );
 
+    testWidgets(
+      'UP-005 pending and failed invite states are visually distinct from joined members',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+
+        final members = [
+          (
+            peerId: 'peer-bob',
+            username: 'Bob',
+            status: GroupInviteDeliveryStatus.sent,
+            lastError: null,
+          ),
+          (
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            status: GroupInviteDeliveryStatus.queued,
+            lastError: null,
+          ),
+          (
+            peerId: 'peer-dave',
+            username: 'Dave',
+            status: GroupInviteDeliveryStatus.needsResend,
+            lastError: 'send_failed',
+          ),
+          (
+            peerId: 'peer-eve',
+            username: 'Eve',
+            status: GroupInviteDeliveryStatus.cannotSend,
+            lastError: 'missing_secure_key',
+          ),
+        ];
+        for (final member in members) {
+          await groupRepo.saveMember(
+            makeMember(peerId: member.peerId, username: member.username),
+          );
+          await inviteStatusRepo.saveAttempt(
+            GroupInviteDeliveryAttempt(
+              groupId: 'group-1',
+              peerId: member.peerId,
+              username: member.username,
+              status: member.status,
+              attemptedAt: DateTime.utc(2026, 5, 13, 12),
+              updatedAt: DateTime.utc(2026, 5, 13, 12),
+              lastError: member.lastError,
+            ),
+          );
+        }
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-bob',
+            joinedUsername: 'Bob',
+            eventAt: DateTime.utc(2026, 5, 13, 12, 5),
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        Finder statusBadge(String peerId) =>
+            find.byKey(ValueKey('group-member-invite-status-$peerId'));
+
+        void expectBadge(String peerId, String label) {
+          expect(
+            find.descendant(
+              of: statusBadge(peerId),
+              matching: find.text(label),
+            ),
+            findsOneWidget,
+          );
+        }
+
+        void expectNotJoined(String peerId) {
+          expect(
+            find.descendant(
+              of: statusBadge(peerId),
+              matching: find.text('Joined'),
+            ),
+            findsNothing,
+          );
+        }
+
+        expectBadge('peer-bob', 'Joined');
+        expectBadge('peer-charlie', 'In their inbox');
+        expectBadge('peer-dave', 'Resend needed');
+        expectBadge('peer-eve', 'Cannot send');
+        expectNotJoined('peer-charlie');
+        expectNotJoined('peer-dave');
+        expectNotJoined('peer-eve');
+        expect(
+          find.byKey(const ValueKey('group-member-resend-invite-peer-dave')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-member-resend-invite-peer-bob')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(
+            const ValueKey('group-member-invite-status-detail-peer-eve'),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('shows cannot-send reason copy from persisted lastError', (
       tester,
     ) async {
