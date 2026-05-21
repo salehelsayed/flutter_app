@@ -878,6 +878,69 @@ void main() {
       expect(payload['nonce'], equals('nonceBase64=='));
     });
 
+    test(
+      'SV-015 classifies ok false decrypt failure and later recovers',
+      () async {
+        bridge.responses['group.decrypt'] = {
+          'ok': false,
+          'errorCode': 'DECRYPT_FAILED',
+          'errorMessage': 'authentication failed',
+        };
+
+        await expectLater(
+          callGroupDecrypt(
+            bridge,
+            'symmetricKeyBase64==',
+            'badCiphertextBase64==',
+            'nonceBase64==',
+          ),
+          throwsA(
+            _bridgeCommandError(
+              command: 'group.decrypt',
+              errorCode: 'DECRYPT_FAILED',
+            ),
+          ),
+        );
+
+        bridge.responses['group.decrypt'] = {
+          'ok': true,
+          'plaintext': 'Recovered plaintext',
+        };
+
+        final plaintext = await callGroupDecrypt(
+          bridge,
+          'symmetricKeyBase64==',
+          'ciphertextBase64==',
+          'nonceBase64==',
+        );
+
+        expect(plaintext, 'Recovered plaintext');
+        expect(
+          bridge.commandLog.where((command) => command == 'group.decrypt'),
+          hasLength(2),
+        );
+      },
+    );
+
+    test('SV-015 classifies malformed decrypt success response', () async {
+      bridge.responses['group.decrypt'] = {'ok': true};
+
+      await expectLater(
+        callGroupDecrypt(
+          bridge,
+          'symmetricKeyBase64==',
+          'ciphertextBase64==',
+          'nonceBase64==',
+        ),
+        throwsA(
+          _bridgeCommandError(
+            command: 'group.decrypt',
+            errorCode: 'INVALID_RESPONSE',
+          ),
+        ),
+      );
+    });
+
     test('rethrows TimeoutException on timeout', () async {
       final slowBridge = _SlowBridge();
 
