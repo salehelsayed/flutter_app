@@ -362,6 +362,44 @@ void main() {
     },
   );
 
+  test(
+    'UP-008 restart retry promotes pending outbound row without duplicate rows',
+    () async {
+      await msgRepo.saveMessage(
+        _makeRetryEligible('up008-pending-restart-id', status: 'pending'),
+      );
+
+      final restartedBridge = FakeBridge();
+      final retried = await retryFailedGroupInboxStores(
+        bridge: restartedBridge,
+        msgRepo: msgRepo,
+      );
+
+      expect(retried, 1);
+      expect(_inboxStoreMessageIds(restartedBridge), [
+        'up008-pending-restart-id',
+      ]);
+      final saved = await msgRepo.getMessage('up008-pending-restart-id');
+      expect(saved, isNotNull);
+      expect(saved!.status, 'sent');
+      expect(saved.inboxStored, isTrue);
+      expect(saved.inboxRetryPayload, isNull);
+      final page = await msgRepo.getMessagesPage('group-1');
+      expect(
+        page.where(
+          (row) => !row.isIncoming && row.id == 'up008-pending-restart-id',
+        ),
+        hasLength(1),
+      );
+
+      final secondRestartPass = await retryFailedGroupInboxStores(
+        bridge: FakeBridge(),
+        msgRepo: msgRepo,
+      );
+      expect(secondRestartPass, 0);
+    },
+  );
+
   test('GO-002 retry promotes pending inbox store failure to sent', () async {
     final msg = _makeRetryEligible('go002-pending', status: 'pending');
     await msgRepo.saveMessage(msg);
