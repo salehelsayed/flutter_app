@@ -1,6 +1,6 @@
 # INTEGRATE-NW-014 Plan - Minimal Standard Integration Contract
 
-Status: blocked_external_fixture
+Status: accepted
 
 Mode: standard worktree-to-main integration. This is import/reconcile/verify work for already-covered source row `NW-014`; it is not gap-closure mode and must not recreate or rewrite the historical source implementation plan.
 
@@ -187,9 +187,22 @@ Broad residual classification:
 - These failures do not include the NW-014 selector or NW-014 criteria tests and are classified as non-NW-014 residuals.
 - `./scripts/run_test_gates.sh completeness-check` failed: `734/735 test files classified`; unmatched file `test/shared/fakes/fake_group_pubsub_network_test.dart`. This is unrelated to NW-014 import ownership.
 
-Terminal status: `blocked_external_fixture`.
+Live fixture recovery 2026-05-21:
 
-Closure note 2026-05-20: breakdown ledger and `test-inventory.md` were updated to record `INTEGRATE-NW-014` as `blocked_external_fixture` after host import passed and the required iOS 26.2 live proof failed before verdict. No code, tests, harnesses, scripts, source matrix docs, COMPLETE_1 docs, or source worktree files were edited during closure. Before proceeding to `INTEGRATE-NW-015`, the controller must verify dirty-state safety, NW-015 dependency independence, and whether this live fixture blocker affects NW-015 or the shared live proof path; if it does, stop and repair/rerun the live fixture first.
+- Recovery scope: focused shared `private_network_chaos_invariants` blocker recovery for `INTEGRATE-NW-014` and `INTEGRATE-ST-001` only; no code, test, harness, criteria, runner, production, or source-matrix changes were made.
+- Preflight: `git status --short` showed only unrelated `info.plist`; no stale `run_group_multi_party_device_real`, Flutter test/drive, Xcode, or simctl launch/proof processes matched; ambient `MKNOON_RELAY_ADDRESSES` was unset; `flutter devices --machine` and `xcrun simctl list devices available` showed all four required iOS 26.2 CoreSimulator devices booted/available; scenario discovery listed `private_network_chaos_invariants`.
+- Command: `MKNOON_RELAY_ADDRESSES='/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g' dart run integration_test/scripts/run_group_multi_party_device_real.dart --scenario private_network_chaos_invariants -d 5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3,279B82AE-2BB9-4924-9AAE-581870ED3FA9,116B4AF6-C1A9-4F36-B929-0A7130B5E83C,CD5929A6-EA0A-421D-A6D3-55BD707E0F76`.
+- Run id: `1779390864533`.
+- Shared dir: `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_network_chaos_invariants_CI0XjH`.
+- Devices: Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`, Dana `CD5929A6-EA0A-421D-A6D3-55BD707E0F76`.
+- Orchestrator verdict: `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_network_chaos_invariants_CI0XjH/gmp_1779390864533_private_network_chaos_invariants_orchestrator_verdict.json`, `ok=true`, detail `private_network_chaos_invariants verdicts valid for alice, bob, charlie, dana`.
+- Role verdicts: Alice/Bob/Charlie/Dana verdict files exist and each includes `nw014ChaosInvariantProof` and `st001ModelOracleProof`; `nw014ChaosInvariantProof.rowId` is `NW-014`, `appPeerPlatform` is `ios_26_2_core_simulator`, `fixedSeed` is `14014`, `modelInvariant` is `active_entitled_exactly_once`, `fakeNetworkChaosProofRequired` is `true`, `messageOperationCount` and `membershipOperationCount` are `12`, `churnCycles` is `3`, `churnTargets` are Charlie/Dana, removed-window plaintext counts are `0`, `duplicateVisibleMessageCount` is `0`, `inactiveSenderAttemptCount` is `0`, `finalEpoch` is `13`, and final member-list/epoch convergence are `true`.
+- Focused checks after rerun: `flutter test --no-pub test/features/groups/integration/group_messaging_smoke_test.dart --plain-name "NW-014 deterministic network chaos run maintains model invariants"` passed (`+1`); `flutter test --no-pub test/integration/group_multi_party_device_criteria_test.dart --plain-name "NW-014"` passed (`+3`); `flutter test --no-pub test/features/groups/integration/group_messaging_smoke_test.dart --plain-name "ST-001"` passed (`+1`); `flutter test --no-pub test/integration/group_multi_party_device_criteria_test.dart --plain-name "ST-001"` passed (`+3`); `flutter test --no-pub test/integration/group_multi_party_device_criteria_test.dart --plain-name "RA-018 accepts private_readd_alternating_churn proof verdicts"` passed (`+1`).
+- Earlier failed run `1779289126608` remains preserved as historical blocker evidence, but the current required `private_network_chaos_invariants` proof is recovered and accepted.
+
+Terminal status: `accepted`.
+
+Closure note 2026-05-21: breakdown ledger and `test-inventory.md` were updated to reclassify `INTEGRATE-NW-014` from `blocked_external_fixture` to `accepted` after live fixture recovery. No code, tests, harnesses, scripts, production files, source matrix docs, COMPLETE_1 docs, or source worktree files were edited during this recovery closure. Unrelated `info.plist` remained unstaged and untouched.
 
 ## Final Verdict Guidance
 
