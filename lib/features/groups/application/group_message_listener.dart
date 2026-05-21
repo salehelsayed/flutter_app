@@ -1748,6 +1748,22 @@ class GroupMessageListener {
         : null;
     final addedPeerId = validMemberData?['peerId'] as String?;
     final addedUsername = validMemberData?['username'] as String?;
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    final keyMaterialRejectReason =
+        (memberData == null
+            ? null
+            : groupMemberConfigKeyMaterialRejectReason(memberData)) ??
+        (groupConfig == null
+            ? null
+            : groupConfigMemberKeyMaterialRejectReason(groupConfig));
+    if (keyMaterialRejectReason != null) {
+      _emitMemberKeyMaterialRejected(
+        groupId,
+        sysType: 'member_added',
+        reason: keyMaterialRejectReason,
+      );
+      return;
+    }
     if (validMemberData != null) {
       final member = GroupMember.fromConfigMap(
         groupId: groupId,
@@ -1773,7 +1789,6 @@ class GroupMessageListener {
     }
 
     // Update Go topic validator config
-    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig != null) {
       await _applyAuthoritativeGroupConfigSnapshot(
         groupId,
@@ -1839,6 +1854,37 @@ class GroupMessageListener {
     required GroupMessageRepository msgRepo,
   }) async {
     final membersList = parsed['members'] as List<dynamic>?;
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    String? directMembersRejectReason;
+    if (membersList != null) {
+      for (final memberData in membersList) {
+        if (memberData is! Map) {
+          continue;
+        }
+        final reason = groupMemberConfigKeyMaterialRejectReason(memberData);
+        if (reason != null) {
+          final peerId = memberData['peerId'];
+          directMembersRejectReason =
+              peerId is String && peerId.trim().isNotEmpty
+              ? '$reason:${peerId.trim()}'
+              : reason;
+          break;
+        }
+      }
+    }
+    final keyMaterialRejectReason =
+        directMembersRejectReason ??
+        (groupConfig == null
+            ? null
+            : groupConfigMemberKeyMaterialRejectReason(groupConfig));
+    if (keyMaterialRejectReason != null) {
+      _emitMemberKeyMaterialRejected(
+        groupId,
+        sysType: 'members_added',
+        reason: keyMaterialRejectReason,
+      );
+      return;
+    }
     final validAddedMembers = <({String peerId, String? username})>[];
     if (membersList != null) {
       for (final memberData in membersList) {
@@ -1879,7 +1925,6 @@ class GroupMessageListener {
       }
     }
 
-    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig != null) {
       final addedPeerIds = validAddedMembers
           .map((member) => member.peerId)
@@ -3154,6 +3199,22 @@ class GroupMessageListener {
     );
   }
 
+  void _emitMemberKeyMaterialRejected(
+    String groupId, {
+    required String sysType,
+    required String reason,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_MEMBER_KEY_MATERIAL_REJECTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'type': sysType,
+        'reason': reason,
+      },
+    );
+  }
+
   DateTime? _parseMembershipEventAt(String? timestamp) {
     if (timestamp == null || timestamp.isEmpty) {
       return null;
@@ -3595,6 +3656,17 @@ class GroupMessageListener {
     if (membersList == null) {
       return;
     }
+    final keyMaterialRejectReason = groupConfigMemberKeyMaterialRejectReason(
+      normalizedGroupConfig,
+    );
+    if (keyMaterialRejectReason != null) {
+      _emitMemberKeyMaterialRejected(
+        groupId,
+        sysType: 'group_config_snapshot',
+        reason: keyMaterialRejectReason,
+      );
+      return;
+    }
 
     final existingMembers = await _groupRepo.getMembers(groupId);
     final existingByPeerId = {
@@ -3820,6 +3892,18 @@ class GroupMessageListener {
     final bridge = _bridge;
     if (bridge == null) {
       return true;
+    }
+
+    final keyMaterialRejectReason = groupConfigMemberKeyMaterialRejectReason(
+      groupConfig,
+    );
+    if (keyMaterialRejectReason != null) {
+      _emitMemberKeyMaterialRejected(
+        groupId,
+        sysType: 'group_config_sync',
+        reason: keyMaterialRejectReason,
+      );
+      return false;
     }
 
     try {

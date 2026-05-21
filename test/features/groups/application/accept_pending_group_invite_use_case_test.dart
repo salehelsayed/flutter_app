@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
@@ -915,6 +916,98 @@ void main() {
         expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
         expect(bridge.commandLog, isNot(contains('group:join')));
         expect(msgRepo.count, 0);
+      },
+    );
+
+    test(
+      'SV-009 rejects invite member key material before join state is active',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        Map<String, dynamic> configWithReceiverKeys({
+          required String publicKey,
+          required String mlKemPublicKey,
+        }) {
+          return {
+            'name': 'SV-009 Book Club',
+            'groupType': 'chat',
+            'description': 'Invalid key material proof',
+            'members': [
+              {
+                'peerId': '12D3KooWAlice',
+                'username': 'Alice',
+                'role': 'admin',
+                'publicKey': 'alicePubKey64',
+                'mlKemPublicKey': 'aliceMlKem64',
+              },
+              {
+                'peerId': '12D3KooWReceiver',
+                'username': 'Receiver',
+                'role': 'writer',
+                'publicKey': publicKey,
+                'mlKemPublicKey': mlKemPublicKey,
+              },
+            ],
+            'createdBy': '12D3KooWAlice',
+            'createdAt': '2026-05-14T05:55:00.000Z',
+          };
+        }
+
+        final variants = [
+          configWithReceiverKeys(
+            publicKey: 'receiver public key with space',
+            mlKemPublicKey: 'receiverMlKem64',
+          ),
+          configWithReceiverKeys(
+            publicKey: 'receiverPubKey64',
+            mlKemPublicKey: 'receiver\nMlKem64',
+          ),
+        ];
+
+        for (final groupConfig in variants) {
+          pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+          groupRepo = InMemoryGroupRepository();
+          msgRepo = InMemoryGroupMessageRepository();
+          contactRepo = FakeContactRepository()..seed([aliceContact()]);
+          bridge = FakeBridge();
+
+          await pendingInviteRepo.savePendingInvite(
+            makeInvite(groupConfig: groupConfig),
+          );
+
+          final (result, group) = await acceptPendingGroupInvite(
+            pendingInviteRepo: pendingInviteRepo,
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            msgRepo: msgRepo,
+            bridge: bridge,
+            groupId: 'grp-abc123',
+          );
+
+          expect(result, AcceptPendingGroupInviteResult.repairPending);
+          expect(group, isNull);
+          expect(
+            await pendingInviteRepo.getPendingInvite('grp-abc123'),
+            isNotNull,
+          );
+          expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+          expect(await groupRepo.getGroup('grp-abc123'), isNull);
+          expect(await groupRepo.getMembers('grp-abc123'), isEmpty);
+          expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+          expect(bridge.commandLog, isNot(contains('group:join')));
+          expect(msgRepo.count, 0);
+        }
+
+        expect(
+          flowEvents.where(
+            (event) =>
+                event['event'] ==
+                'GROUP_INVITE_HANDLE_INVALID_MEMBER_KEY_MATERIAL',
+          ),
+          hasLength(variants.length),
+        );
       },
     );
 

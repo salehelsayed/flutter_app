@@ -993,6 +993,118 @@ void main() {
   );
 
   test(
+    'SV-009 malformed membership key material is rejected without state or config sync',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      listener.start(sourceController.stream);
+
+      final malformedText = jsonEncode({
+        '__sys': 'member_added',
+        'member': {
+          'peerId': 'peer-charlie',
+          'username': 'Charlie',
+          'role': 'writer',
+          'publicKey': 'pk charlie',
+          'mlKemPublicKey': 'mlkem-charlie',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+            {
+              'peerId': 'peer-charlie',
+              'role': 'writer',
+              'publicKey': 'pk charlie',
+              'mlKemPublicKey': 'mlkem-charlie',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': initialGroupCreatedAt.toIso8601String(),
+        },
+      });
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': malformedText,
+        'timestamp': DateTime.utc(2026, 5, 14, 5, 57).toIso8601String(),
+        'messageId': 'sv009-malformed-member-add',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+      expect(msgRepo.count, 0);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+              'GROUP_MESSAGE_LISTENER_MEMBER_KEY_MATERIAL_REJECTED',
+        ),
+        isNotEmpty,
+      );
+
+      final validText = jsonEncode({
+        '__sys': 'member_added',
+        'member': {
+          'peerId': 'peer-charlie',
+          'username': 'Charlie',
+          'role': 'writer',
+          'publicKey': 'pk-charlie',
+          'mlKemPublicKey': 'mlkem-charlie',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+            {
+              'peerId': 'peer-charlie',
+              'role': 'writer',
+              'publicKey': 'pk-charlie',
+              'mlKemPublicKey': 'mlkem-charlie',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': initialGroupCreatedAt.toIso8601String(),
+        },
+      });
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': validText,
+        'timestamp': DateTime.utc(2026, 5, 14, 5, 58).toIso8601String(),
+        'messageId': 'sv009-valid-member-add',
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final charlie = await groupRepo.getMember('group-1', 'peer-charlie');
+      expect(charlie, isNotNull);
+      expect(charlie!.publicKey, 'pk-charlie');
+      expect(bridge.commandLog, contains('group:updateConfig'));
+      final latest = await msgRepo.getLatestMessage('group-1');
+      expect(latest, isNotNull);
+      expect(latest!.text, 'Admin added Charlie');
+    },
+  );
+
+  test(
     'GO-003 sender-visible validation feedback marks outgoing row failed and retryable',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();

@@ -604,3 +604,120 @@ class GroupMember {
     return 'GroupMember(groupId: $groupId, peerId: $peerId, role: ${role.toValue()})';
   }
 }
+
+String? groupMemberKeyMaterialRejectReason(GroupMember member) {
+  return groupMemberConfigKeyMaterialRejectReason(member.toConfigJson());
+}
+
+String? groupConfigMemberKeyMaterialRejectReason(
+  Map<dynamic, dynamic> groupConfig,
+) {
+  final members = groupConfig['members'];
+  if (members == null) {
+    return null;
+  }
+  if (members is! List) {
+    return 'invalid_members';
+  }
+  for (final rawMember in members) {
+    if (rawMember is! Map) {
+      return 'invalid_member';
+    }
+    final reason = groupMemberConfigKeyMaterialRejectReason(rawMember);
+    if (reason != null) {
+      final peerId = rawMember['peerId'];
+      return peerId is String && peerId.trim().isNotEmpty
+          ? '$reason:${peerId.trim()}'
+          : reason;
+    }
+  }
+  return null;
+}
+
+String? groupMemberConfigKeyMaterialRejectReason(Map<dynamic, dynamic> member) {
+  return _optionalKeyMaterialRejectReason(
+        member,
+        'publicKey',
+        'invalid_public_key',
+      ) ??
+      _optionalKeyMaterialRejectReason(
+        member,
+        'mlKemPublicKey',
+        'invalid_ml_kem_public_key',
+      ) ??
+      _deviceKeyMaterialRejectReason(member['devices']);
+}
+
+String? _deviceKeyMaterialRejectReason(Object? rawDevices) {
+  if (rawDevices == null) {
+    return null;
+  }
+  if (rawDevices is! List) {
+    return 'invalid_devices';
+  }
+  for (final rawDevice in rawDevices) {
+    if (rawDevice is! Map) {
+      return 'invalid_device';
+    }
+    final deviceSigningReason = _requiredKeyMaterialRejectReason(
+      rawDevice,
+      'deviceSigningPublicKey',
+      'invalid_device_signing_public_key',
+    );
+    if (deviceSigningReason != null) {
+      return deviceSigningReason;
+    }
+    final optionalReason =
+        _optionalKeyMaterialRejectReason(
+          rawDevice,
+          'mlKemPublicKey',
+          'invalid_device_ml_kem_public_key',
+        ) ??
+        _optionalKeyMaterialRejectReason(
+          rawDevice,
+          'keyPackagePublicMaterial',
+          'invalid_key_package_public_material',
+        );
+    if (optionalReason != null) {
+      return optionalReason;
+    }
+  }
+  return null;
+}
+
+String? _requiredKeyMaterialRejectReason(
+  Map<dynamic, dynamic> value,
+  String key,
+  String reason,
+) {
+  final raw = value[key];
+  if (raw is! String || _isMalformedKeyMaterial(raw)) {
+    return reason;
+  }
+  return null;
+}
+
+String? _optionalKeyMaterialRejectReason(
+  Map<dynamic, dynamic> value,
+  String key,
+  String reason,
+) {
+  if (!value.containsKey(key)) {
+    return null;
+  }
+  final raw = value[key];
+  if (raw == null) {
+    return null;
+  }
+  if (raw is! String) {
+    return '${reason}_type';
+  }
+  return _isMalformedKeyMaterial(raw) ? reason : null;
+}
+
+bool _isMalformedKeyMaterial(String value) {
+  if (value.trim().isEmpty || value.trim() != value) {
+    return true;
+  }
+  return value.runes.any((rune) => rune <= 0x20 || rune == 0x7f);
+}

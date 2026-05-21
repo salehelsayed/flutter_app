@@ -823,6 +823,23 @@ materializeAcceptedGroupInvitePayload({
     return (HandleGroupInviteResult.invalidPayload, null);
   }
 
+  final keyMaterialRejectReason = groupConfigMemberKeyMaterialRejectReason(
+    config,
+  );
+  if (keyMaterialRejectReason != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_INVALID_MEMBER_KEY_MATERIAL',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+        'reason': keyMaterialRejectReason,
+      },
+    );
+    return (HandleGroupInviteResult.invalidPayload, null);
+  }
+
   final groupName = config['name'] as String? ?? 'Unnamed Group';
   final groupTypeStr = config['groupType'] as String? ?? 'chat';
   final description = config['description'] as String?;

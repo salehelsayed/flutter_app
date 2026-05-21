@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
@@ -295,6 +296,84 @@ void main() {
     expect(dianaDevices.single['transportPeerId'], 'peer-d-device');
     expect(dianaDevices.single['deviceSigningPublicKey'], 'pk-peer-d');
   });
+
+  test(
+    'SV-009 malformed member key material is rejected before add or config sync',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final joinedAt = DateTime.utc(2026, 5, 14, 5, 55);
+      final cases = <GroupMember>[
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bad-signing',
+          username: 'Bad Signing',
+          role: MemberRole.writer,
+          publicKey: 'bad signing key',
+          mlKemPublicKey: 'mlkem-peer-bad-signing',
+          joinedAt: joinedAt,
+        ),
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bad-mlkem',
+          username: 'Bad MlKem',
+          role: MemberRole.writer,
+          publicKey: 'pk-peer-bad-mlkem',
+          mlKemPublicKey: 'mlkem\npeer-bad-mlkem',
+          joinedAt: joinedAt,
+        ),
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bad-device',
+          username: 'Bad Device',
+          role: MemberRole.writer,
+          publicKey: 'pk-peer-bad-device',
+          mlKemPublicKey: 'mlkem-peer-bad-device',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'peer-bad-device-phone',
+              transportPeerId: 'peer-bad-device-phone',
+              deviceSigningPublicKey: 'pk peer bad device',
+              mlKemPublicKey: 'mlkem-peer-bad-device-phone',
+            ),
+          ],
+          joinedAt: joinedAt,
+        ),
+      ];
+
+      for (final newMember in cases) {
+        await expectLater(
+          addGroupMember(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: 'group-1',
+            newMember: newMember,
+            selfPeerId: 'peer-admin',
+          ),
+          throwsA(
+            isA<ArgumentError>().having(
+              (error) => error.message,
+              'message',
+              contains('Invalid group member key material'),
+            ),
+          ),
+        );
+        expect(await groupRepo.getMember('group-1', newMember.peerId), isNull);
+      }
+
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+              'GROUP_ADD_MEMBER_USE_CASE_INVALID_KEY_MATERIAL',
+        ),
+        hasLength(cases.length),
+      );
+    },
+  );
 
   test(
     'GM-022 buildGroupConfigPayload emits one active Charlie after repeated re-add shadows',
