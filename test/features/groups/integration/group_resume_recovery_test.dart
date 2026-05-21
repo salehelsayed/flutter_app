@@ -10969,6 +10969,99 @@ void main() {
       );
 
       test(
+        'OB-004 fake-network decryption diagnostic creates repair workflow without normal delivery',
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-ob004-repair',
+            username: 'Alice',
+            network: network,
+          );
+          final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+          final repairRequests = <GroupKeyRepairRequest>[];
+          final bob = GroupTestUser.create(
+            peerId: 'reader-ob004-repair',
+            username: 'Bob',
+            network: network,
+            pendingKeyRepairRepo: pendingRepo,
+            requestGroupKeyRepair: repairRequests.add,
+          );
+          addTearDown(() {
+            admin.dispose();
+            bob.dispose();
+          });
+
+          const groupId = 'group-ob004-repair';
+          await admin.createGroup(
+            groupId: groupId,
+            name: 'OB-004 Repair Workflow',
+          );
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+
+          final placeholderFuture = bob.groupMessageListener.groupMessageStream
+              .where(
+                (message) =>
+                    message.status == groupPendingKeyRepairStatusPendingKey,
+              )
+              .first
+              .timeout(const Duration(seconds: 1));
+
+          final emitted = network.emitDecryptionFailureDiagnostic(
+            receiverPeerOrDeviceId: bob.peerId,
+            groupId: groupId,
+            senderPeerId: admin.peerId,
+            senderDeviceId: admin.deviceId,
+            keyEpoch: 2,
+            localKeyEpoch: 1,
+            messageId: 'ob004-undecipherable-live',
+            error: 'fake network cannot decrypt live message',
+          );
+
+          expect(emitted, 1);
+          final placeholder = await placeholderFuture;
+          final repairId = liveGroupPendingKeyRepairId(
+            groupId: groupId,
+            senderPeerId: admin.peerId,
+            keyEpoch: 2,
+            localKeyEpoch: 1,
+          );
+
+          expect(placeholder.id, repairId);
+          expect(placeholder.groupId, groupId);
+          expect(placeholder.senderPeerId, admin.peerId);
+          expect(placeholder.text, groupPendingKeyRepairPlaceholderText);
+          expect(placeholder.status, groupPendingKeyRepairStatusPendingKey);
+          expect(placeholder.keyGeneration, 2);
+
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(bobMessages, hasLength(1));
+          expect(bobMessages.single.id, repairId);
+          expect(
+            bobMessages.any(
+              (message) =>
+                  message.text == 'fake network cannot decrypt live message',
+            ),
+            isFalse,
+          );
+          expect(pendingRepo.repairs, hasLength(1));
+          expect(pendingRepo.repairs.values.single.id, repairId);
+          expect(pendingRepo.repairs.values.single.replayEnvelopeJson, isNull);
+          expect(repairRequests, hasLength(1));
+          expect(repairRequests.single.groupId, groupId);
+          expect(repairRequests.single.keyEpoch, 2);
+          expect(
+            repairRequests.single.reason,
+            groupKeyRepairReasonLiveDiagnostic,
+          );
+          expect(repairRequests.single.messageId, repairId);
+        },
+      );
+
+      test(
         'SV-005 tampered envelope diagnostic does not poison later fake-network delivery',
         () async {
           final bobDiagnostics =
