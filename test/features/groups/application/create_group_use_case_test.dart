@@ -1086,44 +1086,41 @@ void main() {
     expect(members.single.role, MemberRole.admin);
   });
 
-  test(
-    'fails honestly and rolls back when no usable group key is available',
-    () async {
-      bridge.responses['group:create'] = {
-        'ok': true,
-        'groupId': 'test-group-id',
-        'topicName': '/mknoon/group/test-group-id',
-      };
-      bridge.responses['group.keygen'] = {
-        'ok': false,
-        'errorCode': 'KEYGEN_FAILED',
-        'errorMessage': 'missing key material',
-      };
+  test('SV-016 keygen failure is classified and create rolls back', () async {
+    bridge.responses['group:create'] = {
+      'ok': true,
+      'groupId': 'test-group-id',
+      'topicName': '/mknoon/group/test-group-id',
+    };
+    bridge.responses['group.keygen'] = {
+      'ok': false,
+      'errorCode': 'KEYGEN_FAILED',
+      'errorMessage': 'missing key material',
+    };
 
-      await expectLater(
-        createGroup(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          name: 'Keyless Group',
-          type: GroupType.chat,
-          creatorPeerId: 'peer-123',
-          creatorPublicKey: 'pk-123',
-          creatorMlKemPublicKey: 'mlkem-pk-123',
+    await expectLater(
+      createGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        name: 'Keyless Group',
+        type: GroupType.chat,
+        creatorPeerId: 'peer-123',
+        creatorPublicKey: 'pk-123',
+        creatorMlKemPublicKey: 'mlkem-pk-123',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          allOf(contains('KEYGEN_FAILED'), isNot(contains('_TypeError'))),
         ),
-        throwsA(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            contains('no usable group key'),
-          ),
-        ),
-      );
+      ),
+    );
 
-      expect(await groupRepo.getGroup('test-group-id'), isNull);
-      expect(await groupRepo.getMembers('test-group-id'), isEmpty);
-      expect(await groupRepo.getLatestKey('test-group-id'), isNull);
-    },
-  );
+    expect(await groupRepo.getGroup('test-group-id'), isNull);
+    expect(await groupRepo.getMembers('test-group-id'), isEmpty);
+    expect(await groupRepo.getLatestKey('test-group-id'), isNull);
+  });
 
   test(
     'uses the canonical /mknoon/group fallback when the bridge omits topicName',
