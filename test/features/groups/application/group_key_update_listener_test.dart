@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -2312,6 +2313,150 @@ void main() {
       expect(latest!.keyGeneration, 3);
       expect(latest.encryptedKey, 'current-key-3');
       expect(bridge.commandLog, isNot(contains('group:updateKey')));
+    },
+  );
+
+  test(
+    'ST-003 randomized key updates keep epoch monotonic and reject same-epoch conflicts',
+    () async {
+      const groupId = 'group-st003-epoch-monotonic-property';
+      await saveActiveGroup(groupId);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'st003-key-1-initial',
+          createdAt: DateTime.utc(2026, 5, 14, 6),
+        ),
+      );
+      listener.start();
+
+      final random = Random(3003);
+      final epochs = <int>[
+        2,
+        4,
+        3,
+        4,
+        5,
+        2,
+        6,
+        6,
+        1,
+        7,
+        5,
+        8,
+        8,
+        ...List<int>.generate(36, (_) => 1 + random.nextInt(8)),
+      ];
+      final retainedMaterialByEpoch = <int, String>{1: 'st003-key-1-initial'};
+      var expectedLatestEpoch = 1;
+      var expectedUpdateKeyCount = 0;
+      var promotedEpochs = 0;
+      var historicalOnlyEpochs = 0;
+      var duplicateUpdates = 0;
+      var sameEpochConflicts = 0;
+      final baseTime = DateTime.utc(2026, 5, 14, 6);
+
+      for (var index = 0; index < epochs.length; index++) {
+        final epoch = epochs[index];
+        final existingMaterial = retainedMaterialByEpoch[epoch];
+        final encryptedKey = existingMaterial == null
+            ? 'st003-key-$epoch-first-$index'
+            : (random.nextBool()
+                  ? existingMaterial
+                  : 'st003-key-$epoch-conflict-$index');
+        final previousLatestEpoch = expectedLatestEpoch;
+        final previousUpdateKeyCount = expectedUpdateKeyCount;
+
+        if (existingMaterial == null) {
+          retainedMaterialByEpoch[epoch] = encryptedKey;
+          if (epoch > expectedLatestEpoch) {
+            expectedLatestEpoch = epoch;
+            expectedUpdateKeyCount++;
+            promotedEpochs++;
+          } else {
+            historicalOnlyEpochs++;
+          }
+        } else if (encryptedKey == existingMaterial) {
+          duplicateUpdates++;
+        } else {
+          sameEpochConflicts++;
+        }
+        retainedMaterialByEpoch.removeWhere(
+          (generation, _) => generation < expectedLatestEpoch - 1,
+        );
+
+        controller.add(
+          makeMessage(
+            validEnvelope(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              sourceEventId: 'st003-key-update-$index',
+              eventAt: baseTime.add(Duration(minutes: index + 1)),
+            ),
+            confirmNonce: 'st003-key-update-$index',
+            timestamp: baseTime
+                .add(Duration(minutes: index + 1))
+                .toIso8601String(),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        final latest = await groupRepo.getLatestKey(groupId);
+        expect(latest, isNotNull, reason: 'after event $index epoch $epoch');
+        expect(
+          latest!.keyGeneration,
+          expectedLatestEpoch,
+          reason: 'latest epoch after event $index epoch $epoch',
+        );
+        expect(
+          latest.keyGeneration >= previousLatestEpoch,
+          isTrue,
+          reason: 'latest epoch must not decrease after event $index',
+        );
+        expect(
+          latest.encryptedKey,
+          retainedMaterialByEpoch[expectedLatestEpoch],
+          reason: 'latest material after event $index epoch $epoch',
+        );
+
+        final stored = await groupRepo.getKeyByGeneration(groupId, epoch);
+        final expectedStoredMaterial = retainedMaterialByEpoch[epoch];
+        if (expectedStoredMaterial == null) {
+          expect(stored, isNull, reason: 'obsolete epoch $epoch after $index');
+        } else {
+          expect(stored, isNotNull, reason: 'stored epoch $epoch after $index');
+          expect(
+            stored!.encryptedKey,
+            expectedStoredMaterial,
+            reason: 'same-epoch conflict must not replace epoch $epoch',
+          );
+        }
+
+        final updateKeyCount = bridge.commandLog
+            .where((command) => command == 'group:updateKey')
+            .length;
+        expect(
+          updateKeyCount,
+          expectedUpdateKeyCount,
+          reason: 'bridge promotions after event $index epoch $epoch',
+        );
+        if (existingMaterial != null) {
+          expect(
+            updateKeyCount,
+            previousUpdateKeyCount,
+            reason: 'duplicate/conflict must not promote event $index',
+          );
+        }
+      }
+
+      expect(promotedEpochs, greaterThanOrEqualTo(4));
+      expect(historicalOnlyEpochs, greaterThan(0));
+      expect(duplicateUpdates, greaterThan(0));
+      expect(sameEpochConflicts, greaterThan(0));
+      expect(expectedLatestEpoch, 8);
     },
   );
 
