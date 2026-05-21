@@ -5724,6 +5724,57 @@ void main() {
       );
     });
 
+    test(
+      'SV-003 rejects private_readd_current without pending re-add proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('sv003PendingReaddCurrentProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: missing SV-003 pending re-add current proof fields',
+          ),
+        );
+      },
+    );
+
+    test('SV-003 rejects accepted pending re-add publish or local row', () {
+      final staleAccepted = _validPrivateReaddCurrentVerdicts();
+      staleAccepted[2] = {
+        ...staleAccepted[2],
+        'sv003PendingReaddCurrentProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            staleAccepted[2]['sv003PendingReaddCurrentProof'] as Map,
+          ),
+          'pendingReaddSendRejected': false,
+          'pendingReaddSendOutcome': 'success',
+          'pendingReaddLocalMessageStored': true,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: staleAccepted,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('pending re-add must not publish'));
+      expect(
+        rejected.detail,
+        contains('must not store pending re-add send row'),
+      );
+    });
+
     test('accepts private_readd_current RA-015 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_readd_current',
@@ -21839,6 +21890,20 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'pendingReaddSendOutcome': 'error',
           'rejoinAcknowledgedAfterCurrentKey': true,
           'activeAfterCurrentKeyCanSend': true,
+          'finalEpoch': 2,
+        },
+        'sv003PendingReaddCurrentProof': <String, Object?>{
+          'rowId': 'SV-003',
+          'liveThreePartyProof': true,
+          'hostSendGateCovered': true,
+          'pendingReaddImportedWithoutCurrentKey': true,
+          'pendingReaddMemberListIncludesCharlie': true,
+          'pendingReaddSendRejected': true,
+          'pendingReaddSendOutcome': 'error',
+          'pendingReaddLocalMessageStored': false,
+          'currentConfigAndKeyInstalled': true,
+          'activeAfterCurrentKeyCanSend': true,
+          'currentSendKeyEpoch': 2,
           'finalEpoch': 2,
         },
         'pl004QuoteReaddLiveProof': <String, Object?>{

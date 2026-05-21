@@ -663,6 +663,148 @@ void main() {
     );
 
     test(
+      'SV-003 pending re-add publish is blocked until current config and key',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'sv003-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv003-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv003-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-sv003-pending-readd-current';
+        const pendingMessageId = 'sv003-charlie-pending-readd';
+        const currentMessageId = 'sv003-charlie-current-readd';
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 20),
+        );
+
+        Future<void> saveKey(
+          GroupTestUser user,
+          int epoch,
+          String encryptedKey,
+        ) {
+          return user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt.add(Duration(minutes: epoch)),
+            ),
+          );
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'SV-003 Pending Readd',
+          createdAt: createdAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await Future.wait([
+          saveKey(alice, 1, 'sv003-old-key'),
+          saveKey(bob, 1, 'sv003-old-key'),
+          saveKey(charlie, 1, 'sv003-old-key'),
+        ]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: createdAt.add(const Duration(minutes: 3)),
+        );
+        await pump();
+
+        final readdAt = createdAt.add(const Duration(minutes: 4));
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: readdAt,
+        );
+        await charlie.groupRepo.removeAllKeys(groupId);
+
+        final pendingSend = await charlie.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'SV-003 Charlie pending re-add before current key',
+          messageId: pendingMessageId,
+          timestamp: readdAt.add(const Duration(seconds: 1)),
+        );
+        expect(pendingSend.$1.name, isNot('success'));
+        expect(pendingSend.$1.name, isNot('successNoPeers'));
+        expect(pendingSend.$2, isNull);
+        expect(await charlie.msgRepo.getMessage(pendingMessageId), isNull);
+        expect(charlie.bridge.commandLog, isEmpty);
+        await pump();
+
+        for (final recipient in [alice, bob]) {
+          final pendingVisible = (await recipient.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == pendingMessageId);
+          expect(pendingVisible, isEmpty);
+        }
+
+        await Future.wait([
+          saveKey(alice, 2, 'sv003-current-key'),
+          saveKey(bob, 2, 'sv003-current-key'),
+          saveKey(charlie, 2, 'sv003-current-key'),
+        ]);
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: readdAt,
+        );
+        final readdedCharlieMember = await alice.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        expect(readdedCharlieMember, isNotNull);
+        await bob.groupRepo.saveMember(readdedCharlieMember!);
+        await pump();
+
+        final currentSend = await charlie.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'SV-003 Charlie current re-add publish',
+          messageId: currentMessageId,
+          timestamp: readdAt.add(const Duration(seconds: 2)),
+        );
+        expect(currentSend.$1.name, anyOf('success', 'successNoPeers'));
+        expect(currentSend.$2, isNotNull);
+        expect(currentSend.$2!.keyGeneration, 2);
+        await pump();
+
+        for (final recipient in [alice, bob]) {
+          final currentVisible = (await recipient.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == currentMessageId).toList();
+          expect(currentVisible, hasLength(1));
+          expect(currentVisible.single.keyGeneration, 2);
+          expect(
+            currentVisible.single.text,
+            'SV-003 Charlie current re-add publish',
+          );
+        }
+      },
+    );
+
+    test(
       'NW-001 full-mesh online A/B/C delivery works without relay fallback',
       () async {
         final flowEvents = <Map<String, dynamic>>[];

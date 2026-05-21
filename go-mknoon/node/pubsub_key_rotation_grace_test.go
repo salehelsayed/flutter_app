@@ -1035,6 +1035,94 @@ func TestGL013UpdateGroupKeyNilRemovesKeyAndDisablesSendAndValidator(t *testing.
 	waitForCollectedValidationReject(t, collector, baseline, "missing_key", keyInfo.KeyEpoch, time.Second)
 }
 
+func TestSV003PublishBlockedUntilCurrentConfigAndKeyInstalled(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	oldGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate old group key: %v", err)
+	}
+	currentGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate current group key: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "sv003-pending-readd-current-config-key"
+	senderPeerId := n.PeerId()
+	initialConfig := &GroupConfig{
+		Name:      "SV-003 initial",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleWriter, PublicKey: senderPubB64},
+		},
+		CreatedBy: "alice",
+	}
+	if err := n.JoinGroupTopic(groupId, initialConfig, &GroupKeyInfo{
+		Key:      oldGroupKey,
+		KeyEpoch: 1,
+	}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	assertBlocked := func(label string) {
+		t.Helper()
+		msgID, peerCount, publishErr := n.PublishGroupMessage(
+			groupId,
+			senderPrivB64,
+			senderPeerId,
+			senderPubB64,
+			"Charlie",
+			label,
+			"",
+			nil,
+		)
+		if publishErr == nil {
+			t.Fatalf("%s PublishGroupMessage succeeded before current config/key", label)
+		}
+		if msgID != "" || peerCount != 0 {
+			t.Fatalf("%s PublishGroupMessage returned msgID=%q peerCount=%d, want empty/0", label, msgID, peerCount)
+		}
+	}
+
+	n.UpdateGroupConfig(groupId, nil)
+	n.UpdateGroupKey(groupId, &GroupKeyInfo{Key: currentGroupKey, KeyEpoch: 2})
+	assertBlocked("SV-003 current key without config")
+
+	readdConfig := &GroupConfig{
+		Name:      "SV-003 readd current config",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "alice", Role: GroupRoleAdmin, PublicKey: "alice-pub"},
+			{PeerId: senderPeerId, Role: GroupRoleWriter, PublicKey: senderPubB64},
+		},
+		CreatedBy: "alice",
+	}
+	n.UpdateGroupConfig(groupId, readdConfig)
+	n.UpdateGroupKey(groupId, nil)
+	assertBlocked("SV-003 current config without key")
+
+	n.UpdateGroupKey(groupId, &GroupKeyInfo{Key: currentGroupKey, KeyEpoch: 2})
+	msgID, peerCount, publishErr := n.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		senderPeerId,
+		senderPubB64,
+		"Charlie",
+		"SV-003 current config and key publish",
+		"sv003-current-publish",
+		nil,
+	)
+	if publishErr != nil {
+		t.Fatalf("PublishGroupMessage after current config/key: %v", publishErr)
+	}
+	if msgID != "sv003-current-publish" {
+		t.Fatalf("PublishGroupMessage msgID = %q, want sv003-current-publish", msgID)
+	}
+	if peerCount != 0 {
+		t.Fatalf("local SV-003 publish peerCount = %d, want 0", peerCount)
+	}
+}
+
 func TestUpdateGroupKey_IgnoresSameEpochDifferentMaterial(t *testing.T) {
 	hexKey := generateTestKey(t)
 

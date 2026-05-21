@@ -3343,6 +3343,7 @@ void _validateScenarioProofFields({
       failures: failures,
     );
     _validateUp003ComposeGateProof(byRole: byRole, failures: failures);
+    _validateSv003PendingReaddCurrentProof(byRole: byRole, failures: failures);
     _validatePl004QuoteReaddLiveProof(byRole: byRole, failures: failures);
     _validatePl007ReaddMediaProof(
       byRole: byRole,
@@ -15980,6 +15981,55 @@ void _validateUp003ComposeGateProof({
   final pendingOutcome = _stringValue(proof['pendingReaddSendOutcome']);
   if (pendingOutcome == 'success' || pendingOutcome == 'successNoPeers') {
     failures.add('charlie: $proofName pending re-add must not publish');
+  }
+}
+
+void _validateSv003PendingReaddCurrentProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'sv003PendingReaddCurrentProof';
+  final proof = _mapValue(byRole['charlie']?[proofName]);
+  if (proof == null) {
+    failures.add('charlie: missing SV-003 pending re-add current proof fields');
+    return;
+  }
+  if (_stringValue(proof['rowId']) != 'SV-003') {
+    failures.add('charlie: $proofName.rowId must be SV-003');
+  }
+  for (final field in const <String>[
+    'liveThreePartyProof',
+    'hostSendGateCovered',
+    'pendingReaddImportedWithoutCurrentKey',
+    'pendingReaddMemberListIncludesCharlie',
+    'pendingReaddSendRejected',
+    'currentConfigAndKeyInstalled',
+    'activeAfterCurrentKeyCanSend',
+  ]) {
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: proof,
+      field: field,
+      failures: failures,
+    );
+  }
+  if (proof['pendingReaddLocalMessageStored'] == true) {
+    failures.add('charlie: $proofName must not store pending re-add send row');
+  }
+  final pendingOutcome = _stringValue(proof['pendingReaddSendOutcome']);
+  if (pendingOutcome == 'success' || pendingOutcome == 'successNoPeers') {
+    failures.add('charlie: $proofName pending re-add must not publish');
+  }
+  final finalEpoch = _intValue(proof['finalEpoch']);
+  final currentSendEpoch = _intValue(proof['currentSendKeyEpoch']);
+  if (finalEpoch == null || finalEpoch < 2) {
+    failures.add('charlie: $proofName.finalEpoch must be >= 2');
+  }
+  if (currentSendEpoch == null || currentSendEpoch != finalEpoch) {
+    failures.add(
+      'charlie: $proofName.currentSendKeyEpoch must match finalEpoch',
+    );
   }
 }
 

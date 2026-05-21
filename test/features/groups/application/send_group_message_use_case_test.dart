@@ -1173,6 +1173,123 @@ void main() {
     },
   );
 
+  test(
+    'SV-003 pending re-add cannot publish until current config and key are installed',
+    () async {
+      const missingKeyGroupId = 'group-sv003-missing-key';
+      final joinedAt = DateTime.utc(2026, 5, 14, 4);
+      final pendingKeyGroup = GroupModel(
+        id: missingKeyGroupId,
+        name: 'SV-003 Missing Key',
+        type: GroupType.chat,
+        topicName: 'group-topic-sv003-missing-key',
+        createdAt: joinedAt,
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      );
+      await groupRepo.saveGroup(pendingKeyGroup);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: missingKeyGroupId,
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          joinedAt: joinedAt,
+        ),
+      );
+
+      final (missingKeyResult, missingKeyMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: missingKeyGroupId,
+        text: 'SV-003 missing key',
+        senderPeerId: 'peer-charlie',
+        senderPublicKey: 'pk-charlie',
+        senderPrivateKey: 'sk-charlie',
+        senderUsername: 'Charlie',
+        messageId: 'sv003-missing-key',
+      );
+
+      expect(missingKeyResult, SendGroupMessageResult.error);
+      expect(missingKeyMessage, isNull);
+      expect(await msgRepo.getMessage('sv003-missing-key'), isNull);
+      expect(bridge.commandLog, isEmpty);
+
+      const groupId = 'group-sv003-current-config-key';
+      final group = GroupModel(
+        id: groupId,
+        name: 'SV-003 Current Config Key',
+        type: GroupType.chat,
+        topicName: 'group-topic-sv003-current-config-key',
+        createdAt: joinedAt,
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      );
+      await groupRepo.saveGroup(group);
+      await _saveGroupKey(groupRepo, groupId, generation: 2);
+
+      final (
+        missingConfigResult,
+        missingConfigMessage,
+      ) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: 'SV-003 missing config',
+        senderPeerId: 'peer-charlie',
+        senderPublicKey: 'pk-charlie',
+        senderPrivateKey: 'sk-charlie',
+        senderUsername: 'Charlie',
+        messageId: 'sv003-missing-config',
+      );
+
+      expect(missingConfigResult, SendGroupMessageResult.unauthorized);
+      expect(missingConfigMessage, isNull);
+      expect(await msgRepo.getMessage('sv003-missing-config'), isNull);
+      expect(bridge.commandLog, isEmpty);
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          joinedAt: joinedAt,
+        ),
+      );
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'sv003-current-send',
+        'topicPeers': 0,
+      };
+
+      final (currentResult, currentMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: 'SV-003 current config and key',
+        senderPeerId: 'peer-charlie',
+        senderPublicKey: 'pk-charlie',
+        senderPrivateKey: 'sk-charlie',
+        senderUsername: 'Charlie',
+        messageId: 'sv003-current-send',
+      );
+
+      expect(currentResult, SendGroupMessageResult.successNoPeers);
+      expect(currentMessage, isNotNull);
+      expect(currentMessage!.keyGeneration, 2);
+      expect(await msgRepo.getMessage('sv003-current-send'), isNotNull);
+      expect(bridge.commandLog, contains('group:publish'));
+      expect(bridge.commandLog, contains('group:inboxStore'));
+      expect(_lastGroupOfflineReplayEnvelope(bridge)['keyEpoch'], 2);
+    },
+  );
+
   test('EK004 stores signed offline replay envelope for group_message', () async {
     final (result, message) = await sendGroupMessage(
       bridge: bridge,
