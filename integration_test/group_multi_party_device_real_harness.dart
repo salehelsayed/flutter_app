@@ -130,6 +130,11 @@ const _rolesByScenario = <String, List<String>>{
   'pl012': <String>['alice', 'bob', 'charlie'],
   'private_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
   'private_removed_reaction_rejected': <String>['alice', 'bob', 'charlie'],
+  'private_removed_old_key_publish_rejected': <String>[
+    'alice',
+    'bob',
+    'charlie',
+  ],
   'private_never_member_publish_rejected': <String>[
     'alice',
     'bob',
@@ -3262,6 +3267,297 @@ Future<void> _runSv001Dana(
     sentMessages: const <Map<String, dynamic>>[],
     receivedMessages: const <Map<String, dynamic>>[],
     extra: <String, dynamic>{'sv001NeverMemberPublishProof': proof},
+  );
+}
+
+String _sv002CharlieText() => 'SV-002 Charlie removed old-key publish $_runId';
+
+Future<Map<String, dynamic>> _sv002NoCharlieOldKeyMessageProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String targetMessageId,
+  required String charliePeerId,
+  required int unreadBeforeAttempt,
+  required bool normalAliceDeliveryStillWorks,
+  required Map<String, dynamic>? charlieAttempt,
+}) async {
+  await Future<void>.delayed(const Duration(seconds: 5));
+  final texts = await _timelineTexts(stack: stack, groupId: groupId);
+  final members = await _memberPeerIds(stack, groupId);
+  final unreadAfterAttempt = await stack.groupMsgRepo.getUnreadCount(groupId);
+  final reactions = await stack.reactionRepo.getReactionsForMessage(
+    targetMessageId,
+  );
+  final charlieReactions = reactions
+      .where((reaction) => reaction.senderPeerId == charliePeerId)
+      .toList(growable: false);
+  final visibleCount = texts
+      .where((text) => text == _sv002CharlieText())
+      .length;
+  return <String, dynamic>{
+    'rowId': 'SV-002',
+    'scenario': 'private_removed_old_key_publish_rejected',
+    'observedByRole': _role,
+    'activeRoles': const <String>['alice', 'bob'],
+    'removedRole': 'charlie',
+    'publisherRole': 'charlie',
+    'removedPeerId': charliePeerId,
+    'oldKeyEpoch': charlieAttempt?['oldKeyEpoch'] ?? 1,
+    'currentKeyEpoch': await _keyEpoch(stack, groupId),
+    'normalAliceDeliveryStillWorks': normalAliceDeliveryStillWorks,
+    'observedCharlieAttemptRejected':
+        charlieAttempt?['publishAccepted'] == false,
+    'receivedCharlieOldKeyMessage': visibleCount > 0,
+    'visibleRemovedOldKeyMessageCount': visibleCount,
+    'unreadCountBeforeAttempt': unreadBeforeAttempt,
+    'unreadCountAfterAttempt': unreadAfterAttempt,
+    'unreadCountChanged': unreadAfterAttempt != unreadBeforeAttempt,
+    'reactionMutationCount': charlieReactions.length,
+    'visibleReactionCountForRemovedMember': charlieReactions.length,
+    'removedMemberInActiveConfig': members.contains(charliePeerId),
+  };
+}
+
+Map<String, dynamic> _sv002CharlieAttemptProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String targetMessageId,
+  required Map<String, dynamic> publishResponse,
+  required Map<String, dynamic> reactionAttempt,
+}) {
+  final errorMessage = publishResponse['errorMessage'] as String? ?? '';
+  return <String, dynamic>{
+    'rowId': 'SV-002',
+    'scenario': 'private_removed_old_key_publish_rejected',
+    'observedByRole': 'charlie',
+    'activeRoles': const <String>['alice', 'bob'],
+    'removedRole': 'charlie',
+    'publisherRole': 'charlie',
+    'removedPeerId': stack.identity.peerId,
+    'targetMessageId': targetMessageId,
+    'oldKeyEpoch': 1,
+    'currentKeyEpoch': 1,
+    'normalAliceDeliveryStillWorks': true,
+    'attemptedNativePublish': true,
+    'publishAccepted': publishResponse['ok'] == true,
+    'publishOutcome': publishResponse['errorCode'] as String? ?? 'unknown',
+    'safeError':
+        !errorMessage.contains(groupId) &&
+        !errorMessage.contains(stack.identity.peerId),
+    'groupIdLeakInError': errorMessage.contains(groupId),
+    'peerIdLeakInError': errorMessage.contains(stack.identity.peerId),
+    'storedLocalMessage': false,
+    'visibleRemovedOldKeyMessageCount': 0,
+    'receivedCharlieOldKeyMessage': false,
+    'unreadCountChanged': false,
+    'attemptedReaction': true,
+    'reactionOutcome': reactionAttempt['outcome'],
+    'reactionAccepted': reactionAttempt['accepted'] == true,
+    'localReactionCountAfterAttempt':
+        reactionAttempt['localReactionCountAfterAttempt'],
+    'reactionMutationCount': reactionAttempt['localReactionCountAfterAttempt'],
+    'visibleReactionCountForRemovedMember':
+        reactionAttempt['localReactionCountAfterAttempt'],
+    'removedMemberInActiveConfig': false,
+    'observedCharlieAttemptRejected': false,
+  };
+}
+
+Future<void> _runSv002Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'SV-002 Private ABC',
+  );
+  writeSharedJson(_signalName('sv002_group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+
+  await waitForSharedSignal(_signalName('bob_sv002_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_sv002_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+
+  final target = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceBeforeRemoval',
+    text: 'SV-002 alice pre-removal target $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceBeforeRemoval.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceBeforeRemoval.json'),
+  );
+
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  await _removeCharlieAndPublish(
+    stack: stack,
+    groupId: groupId,
+    charlieIdentity: identities['charlie']!,
+  );
+  final group = await stack.groupRepo.getGroup(groupId);
+  final members = await stack.groupRepo.getMembers(groupId);
+  final oldKey = GroupKeyInfo.fromMap(
+    Map<String, dynamic>.from(fixture['key'] as Map),
+  );
+  if (group == null) {
+    throw StateError('Missing SV-002 group after Charlie removal');
+  }
+  writeSharedJson(
+    _signalName('sv002_removed_old_key_fixture.json'),
+    buildGroupFixture(group: group, keyInfo: oldKey, members: members),
+  );
+  writeSharedText(_signalName('alice_sv002_removed_charlie'), 'ok');
+  await waitForSharedSignal(_signalName('bob_sv002_removed_charlie'));
+
+  final unreadBeforeAttempt = await stack.groupMsgRepo.getUnreadCount(groupId);
+  final charlieAttempt = await waitForSharedJson(
+    _signalName('charlie_sv002_attempt.json'),
+  );
+  final proof = await _sv002NoCharlieOldKeyMessageProof(
+    stack: stack,
+    groupId: groupId,
+    targetMessageId: target['messageId'] as String,
+    charliePeerId: charliePeerId,
+    unreadBeforeAttempt: unreadBeforeAttempt,
+    normalAliceDeliveryStillWorks: target['accepted'] == true,
+    charlieAttempt: charlieAttempt,
+  );
+  writeSharedText(_signalName('alice_sv002_observed_no_mutation'), 'ok');
+  await waitForSharedSignal(_signalName('bob_sv002_observed_no_mutation'));
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[target],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{'sv002RemovedOldKeyPublishProof': proof},
+  );
+}
+
+Future<void> _runSv002Receiver(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(
+    _signalName('sv002_group_fixture.json'),
+  );
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('${_role}_sv002_group_joined'), 'ok');
+
+  final target = await waitForSharedJson(
+    _signalName('alice_sent_aliceBeforeRemoval.json'),
+  );
+  final received = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceBeforeRemoval',
+    text: target['text'] as String,
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+  writeSharedJson(
+    _signalName('${_role}_received_aliceBeforeRemoval.json'),
+    received,
+  );
+
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  if (_role == 'bob') {
+    await waitForSharedSignal(_signalName('alice_sv002_removed_charlie'));
+    await _waitForMemberExclusion(
+      stack: stack,
+      groupId: groupId,
+      removedPeerId: charliePeerId,
+    );
+    writeSharedText(_signalName('bob_sv002_removed_charlie'), 'ok');
+    final unreadBeforeAttempt = await stack.groupMsgRepo.getUnreadCount(
+      groupId,
+    );
+    final charlieAttempt = await waitForSharedJson(
+      _signalName('charlie_sv002_attempt.json'),
+    );
+    final proof = await _sv002NoCharlieOldKeyMessageProof(
+      stack: stack,
+      groupId: groupId,
+      targetMessageId: target['messageId'] as String,
+      charliePeerId: charliePeerId,
+      unreadBeforeAttempt: unreadBeforeAttempt,
+      normalAliceDeliveryStillWorks: received['persistedCount'] == 1,
+      charlieAttempt: charlieAttempt,
+    );
+    writeSharedText(_signalName('bob_sv002_observed_no_mutation'), 'ok');
+    await waitForSharedSignal(_signalName('alice_sv002_observed_no_mutation'));
+
+    await _writeVerdict(
+      stack: stack,
+      groupId: groupId,
+      sentMessages: const <Map<String, dynamic>>[],
+      receivedMessages: <Map<String, dynamic>>[received],
+      extra: <String, dynamic>{'sv002RemovedOldKeyPublishProof': proof},
+    );
+    return;
+  }
+
+  await waitForSharedSignal(_signalName('alice_sv002_removed_charlie'));
+  await _waitForSelfRemovalOrRetainedExclusion(stack: stack, groupId: groupId);
+  writeSharedText(_signalName('charlie_sv002_self_removed'), 'ok');
+  final removedOldKeyFixture = await waitForSharedJson(
+    _signalName('sv002_removed_old_key_fixture.json'),
+  );
+  await importJoinedGroupFixture(stack: stack, fixture: removedOldKeyFixture);
+  final publishResponse = await callGroupPublish(
+    stack.bridge,
+    groupId: groupId,
+    text: _sv002CharlieText(),
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    messageId: 'sv002-removed-old-key-$_runId',
+    timestamp: DateTime.now().toUtc(),
+  );
+  final visibleCount = (await _timelineTexts(
+    stack: stack,
+    groupId: groupId,
+  )).where((text) => text == _sv002CharlieText()).length;
+  final reactionAttempt = await _sendReactionAttemptProof(
+    stack: stack,
+    groupId: groupId,
+    messageId: target['messageId'] as String,
+    key: 'charlieRemovedOldKeyOnAliceTarget',
+    emoji: 'x',
+  );
+  final proof = _sv002CharlieAttemptProof(
+    stack: stack,
+    groupId: groupId,
+    targetMessageId: target['messageId'] as String,
+    publishResponse: publishResponse,
+    reactionAttempt: reactionAttempt,
+  );
+  proof['storedLocalMessage'] = visibleCount > 0;
+  proof['visibleRemovedOldKeyMessageCount'] = visibleCount;
+  proof['receivedCharlieOldKeyMessage'] = visibleCount > 0;
+  proof['removedMemberInActiveConfig'] = (await _memberPeerIds(
+    stack,
+    groupId,
+  )).contains(stack.identity.peerId);
+  writeSharedJson(_signalName('charlie_sv002_attempt.json'), proof);
+
+  await waitForSharedSignal(_signalName('alice_sv002_observed_no_mutation'));
+  await waitForSharedSignal(_signalName('bob_sv002_observed_no_mutation'));
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: <Map<String, dynamic>>[received],
+    extra: <String, dynamic>{'sv002RemovedOldKeyPublishProof': proof},
   );
 }
 
@@ -37278,6 +37574,15 @@ Future<void> _runScenarioRole() async {
         await _runSv001Receiver(stack, identities);
       } else {
         await _runSv001Dana(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_removed_old_key_publish_rejected') {
+      if (_role == 'alice') {
+        await _runSv002Alice(stack, identities);
+      } else {
+        await _runSv002Receiver(stack, identities);
       }
       return;
     }

@@ -14,6 +14,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -850,6 +851,93 @@ void main() {
           (event) =>
               event['event'] ==
               'GROUP_MESSAGE_LISTENER_MEMBERSHIP_DEPENDENT_CONTENT_BUFFERED',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'SV-002 removed old-key message is rejected before stream storage unread or notification',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+      final emitted = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(emitted.add);
+      addTearDown(subscription.cancel);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final removedAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 10),
+      );
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id:
+              'sys-member_removed:group-1:peer-sender:peer-admin:'
+              '${removedAt.microsecondsSinceEpoch}',
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Admin removed peer-sender',
+          timestamp: removedAt,
+          status: 'delivered',
+          isIncoming: true,
+          readAt: removedAt,
+          createdAt: removedAt,
+        ),
+      );
+      await groupRepo.removeMember('group-1', 'peer-sender');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 2,
+          encryptedKey: 'sv002-current-key',
+          createdAt: removedAt.add(const Duration(seconds: 1)),
+        ),
+      );
+      final latestBefore = await msgRepo.getLatestMessage('group-1');
+
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Removed',
+        'keyEpoch': 1,
+        'text': 'SV-002 removed old-key publish',
+        'timestamp': removedAt
+            .add(const Duration(seconds: 2))
+            .toIso8601String(),
+        'messageId': 'sv002-removed-old-key-listener',
+        'transportPeerId': 'peer-sender',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        await msgRepo.getMessage('sv002-removed-old-key-listener'),
+        isNull,
+      );
+      expect((await msgRepo.getLatestMessage('group-1'))!.id, latestBefore!.id);
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+      expect(emitted, isEmpty);
+      expect(notifService.shown, isEmpty);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
         ),
         isTrue,
       );
@@ -8950,6 +9038,63 @@ void main() {
       await sub.cancel();
       rxnListener.dispose();
     });
+
+    test(
+      'SV-002 removed old-key reaction event does not mutate visible reactions',
+      () async {
+        const existing = MessageReaction(
+          id: 'sv002-existing-reaction',
+          messageId: 'sv002-target',
+          emoji: '✅',
+          senderPeerId: 'peer-admin',
+          timestamp: '2026-05-14T03:00:00.000Z',
+          createdAt: '2026-05-14T03:00:00.000Z',
+        );
+        await reactionRepo.saveReaction(existing);
+        await groupRepo.removeMember('group-1', 'peer-sender');
+
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+        );
+
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+
+        final changes = <ReactionChange>[];
+        final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'transportPeerId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'sv002-removed-reaction',
+            'messageId': 'sv002-target',
+            'emoji': '🔥',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-05-14T03:00:01.000Z',
+          }),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(changes, isEmpty);
+        expect(await reactionRepo.getReactionsForMessage('sv002-target'), [
+          existing,
+        ]);
+        expect(reactionRepo.saveReactionCallCount, 1);
+        expect(reactionRepo.removeReactionCallCount, 0);
+
+        await sub.cancel();
+        rxnListener.dispose();
+      },
+    );
 
     test('ignores reaction when reactionRepo is null', () async {
       final noRepoListener = GroupMessageListener(

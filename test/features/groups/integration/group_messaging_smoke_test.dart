@@ -36,6 +36,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
+import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/group_test_user.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
@@ -467,6 +468,196 @@ void main() {
               )
               .toList(),
           hasLength(3),
+        );
+      },
+    );
+
+    test(
+      'SV-002 removed old-key publish reaches listeners without timeline unread or reaction mutation',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        final aliceReactions = FakeReactionRepository();
+        final bobReactions = FakeReactionRepository();
+        final alice = GroupTestUser.create(
+          peerId: 'sv002-alice-peer',
+          username: 'Alice',
+          network: network,
+          reactionRepo: aliceReactions,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'sv002-bob-peer',
+          username: 'Bob',
+          network: network,
+          reactionRepo: bobReactions,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'sv002-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          debugSetFlowEventSink(null);
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-sv002-removed-old-key';
+        const targetId = 'sv002-target-before-removal';
+        const staleMessageId = 'sv002-charlie-old-key-message';
+        const staleReactionId = 'sv002-charlie-old-key-reaction';
+        const staleText = 'SV-002 Charlie removed old-key publish';
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 20),
+        );
+
+        Future<void> saveKey(
+          GroupTestUser user,
+          int epoch,
+          String encryptedKey,
+          DateTime createdAt,
+        ) {
+          return user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'SV-002 Removed Old Key',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await Future.wait([
+          saveKey(alice, 1, 'sv002-old-key', createdAt),
+          saveKey(bob, 1, 'sv002-old-key', createdAt),
+          saveKey(charlie, 1, 'sv002-old-key', createdAt),
+        ]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'SV-002 target before removal',
+          messageId: targetId,
+          timestamp: createdAt.add(const Duration(minutes: 1)),
+        );
+        await pump();
+        expect(await bob.msgRepo.getMessage(targetId), isNotNull);
+        expect(await charlie.msgRepo.getMessage(targetId), isNotNull);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await pump();
+        await Future.wait([
+          saveKey(
+            alice,
+            2,
+            'sv002-current-key',
+            createdAt.add(const Duration(minutes: 3)),
+          ),
+          saveKey(
+            bob,
+            2,
+            'sv002-current-key',
+            createdAt.add(const Duration(minutes: 3)),
+          ),
+        ]);
+
+        final aliceUnreadBefore = await alice.msgRepo.getUnreadCount(groupId);
+        final bobUnreadBefore = await bob.msgRepo.getUnreadCount(groupId);
+
+        await network.publish(groupId, charlie.peerId, <String, dynamic>{
+          'groupId': groupId,
+          'senderId': charlie.peerId,
+          'senderUsername': charlie.username,
+          'keyEpoch': 1,
+          'text': staleText,
+          'timestamp': createdAt
+              .add(const Duration(minutes: 4))
+              .toIso8601String(),
+          'messageId': staleMessageId,
+          'transportPeerId': charlie.deviceId,
+        }, senderDeviceId: charlie.deviceId);
+        await network.publishReaction(
+          groupId,
+          charlie.peerId,
+          <String, dynamic>{
+            'groupId': groupId,
+            'senderId': charlie.peerId,
+            'transportPeerId': charlie.deviceId,
+            'reaction': jsonEncode({
+              'id': staleReactionId,
+              'messageId': targetId,
+              'emoji': '🔥',
+              'action': 'add',
+              'senderPeerId': charlie.peerId,
+              'timestamp': createdAt
+                  .add(const Duration(minutes: 4, seconds: 1))
+                  .toIso8601String(),
+            }),
+          },
+          senderDeviceId: charlie.deviceId,
+        );
+        await pump();
+
+        for (final user in [alice, bob]) {
+          expect(
+            await user.msgRepo.getMessage(staleMessageId),
+            isNull,
+            reason: '${user.username} must not persist Charlie old-key publish',
+          );
+          expect(
+            (await user.loadGroupMessages(
+              groupId,
+            )).where((message) => message.text == staleText).toList(),
+            isEmpty,
+            reason: '${user.username} must not render Charlie old-key publish',
+          );
+        }
+        expect(await alice.msgRepo.getUnreadCount(groupId), aliceUnreadBefore);
+        expect(await bob.msgRepo.getUnreadCount(groupId), bobUnreadBefore);
+        expect(await aliceReactions.getReactionsForMessage(targetId), isEmpty);
+        expect(await bobReactions.getReactionsForMessage(targetId), isEmpty);
+        expect(
+          network.deliveryRecords
+              .where(
+                (record) =>
+                    record['messageId'] == staleMessageId &&
+                    record['senderPeerId'] == charlie.peerId,
+              )
+              .toList(),
+          hasLength(2),
+        );
+        expect(network.totalReactionDeliveries, 2);
+        expect(
+          flowEvents.where(
+            (event) =>
+                event['event'] ==
+                'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
+          ),
+          isNotEmpty,
         );
       },
     );

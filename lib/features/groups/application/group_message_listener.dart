@@ -688,6 +688,16 @@ class GroupMessageListener {
     final group = await _groupRepo.getGroup(groupId);
     if (group == null) return false;
     if (await _groupRepo.getMember(groupId, senderId) != null) return false;
+    final incomingKeyEpoch = data['keyEpoch'];
+    final latestKey = incomingKeyEpoch is int && incomingKeyEpoch > 0
+        ? await _groupRepo.getLatestKey(groupId)
+        : null;
+    if (latestKey != null &&
+        latestKey.keyGeneration > 0 &&
+        incomingKeyEpoch is int &&
+        incomingKeyEpoch < latestKey.keyGeneration) {
+      return false;
+    }
     final membershipWatermark = group.lastMembershipEventAt?.toUtc();
     final messageTimestamp = DateTime.tryParse(
       data['timestamp'] as String? ?? '',

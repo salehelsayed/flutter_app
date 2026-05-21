@@ -79,6 +79,11 @@ const _privateNeverMemberPublishRejectedRequirement =
       scenario: 'private_never_member_publish_rejected',
       roles: <String>['alice', 'bob', 'charlie', 'dana'],
     );
+const _privateRemovedOldKeyPublishRejectedRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_removed_old_key_publish_rejected',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privateFullMeshOnlineRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_full_mesh_online',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -470,6 +475,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
       _privateRemovedReactionRejectedRequirement,
   'private_never_member_publish_rejected':
       _privateNeverMemberPublishRejectedRequirement,
+  'private_removed_old_key_publish_rejected':
+      _privateRemovedOldKeyPublishRejectedRequirement,
   'private_full_mesh_online': _privateFullMeshOnlineRequirement,
   'private_relay_only_delivery': _privateRelayOnlyDeliveryRequirement,
   'private_partition_readd_heal': _privatePartitionReaddHealRequirement,
@@ -739,6 +746,8 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
             requirement.scenario == 'gm034' ||
             requirement.scenario == 'private_history_retention' ||
             requirement.scenario == 'private_invite_terminal_states' ||
+            requirement.scenario ==
+                'private_removed_old_key_publish_rejected' ||
             requirement.scenario == 'de017') &&
         role == 'charlie') {
       if (keyEpoch == null || keyEpoch < 0) {
@@ -796,6 +805,28 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
         }
         if (members.contains(neverMemberPeerId)) {
           failures.add('$role: SV-001 membership includes never-member dana');
+        }
+      }
+    } else if (requirement.scenario ==
+        'private_removed_old_key_publish_rejected') {
+      final remainingPeerIds = <String>{
+        peerIdByRole['alice']!,
+        peerIdByRole['bob']!,
+      };
+      final removedPeerId = peerIdByRole['charlie']!;
+      for (final role in const <String>['alice', 'bob']) {
+        final verdict = byRole[role];
+        if (verdict == null) continue;
+        final members = _activeMemberPeerIds(verdict).toSet();
+        final missingMembers = remainingPeerIds.difference(members);
+        if (missingMembers.isNotEmpty) {
+          failures.add(
+            '$role: incomplete SV-002 post-removal membership, missing '
+            '${missingMembers.join(', ')}',
+          );
+        }
+        if (members.contains(removedPeerId)) {
+          failures.add('$role: SV-002 membership still includes charlie');
         }
       }
     } else if (requirement.scenario == 'ge002' ||
@@ -1751,6 +1782,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceInitial',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_removed_old_key_publish_rejected':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceBeforeRemoval',
           senderRole: 'alice',
           receiverRoles: <String>['bob', 'charlie'],
         ),
@@ -2862,6 +2901,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_never_member_publish_rejected') {
     _validateSv001NeverMemberPublishProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_removed_old_key_publish_rejected') {
+    _validateSv002RemovedOldKeyPublishProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -5167,6 +5214,119 @@ void _validateSv001NeverMemberPublishProof({
       }
       if (proof['receivedDanaMessage'] == true) {
         failures.add('$role: SV-001 active member received Dana injection');
+      }
+    }
+  }
+}
+
+void _validateSv002RemovedOldKeyPublishProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  final charliePeerId = peerIdByRole['charlie'];
+  final activePeerIds = <String>{
+    if (peerIdByRole['alice'] != null) peerIdByRole['alice']!,
+    if (peerIdByRole['bob'] != null) peerIdByRole['bob']!,
+  };
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final verdict = byRole[role];
+    if (verdict == null) {
+      continue;
+    }
+    final proof = _mapValue(verdict['sv002RemovedOldKeyPublishProof']);
+    if (proof == null) {
+      failures.add('$role: missing sv002RemovedOldKeyPublishProof');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'SV-002') {
+      failures.add(
+        '$role: sv002RemovedOldKeyPublishProof.rowId must be SV-002',
+      );
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_removed_old_key_publish_rejected') {
+      failures.add('$role: sv002RemovedOldKeyPublishProof scenario mismatch');
+    }
+    if (_stringValue(proof['removedRole']) != 'charlie' ||
+        _stringValue(proof['publisherRole']) != 'charlie') {
+      failures.add('$role: SV-002 removed/publisher role must both be charlie');
+    }
+    if (charliePeerId != null &&
+        _stringValue(proof['removedPeerId']) != charliePeerId) {
+      failures.add('$role: SV-002 removedPeerId mismatch');
+    }
+    if ((_intValue(proof['oldKeyEpoch']) ?? 0) < 1) {
+      failures.add('$role: SV-002 oldKeyEpoch must identify retained key');
+    }
+    if (proof['normalAliceDeliveryStillWorks'] != true) {
+      failures.add(
+        '$role: SV-002 must prove normal A to B/C delivery still works',
+      );
+    }
+    if (proof['removedMemberInActiveConfig'] == true) {
+      failures.add('$role: SV-002 active config must exclude Charlie');
+    }
+    if (_intValue(proof['visibleRemovedOldKeyMessageCount']) != 0 ||
+        proof['receivedCharlieOldKeyMessage'] == true) {
+      failures.add('$role: SV-002 removed old-key message must not be visible');
+    }
+    if (proof['unreadCountChanged'] == true) {
+      failures.add('$role: SV-002 unread count changed after rejected publish');
+    }
+    if ((_intValue(proof['reactionMutationCount']) ?? 0) != 0 ||
+        (_intValue(proof['visibleReactionCountForRemovedMember']) ?? 0) != 0) {
+      failures.add(
+        '$role: SV-002 removed old-key reaction must not mutate reactions',
+      );
+    }
+
+    final verdictMembers = _activeMemberPeerIds(verdict).toSet();
+    final missing = activePeerIds.difference(verdictMembers);
+    if (role != 'charlie' && missing.isNotEmpty) {
+      failures.add(
+        '$role: SV-002 active member set missing ${missing.join(', ')}',
+      );
+    }
+    if (charliePeerId != null && verdictMembers.contains(charliePeerId)) {
+      failures.add('$role: SV-002 verdict active members include Charlie');
+    }
+
+    if (role == 'charlie') {
+      if (proof['attemptedNativePublish'] != true) {
+        failures.add('charlie: SV-002 must attempt native old-key publish');
+      }
+      if (proof['publishAccepted'] == true) {
+        failures.add('charlie: SV-002 removed old-key publish was accepted');
+      }
+      if (_stringValue(proof['publishOutcome']) != 'GROUP_ERROR') {
+        failures.add('charlie: SV-002 publishOutcome must be GROUP_ERROR');
+      }
+      if (proof['safeError'] != true ||
+          proof['groupIdLeakInError'] == true ||
+          proof['peerIdLeakInError'] == true) {
+        failures.add(
+          'charlie: SV-002 publish rejection error must be non-identifying',
+        );
+      }
+      if (proof['storedLocalMessage'] == true) {
+        failures.add(
+          'charlie: SV-002 rejected publish must not store local message',
+        );
+      }
+      if (proof['attemptedReaction'] != true ||
+          proof['reactionAccepted'] == true ||
+          (_intValue(proof['localReactionCountAfterAttempt']) ?? 0) != 0) {
+        failures.add(
+          'charlie: SV-002 removed old-key reaction attempt must be rejected',
+        );
+      }
+    } else {
+      if (proof['observedCharlieAttemptRejected'] != true) {
+        failures.add(
+          '$role: SV-002 active member did not observe Charlie rejection',
+        );
       }
     }
   }

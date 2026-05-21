@@ -902,6 +902,81 @@ void main() {
       );
     });
 
+    test('SV-002 accepts removed old-key publish rejection verdicts', () {
+      expect(
+        scenarioRequirement('private_removed_old_key_publish_rejected').roles,
+        ['alice', 'bob', 'charlie'],
+      );
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_old_key_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateRemovedOldKeyPublishRejectedVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_removed_old_key_publish_rejected verdicts valid'),
+      );
+    });
+
+    test('SV-002 rejects accepted removed old-key publish', () {
+      final verdicts = _validPrivateRemovedOldKeyPublishRejectedVerdicts();
+      verdicts[2] = _withSv002ProofOverrides(
+        verdicts[2],
+        const <String, Object?>{
+          'publishOutcome': 'success',
+          'publishAccepted': true,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_old_key_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: SV-002 removed old-key publish was accepted'),
+      );
+    });
+
+    test('SV-002 rejects visible message unread or reaction mutation', () {
+      final verdicts = _validPrivateRemovedOldKeyPublishRejectedVerdicts();
+      verdicts[1] =
+          _withSv002ProofOverrides(verdicts[1], const <String, Object?>{
+            'visibleRemovedOldKeyMessageCount': 1,
+            'receivedCharlieOldKeyMessage': true,
+            'unreadCountChanged': true,
+            'reactionMutationCount': 1,
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_old_key_publish_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: SV-002 removed old-key message must not be visible'),
+      );
+      expect(
+        rejected.detail,
+        contains('bob: SV-002 unread count changed after rejected publish'),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'bob: SV-002 removed old-key reaction must not mutate reactions',
+        ),
+      );
+    });
+
     test('accepts valid GM-001 A/B/C receiver persistence verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm001',
@@ -19238,6 +19313,133 @@ Map<String, dynamic> _withSv001ProofOverrides(
     'sv001NeverMemberPublishProof': <String, Object?>{
       ...Map<String, Object?>.from(
         verdict['sv001NeverMemberPublishProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateRemovedOldKeyPublishRejectedVerdicts() {
+  const scenario = 'private_removed_old_key_publish_rejected';
+  const groupId = 'group-sv002';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const activeMembers = <String>[alicePeerId, bobPeerId];
+  const aliceMessage = <String, Object?>{
+    'key': 'aliceBeforeRemoval',
+    'messageId': 'msg-sv002-alice',
+    'groupId': groupId,
+    'text': 'SV-002 Alice pre-removal target',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-13T00:00:00.000Z',
+    'accepted': true,
+  };
+
+  Map<String, Object?> proofFor(String role, {bool charlieAttempted = false}) {
+    return <String, Object?>{
+      'rowId': 'SV-002',
+      'scenario': scenario,
+      'observedByRole': role,
+      'removedRole': 'charlie',
+      'publisherRole': 'charlie',
+      'removedPeerId': charliePeerId,
+      'activeMemberPeerIds': activeMembers,
+      'oldKeyEpoch': 1,
+      'currentKeyEpoch': 1,
+      'removedMemberInActiveConfig': false,
+      'normalAliceDeliveryStillWorks': true,
+      'visibleRemovedOldKeyMessageCount': 0,
+      'receivedCharlieOldKeyMessage': false,
+      'unreadCountChanged': false,
+      'reactionMutationCount': 0,
+      'visibleReactionCountForRemovedMember': 0,
+      'attemptedNativePublish': charlieAttempted,
+      'publishOutcome': charlieAttempted ? 'GROUP_ERROR' : 'not_observed',
+      'publishAccepted': false,
+      'safeError': true,
+      'groupIdLeakInError': false,
+      'peerIdLeakInError': false,
+      'storedLocalMessage': false,
+      'attemptedReaction': charlieAttempted,
+      'reactionAccepted': false,
+      'localReactionCountAfterAttempt': 0,
+      'observedCharlieAttemptRejected': !charlieAttempted,
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[aliceMessage],
+      extra: <String, Object?>{
+        'sv002RemovedOldKeyPublishProof': proofFor('alice'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceBeforeRemoval',
+          'msg-sv002-alice',
+          'SV-002 Alice pre-removal target',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceBeforeRemoval': 1},
+      extra: <String, Object?>{
+        'sv002RemovedOldKeyPublishProof': proofFor('bob'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 0,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceBeforeRemoval',
+          'msg-sv002-alice',
+          'SV-002 Alice pre-removal target',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceBeforeRemoval': 1},
+      extra: <String, Object?>{
+        'sv002RemovedOldKeyPublishProof': proofFor(
+          'charlie',
+          charlieAttempted: true,
+        ),
+      },
+    ),
+  ];
+}
+
+Map<String, dynamic> _withSv002ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'sv002RemovedOldKeyPublishProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['sv002RemovedOldKeyPublishProof'] as Map,
       ),
       ...overrides,
     },
