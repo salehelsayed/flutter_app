@@ -748,6 +748,67 @@ void main() {
   );
 
   test(
+    'SV-005 tampered envelope diagnostic does not poison later listener delivery',
+    () async {
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final repairRequests = <GroupKeyRepairRequest>[];
+
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: repairRequests.add,
+      );
+      listener.start(sourceController.stream);
+      addTearDown(diagnostics.close);
+
+      final placeholderFuture = listener.groupMessageStream.first.timeout(
+        const Duration(seconds: 1),
+      );
+      diagnostics.add({
+        'event': 'group:decryption_failed',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'keyEpoch': 5,
+        'localKeyEpoch': 5,
+        'error': 'cipher: message authentication failed after tamper',
+      });
+
+      final placeholder = await placeholderFuture;
+      expect(placeholder.text, groupPendingKeyRepairPlaceholderText);
+      expect(placeholder.status, groupPendingKeyRepairStatusPendingKey);
+      expect(placeholder.keyGeneration, 5);
+      expect(msgRepo.count, 1);
+      expect(pendingRepo.repairs.values, hasLength(1));
+      expect(repairRequests, hasLength(1));
+      expect(await msgRepo.getMessage('sv005-valid-after-tamper'), isNull);
+
+      final laterEvent = listener.groupMessageStream
+          .where((message) => message.id == 'sv005-valid-after-tamper')
+          .first
+          .timeout(const Duration(seconds: 1));
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 5,
+        'messageId': 'sv005-valid-after-tamper',
+        'text': 'SV-005 valid listener delivery after tamper',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      final laterMessage = await laterEvent;
+      expect(laterMessage.text, 'SV-005 valid listener delivery after tamper');
+      expect(await msgRepo.getMessage('sv005-valid-after-tamper'), isNotNull);
+      expect(msgRepo.count, 2);
+    },
+  );
+
+  test(
     'GO-003 sender-visible validation feedback marks outgoing row failed and retryable',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();

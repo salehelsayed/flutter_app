@@ -10969,6 +10969,107 @@ void main() {
       );
 
       test(
+        'SV-005 tampered envelope diagnostic does not poison later fake-network delivery',
+        () async {
+          final bobDiagnostics =
+              StreamController<Map<String, dynamic>>.broadcast();
+          final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+          final repairRequests = <GroupKeyRepairRequest>[];
+          final admin = GroupTestUser.create(
+            peerId: 'admin-sv005-tamper',
+            username: 'Alice',
+            network: network,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-sv005-tamper',
+            username: 'Bob',
+            network: network,
+            groupDiagnosticEvents: bobDiagnostics.stream,
+            pendingKeyRepairRepo: pendingRepo,
+            requestGroupKeyRepair: repairRequests.add,
+          );
+          addTearDown(() {
+            admin.dispose();
+            bob.dispose();
+            bobDiagnostics.close();
+          });
+
+          const groupId = 'group-sv005-tamper';
+          const laterMessageId = 'sv005-fake-network-valid-after-tamper';
+          const laterText = 'SV-005 valid fake-network delivery after tamper';
+          await admin.createGroup(
+            groupId: groupId,
+            name: 'SV-005 Tamper Recovery',
+          );
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+
+          final placeholderFuture = bob
+              .groupMessageListener
+              .groupMessageStream
+              .first
+              .timeout(const Duration(seconds: 1));
+          bobDiagnostics.add({
+            'event': 'group:decryption_failed',
+            'groupId': groupId,
+            'senderId': admin.peerId,
+            'keyEpoch': 1,
+            'localKeyEpoch': 1,
+            'error': 'cipher: message authentication failed after tamper',
+          });
+
+          final placeholder = await placeholderFuture;
+          expect(placeholder.text, groupPendingKeyRepairPlaceholderText);
+          expect(placeholder.status, groupPendingKeyRepairStatusPendingKey);
+          expect(await bob.msgRepo.getMessage(laterMessageId), isNull);
+          expect(pendingRepo.repairs.values, hasLength(1));
+          expect(repairRequests, hasLength(1));
+
+          final (sendResult, sentMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: laterText,
+                messageId: laterMessageId,
+              );
+          expect(sendResult, SendGroupMessageResult.success);
+          expect(sentMessage, isNotNull);
+
+          await pumpUntilAsync(() async {
+            final messages = await bob.loadGroupMessages(groupId);
+            return messages.any(
+              (message) =>
+                  message.id == laterMessageId && message.text == laterText,
+            );
+          });
+
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where(
+              (message) =>
+                  message.id == laterMessageId && message.text == laterText,
+            ),
+            hasLength(1),
+          );
+          expect(
+            bobMessages
+                .where(
+                  (message) =>
+                      message.text ==
+                      'SV-005 tampered nonce should not deliver',
+                )
+                .toList(),
+            isEmpty,
+          );
+          expect(network.deliveryRecords, hasLength(1));
+          expect(network.deliveryRecords.single['messageId'], laterMessageId);
+        },
+      );
+
+      test(
         'DE-015 payload parse diagnostic does not poison later fake-network delivery',
         () async {
           final admin = GroupTestUser.create(
