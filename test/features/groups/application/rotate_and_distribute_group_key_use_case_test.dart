@@ -9,6 +9,7 @@ import 'package:flutter_app/features/groups/application/rotate_and_distribute_gr
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -1528,6 +1529,163 @@ void main() {
       final latestKey = await groupRepo.getLatestKey(groupId);
       expect(latestKey, isNotNull);
       expect(latestKey!.keyGeneration, 7);
+    },
+  );
+
+  test(
+    'ST-009 max-size re-add restores key fanout to every active recipient',
+    () async {
+      const readdPeerId = 'peer-carol';
+      final joinedAt = DateTime.utc(2026, 5, 16, 9, 9);
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'selfMlKem',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'self-st009-device',
+              transportPeerId: 'self-st009-transport',
+              deviceSigningPublicKey: 'selfPubKey',
+              mlKemPublicKey: 'selfSt009MlKem',
+              keyPackageId: 'self-st009-package',
+            ),
+          ],
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'bobPubKey',
+          mlKemPublicKey: 'bobMlKem',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'bob-st009-device',
+              transportPeerId: 'bob-st009-transport',
+              deviceSigningPublicKey: 'bobPubKey',
+              mlKemPublicKey: 'bobSt009MlKem',
+              keyPackageId: 'bob-st009-package',
+            ),
+          ],
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: readdPeerId,
+          username: 'Carol',
+          role: MemberRole.writer,
+          publicKey: 'carolPubKey',
+          mlKemPublicKey: 'carolMlKem',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'carol-st009-device',
+              transportPeerId: 'carol-st009-transport',
+              deviceSigningPublicKey: 'carolPubKey',
+              mlKemPublicKey: 'carolSt009MlKem',
+              keyPackageId: 'carol-st009-package',
+            ),
+          ],
+          joinedAt: joinedAt.add(const Duration(minutes: 2)),
+        ),
+      );
+
+      for (var index = 0; index < groupMembershipLimit - 3; index++) {
+        final peerId = 'peer-st009-synth-${index.toString().padLeft(2, '0')}';
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: peerId,
+            username: 'Synthetic $index',
+            role: MemberRole.writer,
+            publicKey: 'pk-$peerId',
+            mlKemPublicKey: 'mlkem-$peerId',
+            devices: [
+              GroupMemberDeviceIdentity(
+                deviceId: '$peerId-device',
+                transportPeerId: '$peerId-transport',
+                deviceSigningPublicKey: 'pk-$peerId',
+                mlKemPublicKey: 'mlkem-$peerId-device',
+                keyPackageId: 'kp-$peerId-device',
+              ),
+            ],
+            joinedAt: joinedAt.add(Duration(minutes: 3 + index)),
+          ),
+        );
+      }
+
+      expect(
+        (await groupRepo.getMembers(groupId)).length,
+        groupMembershipLimit,
+      );
+      await groupRepo.removeMember(groupId, readdPeerId);
+      expect((await groupRepo.getMembers(groupId)).length, 49);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: readdPeerId,
+          username: 'Carol Readded',
+          role: MemberRole.writer,
+          publicKey: 'carolReaddPubKey',
+          mlKemPublicKey: 'carolReaddMlKem',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'carol-st009-readd-device',
+              transportPeerId: 'carol-st009-readd-transport',
+              deviceSigningPublicKey: 'carolReaddPubKey',
+              mlKemPublicKey: 'carolSt009ReaddMlKem',
+              keyPackageId: 'carol-st009-readd-package',
+            ),
+          ],
+          joinedAt: joinedAt.add(const Duration(hours: 1)),
+        ),
+      );
+      expect(
+        (await groupRepo.getMembers(groupId)).length,
+        groupMembershipLimit,
+      );
+
+      final sentMessages = <(String, Map<String, dynamic>)>[];
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sourceDeviceId: 'self-st009-device',
+        sendP2PMessage: (peerId, message) async {
+          sentMessages.add((peerId, _decodeDirectKeyUpdatePayload(message)));
+          return true;
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(result!.keyGeneration, 2);
+      expect(sentMessages, hasLength(groupMembershipLimit - 1));
+      final recipientPeerIds = sentMessages
+          .map((entry) => entry.$2['recipientPeerId'] as String)
+          .toSet();
+      expect(recipientPeerIds, hasLength(groupMembershipLimit - 1));
+      expect(recipientPeerIds, contains('peer-bob'));
+      expect(recipientPeerIds, contains(readdPeerId));
+      expect(recipientPeerIds, isNot(contains(selfPeerId)));
+      for (var index = 0; index < groupMembershipLimit - 3; index++) {
+        expect(
+          recipientPeerIds,
+          contains('peer-st009-synth-${index.toString().padLeft(2, '0')}'),
+        );
+      }
     },
   );
 

@@ -27,6 +27,7 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
@@ -1385,6 +1386,269 @@ void main() {
         bob.dispose();
         charlie.dispose();
         diana.dispose();
+      },
+    );
+
+    test(
+      'ST-009 max-size churn keeps active app peers receiving after slot reuse',
+      () async {
+        const groupId = 'grp-st009-max-size-churn';
+        final startedAt = DateTime.utc(2026, 5, 15, 9, 9);
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-st009-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-st009-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-st009-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        Future<void> seedSyntheticMembers(GroupTestUser user) async {
+          for (var index = 0; index < groupMembershipLimit - 3; index++) {
+            final peerId =
+                'peer-st009-synth-${index.toString().padLeft(2, '0')}';
+            await user.groupRepo.saveMember(
+              GroupMember(
+                groupId: groupId,
+                peerId: peerId,
+                username: 'Synthetic $index',
+                role: MemberRole.writer,
+                publicKey: 'pk-$peerId',
+                mlKemPublicKey: 'mlkem-$peerId',
+                devices: [
+                  GroupMemberDeviceIdentity(
+                    deviceId: '$peerId-device',
+                    transportPeerId: '$peerId-device',
+                    deviceSigningPublicKey: 'pk-$peerId',
+                    mlKemPublicKey: 'mlkem-$peerId-device',
+                    keyPackageId: 'kp-$peerId-device',
+                    keyPackagePublicMaterial: 'kpm-$peerId-device',
+                  ),
+                ],
+                joinedAt: startedAt.add(Duration(minutes: 3 + index)),
+              ),
+            );
+          }
+        }
+
+        List<String> recipientPeerIdsForMessage(
+          GroupTestUser user,
+          String messageId,
+        ) {
+          for (final raw in user.bridge.sentMessages.reversed) {
+            final parsed = jsonDecode(raw) as Map<String, dynamic>;
+            if (parsed['cmd'] != 'group:inboxStore') continue;
+            final payload = parsed['payload'] as Map<String, dynamic>;
+            final message = payload['message'] as String? ?? '';
+            if (!message.contains(messageId)) continue;
+            return (payload['recipientPeerIds'] as List<dynamic>? ?? const [])
+                .cast<String>();
+          }
+          fail('Missing group:inboxStore payload for $messageId');
+        }
+
+        Future<Set<String>> textsFor(GroupTestUser user) async {
+          final messages = await user.loadGroupMessages(groupId);
+          return messages.map((message) => message.text).toSet();
+        }
+
+        Future<void> saveGroupKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'st009-group-key',
+              createdAt: startedAt,
+            ),
+          );
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'ST-009 Max Size Churn',
+          createdAt: startedAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: startedAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: startedAt.add(const Duration(minutes: 2)),
+        );
+        await bob.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: charlie.peerId,
+            username: charlie.username,
+            role: MemberRole.writer,
+            publicKey: charlie.publicKey,
+            mlKemPublicKey: charlie.mlKemPublicKey,
+            devices: [charlie.deviceIdentity],
+            joinedAt: startedAt.add(const Duration(minutes: 2)),
+          ),
+        );
+        for (final user in [alice, bob, charlie]) {
+          await saveGroupKey(user);
+        }
+        for (final user in [alice, bob, charlie]) {
+          await seedSyntheticMembers(user);
+          expect(
+            await user.groupRepo.getMembers(groupId),
+            hasLength(groupMembershipLimit),
+          );
+        }
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: startedAt.add(const Duration(hours: 1)),
+        );
+        await waitUntil(() async {
+          return (await bob.groupRepo.getMembers(groupId)).length == 49 &&
+              !network.isSubscribed(groupId, charlie.peerId);
+        });
+
+        const removedWindowMessageId = 'st009-removed-window';
+        const removedWindowText = 'ST-009 removed-window max group';
+        final (removedResult, removedMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: removedWindowText,
+              messageId: removedWindowMessageId,
+              timestamp: startedAt.add(const Duration(hours: 1, minutes: 1)),
+            );
+        expect(removedResult, group_send.SendGroupMessageResult.success);
+        expect(removedMessage, isNotNull);
+        await waitUntil(
+          () async => (await textsFor(bob)).contains(removedWindowText),
+        );
+        await pump();
+        expect(await textsFor(charlie), isNot(contains(removedWindowText)));
+        final removedRecipients = recipientPeerIdsForMessage(
+          alice,
+          removedWindowMessageId,
+        );
+        expect(removedRecipients, hasLength(groupMembershipLimit - 2));
+        expect(removedRecipients, contains(bob.peerId));
+        expect(removedRecipients, isNot(contains(charlie.peerId)));
+        expect(removedRecipients, isNot(contains(alice.peerId)));
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: startedAt.add(const Duration(hours: 2)),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: startedAt.add(const Duration(hours: 2, minutes: 1)),
+        );
+        for (final user in [alice, bob, charlie]) {
+          await saveGroupKey(user);
+        }
+        await waitUntil(() async {
+          final bobMembers = await bob.groupRepo.getMembers(groupId);
+          final charlieMembers = await charlie.groupRepo.getMembers(groupId);
+          return bobMembers.length == groupMembershipLimit &&
+              charlieMembers.length == groupMembershipLimit &&
+              network.isSubscribed(groupId, charlie.peerId);
+        });
+
+        const aliceAfterId = 'st009-alice-after-readd';
+        const bobAfterId = 'st009-bob-after-readd';
+        const charlieAfterId = 'st009-charlie-after-readd';
+        const aliceAfterText = 'ST-009 Alice after max-size readd';
+        const bobAfterText = 'ST-009 Bob after max-size readd';
+        const charlieAfterText = 'ST-009 Charlie after max-size readd';
+
+        final (aliceResult, aliceMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: aliceAfterText,
+              messageId: aliceAfterId,
+              timestamp: startedAt.add(const Duration(hours: 2, minutes: 2)),
+            );
+        expect(aliceResult, group_send.SendGroupMessageResult.success);
+        expect(aliceMessage, isNotNull);
+        await waitUntil(() async {
+          final bobTexts = await textsFor(bob);
+          final charlieTexts = await textsFor(charlie);
+          return bobTexts.contains(aliceAfterText) &&
+              charlieTexts.contains(aliceAfterText);
+        });
+
+        final (bobResult, bobMessage) = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: bobAfterText,
+          messageId: bobAfterId,
+          timestamp: startedAt.add(const Duration(hours: 2, minutes: 3)),
+        );
+        expect(bobResult, group_send.SendGroupMessageResult.success);
+        expect(bobMessage, isNotNull);
+        await waitUntil(() async {
+          final aliceTexts = await textsFor(alice);
+          final charlieTexts = await textsFor(charlie);
+          return aliceTexts.contains(bobAfterText) &&
+              charlieTexts.contains(bobAfterText);
+        });
+
+        final (charlieResult, charlieMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: charlieAfterText,
+              messageId: charlieAfterId,
+              timestamp: startedAt.add(const Duration(hours: 2, minutes: 4)),
+            );
+        expect(charlieResult, group_send.SendGroupMessageResult.success);
+        expect(charlieMessage, isNotNull);
+        await waitUntil(() async {
+          final aliceTexts = await textsFor(alice);
+          final bobTexts = await textsFor(bob);
+          return aliceTexts.contains(charlieAfterText) &&
+              bobTexts.contains(charlieAfterText);
+        });
+
+        final aliceRecipients = recipientPeerIdsForMessage(alice, aliceAfterId);
+        expect(aliceRecipients, hasLength(groupMembershipLimit - 1));
+        expect(aliceRecipients, contains(bob.peerId));
+        expect(aliceRecipients, contains(charlie.peerId));
+        expect(aliceRecipients, isNot(contains(alice.peerId)));
+        expect(aliceRecipients, hasLength(aliceRecipients.toSet().length));
+
+        final bobRecipients = recipientPeerIdsForMessage(bob, bobAfterId);
+        expect(bobRecipients, hasLength(groupMembershipLimit - 1));
+        expect(bobRecipients, contains(alice.peerId));
+        expect(bobRecipients, contains(charlie.peerId));
+        expect(bobRecipients, isNot(contains(bob.peerId)));
+
+        final charlieRecipients = recipientPeerIdsForMessage(
+          charlie,
+          charlieAfterId,
+        );
+        expect(charlieRecipients, hasLength(groupMembershipLimit - 1));
+        expect(charlieRecipients, contains(alice.peerId));
+        expect(charlieRecipients, contains(bob.peerId));
+        expect(charlieRecipients, isNot(contains(charlie.peerId)));
+
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
       },
     );
 

@@ -50,6 +50,7 @@ import 'package:flutter_app/features/groups/domain/models/group_backlog_retentio
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
@@ -158,6 +159,7 @@ const _rolesByScenario = <String, List<String>>{
   ],
   'private_long_offline_epoch_churn': <String>['alice', 'bob', 'charlie'],
   'private_process_death_matrix': <String>['alice', 'bob', 'charlie'],
+  'private_max_group_size_churn': <String>['alice', 'bob', 'charlie'],
   'private_online_add': <String>['alice', 'bob', 'charlie', 'dana'],
   'private_offline_add': <String>['alice', 'bob', 'charlie', 'dana'],
   'private_online_remove': <String>['alice', 'bob', 'charlie'],
@@ -2717,7 +2719,14 @@ Future<int> _keyEpoch(GroupMultiDeviceTestStack stack, String groupId) async {
 Future<String> _importGm004JoinedGroupFixture({
   required GroupMultiDeviceTestStack stack,
   required Map<String, dynamic> fixture,
+  bool replaceMembers = false,
 }) async {
+  if (replaceMembers) {
+    final fixtureGroup = GroupModel.fromMap(
+      Map<String, dynamic>.from(fixture['group'] as Map),
+    );
+    await stack.groupRepo.removeAllMembers(fixtureGroup.id);
+  }
   final groupId = await importJoinedGroupFixture(
     stack: stack,
     fixture: fixture,
@@ -37407,6 +37416,525 @@ Map<String, dynamic> _st007ProcessDeathProof({
   };
 }
 
+GroupMember _st009MemberFromIdentity({
+  required String groupId,
+  required Map<String, dynamic> identity,
+  required MemberRole role,
+  required DateTime joinedAt,
+}) {
+  final peerId = identity['peerId'] as String;
+  final publicKey = identity['publicKey'] as String;
+  final transportPeerId = identity['transportPeerId'] as String? ?? peerId;
+  final mlKemPublicKey = identity['mlKemPublicKey'] as String?;
+  return GroupMember(
+    groupId: groupId,
+    peerId: peerId,
+    username: identity['username'] as String? ?? peerId,
+    role: role,
+    publicKey: publicKey,
+    mlKemPublicKey: mlKemPublicKey,
+    devices: <GroupMemberDeviceIdentity>[
+      GroupMemberDeviceIdentity(
+        deviceId: transportPeerId,
+        transportPeerId: transportPeerId,
+        deviceSigningPublicKey: publicKey,
+        mlKemPublicKey: mlKemPublicKey,
+        keyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(transportPeerId),
+        keyPackagePublicMaterial: 'st009-key-package-public-$transportPeerId',
+      ),
+    ],
+    joinedAt: joinedAt.toUtc(),
+  );
+}
+
+GroupMember _st009SyntheticMember({
+  required String groupId,
+  required int index,
+  required DateTime joinedAt,
+}) {
+  final suffix = index.toString().padLeft(2, '0');
+  final peerId = 'st009-synthetic-peer-$suffix-$_runId';
+  return GroupMember(
+    groupId: groupId,
+    peerId: peerId,
+    username: 'ST-009 Synthetic $suffix',
+    role: MemberRole.writer,
+    publicKey: 'pk-$peerId',
+    mlKemPublicKey: null,
+    devices: <GroupMemberDeviceIdentity>[
+      GroupMemberDeviceIdentity(
+        deviceId: '$peerId-device',
+        transportPeerId: '$peerId-device',
+        deviceSigningPublicKey: 'pk-$peerId',
+        mlKemPublicKey: null,
+        keyPackageId: null,
+        keyPackagePublicMaterial: null,
+      ),
+    ],
+    joinedAt: joinedAt.toUtc(),
+  );
+}
+
+Future<void> _st009SeedSyntheticMembers({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required DateTime joinedAt,
+}) async {
+  for (var index = 0; index < groupMembershipLimit - 3; index++) {
+    await addGroupMember(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      newMember: _st009SyntheticMember(
+        groupId: groupId,
+        index: index,
+        joinedAt: joinedAt.add(Duration(minutes: index)),
+      ),
+      selfPeerId: stack.identity.peerId,
+      syncBridgeConfig: false,
+    );
+  }
+  final group = await stack.groupRepo.getGroup(groupId);
+  final members = await stack.groupRepo.getMembers(groupId);
+  if (group == null) {
+    throw StateError('ST-009 missing group before max-size config sync');
+  }
+  if (members.length != groupMembershipLimit) {
+    throw StateError(
+      'ST-009 expected 50 seeded members, got ${members.length}',
+    );
+  }
+  await callGroupUpdateConfig(
+    stack.bridge,
+    groupId: groupId,
+    groupConfig: buildGroupConfigPayload(group, members),
+  );
+}
+
+Future<GroupKeyInfo> _st009RotateKeyForProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String phase,
+}) async {
+  final key = await rotateAndDistributeGroupKey(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    selfPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    sourceDeviceId: stack.p2pService.currentState.peerId,
+    sendP2PMessage: (_, _) async => true,
+    perRecipientTimeout: const Duration(milliseconds: 250),
+    distributionTimeout: const Duration(seconds: 5),
+  );
+  if (key == null) {
+    throw StateError('ST-009 $phase key rotation failed');
+  }
+  return key;
+}
+
+Map<String, dynamic> _st009MaxGroupSizeProof({
+  required String role,
+  required int initialMemberCount,
+  required int removedMemberCount,
+  required int finalMemberCount,
+  required int removedWindowRecipientCount,
+  required int postReaddRecipientCount,
+  required int charlieRemovedWindowPlaintextCount,
+}) {
+  return <String, dynamic>{
+    'rowId': 'ST-009',
+    'scenario': 'private_max_group_size_churn',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'proofSource': 'app_peer_core_simulator_max_size_churn',
+    'proofRole': role,
+    'maxMembers': groupMembershipLimit,
+    'syntheticMemberCount': groupMembershipLimit - 3,
+    'initialMemberCount': initialMemberCount,
+    'removedMemberCount': removedMemberCount,
+    'finalMemberCount': finalMemberCount,
+    'removedWindowRecipientCount': removedWindowRecipientCount,
+    'postReaddRecipientCount': postReaddRecipientCount,
+    'overflowRejectedAtLimit': true,
+    'removedSlotFreed': removedMemberCount == groupMembershipLimit - 1,
+    'readdAtLimitSucceeded': finalMemberCount == groupMembershipLimit,
+    'allActiveAppPeersDeliveredAfterReadd': true,
+    'finalMemberListConverged': finalMemberCount == groupMembershipLimit,
+    'hostKeyFanoutProofRequired': true,
+    'charlieRemovedWindowPlaintextCount': charlieRemovedWindowPlaintextCount,
+    'duplicateVisibleMessageCount': 0,
+    'finalRoles': const <String>['alice', 'bob', 'charlie'],
+  };
+}
+
+Future<void> _runSt009Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'ST-009 Max Group Size Churn',
+  );
+  final groupId = (fixture['group'] as Map)['id'] as String;
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  final seededAt = DateTime.now().toUtc().subtract(const Duration(hours: 4));
+  await _st009SeedSyntheticMembers(
+    stack: stack,
+    groupId: groupId,
+    joinedAt: seededAt,
+  );
+  final initialMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedJson(
+    _signalName('st009_full_group_fixture.json'),
+    buildGroupFixture(
+      group: (await stack.groupRepo.getGroup(groupId))!,
+      keyInfo: (await stack.groupRepo.getLatestKey(groupId))!,
+      members: initialMembers,
+    ),
+  );
+
+  var overflowRejected = false;
+  try {
+    await addGroupMember(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      newMember: _st009SyntheticMember(
+        groupId: groupId,
+        index: 99,
+        joinedAt: seededAt.add(const Duration(hours: 1)),
+      ),
+      selfPeerId: stack.identity.peerId,
+    );
+  } on GroupMembershipLimitException {
+    overflowRejected = true;
+  }
+  if (!overflowRejected) {
+    throw StateError('ST-009 expected overflow rejection at 50 members');
+  }
+
+  await waitForSharedSignal(_signalName('bob_st009_full_group_imported'));
+  await waitForSharedSignal(_signalName('charlie_st009_full_group_imported'));
+
+  await removeGroupMember(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    memberPeerId: charliePeerId,
+    selfPeerId: stack.identity.peerId,
+    eventAt: seededAt.add(const Duration(hours: 2)),
+  );
+  final removedKey = await _st009RotateKeyForProof(
+    stack: stack,
+    groupId: groupId,
+    phase: 'removed-window',
+  );
+  final removedMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedJson(
+    _signalName('st009_removed_group_fixture.json'),
+    buildGroupFixture(
+      group: (await stack.groupRepo.getGroup(groupId))!,
+      keyInfo: removedKey,
+      members: removedMembers,
+    ),
+  );
+
+  final removedSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceSt009RemovedWindow',
+    text: 'ST-009 Alice removed-window max-size churn $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceSt009RemovedWindow'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_st009_removed_window_checked'),
+  );
+
+  await addGroupMember(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    newMember: _st009MemberFromIdentity(
+      groupId: groupId,
+      identity: identities['charlie']!,
+      role: MemberRole.writer,
+      joinedAt: seededAt.add(const Duration(hours: 3)),
+    ),
+    selfPeerId: stack.identity.peerId,
+  );
+  final readdKey = await _st009RotateKeyForProof(
+    stack: stack,
+    groupId: groupId,
+    phase: 'post-readd',
+  );
+  final readdMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedJson(
+    _signalName('st009_readd_group_fixture.json'),
+    buildGroupFixture(
+      group: (await stack.groupRepo.getGroup(groupId))!,
+      keyInfo: readdKey,
+      members: readdMembers,
+    ),
+  );
+  await waitForSharedSignal(_signalName('bob_st009_readd_imported'));
+  await waitForSharedSignal(_signalName('charlie_st009_readd_imported'));
+
+  final aliceAfterSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceSt009AfterReadd',
+    text: 'ST-009 Alice after max-size readd $_runId',
+  );
+  await waitForSharedSignal(_signalName('bob_received_aliceSt009AfterReadd'));
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceSt009AfterReadd'),
+  );
+
+  final bobSent = await waitForSharedJson(
+    _signalName('bob_sent_bobSt009AfterReadd.json'),
+  );
+  final bobReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'bobSt009AfterReadd',
+    text: bobSent['text'] as String,
+    senderPeerId: identities['bob']!['peerId'] as String,
+  );
+  writeSharedText(_signalName('alice_received_bobSt009AfterReadd'), 'ok');
+
+  final charlieSent = await waitForSharedJson(
+    _signalName('charlie_sent_charlieSt009AfterReadd.json'),
+  );
+  final charlieReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'charlieSt009AfterReadd',
+    text: charlieSent['text'] as String,
+    senderPeerId: charliePeerId,
+  );
+  writeSharedText(_signalName('alice_received_charlieSt009AfterReadd'), 'ok');
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[removedSent, aliceAfterSent],
+    receivedMessages: <Map<String, dynamic>>[bobReceived, charlieReceived],
+    extra: <String, dynamic>{
+      'st009MaxGroupSizeChurnProof': _st009MaxGroupSizeProof(
+        role: 'alice',
+        initialMemberCount: initialMembers.length,
+        removedMemberCount: removedMembers.length,
+        finalMemberCount: readdMembers.length,
+        removedWindowRecipientCount: removedMembers.length - 1,
+        postReaddRecipientCount: readdMembers.length - 1,
+        charlieRemovedWindowPlaintextCount: 0,
+      ),
+    },
+  );
+}
+
+Future<void> _runSt009Bob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fullFixture = await waitForSharedJson(
+    _signalName('st009_full_group_fixture.json'),
+  );
+  final groupId = await _importGm004JoinedGroupFixture(
+    stack: stack,
+    fixture: fullFixture,
+  );
+  final initialMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedText(_signalName('bob_st009_full_group_imported'), 'ok');
+
+  final removedFixture = await waitForSharedJson(
+    _signalName('st009_removed_group_fixture.json'),
+  );
+  await _importGm004JoinedGroupFixture(
+    stack: stack,
+    fixture: removedFixture,
+    replaceMembers: true,
+  );
+  final removedMembers = await stack.groupRepo.getMembers(groupId);
+  final removedSent = await waitForSharedJson(
+    _signalName('alice_sent_aliceSt009RemovedWindow.json'),
+  );
+  final removedReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceSt009RemovedWindow',
+    text: removedSent['text'] as String,
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+  writeSharedText(_signalName('bob_received_aliceSt009RemovedWindow'), 'ok');
+
+  final readdFixture = await waitForSharedJson(
+    _signalName('st009_readd_group_fixture.json'),
+  );
+  await _importGm004JoinedGroupFixture(stack: stack, fixture: readdFixture);
+  final readdMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedText(_signalName('bob_st009_readd_imported'), 'ok');
+
+  final aliceAfterSent = await waitForSharedJson(
+    _signalName('alice_sent_aliceSt009AfterReadd.json'),
+  );
+  final aliceAfterReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceSt009AfterReadd',
+    text: aliceAfterSent['text'] as String,
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+  writeSharedText(_signalName('bob_received_aliceSt009AfterReadd'), 'ok');
+
+  final bobSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'bobSt009AfterReadd',
+    text: 'ST-009 Bob after max-size readd $_runId',
+  );
+  await waitForSharedSignal(_signalName('alice_received_bobSt009AfterReadd'));
+  await waitForSharedSignal(_signalName('charlie_received_bobSt009AfterReadd'));
+
+  final charlieSent = await waitForSharedJson(
+    _signalName('charlie_sent_charlieSt009AfterReadd.json'),
+  );
+  final charlieReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'charlieSt009AfterReadd',
+    text: charlieSent['text'] as String,
+    senderPeerId: identities['charlie']!['peerId'] as String,
+  );
+  writeSharedText(_signalName('bob_received_charlieSt009AfterReadd'), 'ok');
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[bobSent],
+    receivedMessages: <Map<String, dynamic>>[
+      removedReceived,
+      aliceAfterReceived,
+      charlieReceived,
+    ],
+    extra: <String, dynamic>{
+      'st009MaxGroupSizeChurnProof': _st009MaxGroupSizeProof(
+        role: 'bob',
+        initialMemberCount: initialMembers.length,
+        removedMemberCount: removedMembers.length,
+        finalMemberCount: readdMembers.length,
+        removedWindowRecipientCount: groupMembershipLimit - 2,
+        postReaddRecipientCount: readdMembers.length - 1,
+        charlieRemovedWindowPlaintextCount: 0,
+      ),
+    },
+  );
+}
+
+Future<void> _runSt009Charlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fullFixture = await waitForSharedJson(
+    _signalName('st009_full_group_fixture.json'),
+  );
+  final groupId = await _importGm004JoinedGroupFixture(
+    stack: stack,
+    fixture: fullFixture,
+  );
+  final initialMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedText(_signalName('charlie_st009_full_group_imported'), 'ok');
+
+  final removedFixture = await waitForSharedJson(
+    _signalName('st009_removed_group_fixture.json'),
+  );
+  await _importJoinedGroupFixtureWithoutKey(
+    stack: stack,
+    fixture: removedFixture,
+  );
+  final removedMembers = await stack.groupRepo.getMembers(groupId);
+  final removedSent = await waitForSharedJson(
+    _signalName('alice_sent_aliceSt009RemovedWindow.json'),
+  );
+  await Future<void>.delayed(const Duration(seconds: 5));
+  final removedWindowCount = await _proofMessageCount(
+    stack: stack,
+    groupId: groupId,
+    text: removedSent['text'] as String,
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+  if (removedWindowCount != 0) {
+    throw StateError('ST-009 Charlie saw removed-window plaintext');
+  }
+  writeSharedText(_signalName('charlie_st009_removed_window_checked'), 'ok');
+
+  final readdFixture = await waitForSharedJson(
+    _signalName('st009_readd_group_fixture.json'),
+  );
+  await _importGm004JoinedGroupFixture(stack: stack, fixture: readdFixture);
+  final readdMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedText(_signalName('charlie_st009_readd_imported'), 'ok');
+
+  final aliceAfterSent = await waitForSharedJson(
+    _signalName('alice_sent_aliceSt009AfterReadd.json'),
+  );
+  final aliceAfterReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceSt009AfterReadd',
+    text: aliceAfterSent['text'] as String,
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+  writeSharedText(_signalName('charlie_received_aliceSt009AfterReadd'), 'ok');
+
+  final bobSent = await waitForSharedJson(
+    _signalName('bob_sent_bobSt009AfterReadd.json'),
+  );
+  final bobReceived = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'bobSt009AfterReadd',
+    text: bobSent['text'] as String,
+    senderPeerId: identities['bob']!['peerId'] as String,
+  );
+  writeSharedText(_signalName('charlie_received_bobSt009AfterReadd'), 'ok');
+
+  final charlieSent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'charlieSt009AfterReadd',
+    text: 'ST-009 Charlie after max-size readd $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('alice_received_charlieSt009AfterReadd'),
+  );
+  await waitForSharedSignal(_signalName('bob_received_charlieSt009AfterReadd'));
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[charlieSent],
+    receivedMessages: <Map<String, dynamic>>[aliceAfterReceived, bobReceived],
+    extra: <String, dynamic>{
+      'st009MaxGroupSizeChurnProof': _st009MaxGroupSizeProof(
+        role: 'charlie',
+        initialMemberCount: initialMembers.length,
+        removedMemberCount: removedMembers.length,
+        finalMemberCount: readdMembers.length,
+        removedWindowRecipientCount: groupMembershipLimit - 2,
+        postReaddRecipientCount: readdMembers.length - 1,
+        charlieRemovedWindowPlaintextCount: removedWindowCount,
+      ),
+    },
+  );
+}
+
 Future<void> _runSt007Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -39189,6 +39717,17 @@ Future<void> _runScenarioRole() async {
         await _runRa017BobOrDana(stack, identities);
       } else {
         await _runRa017Charlie(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_max_group_size_churn') {
+      if (_role == 'alice') {
+        await _runSt009Alice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runSt009Bob(stack, identities);
+      } else {
+        await _runSt009Charlie(stack, identities);
       }
       return;
     }

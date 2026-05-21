@@ -161,6 +161,10 @@ const _privateReaddAlternatingChurnRequirement =
       scenario: 'private_readd_alternating_churn',
       roles: <String>['alice', 'bob', 'charlie', 'dana'],
     );
+const _privateMaxGroupSizeChurnRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_max_group_size_churn',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
 const _privateNetworkChaosInvariantsRequirement =
     GroupMultiPartyScenarioRequirement(
       scenario: 'private_network_chaos_invariants',
@@ -503,6 +507,7 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'private_readd_current': _privateReaddCurrentRequirement,
   'private_readd_active_members': _privateReaddActiveMembersRequirement,
   'private_readd_alternating_churn': _privateReaddAlternatingChurnRequirement,
+  'private_max_group_size_churn': _privateMaxGroupSizeChurnRequirement,
   'private_network_chaos_invariants': _privateNetworkChaosInvariantsRequirement,
   'private_late_leave_readd': _privateLateLeaveReaddRequirement,
   'private_rotated_device_readd': _privateRotatedDeviceReaddRequirement,
@@ -2440,6 +2445,29 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
     case 'private_readd_alternating_churn':
     case 'private_network_chaos_invariants':
       return _ra018ExpectedMessages();
+    case 'private_max_group_size_churn':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceSt009RemovedWindow',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceSt009AfterReadd',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobSt009AfterReadd',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieSt009AfterReadd',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
     case 'private_readd_cycles':
       return const <_ExpectedProofMessage>[];
     case 'private_rapid_readd':
@@ -3452,6 +3480,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_readd_alternating_churn') {
     _validateRa018AlternatingChurnProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_max_group_size_churn') {
+    _validateSt009MaxGroupSizeChurnProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -15750,6 +15786,114 @@ void _validateRa018AlternatingChurnProof({
       if (!danaSentKeys.contains(readdKey)) {
         failures.add('dana: sent $readdKey missing from RA-018 proof');
       }
+    }
+  }
+}
+
+void _validateSt009MaxGroupSizeChurnProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'st009MaxGroupSizeChurnProof';
+  const expectedRoles = <String>{'alice', 'bob', 'charlie'};
+  const maxMembers = 50;
+  const syntheticMembers = 47;
+
+  final expectedPeerIds = <String>{
+    for (final role in expectedRoles) ?peerIdByRole[role],
+  };
+  if (expectedPeerIds.length != expectedRoles.length) {
+    failures.add('alice/bob/charlie: ST-009 requires three peer ids');
+  }
+
+  for (final role in expectedRoles) {
+    final verdict = byRole[role];
+    final proof = _mapValue(verdict?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing ST-009 max-size churn proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'ST-009') {
+      failures.add('$role: $proofName.rowId must be ST-009');
+    }
+    if (_stringValue(proof['scenario']) != 'private_max_group_size_churn') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+    if (_stringValue(proof['proofSource']) !=
+        'app_peer_core_simulator_max_size_churn') {
+      failures.add('$role: $proofName.proofSource mismatch');
+    }
+    if (_intValue(proof['maxMembers']) != maxMembers) {
+      failures.add('$role: $proofName.maxMembers must be 50');
+    }
+    if (_intValue(proof['syntheticMemberCount']) != syntheticMembers) {
+      failures.add('$role: $proofName.syntheticMemberCount must be 47');
+    }
+    if (_intValue(proof['initialMemberCount']) != maxMembers) {
+      failures.add('$role: $proofName.initialMemberCount must be 50');
+    }
+    if (_intValue(proof['removedMemberCount']) != maxMembers - 1) {
+      failures.add('$role: $proofName.removedMemberCount must be 49');
+    }
+    if (_intValue(proof['finalMemberCount']) != maxMembers) {
+      failures.add('$role: $proofName.finalMemberCount must be 50');
+    }
+    if (_intValue(proof['removedWindowRecipientCount']) != maxMembers - 2) {
+      failures.add('$role: $proofName.removedWindowRecipientCount must be 48');
+    }
+    if (_intValue(proof['postReaddRecipientCount']) != maxMembers - 1) {
+      failures.add('$role: $proofName.postReaddRecipientCount must be 49');
+    }
+    for (final field in const <String>[
+      'overflowRejectedAtLimit',
+      'removedSlotFreed',
+      'readdAtLimitSucceeded',
+      'allActiveAppPeersDeliveredAfterReadd',
+      'finalMemberListConverged',
+      'hostKeyFanoutProofRequired',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedWindowPlaintextCount = _intValue(
+      proof['charlieRemovedWindowPlaintextCount'],
+    );
+    if (removedWindowPlaintextCount != 0) {
+      failures.add(
+        '$role: $proofName.charlieRemovedWindowPlaintextCount must be 0',
+      );
+    }
+    final duplicateVisibleMessageCount = _intValue(
+      proof['duplicateVisibleMessageCount'],
+    );
+    if (duplicateVisibleMessageCount != 0) {
+      failures.add('$role: $proofName.duplicateVisibleMessageCount must be 0');
+    }
+
+    final finalRoles = _stringList(proof['finalRoles']).toSet();
+    if (!finalRoles.containsAll(expectedRoles)) {
+      failures.add(
+        '$role: $proofName.finalRoles must include Alice/Bob/Charlie',
+      );
+    }
+    final activeMembers = _activeMemberPeerIds(verdict ?? const {});
+    if (activeMembers.length != maxMembers) {
+      failures.add('$role: activeMemberPeerIds must contain 50 members');
+    }
+    final missingAppPeers = expectedPeerIds.difference(activeMembers.toSet());
+    if (missingAppPeers.isNotEmpty) {
+      failures.add(
+        '$role: ST-009 active membership missing ${missingAppPeers.join(', ')}',
+      );
     }
   }
 }
