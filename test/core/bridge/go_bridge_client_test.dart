@@ -1248,6 +1248,86 @@ void main() {
       expect(rawEvents.single['details'], containsPair('topicPeers', 2));
     });
 
+    test(
+      'OB-003 publish debug and validator reject expose branch diagnostics',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        var groupMessageCalls = 0;
+        client.onGroupMessageReceived = (_) {
+          groupMessageCalls++;
+        };
+
+        final validationFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:publish_debug',
+            'data': {
+              'groupId': 'group-ob003-zero-peer',
+              'messageId': 'message-ob003-zero-peer',
+              'topicPeers': 0,
+              'encryptMs': 4,
+              'signMs': 2,
+              'requestedTimestampProvided': false,
+              'payloadTimestamp': '2026-05-16T06:03:00.000Z',
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:validation_rejected',
+            'data': {
+              'reason': 'non_member',
+              'groupHash': 'ob003-group-hash',
+              'senderHash': 'ob003-sender-hash',
+              'transportPeerHash': 'ob003-transport-hash',
+              'localPeerHash': 'ob003-local-hash',
+              'envelopeType': 'group_message',
+              'keyEpoch': 3,
+            },
+          }),
+        );
+
+        final validation = await validationFuture;
+        expect(validation['event'], 'group:validation_rejected');
+        expect(validation['reason'], 'non_member');
+        expect(validation['groupHash'], 'ob003-group-hash');
+        expect(validation['senderHash'], 'ob003-sender-hash');
+        expect(validation['transportPeerHash'], 'ob003-transport-hash');
+        expect(validation['localPeerHash'], 'ob003-local-hash');
+        expect(validation['keyEpoch'], 3);
+        expect(groupMessageCalls, 0);
+
+        final rawPublish = flowEvents.singleWhere(
+          (event) => event['event'] == 'group:publish_debug',
+        );
+        final publishAlias = flowEvents.singleWhere(
+          (event) => event['event'] == 'GROUP_PUBLISH_DEBUG',
+        );
+        for (final event in [rawPublish, publishAlias]) {
+          final details = event['details'] as Map<String, dynamic>;
+          expect(details['topicPeers'], 0);
+          expect(details['encryptMs'], 4);
+          expect(details['signMs'], 2);
+          expect(details['requestedTimestampProvided'], isFalse);
+        }
+
+        final validationFlow = flowEvents.singleWhere(
+          (event) => event['event'] == 'GROUP_VALIDATION_REJECTED',
+        );
+        final validationDetails =
+            validationFlow['details'] as Map<String, dynamic>;
+        expect(validationDetails['reason'], 'non_member');
+        expect(validationDetails['envelopeType'], 'group_message');
+        expect(validationDetails['keyEpoch'], 3);
+        expect(validationDetails.containsKey('groupId'), isFalse);
+        expect(validationDetails.containsKey('senderId'), isFalse);
+      },
+    );
+
     test('relay:state push event invokes relay-state callback', () {
       Map<String, dynamic>? received;
       client.onRelayStateChanged = (data) {
