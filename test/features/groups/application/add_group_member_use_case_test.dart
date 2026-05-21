@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
@@ -372,6 +373,72 @@ void main() {
         ),
         hasLength(cases.length),
       );
+    },
+  );
+
+  test(
+    'OB-002 add member config failure emits safe operation metadata',
+    () async {
+      const groupId = 'group-ob002-config-failure';
+      const peerId = 'peer-ob002-added-member';
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'OB-002 Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdAt: DateTime.utc(2026, 5, 14, 6, 50),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
+      bridge.responses['group:updateConfig'] = {
+        'ok': false,
+        'errorCode': 'CONFIG_SYNC_FAILED',
+        'errorMessage': 'config sync failed',
+      };
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          newMember: GroupMember(
+            groupId: groupId,
+            peerId: peerId,
+            username: 'OB Member',
+            role: MemberRole.writer,
+            publicKey: 'pk-ob002-member',
+            joinedAt: DateTime.utc(2026, 5, 14, 6, 51),
+          ),
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(
+          isA<BridgeCommandException>().having(
+            (error) => error.errorCode,
+            'errorCode',
+            'CONFIG_SYNC_FAILED',
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getMember(groupId, peerId), isNull);
+      final event = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_ADD_MEMBER_USE_CASE_REVERTED',
+      );
+      final details = event['details'] as Map<String, dynamic>;
+      expect(details['groupId'], groupId.substring(0, 8));
+      expect(details['peerId'], peerId.substring(0, 8));
+      expect(details['membershipOperationId'], 'add:group-ob:peer-ob0');
+      expect(details['errorCode'], 'CONFIG_SYNC_FAILED');
+
+      final encoded = jsonEncode(details);
+      expect(encoded, isNot(contains(groupId)));
+      expect(encoded, isNot(contains(peerId)));
     },
   );
 

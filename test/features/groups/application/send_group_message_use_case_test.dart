@@ -519,6 +519,79 @@ void main() {
     expect(message.status, 'sent');
   });
 
+  test(
+    'OB-002 publish failure emits safe group epoch and message metadata',
+    () async {
+      const groupId = 'group-ob002-publish-failure';
+      const messageId = 'ob002-message-publish-failure';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'OB-002 Publish Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdAt: DateTime.utc(2026, 5, 14, 6, 53),
+          createdBy: 'peer-1',
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          joinedAt: DateTime.utc(2026, 5, 14, 6, 53),
+        ),
+      );
+      await _saveGroupKey(groupRepo, groupId, generation: 7);
+      bridge.responses['group:publish'] = {
+        'ok': false,
+        'errorCode': 'PUBLISH_FAILED',
+        'errorMessage': 'publish failed',
+      };
+
+      final events = await captureFlowEvents(() async {
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: groupId,
+          text: 'diagnostic publish failure',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
+      });
+
+      final errorEvent = events.singleWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_USE_CASE_PUBLISH_ERROR',
+      );
+      final failedEvent = events.singleWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_USE_CASE_PUBLISH_FAILED',
+      );
+
+      for (final event in [errorEvent, failedEvent]) {
+        final details = event['details'] as Map<String, dynamic>;
+        expect(details['groupId'], groupId.substring(0, 8));
+        expect(details['keyEpoch'], 7);
+        expect(details['messageId'], messageId.substring(0, 8));
+        expect(details['errorCode'], 'PUBLISH_FAILED');
+
+        final encoded = jsonEncode(details);
+        expect(encoded, isNot(contains(groupId)));
+        expect(encoded, isNot(contains(messageId)));
+      }
+    },
+  );
+
   test('GM-032 empty active membership disables publish and inbox', () async {
     await groupRepo.removeAllMembers(testGroup.id);
 

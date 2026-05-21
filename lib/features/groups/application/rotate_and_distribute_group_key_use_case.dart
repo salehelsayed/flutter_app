@@ -10,6 +10,12 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
+String _diagnosticPrefix(String value) =>
+    value.length > 8 ? value.substring(0, 8) : value;
+
+String _rotationOperationId(String groupId, String peerId) =>
+    'rotate:${_diagnosticPrefix(groupId)}:${_diagnosticPrefix(peerId)}';
+
 /// Generates the next group encryption key, distributes it to remaining
 /// members, then promotes the admin validator and local key last.
 ///
@@ -169,7 +175,12 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
-          details: {'errorCode': generateResult['errorCode']},
+          details: {
+            'groupId': _diagnosticPrefix(groupId),
+            'keyEpoch': expectedEpoch,
+            'membershipOperationId': _rotationOperationId(groupId, selfPeerId),
+            'errorCode': generateResult['errorCode'],
+          },
         );
         return null;
       }
