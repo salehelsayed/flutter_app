@@ -164,6 +164,131 @@ func TestSV001NeverMemberRawPubSubRejectsBeforeAcceptAndForward(t *testing.T) {
 	}
 }
 
+func TestSV011ValidKeyNonMemberEnvelopeRejectsOnMembership(t *testing.T) {
+	attackerPriv, attackerPub := generateEd25519KeyPair(t)
+	memberPriv, memberPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "sv011-sensitive-group-id-should-not-log"
+	groupName := "SV011 Sensitive Group Name Should Not Log"
+	attackerPeerId := generatePeerIDStr(t)
+	memberPeerId := generatePeerIDStr(t)
+	localPeerId := generatePeerIDStr(t)
+	attackerPID, err := peer.Decode(attackerPeerId)
+	if err != nil {
+		t.Fatalf("decode attacker peer ID: %v", err)
+	}
+
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 7}
+	collector := &testEventCollector{}
+	n := NewNode()
+	n.peerId = localPeerId
+	n.eventCallback = collector
+	n.groupConfigs = map[string]*GroupConfig{
+		groupId: {
+			Name:      groupName,
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: memberPeerId, Role: GroupRoleAdmin, PublicKey: memberPub},
+			},
+			CreatedBy: memberPeerId,
+		},
+	}
+	n.groupKeys = map[string]*GroupKeyInfo{groupId: keyInfo}
+	n.pubsubRejectDiagNow = func() time.Time {
+		return time.Date(2026, 5, 14, 5, 20, 0, 0, time.UTC)
+	}
+
+	plaintext := `{"text":"SV011-VALID-KEY-NONMEMBER-SENTINEL","timestamp":"2026-05-14T05:20:00Z","username":"SV011-ATTACKER-SENTINEL"}`
+	envelopeJSON := buildTestEnvelopeWithPlaintext(
+		t,
+		groupId,
+		"group_message",
+		attackerPeerId,
+		attackerPriv,
+		attackerPub,
+		groupKey,
+		keyInfo.KeyEpoch,
+		plaintext,
+	)
+	env, err := internal.ParseGroupEnvelope(envelopeJSON)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
+	validSignature, err := mcrypto.VerifyPayload(attackerPub, sigData, env.Signature)
+	if err != nil {
+		t.Fatalf("verify attacker signature: %v", err)
+	}
+	if !validSignature {
+		t.Fatal("test envelope must have a valid attacker signature")
+	}
+	decrypted, err := mcrypto.DecryptGroupMessage(groupKey, env.Encrypted.Ciphertext, env.Encrypted.Nonce)
+	if err != nil {
+		t.Fatalf("decrypt with current group key: %v", err)
+	}
+	if decrypted != plaintext {
+		t.Fatalf("decrypted payload = %q, want %q", decrypted, plaintext)
+	}
+
+	validator := n.groupTopicValidator(groupId)
+	logs := captureLP002ValidatorLogs(t)
+	msg := &pubsub.Message{Message: &pb.Message{Data: []byte(envelopeJSON)}}
+	if result := validator(context.Background(), attackerPID, msg); result != pubsub.ValidationReject {
+		t.Fatalf("validator result = %v, want ValidationReject", result)
+	}
+	if got := countLP002RejectLogs(logs.String(), "non_member"); got != 1 {
+		t.Fatalf("non_member diagnostics = %d, want 1; logs:\n%s", got, logs.String())
+	}
+
+	events := collector.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("diagnostic events = %d, want 1; events:\n%s", len(events), strings.Join(events, "\n"))
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(events[0]), &payload); err != nil {
+		t.Fatalf("decode diagnostic event: %v", err)
+	}
+	if payload["event"] != "group:validation_rejected" {
+		t.Fatalf("event = %v, want group:validation_rejected", payload["event"])
+	}
+	data, ok := payload["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("event data has type %T, want object", payload["data"])
+	}
+	for key, want := range map[string]interface{}{
+		"reason":       "non_member",
+		"envelopeType": "group_message",
+		"keyEpoch":     float64(keyInfo.KeyEpoch),
+	} {
+		if got := data[key]; got != want {
+			t.Fatalf("event data[%s] = %v, want %v", key, got, want)
+		}
+	}
+	assertLP002NoAcceptedGroupEvents(t, "SV-011 validator", collector)
+	assertLP002LogsOmitSensitive(t, logs, []string{
+		plaintext,
+		"SV011-VALID-KEY-NONMEMBER-SENTINEL",
+		"SV011-ATTACKER-SENTINEL",
+		groupId,
+		groupName,
+		attackerPeerId,
+		memberPeerId,
+		localPeerId,
+		attackerPriv,
+		attackerPub,
+		memberPriv,
+		memberPub,
+		groupKey,
+		env.Signature,
+		env.Encrypted.Ciphertext,
+		env.Encrypted.Nonce,
+	})
+}
+
 func TestSV002RemovedMemberOldKeyRawPubSubRejectsBeforeAcceptAndForward(t *testing.T) {
 	removedPriv, removedPub := generateEd25519KeyPair(t)
 	oldGroupKey, err := mcrypto.GenerateGroupKey()

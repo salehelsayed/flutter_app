@@ -280,6 +280,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         details: {
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'keyEpoch': keyEpoch,
         },
       );
       return null;

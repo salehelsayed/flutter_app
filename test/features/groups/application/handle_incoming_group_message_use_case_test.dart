@@ -363,6 +363,54 @@ void main() {
     },
   );
 
+  test(
+    'SV-011 valid key nonmember sender is rejected before persistence or event log',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final eventLog = _FakeEventLog();
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'sv011-current-group-key',
+          createdAt: DateTime.utc(2026, 5, 14, 4),
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-valid-key-nonmember',
+        senderUsername: 'Key Holder',
+        keyEpoch: 1,
+        text: 'SV-011 nonmember with valid key',
+        timestamp: DateTime.utc(2026, 5, 14, 4).toIso8601String(),
+        messageId: 'sv011-valid-key-nonmember',
+        transportPeerId: 'peer-valid-key-nonmember',
+        senderDeviceId: 'peer-valid-key-nonmember',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('sv011-valid-key-nonmember'), isNull);
+      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+      expect(eventLog.entries, isEmpty);
+      expect(await groupRepo.getLatestKey('group-1'), isNotNull);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+                  'GROUP_HANDLE_INCOMING_MSG_UNKNOWN_SENDER_REJECTED' &&
+              (event['details'] as Map<String, dynamic>)['keyEpoch'] == 1,
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('MS002 stores verified transport peer id on accepted message', () async {
     final result = await handleIncomingGroupMessage(
       groupRepo: groupRepo,
