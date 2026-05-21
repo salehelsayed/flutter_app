@@ -1334,6 +1334,89 @@ void main() {
       },
     );
 
+    testWidgets(
+      'UP-006 re-added member renders joined instead of stale removed or pending invite',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        final firstInviteAt = DateTime.utc(2026, 5, 16, 10);
+        final removedAt = firstInviteAt.add(const Duration(minutes: 5));
+        final readdAt = firstInviteAt.add(const Duration(minutes: 10));
+
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+          ).copyWith(joinedAt: readdAt),
+        );
+        await inviteStatusRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            status: GroupInviteDeliveryStatus.joined,
+            attemptedAt: firstInviteAt,
+            updatedAt: firstInviteAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        await msgRepo.saveMessage(
+          buildMemberRemovedTimelineMessage(
+            groupId: 'group-1',
+            removedPeerId: 'peer-charlie',
+            removedUsername: 'Charlie',
+            senderId: 'peer-admin',
+            senderUsername: 'Admin',
+            eventAt: removedAt,
+          ),
+        );
+        await msgRepo.saveMessage(
+          buildMembersAddedTimelineMessage(
+            groupId: 'group-1',
+            addedMembers: const [(peerId: 'peer-charlie', username: 'Charlie')],
+            senderId: 'peer-admin',
+            senderUsername: 'Admin',
+            eventAt: readdAt,
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final charlieBadge = find.byKey(
+          const ValueKey('group-member-invite-status-peer-charlie'),
+        );
+        expect(find.text('Charlie'), findsOneWidget);
+        expect(
+          find.descendant(of: charlieBadge, matching: find.text('Joined')),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('shows cannot-send reason copy from persisted lastError', (
       tester,
     ) async {

@@ -188,11 +188,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
     final resolvedStatuses = await Future.wait(
       members.map((member) async {
-        final joinedAt = await msgRepo.getLatestSystemEventTimestampForTarget(
-          widget.group.id,
-          eventType: 'member_joined',
-          targetId: member.peerId,
-        );
+        final joinedAt = await _loadLatestJoinEvidenceAt(msgRepo, member);
         final removedAt = await msgRepo.getLatestSystemEventTimestampForTarget(
           widget.group.id,
           eventType: 'member_removed',
@@ -226,6 +222,44 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       }
     }
     return (statusesByPeerId: statuses, attemptsByPeerId: attemptsByPeerId);
+  }
+
+  Future<DateTime?> _loadLatestJoinEvidenceAt(
+    GroupMessageRepository msgRepo,
+    GroupMember member,
+  ) async {
+    final timestamps = await Future.wait([
+      msgRepo.getLatestSystemEventTimestampForTarget(
+        widget.group.id,
+        eventType: 'member_joined',
+        targetId: member.peerId,
+      ),
+      msgRepo.getLatestSystemEventTimestampForTarget(
+        widget.group.id,
+        eventType: 'member_added',
+        targetId: member.peerId,
+      ),
+      msgRepo.getLatestSystemEventTimestampForTarget(
+        widget.group.id,
+        eventType: 'members_added',
+        targetId: member.peerId,
+      ),
+    ]);
+    return _latestTimestamp(timestamps);
+  }
+
+  DateTime? _latestTimestamp(Iterable<DateTime?> values) {
+    DateTime? latest;
+    for (final value in values) {
+      if (value == null) {
+        continue;
+      }
+      final normalized = value.toUtc();
+      if (latest == null || normalized.isAfter(latest)) {
+        latest = normalized;
+      }
+    }
+    return latest;
   }
 
   bool _isCurrentJoinEvidence({

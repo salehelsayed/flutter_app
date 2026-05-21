@@ -9651,6 +9651,189 @@ void main() {
     );
 
     test(
+      'UP-006 re-add system row and member state stay active after reopen',
+      () async {
+        const groupId = 'grp-up006-readd-ui-state';
+        final createdAt = DateTime.utc(2026, 5, 15, 9, 30);
+        final bobJoinedAt = createdAt.add(const Duration(seconds: 10));
+        final charlieFirstJoinedAt = createdAt.add(const Duration(seconds: 20));
+        final firstAddEventAt = charlieFirstJoinedAt.add(
+          const Duration(seconds: 1),
+        );
+        final beforeRemovalAt = createdAt.add(const Duration(seconds: 40));
+        final removedAt = createdAt.add(const Duration(minutes: 1));
+        final charlieRejoinedAt = createdAt.add(const Duration(minutes: 2));
+        final readdEventAt = charlieRejoinedAt.add(const Duration(seconds: 1));
+        const firstAddText = 'Alice added Charlie';
+        const beforeRemovalText = 'UP-006 before removal history';
+        const removalText = 'Alice removed Charlie';
+        const readdText = firstAddText;
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-up006-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-up006-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-up006-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> waitForText(
+          GroupTestUser user,
+          String text,
+          int count,
+        ) async {
+          await waitUntil(() async {
+            final messages = await user.loadGroupMessages(groupId);
+            return messages.where((message) => message.text == text).length >=
+                count;
+          }, maxTicks: 80);
+        }
+
+        Future<void> restartListener(GroupTestUser user) async {
+          user.groupMessageListener.stop();
+          await pump();
+          user.start();
+        }
+
+        Future<void> expectActiveReaddState(GroupTestUser user) async {
+          await restartListener(user);
+          final messages = await user.loadGroupMessages(groupId);
+          final texts = messages.map((message) => message.text).toList();
+          final removalIndex = texts.indexOf(removalText);
+          final readdIndex = texts.indexOf(readdText, removalIndex + 1);
+          expect(
+            removalIndex,
+            greaterThanOrEqualTo(0),
+            reason: '${user.username} timeline: $texts',
+          );
+          expect(
+            readdIndex,
+            greaterThan(removalIndex),
+            reason: '${user.username} timeline: $texts',
+          );
+          expect(
+            texts.lastWhere((text) => text.contains('Charlie')),
+            readdText,
+          );
+          expect(
+            messages.where((message) => message.text == removalText),
+            hasLength(1),
+          );
+
+          final members = await user.groupRepo.getMembers(groupId);
+          final charlieMember = members.singleWhere(
+            (member) => member.peerId == charlie.peerId,
+          );
+          expect(charlieMember.joinedAt.toUtc().isAfter(removedAt), isTrue);
+          expect(members.map((member) => member.peerId).toSet(), {
+            alice.peerId,
+            bob.peerId,
+            charlie.peerId,
+          });
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'UP-006 Readd UI',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: bobJoinedAt,
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: charlieFirstJoinedAt,
+        );
+        await alice.msgRepo.saveMessage(
+          buildMembersAddedTimelineMessage(
+            groupId: groupId,
+            addedMembers: [
+              (peerId: charlie.peerId, username: charlie.username),
+            ],
+            senderId: alice.peerId,
+            senderUsername: alice.username,
+            eventAt: firstAddEventAt,
+          ),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: firstAddEventAt,
+        );
+        await waitForText(bob, firstAddText, 1);
+        await waitForText(charlie, firstAddText, 1);
+
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: beforeRemovalText,
+          messageId: 'up006-before-removal',
+          timestamp: beforeRemovalAt,
+        );
+        await waitForText(charlie, beforeRemovalText, 1);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await waitForText(alice, removalText, 1);
+        await waitForText(bob, removalText, 1);
+        await waitForText(charlie, removalText, 1);
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: charlieRejoinedAt,
+        );
+        await alice.msgRepo.saveMessage(
+          buildMembersAddedTimelineMessage(
+            groupId: groupId,
+            addedMembers: [
+              (peerId: charlie.peerId, username: charlie.username),
+            ],
+            senderId: alice.peerId,
+            senderUsername: alice.username,
+            eventAt: readdEventAt,
+          ),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: readdEventAt,
+        );
+        await waitForText(alice, readdText, 2);
+        await waitForText(bob, readdText, 2);
+        await waitForText(charlie, readdText, 2);
+
+        await expectActiveReaddState(alice);
+        await expectActiveReaddState(bob);
+        await expectActiveReaddState(charlie);
+      },
+    );
+
+    test(
       'GM-024 member display and topic state converge after Charlie re-add',
       () async {
         const groupId = 'grp-gm024-display-state-convergence';

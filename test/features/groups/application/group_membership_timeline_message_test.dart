@@ -62,4 +62,37 @@ void main() {
       );
     },
   );
+
+  test('UP-006 re-add timeline row stays active added state after removal', () {
+    const groupId = 'grp-up006-readd-ui-state';
+    const alicePeerId = 'peer-up006-alice';
+    const charliePeerId = 'peer-up006-charlie';
+    final removedAt = DateTime.utc(2026, 5, 16, 11);
+    final readdAt = removedAt.add(const Duration(minutes: 1));
+
+    final removal = buildMemberRemovedTimelineMessage(
+      groupId: groupId,
+      removedPeerId: charliePeerId,
+      removedUsername: 'Charlie',
+      senderId: alicePeerId,
+      senderUsername: 'Alice',
+      eventAt: removedAt,
+    );
+    final readd = buildMembersAddedTimelineMessage(
+      groupId: groupId,
+      addedMembers: const [(peerId: charliePeerId, username: 'Charlie')],
+      senderId: alicePeerId,
+      senderUsername: 'Alice',
+      eventAt: readdAt,
+    );
+
+    expect(removal.text, 'Alice removed Charlie');
+    expect(readd.text, 'Alice added Charlie');
+    expect(readd.id, startsWith('sys-members_added:$groupId:$charliePeerId'));
+    expect(readd.id, isNot(startsWith('sys-member_removed:')));
+    expect(readd.text, isNot(contains('removed')));
+    expect(readd.text, isNot(contains('Invite')));
+    expect(readd.timestamp, readdAt);
+    expect(readd.timestamp.isAfter(removal.timestamp), isTrue);
+  });
 }

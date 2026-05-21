@@ -12250,6 +12250,79 @@ void main() {
       },
     );
 
+    test(
+      'UP-006 accepts private_timeline_truth re-add UI state proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateTimelineTruthVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_timeline_truth verdicts valid'),
+        );
+      },
+    );
+
+    test(
+      'UP-006 rejects private_timeline_truth without re-add UI state proof',
+      () {
+        final missingProof = _validPrivateTimelineTruthVerdicts();
+        missingProof[0] = Map<String, dynamic>.from(missingProof[0])
+          ..remove('up006ReaddUiStateProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('alice: missing UP-006 re-add UI state proof fields'),
+        );
+      },
+    );
+
+    test('UP-006 rejects private_timeline_truth stale removed state reuse', () {
+      final stale = _validPrivateTimelineTruthVerdicts();
+      stale[2] = {
+        ...stale[2],
+        'up006ReaddUiStateProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            stale[2]['up006ReaddUiStateProof'] as Map,
+          ),
+          'latestCharlieTimelineText': 'Alice removed Charlie',
+          'latestCharlieTimelineIsReadd': false,
+          'staleRemovedStateReused': true,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: stale,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('latestCharlieTimelineIsReadd must be true'),
+      );
+      expect(
+        rejected.detail,
+        contains('staleRemovedStateReused must be false'),
+      );
+      expect(
+        rejected.detail,
+        contains('latestCharlieTimelineText must not contain removed'),
+      );
+    });
+
     test('rejects private_timeline_truth without ML-015 proof fields', () {
       final missingProof = _validPrivateTimelineTruthVerdicts();
       missingProof[1] = Map<String, dynamic>.from(missingProof[1])
@@ -21737,6 +21810,23 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'readClearOnOpen': true,
           'finalUnreadCountAfterOpen': 0,
         },
+        'up006ReaddUiStateProof': <String, Object?>{
+          'rowId': 'UP-006',
+          'role': 'alice',
+          'liveThreePartyProof': true,
+          'reopenedTimelineRead': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'timelineOrderShowsRemoveBeforeReadd': true,
+          'readdLabelIsActive': true,
+          'latestCharlieTimelineText': 'Alice added Charlie',
+          'latestCharlieTimelineIsReadd': true,
+          'staleRemovedStateReused': false,
+          'stalePendingInviteStateReused': false,
+          'memberListIncludesCharlie': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -21834,6 +21924,23 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'readClearOnOpen': true,
           'finalUnreadCountAfterOpen': 0,
         },
+        'up006ReaddUiStateProof': <String, Object?>{
+          'rowId': 'UP-006',
+          'role': 'bob',
+          'liveThreePartyProof': true,
+          'reopenedTimelineRead': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'timelineOrderShowsRemoveBeforeReadd': true,
+          'readdLabelIsActive': true,
+          'latestCharlieTimelineText': 'Alice added Charlie',
+          'latestCharlieTimelineIsReadd': true,
+          'staleRemovedStateReused': false,
+          'stalePendingInviteStateReused': false,
+          'memberListIncludesCharlie': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -21925,6 +22032,23 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'postReaddUnreadIncluded': true,
           'readClearOnOpen': true,
           'finalUnreadCountAfterOpen': 0,
+        },
+        'up006ReaddUiStateProof': <String, Object?>{
+          'rowId': 'UP-006',
+          'role': 'charlie',
+          'liveThreePartyProof': true,
+          'reopenedTimelineRead': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'timelineOrderShowsRemoveBeforeReadd': true,
+          'readdLabelIsActive': true,
+          'latestCharlieTimelineText': 'Alice added Charlie',
+          'latestCharlieTimelineIsReadd': true,
+          'staleRemovedStateReused': false,
+          'stalePendingInviteStateReused': false,
+          'memberListIncludesCharlie': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 3,
         },
       },
     ),

@@ -26906,6 +26906,62 @@ Future<Map<String, dynamic>> _up002DurableTimelineProof({
   };
 }
 
+Future<Map<String, dynamic>> _up006ReaddUiStateProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required String role,
+}) async {
+  await _restartMl008Listener(stack);
+  final timelineTexts = await _timelineTexts(stack: stack, groupId: groupId);
+  final removalTimelineText = _ml015RemovalTimelineText(identities);
+  final readdTimelineText = _ml015ReaddTimelineText(identities);
+  final charlieUsername =
+      identities['charlie']!['username'] as String? ??
+      _usernameForRole('charlie');
+  final removalIndex = timelineTexts.indexOf(removalTimelineText);
+  final readdIndex = timelineTexts.indexOf(readdTimelineText, removalIndex + 1);
+  final latestCharlieTimelineText = timelineTexts.lastWhere(
+    (text) => text.contains(charlieUsername),
+    orElse: () => '',
+  );
+  final latestCharlieTimelineLabel = latestCharlieTimelineText.toLowerCase();
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalMemberListIncludesAliceBobCharlie = _ml008HasAllMembers(
+    memberPeerIds,
+    identities,
+  );
+  final finalEpoch = await _keyEpoch(stack, groupId);
+
+  return <String, dynamic>{
+    'rowId': 'UP-006',
+    'role': role,
+    'liveThreePartyProof': true,
+    'reopenedTimelineRead': true,
+    'timelineContainsRemoval': removalIndex >= 0,
+    'timelineContainsReadd': readdIndex >= 0,
+    'timelineOrderShowsRemoveBeforeReadd':
+        removalIndex >= 0 && readdIndex > removalIndex,
+    'readdLabelIsActive':
+        latestCharlieTimelineLabel.contains('added') &&
+        !latestCharlieTimelineLabel.contains('removed') &&
+        !latestCharlieTimelineLabel.contains('invite'),
+    'latestCharlieTimelineText': latestCharlieTimelineText,
+    'latestCharlieTimelineIsReadd':
+        latestCharlieTimelineText == readdTimelineText,
+    'staleRemovedStateReused': latestCharlieTimelineText == removalTimelineText,
+    'stalePendingInviteStateReused': latestCharlieTimelineText.contains(
+      'Invite',
+    ),
+    'memberListIncludesCharlie': memberPeerIds.contains(
+      identities['charlie']!['peerId'] as String,
+    ),
+    'finalMemberListIncludesAliceBobCharlie':
+        finalMemberListIncludesAliceBobCharlie,
+    'finalEpoch': finalEpoch,
+  };
+}
+
 Future<void> _runMl015Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -27194,6 +27250,12 @@ Future<void> _runMl015Alice(
         'readClearOnOpen': aliceFinalUnreadCount == 0,
         'finalUnreadCountAfterOpen': aliceFinalUnreadCount,
       },
+      'up006ReaddUiStateProof': await _up006ReaddUiStateProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'alice',
+      ),
     },
   );
 }
@@ -27391,6 +27453,12 @@ Future<void> _runMl015Bob(
         'readClearOnOpen': bobFinalUnreadCount == 0,
         'finalUnreadCountAfterOpen': bobFinalUnreadCount,
       },
+      'up006ReaddUiStateProof': await _up006ReaddUiStateProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'bob',
+      ),
     },
   );
 }
@@ -27586,6 +27654,12 @@ Future<void> _runMl015Charlie(
         'readClearOnOpen': charlieFinalUnreadCount == 0,
         'finalUnreadCountAfterOpen': charlieFinalUnreadCount,
       },
+      'up006ReaddUiStateProof': await _up006ReaddUiStateProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'charlie',
+      ),
     },
   );
 }
