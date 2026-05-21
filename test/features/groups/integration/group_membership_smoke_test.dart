@@ -9312,6 +9312,212 @@ void main() {
     );
 
     test(
+      'UP-004 unread counts exclude removed-window traffic and clear after readd open',
+      () async {
+        const groupId = 'grp-up004-unread-churn';
+        final createdAt = DateTime.utc(2026, 5, 15, 10);
+        final bobJoinedAt = createdAt.add(const Duration(seconds: 10));
+        final charlieJoinedAt = createdAt.add(const Duration(seconds: 20));
+        final beforeRemovalAt = createdAt.add(const Duration(seconds: 40));
+        final removedAt = createdAt.add(const Duration(minutes: 1));
+        final readdedAt = createdAt.add(const Duration(minutes: 2));
+        const beforeRemovalText = 'UP-004 before removal unread';
+        const aliceRemovedWindowText = 'UP-004 Alice removed window';
+        const bobRemovedWindowText = 'UP-004 Bob removed window';
+        const alicePostReaddText = 'UP-004 Alice post readd unread';
+        const bobPostReaddText = 'UP-004 Bob post readd unread';
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-up004-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-up004-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-up004-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> saveKey(GroupTestUser user, int epoch) {
+          return user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: 'up004-key-$epoch',
+              createdAt: createdAt.add(Duration(minutes: epoch)),
+            ),
+          );
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'UP-004 Unread',
+          createdAt: createdAt,
+        );
+        await saveKey(alice, 1);
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: bobJoinedAt,
+        );
+        await saveKey(bob, 1);
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: charlieJoinedAt,
+        );
+        await saveKey(charlie, 1);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        final before = await alice.sendGroupMessage(
+          groupId: groupId,
+          text: beforeRemovalText,
+          messageId: 'up004-before-removal',
+          timestamp: beforeRemovalAt,
+        );
+        expect(before, isNotNull);
+        await waitUntil(() async {
+          final charlieTexts = (await charlie.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return charlieTexts.contains(beforeRemovalText);
+        }, maxTicks: 40);
+
+        expect(await alice.msgRepo.getUnreadCount(groupId), 0);
+        expect(
+          await bob.msgRepo.getUnreadCount(groupId),
+          greaterThanOrEqualTo(1),
+        );
+        expect(
+          await charlie.msgRepo.getUnreadCount(groupId),
+          greaterThanOrEqualTo(1),
+        );
+
+        await bob.msgRepo.markAsRead(groupId);
+        await charlie.msgRepo.markAsRead(groupId);
+        expect(await bob.msgRepo.getUnreadCount(groupId), 0);
+        expect(await charlie.msgRepo.getUnreadCount(groupId), 0);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await waitUntil(() async {
+          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+          final charlieSelf = await charlie.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return charlieGroup == null || charlieSelf == null;
+        }, maxTicks: 40);
+        await charlie.msgRepo.markAsRead(groupId);
+        expect(await charlie.msgRepo.getUnreadCount(groupId), 0);
+
+        final aliceRemoved = await alice.sendGroupMessage(
+          groupId: groupId,
+          text: aliceRemovedWindowText,
+          messageId: 'up004-alice-removed-window',
+          timestamp: removedAt.add(const Duration(seconds: 10)),
+        );
+        final bobRemoved = await bob.sendGroupMessage(
+          groupId: groupId,
+          text: bobRemovedWindowText,
+          messageId: 'up004-bob-removed-window',
+          timestamp: removedAt.add(const Duration(seconds: 11)),
+        );
+        expect(aliceRemoved, isNotNull);
+        expect(bobRemoved, isNotNull);
+        await waitUntil(() async {
+          final aliceTexts = (await alice.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return aliceTexts.contains(bobRemovedWindowText) &&
+              bobTexts.contains(aliceRemovedWindowText);
+        }, maxTicks: 40);
+
+        final charlieRemovedTexts = (await charlie.loadGroupMessages(
+          groupId,
+        )).map((message) => message.text).toSet();
+        expect(charlieRemovedTexts, isNot(contains(aliceRemovedWindowText)));
+        expect(charlieRemovedTexts, isNot(contains(bobRemovedWindowText)));
+        expect(await charlie.msgRepo.getUnreadCount(groupId), 0);
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: readdedAt,
+        );
+        await saveKey(alice, 2);
+        await saveKey(bob, 2);
+        await saveKey(charlie, 2);
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: readdedAt.add(const Duration(seconds: 1)),
+        );
+        await waitUntil(() async {
+          final members = await charlie.groupRepo.getMembers(groupId);
+          return members.map((member) => member.peerId).toSet().containsAll({
+            alice.peerId,
+            bob.peerId,
+            charlie.peerId,
+          });
+        }, maxTicks: 40);
+        await charlie.msgRepo.markAsRead(groupId);
+        expect(await charlie.msgRepo.getUnreadCount(groupId), 0);
+
+        final alicePostReadd = await alice.sendGroupMessage(
+          groupId: groupId,
+          text: alicePostReaddText,
+          messageId: 'up004-alice-post-readd',
+          timestamp: readdedAt.add(const Duration(seconds: 10)),
+        );
+        final bobPostReadd = await bob.sendGroupMessage(
+          groupId: groupId,
+          text: bobPostReaddText,
+          messageId: 'up004-bob-post-readd',
+          timestamp: readdedAt.add(const Duration(seconds: 11)),
+        );
+        expect(alicePostReadd, isNotNull);
+        expect(bobPostReadd, isNotNull);
+        await waitUntil(() async {
+          final charlieTexts = (await charlie.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return charlieTexts.containsAll({
+            alicePostReaddText,
+            bobPostReaddText,
+          });
+        }, maxTicks: 40);
+
+        expect(
+          await charlie.msgRepo.getUnreadCount(groupId),
+          greaterThanOrEqualTo(2),
+        );
+        await charlie.msgRepo.markAsRead(groupId);
+        expect(await charlie.msgRepo.getUnreadCount(groupId), 0);
+      },
+    );
+
+    test(
       'GM-024 member display and topic state converge after Charlie re-add',
       () async {
         const groupId = 'grp-gm024-display-state-convergence';

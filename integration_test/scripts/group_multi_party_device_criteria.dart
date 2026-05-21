@@ -3030,6 +3030,7 @@ void _validateScenarioProofFields({
       failures: failures,
     );
     _validateUp002DurableTimelineProof(byRole: byRole, failures: failures);
+    _validateUp004UnreadChurnProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_non_friend_member_delivery') {
@@ -6628,6 +6629,122 @@ void _validateUp002DurableTimelineProof({
   }
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: UP-002 finalEpoch mismatch');
+  }
+}
+
+void _validateUp004UnreadChurnProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up004UnreadChurnProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRoleProof(String role, Map<String, dynamic>? proof) {
+    if (proof == null) {
+      failures.add('$role: missing UP-004 unread churn proof fields');
+      return;
+    }
+    if (_stringValue(proof['rowId']) != 'UP-004') {
+      failures.add('$role: $proofName.rowId must be UP-004');
+    }
+    if (_stringValue(proof['role']) != role) {
+      failures.add('$role: $proofName.role must be $role');
+    }
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'liveThreePartyProof',
+      failures: failures,
+    );
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'postReaddUnreadIncluded',
+      failures: failures,
+    );
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'readClearOnOpen',
+      failures: failures,
+    );
+    final postReaddUnreadCount = _intValue(proof['postReaddUnreadCount']);
+    if (postReaddUnreadCount == null || postReaddUnreadCount < 1) {
+      failures.add('$role: $proofName.postReaddUnreadCount must be >= 1');
+    }
+    final finalUnread = _intValue(proof['finalUnreadCountAfterOpen']);
+    if (finalUnread != 0) {
+      failures.add('$role: $proofName.finalUnreadCountAfterOpen must be 0');
+    }
+  }
+
+  requireRoleProof('alice', aliceProof);
+  requireRoleProof('bob', bobProof);
+  requireRoleProof('charlie', charlieProof);
+
+  for (final roleProof in <(String, Map<String, dynamic>?)>[
+    ('bob', bobProof),
+    ('charlie', charlieProof),
+  ]) {
+    final role = roleProof.$1;
+    final proof = roleProof.$2;
+    if (proof == null) {
+      continue;
+    }
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'preRemovalUnreadCovered',
+      failures: failures,
+    );
+    final preRemovalUnreadCount = _intValue(proof['preRemovalUnreadCount']);
+    if (preRemovalUnreadCount == null || preRemovalUnreadCount < 1) {
+      failures.add('$role: $proofName.preRemovalUnreadCount must be >= 1');
+    }
+  }
+
+  if (bobProof != null) {
+    _requireTrueProof(
+      role: 'bob',
+      proofName: proofName,
+      proof: bobProof,
+      field: 'removedWindowActiveRecipientUnreadCovered',
+      failures: failures,
+    );
+    final removedWindowUnreadCount = _intValue(
+      bobProof['removedWindowUnreadCount'],
+    );
+    if (removedWindowUnreadCount == null || removedWindowUnreadCount < 1) {
+      failures.add('bob: $proofName.removedWindowUnreadCount must be >= 1');
+    }
+  }
+
+  if (charlieProof != null) {
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'removedWindowUnreadExcluded',
+      failures: failures,
+    );
+    final removedWindowUnreadCount = _intValue(
+      charlieProof['removedWindowUnreadCount'],
+    );
+    if (removedWindowUnreadCount != 0) {
+      failures.add('charlie: $proofName.removedWindowUnreadCount must be 0');
+    }
+    final removedWindowPlaintextCount = _intValue(
+      charlieProof['removedWindowPlaintextCount'],
+    );
+    if (removedWindowPlaintextCount != 0) {
+      failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
+    }
   }
 }
 

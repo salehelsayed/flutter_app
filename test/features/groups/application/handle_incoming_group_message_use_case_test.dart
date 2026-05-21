@@ -883,6 +883,91 @@ void main() {
   );
 
   test(
+    'UP-004 excludes removed-window unread and clears post-readd unread on open',
+    () async {
+      final joinedAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 20),
+      );
+      final removedAt = joinedAt.add(const Duration(minutes: 5));
+      final readdedAt = removedAt.add(const Duration(minutes: 5));
+      final charlie = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-charlie',
+        username: 'Charlie',
+        role: MemberRole.writer,
+        joinedAt: joinedAt,
+      );
+
+      await groupRepo.saveMember(testMember.copyWith(joinedAt: joinedAt));
+      await groupRepo.saveMember(charlie);
+
+      final beforeRemoval = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'UP-004 before removal unread',
+        timestamp: removedAt
+            .subtract(const Duration(seconds: 30))
+            .toIso8601String(),
+        selfPeerId: 'peer-charlie',
+        messageId: 'up004-before-removal',
+      );
+
+      expect(beforeRemoval, isNotNull);
+      expect(await msgRepo.getUnreadCount('group-1'), 1);
+
+      await msgRepo.markAsRead('group-1');
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-charlie',
+        removedAt: removedAt,
+      );
+      await msgRepo.markAsRead('group-1');
+      await groupRepo.saveMember(charlie.copyWith(joinedAt: readdedAt));
+
+      final removedWindow = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 2,
+        text: 'UP-004 removed-window message',
+        timestamp: removedAt.add(const Duration(seconds: 30)).toIso8601String(),
+        selfPeerId: 'peer-charlie',
+        messageId: 'up004-removed-window',
+      );
+
+      expect(removedWindow, isNull);
+      expect(await msgRepo.getMessage('up004-removed-window'), isNull);
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+
+      final postReadd = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 2,
+        text: 'UP-004 post-readd unread',
+        timestamp: readdedAt.add(const Duration(seconds: 30)).toIso8601String(),
+        selfPeerId: 'peer-charlie',
+        messageId: 'up004-post-readd',
+      );
+
+      expect(postReadd, isNotNull);
+      expect(await msgRepo.getUnreadCount('group-1'), 1);
+
+      await msgRepo.markAsRead('group-1');
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+    },
+  );
+
+  test(
     'RA-014 rejects old-key post-readd sender message and accepts later current epoch',
     () async {
       final flowEvents = <Map<String, dynamic>>[];
