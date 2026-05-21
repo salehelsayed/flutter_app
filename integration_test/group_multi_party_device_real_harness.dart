@@ -17693,6 +17693,7 @@ Future<void> _runGm004Alice(
   await waitForSharedSignal(_signalName('bob_removed_charlie'));
   await waitForSharedSignal(_signalName('charlie_self_removed'));
 
+  var st006BoundaryPublishTriggered = false;
   final rotatedKey = await rotateAndDistributeGroupKey(
     bridge: stack.bridge,
     groupRepo: stack.groupRepo,
@@ -17703,16 +17704,43 @@ Future<void> _runGm004Alice(
     senderUsername: stack.identity.username,
     sourceDeviceId: stack.p2pService.currentState.peerId,
     sendP2PMessage: (peerId, message) async {
+      if (_scenario == 'private_online_remove' &&
+          !st006BoundaryPublishTriggered &&
+          peerId == identities['bob']!['peerId'] as String) {
+        st006BoundaryPublishTriggered = true;
+        writeSharedText(_signalName('st006_bob_publish_during_rotation'), 'ok');
+        await waitForSharedJson(
+          _signalName('bob_sent_st006BobDuringRotation.json'),
+        );
+      }
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
   if (rotatedKey == null) {
     throw StateError('GM-004 Alice key rotation failed');
   }
+  if (_scenario == 'private_online_remove' && !st006BoundaryPublishTriggered) {
+    throw StateError('ST-006 boundary publish was not triggered');
+  }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
     'keyEpoch': rotatedKey.keyGeneration,
     'groupKey': rotatedKey.encryptedKey,
   });
+
+  Map<String, dynamic>? st006BobDuringRotationSent;
+  Map<String, dynamic>? st006BobDuringRotationReceived;
+  if (_scenario == 'private_online_remove') {
+    st006BobDuringRotationSent = await waitForSharedJson(
+      _signalName('bob_sent_st006BobDuringRotation.json'),
+    );
+    st006BobDuringRotationReceived = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'st006BobDuringRotation',
+      text: st006BobDuringRotationSent['text'] as String,
+      senderPeerId: identities['bob']!['peerId'] as String,
+    );
+  }
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
   (MediaAttachment, Map<String, dynamic>)? pl006MediaUpload;
@@ -17803,6 +17831,25 @@ Future<void> _runGm004Alice(
           'receivedBobAfterRemoval': true,
         },
       if (_scenario == 'private_online_remove')
+        'st006RotationBoundaryPublishProof': <String, dynamic>{
+          'rowId': 'ST-006',
+          'removedCharlie': true,
+          'removedPeerId': identities['charlie']!['peerId'] as String,
+          'memberListExcludesCharlie': !(await _memberPeerIds(
+            stack,
+            groupId,
+          )).contains(identities['charlie']!['peerId'] as String),
+          'rotatedEpoch': rotatedKey.keyGeneration,
+          'receivedBobDuringRotation': st006BobDuringRotationReceived != null,
+          'bobDuringRotationEpoch': st006BobDuringRotationReceived?['keyEpoch'],
+          'bobDuringRotationPersistedCount':
+              st006BobDuringRotationReceived?['persistedCount'],
+          'sentAlicePostRotationAtRotatedEpoch':
+              aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
+          'alicePostRotationEpoch': aliceSent['keyEpoch'],
+          'receivedBobAfterRotation': true,
+        },
+      if (_scenario == 'private_online_remove')
         'pl006RemovedMediaProof': <String, dynamic>{
           'rowId': 'PL-006',
           'removedCharlie': true,
@@ -17864,6 +17911,17 @@ Future<void> _runGm004Bob(
     removedPeerId: charliePeerId,
   );
   writeSharedText(_signalName('bob_removed_charlie'), 'ok');
+
+  Map<String, dynamic>? st006BobDuringRotationSent;
+  if (_scenario == 'private_online_remove') {
+    await waitForSharedSignal(_signalName('st006_bob_publish_during_rotation'));
+    st006BobDuringRotationSent = await _sendProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'st006BobDuringRotation',
+      text: 'ST-006 Bob during rotation $_runId',
+    );
+  }
 
   final rotated = await waitForSharedJson(_signalName('rotated_key.json'));
   final rotatedEpoch = rotated['keyEpoch'] as int;
@@ -17946,6 +18004,24 @@ Future<void> _runGm004Bob(
           'sentPostRemovalAtRotatedEpoch': bobSent['keyEpoch'] == rotatedEpoch,
         },
       if (_scenario == 'private_online_remove')
+        'st006RotationBoundaryPublishProof': <String, dynamic>{
+          'rowId': 'ST-006',
+          'memberListExcludesCharlie': !(await _memberPeerIds(
+            stack,
+            groupId,
+          )).contains(charliePeerId),
+          'sentDuringRotationBeforeRotatedKey':
+              st006BobDuringRotationSent != null,
+          'bobDuringRotationEpoch': st006BobDuringRotationSent?['keyEpoch'],
+          'rotatedEpoch': rotatedEpoch,
+          'receivedRotatedKeyBeforeAlicePostRotation': true,
+          'receivedAlicePostRotation': true,
+          'receivedAlicePostRotationAtRotatedEpoch':
+              aliceReceived['keyEpoch'] == rotatedEpoch,
+          'alicePostRotationEpoch': aliceReceived['keyEpoch'],
+          'sentPostRotationAtRotatedEpoch': bobSent['keyEpoch'] == rotatedEpoch,
+        },
+      if (_scenario == 'private_online_remove')
         'pl006RemovedMediaProof': <String, dynamic>{
           'rowId': 'PL-006',
           'memberListExcludesCharlie': !(await _memberPeerIds(
@@ -18004,6 +18080,12 @@ Future<void> _runGm004Charlie(
 
   final rotated = await waitForSharedJson(_signalName('rotated_key.json'));
   final rotatedEpoch = rotated['keyEpoch'] as int;
+  Map<String, dynamic>? st006BobDuringRotationSent;
+  if (_scenario == 'private_online_remove') {
+    st006BobDuringRotationSent = await waitForSharedJson(
+      _signalName('bob_sent_st006BobDuringRotation.json'),
+    );
+  }
   final aliceSent = await waitForSharedJson(
     _signalName('alice_sent_aliceAfterCharlieRemove.json'),
   );
@@ -18041,6 +18123,14 @@ Future<void> _runGm004Charlie(
     text: bobSent['text'] as String,
     senderPeerId: identities['bob']!['peerId'] as String,
   );
+  final st006BobDuringRotationLeakCount = st006BobDuringRotationSent == null
+      ? 0
+      : await _proofMessageCount(
+          stack: stack,
+          groupId: groupId,
+          text: st006BobDuringRotationSent['text'] as String,
+          senderPeerId: identities['bob']!['peerId'] as String,
+        );
 
   final rejectedSend = await _attemptRejectedProofMessage(
     stack: stack,
@@ -18135,6 +18225,22 @@ Future<void> _runGm004Charlie(
           'postRemovalPlaintextCount': postRemovalPlaintextCount,
         },
       if (_scenario == 'private_online_remove')
+        'st006RotationBoundaryPublishProof': <String, dynamic>{
+          'rowId': 'ST-006',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
+          'groupPresentAfterRemoval':
+              await stack.groupRepo.getGroup(groupId) != null,
+          'hasRotatedEpoch': keyEpochAfterRemoval >= rotatedEpoch,
+          'excludedRotatedEpoch': rotatedEpoch,
+          'retainedEpochAfterRemoval': keyEpochAfterRemoval,
+          'postRemovalPublishAccepted': rejectedSend['accepted'] == true,
+          'receivedBobDuringRotation': st006BobDuringRotationLeakCount > 0,
+          'receivedAlicePostRotation': aliceLeakCount > 0,
+          'postRemovalPlaintextCount':
+              aliceLeakCount + st006BobDuringRotationLeakCount,
+        },
+      if (_scenario == 'private_online_remove')
         'pl006RemovedMediaProof': <String, dynamic>{
           'rowId': 'PL-006',
           'onlineBeforeRemoval': true,
@@ -18150,8 +18256,12 @@ Future<void> _runGm004Charlie(
           'directDownloadOutputBytes': pl006DirectDownloadProof?['outputBytes'],
           'noDirectDownloadPlaintext':
               pl006DirectDownloadProof?['noDirectDownloadPlaintext'] == true,
-          'noPostRemovalMessage': aliceLeakCount == 0 && bobLeakCount == 0,
-          'postRemovalPlaintextCount': postRemovalPlaintextCount,
+          'noPostRemovalMessage':
+              aliceLeakCount == 0 &&
+              bobLeakCount == 0 &&
+              st006BobDuringRotationLeakCount == 0,
+          'postRemovalPlaintextCount':
+              aliceLeakCount + bobLeakCount + st006BobDuringRotationLeakCount,
           'mediaRowsAfterRemoval': pl006MediaRowsAfterRemoval,
           'replayMediaRowsAbsent': pl006MediaRowsAfterRemoval == 0,
           'pendingDownloadsAfterRemoval': pl006PendingDownloadsAfterRemoval,

@@ -10332,6 +10332,54 @@ void main() {
       },
     );
 
+    test('rejects private_online_remove without ST-006 boundary proof', () {
+      final missingProof = _validPrivateOnlineRemoveVerdicts();
+      missingProof[0] = Map<String, dynamic>.from(missingProof[0])
+        ..remove('st006RotationBoundaryPublishProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: missing ST-006 rotation-boundary proof fields'),
+      );
+    });
+
+    test(
+      'rejects private_online_remove ST-006 boundary epoch after rotation',
+      () {
+        final invalidEpoch = _validPrivateOnlineRemoveVerdicts();
+        invalidEpoch[1] = {
+          ...invalidEpoch[1],
+          'st006RotationBoundaryPublishProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              invalidEpoch[1]['st006RotationBoundaryPublishProof'] as Map,
+            ),
+            'bobDuringRotationEpoch': 2,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_online_remove',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: invalidEpoch,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'bob: st006RotationBoundaryPublishProof.bobDuringRotationEpoch must be below rotated epoch',
+          ),
+        );
+      },
+    );
+
     test('rejects private_online_remove without KE-006 key proof fields', () {
       final missingProof = _validPrivateOnlineRemoveVerdicts();
       missingProof[1] = Map<String, dynamic>.from(missingProof[1])
@@ -20773,6 +20821,18 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'sentPostRemovalAtRotatedEpoch': true,
           'receivedBobAfterRemoval': true,
         },
+        'st006RotationBoundaryPublishProof': <String, Object?>{
+          'rowId': 'ST-006',
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListExcludesCharlie': true,
+          'rotatedEpoch': 2,
+          'receivedBobDuringRotation': true,
+          'bobDuringRotationEpoch': 1,
+          'bobDuringRotationPersistedCount': 1,
+          'sentAlicePostRotationAtRotatedEpoch': true,
+          'alicePostRotationEpoch': 2,
+        },
         'pl006RemovedMediaProof': <String, Object?>{
           'rowId': 'PL-006',
           'removedCharlie': true,
@@ -20834,6 +20894,18 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'receivedAliceAfterRemoval': true,
           'sentPostRemovalAtRotatedEpoch': true,
         },
+        'st006RotationBoundaryPublishProof': <String, Object?>{
+          'rowId': 'ST-006',
+          'memberListExcludesCharlie': true,
+          'sentDuringRotationBeforeRotatedKey': true,
+          'bobDuringRotationEpoch': 1,
+          'rotatedEpoch': 2,
+          'receivedRotatedKeyBeforeAlicePostRotation': true,
+          'receivedAlicePostRotation': true,
+          'receivedAlicePostRotationAtRotatedEpoch': true,
+          'alicePostRotationEpoch': 2,
+          'sentPostRotationAtRotatedEpoch': true,
+        },
         'pl006RemovedMediaProof': <String, Object?>{
           'rowId': 'PL-006',
           'memberListExcludesCharlie': true,
@@ -20879,6 +20951,19 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'postRemovalPublishAccepted': false,
           'receivedAliceAfterRemoval': false,
           'receivedBobAfterRemoval': false,
+          'postRemovalPlaintextCount': 0,
+        },
+        'st006RotationBoundaryPublishProof': <String, Object?>{
+          'rowId': 'ST-006',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': true,
+          'groupPresentAfterRemoval': false,
+          'hasRotatedEpoch': false,
+          'excludedRotatedEpoch': 2,
+          'retainedEpochAfterRemoval': 0,
+          'postRemovalPublishAccepted': false,
+          'receivedBobDuringRotation': false,
+          'receivedAlicePostRotation': false,
           'postRemovalPlaintextCount': 0,
         },
         'pl006RemovedMediaProof': <String, Object?>{

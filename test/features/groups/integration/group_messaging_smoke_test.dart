@@ -14028,6 +14028,210 @@ void main() {
     );
 
     test(
+      'ST-006 fake-network rotation-boundary publishes stay visible to active members',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'st006-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'st006-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'st006-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-st006-rotation-boundary';
+        await alice.createGroup(groupId: groupId, name: 'ST-006 Boundary');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        Future<void> saveKey(GroupTestUser user, int epoch) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: 'st006-key-$epoch',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+        }
+
+        await Future.wait([
+          saveKey(alice, 1),
+          saveKey(bob, 1),
+          saveKey(charlie, 1),
+        ]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await pump();
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: DateTime.now().toUtc(),
+        );
+
+        Future<void> waitForRemoval() async {
+          final deadline = DateTime.now().add(const Duration(seconds: 5));
+          while (DateTime.now().isBefore(deadline)) {
+            final bobSeesCharlie = await bob.groupRepo.getMember(
+              groupId,
+              charlie.peerId,
+            );
+            final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+            if (bobSeesCharlie == null && charlieGroup == null) {
+              return;
+            }
+            await pump();
+          }
+          fail('ST-006 timed out waiting for Charlie removal propagation');
+        }
+
+        await waitForRemoval();
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'st006-key-2',
+          'keyEpoch': 2,
+        };
+        alice.bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'st006-key-rotated',
+          'topicPeers': 1,
+        };
+
+        final distributionStarted = Completer<void>();
+        final distributionGate = Completer<bool>();
+        final distributionTargets = <String>[];
+        final rotationFuture = rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          perRecipientTimeout: const Duration(seconds: 5),
+          distributionTimeout: const Duration(seconds: 5),
+          sendP2PMessage: (peerId, message) {
+            distributionTargets.add(peerId);
+            if (!distributionStarted.isCompleted) {
+              distributionStarted.complete();
+            }
+            return distributionGate.future;
+          },
+        );
+        await distributionStarted.future;
+
+        final bobDuring = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'ST-006 Bob during rotation',
+          messageId: 'st006-bob-during-rotation',
+        );
+        expect(bobDuring.$1.name, 'success');
+        expect(bobDuring.$2, isNotNull);
+        expect(bobDuring.$2!.keyGeneration, 1);
+
+        distributionGate.complete(true);
+        final rotatedKey = await rotationFuture;
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+        expect(distributionTargets, [bob.deviceId]);
+        expect(distributionTargets, isNot(contains(charlie.deviceId)));
+        await bob.groupRepo.saveKey(rotatedKey);
+
+        final aliceAfter = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'ST-006 Alice after rotation',
+          messageId: 'st006-alice-after-rotation',
+        );
+        expect(aliceAfter.$1.name, 'success');
+        expect(aliceAfter.$2, isNotNull);
+        expect(aliceAfter.$2!.keyGeneration, 2);
+
+        Future<GroupMessage?> waitForMessage(
+          GroupTestUser user,
+          String messageId,
+        ) async {
+          final deadline = DateTime.now().add(const Duration(seconds: 5));
+          while (DateTime.now().isBefore(deadline)) {
+            final message = await user.msgRepo.getMessage(messageId);
+            if (message != null) {
+              return message;
+            }
+            await pump();
+          }
+          return null;
+        }
+
+        final aliceReceivedBob = await waitForMessage(
+          alice,
+          'st006-bob-during-rotation',
+        );
+        final bobReceivedAlice = await waitForMessage(
+          bob,
+          'st006-alice-after-rotation',
+        );
+        expect(aliceReceivedBob, isNotNull);
+        expect(bobReceivedAlice, isNotNull);
+        expect(aliceReceivedBob!.isIncoming, isTrue);
+        expect(aliceReceivedBob.keyGeneration, 1);
+        expect(bobReceivedAlice!.isIncoming, isTrue);
+        expect(bobReceivedAlice.keyGeneration, 2);
+
+        final aliceBoundaryMessages = (await alice.msgRepo.getMessagesPage(
+          groupId,
+          limit: 20,
+        )).where((message) => message.id.startsWith('st006-')).toList();
+        final bobBoundaryMessages = (await bob.msgRepo.getMessagesPage(
+          groupId,
+          limit: 20,
+        )).where((message) => message.id.startsWith('st006-')).toList();
+        final charlieBoundaryMessages = (await charlie.msgRepo.getMessagesPage(
+          groupId,
+          limit: 20,
+        )).where((message) => message.id.startsWith('st006-')).toList();
+
+        expect(aliceBoundaryMessages.map((message) => message.id).toSet(), {
+          'st006-bob-during-rotation',
+          'st006-alice-after-rotation',
+        });
+        expect(bobBoundaryMessages.map((message) => message.id).toSet(), {
+          'st006-bob-during-rotation',
+          'st006-alice-after-rotation',
+        });
+        expect(charlieBoundaryMessages, isEmpty);
+
+        final charlieSend = await charlie.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'ST-006 Charlie removed send rejected',
+          messageId: 'st006-charlie-removed-send',
+        );
+        expect(charlieSend.$1.name, anyOf('groupNotFound', 'unauthorized'));
+        expect(charlieSend.$2, isNull);
+        expect(
+          bob.bridge.commandLog,
+          isNot(contains('group:inboxRetrieveCursor')),
+        );
+      },
+    );
+
+    test(
       'DE-002 rapid 100 same-sender messages stay ordered for both recipients',
       () async {
         final alice = GroupTestUser.create(
