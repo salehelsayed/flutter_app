@@ -341,6 +341,58 @@ void main() {
     });
 
     test(
+      'UP-013 route-unmounted recipient persists incoming message for reopen',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'up013-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'up013-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-up013-route-away';
+        await alice.createGroup(groupId: groupId, name: 'UP-013 Route Away');
+        await alice.addMember(groupId: groupId, invitee: bob);
+
+        // Bob's app-level listener stays running while no conversation route is
+        // mounted, which is the production shape for a user on another route.
+        alice.start();
+        bob.start();
+
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'UP-013 message while Bob route is unmounted',
+          messageId: 'up013-route-away-smoke',
+          timestamp: DateTime.utc(2026, 5, 14, 0, 13),
+        );
+        await pump();
+
+        final persisted = await bob.msgRepo.getMessage(
+          'up013-route-away-smoke',
+        );
+        expect(persisted, isNotNull);
+        expect(persisted!.isIncoming, isTrue);
+        expect(persisted.text, 'UP-013 message while Bob route is unmounted');
+
+        final reopenedMessages = await bob.loadGroupMessages(groupId);
+        expect(
+          reopenedMessages
+              .where((message) => message.id == 'up013-route-away-smoke')
+              .toList(),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
       'NW-001 full-mesh online A/B/C delivery works without relay fallback',
       () async {
         final flowEvents = <Map<String, dynamic>>[];

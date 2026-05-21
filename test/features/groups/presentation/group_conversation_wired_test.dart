@@ -2341,6 +2341,48 @@ void main() {
     );
 
     testWidgets(
+      'UP-013 route reopen renders message persisted while widget unmounted',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'up013-before-unmount', text: 'Before unmount'),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        expect(find.text('Before unmount'), findsOneWidget);
+        expect(msgRepo.getMessagesPageCalls, 1);
+
+        await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+        await pumpFrames(tester);
+
+        final incomingWhileUnmounted = makeMessage(
+          id: 'up013-while-unmounted',
+          text: 'Arrived while route was away',
+          groupId: group.id,
+        );
+        await msgRepo.saveMessage(incomingWhileUnmounted);
+        messageStreamController.add(incomingWhileUnmounted);
+        await pumpFrames(tester, count: 5);
+
+        expect(find.text('Arrived while route was away'), findsNothing);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Before unmount'), findsOneWidget);
+        expect(find.text('Arrived while route was away'), findsOneWidget);
+        expect(
+          msgRepo.getMessagesPageCalls,
+          greaterThanOrEqualTo(2),
+          reason: 'reopened route must hydrate from repository state',
+        );
+      },
+    );
+
+    testWidgets(
       'GMAR-004 reopen hydration preserves video voice pending and failed media without duplicates',
       (tester) async {
         final group = makeChatGroup();

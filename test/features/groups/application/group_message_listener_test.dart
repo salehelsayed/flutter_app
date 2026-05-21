@@ -561,6 +561,33 @@ void main() {
   });
 
   test(
+    'UP-013 persists incoming group message without UI stream subscriber',
+    () async {
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'UP-013 delivered while route is away',
+        'timestamp': DateTime.utc(2026, 5, 14, 1).toIso8601String(),
+        'messageId': 'up013-route-away-listener',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final saved = await msgRepo.getMessage('up013-route-away-listener');
+      expect(saved, isNotNull);
+      expect(saved!.groupId, 'group-1');
+      expect(saved.text, 'UP-013 delivered while route is away');
+      expect(saved.isIncoming, isTrue);
+      expect(saved.status, 'delivered');
+      expect(await msgRepo.getUnreadCount('group-1'), 1);
+    },
+  );
+
+  test(
     'GO-004 live decryption failure creates repair placeholder and trigger without plaintext delivery',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
