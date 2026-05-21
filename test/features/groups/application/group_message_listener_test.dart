@@ -2015,6 +2015,55 @@ void main() {
     expect(latest!.text, 'Hello group!');
   });
 
+  test(
+    'ST-005 high-throughput listener storm persists all message events without recovery',
+    () async {
+      final emitted = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(emitted.add);
+      addTearDown(subscription.cancel);
+
+      listener.start(sourceController.stream);
+
+      const messageCount = 160;
+      final baseTime = DateTime.utc(2026, 5, 14, 5);
+      for (var i = 0; i < messageCount; i++) {
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'ST-005 direct storm message $i',
+          'timestamp': baseTime.add(Duration(seconds: i)).toIso8601String(),
+          'messageId': 'st005-direct-storm-$i',
+        });
+      }
+
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (msgRepo.count < messageCount &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+
+      expect(msgRepo.count, messageCount);
+      expect(emitted, hasLength(messageCount));
+      final messages = await msgRepo.getMessagesPage(
+        'group-1',
+        limit: messageCount + 10,
+      );
+      final ids = messages.map((message) => message.id).toSet();
+      expect(ids, hasLength(messageCount));
+      for (var i = 0; i < messageCount; i++) {
+        final id = 'st005-direct-storm-$i';
+        expect(ids, contains(id));
+        final matching = messages.where((message) => message.id == id).toList();
+        expect(matching, hasLength(1));
+        expect(matching.single.text, 'ST-005 direct storm message $i');
+        expect(matching.single.keyGeneration, 0);
+      }
+      expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
+    },
+  );
+
   test('drops events with neither text nor media — empty bubble after cold '
       'restart regression', () async {
     // Regression for the user-reported bug: after the app was killed

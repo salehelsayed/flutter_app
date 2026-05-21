@@ -13899,6 +13899,135 @@ void main() {
     );
 
     test(
+      'ST-005 fake-network high-throughput message storm fanout is exact once without recovery',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'st005-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'st005-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'st005-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-st005-fake-network-storm';
+        const messageCount = 96;
+        await alice.createGroup(groupId: groupId, name: 'ST-005 Storm');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        Future<void> saveKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'st005-shared-key-1',
+              createdAt: DateTime.utc(2026, 5, 14, 5, 30),
+            ),
+          );
+        }
+
+        await Future.wait([saveKey(alice), saveKey(bob), saveKey(charlie)]);
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        for (var i = 0; i < messageCount; i++) {
+          final (result, sentMessage) = await alice.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: 'ST-005 fake-network storm message $i',
+            messageId: 'st005-fake-storm-$i',
+          );
+          expect(result.name, 'success');
+          expect(sentMessage, isNotNull);
+          expect(sentMessage!.keyGeneration, 1);
+        }
+
+        Future<List<GroupMessage>> waitForStormMessages(
+          GroupTestUser user,
+        ) async {
+          final deadline = DateTime.now().add(const Duration(seconds: 5));
+          List<GroupMessage> messages = const <GroupMessage>[];
+          while (DateTime.now().isBefore(deadline)) {
+            messages =
+                (await user.msgRepo.getMessagesPage(
+                      groupId,
+                      limit: messageCount + 1,
+                    ))
+                    .where(
+                      (message) => message.id.startsWith('st005-fake-storm-'),
+                    )
+                    .toList();
+            if (messages.length == messageCount) {
+              break;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 25));
+          }
+          return messages;
+        }
+
+        final aliceMessages = await waitForStormMessages(alice);
+        final bobMessages = await waitForStormMessages(bob);
+        final charlieMessages = await waitForStormMessages(charlie);
+
+        void expectExactStormMessages(
+          String label,
+          List<GroupMessage> messages, {
+          required bool incoming,
+        }) {
+          expect(messages, hasLength(messageCount), reason: label);
+          final ids = messages.map((message) => message.id).toSet();
+          expect(ids, hasLength(messageCount), reason: label);
+          for (var i = 0; i < messageCount; i++) {
+            final id = 'st005-fake-storm-$i';
+            final matching = messages
+                .where((message) => message.id == id)
+                .toList();
+            expect(matching, hasLength(1), reason: '$label $id');
+            expect(
+              matching.single.text,
+              'ST-005 fake-network storm message $i',
+            );
+            expect(matching.single.keyGeneration, 1);
+            expect(matching.single.isIncoming, incoming);
+          }
+        }
+
+        expectExactStormMessages(
+          'alice local storm',
+          aliceMessages,
+          incoming: false,
+        );
+        expectExactStormMessages('bob storm', bobMessages, incoming: true);
+        expectExactStormMessages(
+          'charlie storm',
+          charlieMessages,
+          incoming: true,
+        );
+        expect(
+          bob.bridge.commandLog,
+          isNot(contains('group:inboxRetrieveCursor')),
+        );
+        expect(
+          charlie.bridge.commandLog,
+          isNot(contains('group:inboxRetrieveCursor')),
+        );
+      },
+    );
+
+    test(
       'DE-002 rapid 100 same-sender messages stay ordered for both recipients',
       () async {
         final alice = GroupTestUser.create(
