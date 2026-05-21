@@ -624,6 +624,38 @@ void main() {
       expect(sent['payload'], isEmpty);
     });
 
+    test('SV-016 classifies ok false keygen failure', () async {
+      bridge.responses['group.keygen'] = {
+        'ok': false,
+        'errorCode': 'KEYGEN_FAILED',
+        'errorMessage': 'native keygen failed',
+      };
+
+      await expectLater(
+        callGroupKeygen(bridge),
+        throwsA(
+          _bridgeCommandError(
+            command: 'group.keygen',
+            errorCode: 'KEYGEN_FAILED',
+          ),
+        ),
+      );
+    });
+
+    test('SV-016 classifies malformed keygen success response', () async {
+      bridge.responses['group.keygen'] = {'ok': true};
+
+      await expectLater(
+        callGroupKeygen(bridge),
+        throwsA(
+          _bridgeCommandError(
+            command: 'group.keygen',
+            errorCode: 'INVALID_RESPONSE',
+          ),
+        ),
+      );
+    });
+
     test('rethrows TimeoutException on timeout', () async {
       final slowBridge = _SlowBridge();
 

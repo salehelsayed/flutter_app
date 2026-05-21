@@ -133,12 +133,18 @@ Future<GroupModel> createGroup({
       );
       await groupRepo.saveKey(keyInfo);
     } catch (e) {
+      final errorCode = e is BridgeCommandException ? e.errorCode : null;
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_CREATE_USE_CASE_KEYGEN_ERROR',
-        details: {'error': e.toString()},
+        details: {'errorCode': ?errorCode, 'error': e.toString()},
       );
       await _rollbackCreatedGroup(groupRepo, groupId);
+      if (e is BridgeCommandException) {
+        throw StateError(
+          'Group creation did not finish because group key generation failed: ${e.errorCode}.',
+        );
+      }
       throw StateError(
         'Group creation did not finish because no usable group key was available.',
       );
