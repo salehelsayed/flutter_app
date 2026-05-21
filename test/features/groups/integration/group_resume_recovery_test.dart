@@ -6488,6 +6488,130 @@ void main() {
       );
 
       test(
+        'OB-008 fake-network degraded branches use only their retry owner',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            inboxStoreFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-ob008-retry-owner',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-ob008-retry-owner',
+            username: 'Bob',
+            network: network,
+          );
+
+          const groupId = 'group-ob008-retry-owner';
+          await admin.createGroup(groupId: groupId, name: 'OB-008 Owners');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+
+          final (pendingResult, pendingMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'OB-008 pending inbox owner',
+              );
+          expect(pendingResult, SendGroupMessageResult.success);
+          expect(pendingMessage, isNotNull);
+          expect(pendingMessage!.status, 'pending');
+          expect(pendingMessage.inboxStored, isFalse);
+          expect(pendingMessage.inboxRetryPayload, isNotNull);
+
+          final failedMessageWrongOwner = await retryFailedGroupMessages(
+            groupMsgRepo: admin.msgRepo,
+            groupRepo: admin.groupRepo,
+            identityRepo: _Section10IdentityRepository(_identityForUser(admin)),
+            bridge: admin.bridge,
+            mediaAttachmentRepo: admin.mediaAttachmentRepo,
+          );
+          expect(failedMessageWrongOwner, 0);
+          expect(
+            (await admin.msgRepo.getMessage(pendingMessage.id))!.status,
+            'pending',
+          );
+
+          final inboxOwnerRetried = await retryFailedGroupInboxStores(
+            bridge: admin.bridge,
+            msgRepo: admin.msgRepo,
+          );
+          expect(inboxOwnerRetried, 1);
+          final inboxRecovered = await admin.msgRepo.getMessage(
+            pendingMessage.id,
+          );
+          expect(inboxRecovered, isNotNull);
+          expect(inboxRecovered!.status, 'sent');
+          expect(inboxRecovered.inboxStored, isTrue);
+          expect(inboxRecovered.inboxRetryPayload, isNull);
+
+          bob.unsubscribeFromGroup(groupId);
+          adminBridge.inboxStoreFailuresRemaining = 1;
+          final (failedResult, failedMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'OB-008 failed message owner',
+              );
+          expect(failedResult, SendGroupMessageResult.error);
+          expect(failedMessage, isNotNull);
+          expect(failedMessage!.status, 'failed');
+          expect(failedMessage.inboxStored, isFalse);
+          expect(failedMessage.inboxRetryPayload, isNotNull);
+
+          final inboxWrongOwner = await retryFailedGroupInboxStores(
+            bridge: admin.bridge,
+            msgRepo: admin.msgRepo,
+          );
+          expect(inboxWrongOwner, 0);
+          expect(
+            (await admin.msgRepo.getMessage(failedMessage.id))!.status,
+            'failed',
+          );
+
+          bob.subscribeToGroup(groupId);
+          final failedMessageRetried = await retryFailedGroupMessages(
+            groupMsgRepo: admin.msgRepo,
+            groupRepo: admin.groupRepo,
+            identityRepo: _Section10IdentityRepository(_identityForUser(admin)),
+            bridge: admin.bridge,
+            mediaAttachmentRepo: admin.mediaAttachmentRepo,
+          );
+          expect(failedMessageRetried, 1);
+          final failedRecovered = await admin.msgRepo.getMessage(
+            failedMessage.id,
+          );
+          expect(failedRecovered, isNotNull);
+          expect(failedRecovered!.status, 'sent');
+          expect(failedRecovered.inboxStored, isTrue);
+          expect(failedRecovered.inboxRetryPayload, isNull);
+
+          await pump();
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where(
+              (message) =>
+                  message.isIncoming &&
+                  message.id == failedMessage.id &&
+                  message.text == 'OB-008 failed message owner',
+            ),
+            hasLength(1),
+          );
+
+          admin.dispose();
+          bob.dispose();
+        },
+      );
+
+      test(
         'IR-007 rapid pause/resume closes pending live-peer send via inbox retry exactly once',
         () async {
           final adminBridge = _Section10MirroringBridge(
