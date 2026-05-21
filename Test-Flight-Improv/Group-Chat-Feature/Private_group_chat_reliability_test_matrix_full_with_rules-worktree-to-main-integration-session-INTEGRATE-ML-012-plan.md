@@ -1,5 +1,5 @@
-Status: blocked_external_fixture
-Acceptance Status: blocked_external_fixture
+Status: accepted
+Acceptance Status: accepted
 Mode: standard worktree-to-main integration, not gap-closure
 Source row: `ML-012 | Concurrent admin membership edits resolve deterministically`
 Integration row: `INTEGRATE-ML-012`
@@ -83,6 +83,53 @@ MKNOON_RELAY_ADDRESSES='/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaS
 - Failure signature: Alice published Charlie removal and Bob/Charlie progressed, but Dana repeatedly drained only a stale `members_added` replay, kept `GROUP_MEMBERS_DB_LOAD_ALL_SUCCESS count:4`, never observed Alice's removal, and logs contained direct/relay dial backoff plus missing peer/topic peer instability.
 - Classification: `blocked_external_fixture/relay-discovery-group-inbox-delivery-timeout`. No remaining repo-owned ML-012 delta was identified after source member-wait stabilization was imported and focused/preservation tests passed.
 
+Focused recovery rerun after later shared fixture repairs also failed:
+
+```bash
+MKNOON_RELAY_ADDRESSES='/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g' dart run integration_test/scripts/run_group_multi_party_device_real.dart --scenario private_concurrent_admin_membership_edits -d 5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3,279B82AE-2BB9-4924-9AAE-581870ED3FA9,116B4AF6-C1A9-4F36-B929-0A7130B5E83C,CD5929A6-EA0A-421D-A6D3-55BD707E0F76
+```
+
+- Run id: `1779394615524`
+- Evidence dir: `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_concurrent_admin_membership_edits_0s7Idi`
+- Devices: Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`, Dana `CD5929A6-EA0A-421D-A6D3-55BD707E0F76`; all are iOS 26.2 CoreSimulator devices.
+- Exit code: `255`.
+- Orchestrator result: no orchestrator verdict; `Bad state: dana exited with code 1 before writing a verdict`.
+- Verdict files: Bob and Charlie wrote partial `ml012ConcurrentAdminEditsProof` verdicts; Alice and Dana did not write verdict JSON, so the row acceptance contract was not satisfied.
+- Failure signature: Dana timed out in `_waitForMemberExclusion` (`group_multi_party_device_real_harness.dart:2812`, called from `_runMl012Dana`), kept loading four members and repeatedly drained one stale `members_added` replay; Alice timed out waiting for `gmp_1779394615524_dana_observed_charlie_removed` (`_runMl012Alice`). Logs also recorded discovery/backoff instability: Dana saw `missingPeers:2`, `topicPeers:1`, `backoff`, direct dial deadline failures, and relay dial backoff; Alice later saw an inbox retrieve `read length: deadline exceeded` and recovered relay health after the row was already blocked.
+- Classification: still `blocked_external_fixture/relay-discovery-group-inbox-delivery-timeout`. Later shared fixture repairs `f9a31437`, `9b3bfac8`, and `9ab39042` did not recover the ML-012 `private_concurrent_admin_membership_edits` live path.
+
+Focused fixture repair:
+
+- Repaired only the ML-012 `private_concurrent_admin_membership_edits` live harness path in `integration_test/group_multi_party_device_real_harness.dart`.
+- Root cause narrowed from the failed artifacts: Dana could miss Alice's live Charlie-removal publish during relay/discovery churn, while the helper stored removal replay only for Charlie. Bob and Charlie could complete from live delivery; Dana repeatedly drained only the stale `members_added` replay and never had a durable removal replay to apply.
+- Repair: `_runMl012Alice` now waits until Alice has locally applied Bob's Dana-add event before removing Charlie, then passes Dana's peer id as an additional durable replay recipient to `_removeCharlieAndPublish`. This keeps the concurrent admin edit contract intact without timeout expansion or unrelated product rewrites.
+
+Successful focused recovery proof:
+
+```bash
+MKNOON_RELAY_ADDRESSES='/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g' dart run integration_test/scripts/run_group_multi_party_device_real.dart --scenario private_concurrent_admin_membership_edits -d 5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3,279B82AE-2BB9-4924-9AAE-581870ED3FA9,116B4AF6-C1A9-4F36-B929-0A7130B5E83C,CD5929A6-EA0A-421D-A6D3-55BD707E0F76
+```
+
+- Run id: `1779395988799`
+- Evidence dir: `/var/folders/nd/_55d26s936d0fb_5l9s00t980000gn/T/group_multi_party_private_concurrent_admin_membership_edits_RLkRDR`
+- Devices: Alice `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`, Bob `279B82AE-2BB9-4924-9AAE-581870ED3FA9`, Charlie `116B4AF6-C1A9-4F36-B929-0A7130B5E83C`, Dana `CD5929A6-EA0A-421D-A6D3-55BD707E0F76`; all are iOS 26.2 CoreSimulator devices.
+- Orchestrator verdict: `private_concurrent_admin_membership_edits proof passed: private_concurrent_admin_membership_edits verdicts valid for alice, bob, charlie, dana`.
+- Verdict files: `gmp_1779395988799_alice_verdict.json`, `gmp_1779395988799_bob_verdict.json`, `gmp_1779395988799_charlie_verdict.json`, and `gmp_1779395988799_dana_verdict.json`.
+- Proof summary: Alice, Bob, and Dana verdicts include `ml012ConcurrentAdminEditsProof` with `rowId=ML-012`, `memberSetsConverged=true`, `independentAddPreserved=true`, `removedCharlieExcluded=true`, and `sameTargetTieRemoveWins=true`; Charlie's removed-role verdict includes `postRemovalGroupAbsent=true`, `removedCharlieExcluded=true`, and `sameTargetTieRemoveWins=true`.
+
+Post-repair focused checks passed:
+
+```bash
+dart format --set-exit-if-changed integration_test/group_multi_party_device_real_harness.dart
+flutter analyze --no-pub integration_test/group_multi_party_device_real_harness.dart
+flutter test --no-pub test/features/groups/application/group_message_listener_test.dart test/features/groups/integration/group_membership_smoke_test.dart test/integration/group_multi_party_device_criteria_test.dart --plain-name "ML-012"
+flutter test --no-pub test/features/groups/application/group_message_listener_test.dart --name "GM-011|GM-012"
+flutter test --no-pub test/features/groups/integration/group_membership_smoke_test.dart --name "GE-016|GM-009|GM-010|GM-011|GM-012|GM-022"
+flutter test --no-pub test/integration/group_multi_party_device_criteria_test.dart --name "GM-009|GM-011|GM-012"
+```
+
+Results: format passed with `0 changed`; analyzer reported `No issues found! (ran in 51.6s)`; focused ML-012 selector passed `+4`; preservation selectors passed `+2`, `+6`, and `+19`.
+
 ## Scope
 
 Allowed integration action was limited to importing or verifying ML-012 row-owned membership merge, host/fake proof, criteria, runner, and live harness support.
@@ -91,8 +138,8 @@ Out of scope: `ML-013+`, source worktree docs, COMPLETE_1 docs, source matrix do
 
 ## Final Verdict
 
-`INTEGRATE-ML-012` is `blocked_external_fixture`.
+`INTEGRATE-ML-012` is `accepted`.
 
-The row-owned meaningful main delta has been imported and focused/preservation checks are green, but the required fresh iOS 26.2 live `private_concurrent_admin_membership_edits` proof did not pass in main. The blocker is external relay/discovery/group-inbox delivery instability preventing Dana from receiving or applying Alice's removal event.
+The row-owned meaningful main delta is imported, the narrow live-harness replay repair is in place, focused/preservation checks are green, and required fresh iOS 26.2 live proof run `1779395988799` passed with valid Alice/Bob/Charlie/Dana `ml012ConcurrentAdminEditsProof` verdicts.
 
-Next safe action: rerun the exact live proof after the relay/device fixture is healthy. If it passes, update this contract and the integration breakdown from `blocked_external_fixture` to `accepted` with the new run id before relying on ML-012 as accepted closure.
+Next safe action: do not reopen ML-012 in this recovery pass. The only remaining integration-program blockers are `KE-007` and `KE-009` conflict re-reconciliation.
