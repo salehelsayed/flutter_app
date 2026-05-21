@@ -3031,6 +3031,7 @@ void _validateScenarioProofFields({
     );
     _validateUp002DurableTimelineProof(byRole: byRole, failures: failures);
     _validateUp004UnreadChurnProof(byRole: byRole, failures: failures);
+    _validateUp006ReaddUiStateProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_non_friend_member_delivery') {
@@ -6745,6 +6746,102 @@ void _validateUp004UnreadChurnProof({
     if (removedWindowPlaintextCount != 0) {
       failures.add('charlie: $proofName.removedWindowPlaintextCount must be 0');
     }
+  }
+}
+
+void _validateUp006ReaddUiStateProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up006ReaddUiStateProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRoleProof(String role, Map<String, dynamic>? proof) {
+    if (proof == null) {
+      failures.add('$role: missing UP-006 re-add UI state proof fields');
+      return;
+    }
+    if (_stringValue(proof['rowId']) != 'UP-006') {
+      failures.add('$role: $proofName.rowId must be UP-006');
+    }
+    if (_stringValue(proof['role']) != role) {
+      failures.add('$role: $proofName.role must be $role');
+    }
+    for (final field in const <String>[
+      'liveThreePartyProof',
+      'reopenedTimelineRead',
+      'timelineContainsRemoval',
+      'timelineContainsReadd',
+      'timelineOrderShowsRemoveBeforeReadd',
+      'readdLabelIsActive',
+      'latestCharlieTimelineIsReadd',
+      'memberListIncludesCharlie',
+      'finalMemberListIncludesAliceBobCharlie',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'staleRemovedStateReused',
+      'stalePendingInviteStateReused',
+    ]) {
+      _requireFalseProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    final latestCharlieTimelineText =
+        _stringValue(proof['latestCharlieTimelineText']) ?? '';
+    if (!latestCharlieTimelineText.contains('added')) {
+      failures.add(
+        '$role: $proofName.latestCharlieTimelineText must contain added',
+      );
+    }
+    if (latestCharlieTimelineText.contains('removed')) {
+      failures.add(
+        '$role: $proofName.latestCharlieTimelineText must not contain removed',
+      );
+    }
+    if (latestCharlieTimelineText.contains('Invite')) {
+      failures.add(
+        '$role: $proofName.latestCharlieTimelineText must not contain Invite',
+      );
+    }
+
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  requireRoleProof('alice', aliceProof);
+  requireRoleProof('bob', bobProof);
+  requireRoleProof('charlie', charlieProof);
+
+  final epochs = <int>{};
+  for (final proof in <Map<String, dynamic>?>[
+    aliceProof,
+    bobProof,
+    charlieProof,
+  ]) {
+    final epoch = _intValue(proof?['finalEpoch']);
+    if (epoch != null) {
+      epochs.add(epoch);
+    }
+  }
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: UP-006 finalEpoch mismatch');
   }
 }
 
