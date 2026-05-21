@@ -20226,6 +20226,32 @@ Future<void> _runGm006Charlie(
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
+        'sv003PendingReaddCurrentProof': <String, dynamic>{
+          'rowId': 'SV-003',
+          'liveThreePartyProof': true,
+          'hostSendGateCovered': true,
+          'pendingReaddImportedWithoutCurrentKey': pendingReaddEpoch == 0,
+          'pendingReaddMemberListIncludesCharlie': pendingReaddPeerIds.contains(
+            charliePeerId,
+          ),
+          'pendingReaddSendRejected': pendingReaddSend?['accepted'] == false,
+          'pendingReaddSendOutcome': pendingReaddSend?['outcome'],
+          'pendingReaddLocalMessageStored': pendingReaddLocalMessageStored,
+          'currentConfigAndKeyInstalled':
+              finalEpoch >= 2 &&
+              memberPeerIds.contains(alicePeerId) &&
+              memberPeerIds.contains(bobPeerId) &&
+              memberPeerIds.contains(charliePeerId),
+          'activeAfterCurrentKeyCanSend':
+              (charlieSent['outcome'] == 'success' ||
+                  charlieSent['outcome'] == 'successNoPeers') &&
+              charlieSentEpoch != null &&
+              charlieSentEpoch == finalEpoch &&
+              finalEpoch >= 2,
+          'currentSendKeyEpoch': charlieSentEpoch,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
         'pl004QuoteReaddLiveProof': <String, dynamic>{
           'rowId': 'PL-004',
           'quoteBoundary': 'post_readd_live',
