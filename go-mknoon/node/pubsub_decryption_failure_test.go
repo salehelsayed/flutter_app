@@ -2192,3 +2192,118 @@ func TestHandleGroupSubscription_EmitsDecryptionFailedEventForTamperedCiphertext
 		}
 	}
 }
+
+func TestSV005TamperedCiphertextOrNonceDoesNotPoisonLaterValidDelivery(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "sv005-tamper-stream-recovery"
+	senderPeerId := nodeA.PeerId()
+	config := &GroupConfig{
+		Name:      "SV-005 Tamper Stream Recovery",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: senderPeerId,
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 12}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+
+	nonceEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"SV-005 tampered nonce should not deliver",
+	)
+	tamperedNonceEnvelope := mutateGroupEnvelope(t, nonceEnvelope, func(env *internal.GroupEnvelope) {
+		nonceBytes, err := base64.StdEncoding.DecodeString(env.Encrypted.Nonce)
+		if err != nil {
+			t.Fatalf("decode nonce: %v", err)
+		}
+		nonceBytes[0] ^= 0xFF
+		env.Encrypted.Nonce = base64.StdEncoding.EncodeToString(nonceBytes)
+	})
+	publishRawGroupEnvelope(t, nodeA, groupId, tamperedNonceEnvelope)
+	decryptFailures := waitForCollectedEventCount(t, nodeBCapture, "group:decryption_failed", 1, 5*time.Second)
+	if got := decryptFailures[0]["groupId"]; got != groupId {
+		t.Fatalf("nonce failure groupId = %v, want %q", got, groupId)
+	}
+	if got := int(decryptFailures[0]["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("nonce failure keyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+
+	ciphertextEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"SV-005 tampered ciphertext should not deliver",
+	)
+	tamperedCiphertextEnvelope := mutateAndResignGroupEnvelope(t, ciphertextEnvelope, senderPrivB64, func(env *internal.GroupEnvelope) {
+		ciphertextBytes, err := base64.StdEncoding.DecodeString(env.Encrypted.Ciphertext)
+		if err != nil {
+			t.Fatalf("decode ciphertext: %v", err)
+		}
+		ciphertextBytes[0] ^= 0xFF
+		env.Encrypted.Ciphertext = base64.StdEncoding.EncodeToString(ciphertextBytes)
+	})
+	publishRawGroupEnvelope(t, nodeA, groupId, tamperedCiphertextEnvelope)
+	decryptFailures = waitForCollectedEventCount(t, nodeBCapture, "group:decryption_failed", 2, 5*time.Second)
+	if got := decryptFailures[1]["groupId"]; got != groupId {
+		t.Fatalf("ciphertext failure groupId = %v, want %q", got, groupId)
+	}
+	if got := int(decryptFailures[1]["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("ciphertext failure keyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+
+	if received := nodeBCapture.collectEvents("group_message:received"); len(received) != 0 {
+		t.Fatalf("group_message:received before valid follow-up = %d, want 0: %#v", len(received), received)
+	}
+
+	validText := "SV-005 valid delivery after tampered envelopes"
+	validEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		validText,
+	)
+	publishRawGroupEnvelope(t, nodeA, groupId, validEnvelope)
+
+	received := waitForCollectedEventCount(t, nodeBCapture, "group_message:received", 1, 5*time.Second)
+	if got := received[0]["text"]; got != validText {
+		t.Fatalf("valid follow-up text = %v, want %q", got, validText)
+	}
+	if got := received[0]["senderId"]; got != senderPeerId {
+		t.Fatalf("valid follow-up senderId = %v, want %q", got, senderPeerId)
+	}
+	if got := int(received[0]["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("valid follow-up keyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+}
