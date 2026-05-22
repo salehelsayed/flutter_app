@@ -17,6 +17,7 @@ import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
@@ -595,48 +596,105 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         dbLoadGroupKeyByGeneration(db, groupId, generation),
     dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
   );
-  final groupMsgRepo = GroupMessageRepositoryImpl(
-    dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
-    dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
-        dbLoadGroupMessagesPage(db, groupId, limit: limit, offset: offset),
-    dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
-    dbLoadLatestGroupMessage: (groupId) =>
-        dbLoadLatestGroupMessage(db, groupId),
-    dbLoadLatestRemovalTimestampForSenderFn: (groupId, senderPeerId) =>
-        dbLoadLatestGroupRemovalTimestampForSender(db, groupId, senderPeerId),
-    dbUpdateGroupMessageStatus: (id, status) =>
-        dbUpdateGroupMessageStatus(db, id, status),
-    dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
-    dbCountUnreadGroupMessages: (groupId) =>
-        dbCountUnreadGroupMessages(db, groupId),
-    dbCountTotalUnreadGroupMessages: () => dbCountTotalUnreadGroupMessages(db),
-    dbMarkGroupMessagesAsRead: (groupId) =>
-        dbMarkGroupMessagesAsRead(db, groupId),
-    dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
-    dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
-        dbExistsGroupMessageByContent(
-          db,
-          groupId,
-          senderPeerId,
-          text,
-          timestamp,
-        ),
-    dbDeleteGroupMessagesForGroup: (groupId) =>
-        dbDeleteGroupMessagesForGroup(db, groupId),
-    dbLoadGroupThreadSummaries: (groupIds) =>
-        dbLoadGroupThreadSummaries(db, groupIds),
-    dbLoadFailedOutgoingGroupMessagesFn: () =>
-        dbLoadFailedOutgoingGroupMessages(db),
-    dbRecoverStuckSendingGroupMessagesFn: ({olderThan}) =>
-        dbTransitionGroupSendingToFailed(db, olderThan: olderThan),
-    dbLoadGroupMessagesWithFailedInboxStore: ({limit = 20}) =>
-        dbLoadGroupMessagesWithFailedInboxStore(db, limit: limit),
-    dbUpdateGroupMessageInboxStoredFn: (id, {required stored}) =>
-        dbUpdateGroupMessageInboxStored(db, id, stored: stored),
-    dbUpdateGroupMessageInboxRetryPayloadFn: (id, payload) =>
-        dbUpdateGroupMessageInboxRetryPayload(db, id, payload),
-    dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
-        dbUpdateGroupMessageWireEnvelope(db, id, envelope),
+  GroupMessageRepositoryImpl createGroupMessageRepository(
+    dynamic executor, {
+    bool enableInboxPageTransactions = false,
+  }) {
+    return GroupMessageRepositoryImpl(
+      dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
+      dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
+          dbLoadGroupMessagesPage(
+            executor,
+            groupId,
+            limit: limit,
+            offset: offset,
+          ),
+      dbLoadGroupMessage: (id) => dbLoadGroupMessage(executor, id),
+      dbLoadLatestGroupMessage: (groupId) =>
+          dbLoadLatestGroupMessage(executor, groupId),
+      dbLoadLatestRemovalTimestampForSenderFn: (groupId, senderPeerId) =>
+          dbLoadLatestGroupRemovalTimestampForSender(
+            executor,
+            groupId,
+            senderPeerId,
+          ),
+      dbUpdateGroupMessageStatus: (id, status) =>
+          dbUpdateGroupMessageStatus(executor, id, status),
+      dbCountGroupMessages: (groupId) =>
+          dbCountGroupMessages(executor, groupId),
+      dbCountUnreadGroupMessages: (groupId) =>
+          dbCountUnreadGroupMessages(executor, groupId),
+      dbCountTotalUnreadGroupMessages: () =>
+          dbCountTotalUnreadGroupMessages(executor),
+      dbMarkGroupMessagesAsRead: (groupId) =>
+          dbMarkGroupMessagesAsRead(executor, groupId),
+      dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
+      dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
+          dbExistsGroupMessageByContent(
+            executor,
+            groupId,
+            senderPeerId,
+            text,
+            timestamp,
+          ),
+      dbDeleteGroupMessagesForGroup: (groupId) =>
+          dbDeleteGroupMessagesForGroup(executor, groupId),
+      dbLoadGroupThreadSummaries: (groupIds) =>
+          dbLoadGroupThreadSummaries(executor, groupIds),
+      dbLoadFailedOutgoingGroupMessagesFn: () =>
+          dbLoadFailedOutgoingGroupMessages(executor),
+      dbRecoverStuckSendingGroupMessagesFn: ({olderThan}) =>
+          dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
+      dbLoadGroupMessagesWithFailedInboxStore: ({limit = 20}) =>
+          dbLoadGroupMessagesWithFailedInboxStore(executor, limit: limit),
+      dbUpdateGroupMessageInboxStoredFn: (id, {required stored}) =>
+          dbUpdateGroupMessageInboxStored(executor, id, stored: stored),
+      dbUpdateGroupMessageInboxRetryPayloadFn: (id, payload) =>
+          dbUpdateGroupMessageInboxRetryPayload(executor, id, payload),
+      dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
+          dbUpdateGroupMessageWireEnvelope(executor, id, envelope),
+      dbLoadGroupInboxCursorFn: (groupId) async {
+        final row = await dbLoadGroupInboxCursor(executor, groupId);
+        return row?['cursor'] as String?;
+      },
+      dbLoadGroupMessageReceiptsFn:
+          (groupId, messageId, {String? receiptType}) =>
+              dbLoadGroupMessageReceipts(
+                executor,
+                groupId: groupId,
+                messageId: messageId,
+                receiptType: receiptType,
+              ),
+      dbRunGroupInboxPageTransactionFn: enableInboxPageTransactions
+          ? ({
+              required groupId,
+              required nextCursor,
+              required apply,
+              required receipts,
+              required markReadMessageIds,
+            }) {
+              return dbApplyGroupInboxPageTransaction(
+                db,
+                groupId: groupId,
+                nextCursor: nextCursor,
+                receiptRows: () =>
+                    receipts.map((receipt) => receipt.toMap()).toList(),
+                markReadMessageIds: () => markReadMessageIds,
+                apply: (transactionExecutor) {
+                  final transactionRepo = createGroupMessageRepository(
+                    transactionExecutor,
+                  );
+                  return apply(transactionRepo);
+                },
+              );
+            }
+          : null,
+    );
+  }
+
+  final groupMsgRepo = createGroupMessageRepository(
+    db,
+    enableInboxPageTransactions: true,
   );
   final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
     dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
