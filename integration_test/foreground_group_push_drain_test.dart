@@ -128,14 +128,14 @@ class _ForegroundGroupPushHarness {
 
     await admin.createGroup(groupId: 'group-foreground', name: 'Weekend Crew');
     await admin.addMember(groupId: 'group-foreground', invitee: member);
-    await member.groupRepo.saveKey(
-      GroupKeyInfo(
-        groupId: 'group-foreground',
-        keyGeneration: 0,
-        encryptedKey: 'foreground-key',
-        createdAt: DateTime.now().toUtc(),
-      ),
+    final foregroundKey = GroupKeyInfo(
+      groupId: 'group-foreground',
+      keyGeneration: 0,
+      encryptedKey: 'foreground-key',
+      createdAt: DateTime.now().toUtc(),
     );
+    await admin.groupRepo.saveKey(foregroundKey);
+    await member.groupRepo.saveKey(foregroundKey);
 
     member.start();
     return _ForegroundGroupPushHarness._(
@@ -611,7 +611,10 @@ void main() {
           reason: 'Same-message dedupe must not clear unrelated entries',
         );
 
-        await harness.addSignedInboxPage('group-foreground', '', [
+        final followUpCursor =
+            await harness.member.msgRepo.getInboxCursor('group-foreground') ??
+            '';
+        await harness.addSignedInboxPage('group-foreground', followUpCursor, [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',

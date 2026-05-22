@@ -9500,6 +9500,50 @@ void main() {
       );
     });
 
+    test('rejects GM-013 retained Charlie history without self-cleanup', () {
+      final retainedButActive = _validGm013Verdicts();
+      final charlieProof =
+          Map<String, Object?>.from(
+              retainedButActive[2]['gm013SimultaneousRemoveSendProof'] as Map,
+            )
+            ..['currentMemberAfterRemoval'] = true
+            ..['selfRemovalCleanupObserved'] = false;
+      retainedButActive[2] = {
+        ...retainedButActive[2],
+        'memberPeerIds': const <String>[
+          'alice-peer',
+          'bob-peer',
+          'charlie-peer',
+        ],
+        'activeMemberPeerIds': const <String>[
+          'alice-peer',
+          'bob-peer',
+          'charlie-peer',
+        ],
+        'gm013SimultaneousRemoveSendProof': charlieProof,
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm013',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: retainedButActive,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: gm013SimultaneousRemoveSendProof.currentMemberAfterRemoval must be false',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: gm013SimultaneousRemoveSendProof.selfRemovalCleanupObserved must be true',
+        ),
+      );
+    });
+
     test('rejects GM-012 missing stale remove re-add proof', () {
       final missingProof = _validGm012Verdicts();
       missingProof[0] = Map<String, dynamic>.from(missingProof[0])
@@ -27526,7 +27570,7 @@ List<Map<String, dynamic>> _validGm013Verdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'gm013-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       sentMessages: const <Map<String, Object?>>[
         {
@@ -27542,7 +27586,7 @@ List<Map<String, dynamic>> _validGm013Verdicts() {
           'key': 'charlieAfterCharlieRemove',
           'messageId': 'gm013-c-after-remove',
           'text': 'charlie after charlie remove',
-          'outcome': 'groupNotFound',
+          'outcome': 'unauthorized',
           'senderPeerId': 'charlie-peer',
           'keyEpoch': 0,
         },
@@ -27553,10 +27597,12 @@ List<Map<String, dynamic>> _validGm013Verdicts() {
         'gm013SimultaneousRemoveSendProof': <String, Object?>{
           'currentMemberBeforeRemoval': true,
           'startedOldEpochPublishBeforeRemoval': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'retainedLocalHistoryAfterRemoval': true,
           'currentMemberAfterRemoval': false,
           'hasRotatedEpoch': false,
-          'postRemovalSendOutcome': 'groupNotFound',
+          'selfRemovalCleanupObserved': true,
+          'postRemovalSendOutcome': 'unauthorized',
           'postRemovalPublishAccepted': false,
           'receivedAlicePostRemoval': false,
           'receivedBobPostRemoval': false,

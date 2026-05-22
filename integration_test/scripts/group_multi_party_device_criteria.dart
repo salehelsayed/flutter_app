@@ -20764,13 +20764,24 @@ void _validateGm013SimultaneousRemoveSendProof({
       field: 'startedOldEpochPublishBeforeRemoval',
       failures: failures,
     );
-    _requireFalseProof(
-      role: 'charlie',
-      proofName: proofName,
-      proof: charlieProof,
-      field: 'groupPresentAfterRemoval',
-      failures: failures,
-    );
+    final groupPresentAfterRemoval =
+        charlieProof['groupPresentAfterRemoval'] == true;
+    if (groupPresentAfterRemoval) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: 'retainedLocalHistoryAfterRemoval',
+        failures: failures,
+      );
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: 'selfRemovalCleanupObserved',
+        failures: failures,
+      );
+    }
     _requireFalseProof(
       role: 'charlie',
       proofName: proofName,

@@ -177,7 +177,7 @@ group_multi_party_scenarios() {
     if ! dart integration_test/scripts/run_group_multi_party_device_real.dart \
       --scenario all \
       --list-scenarios |
-      awk '/^(ge|gm|go)[0-9]+$/ { print }' >"$group_multi_party_scenarios_file"; then
+      awk 'NF { print }' >"$group_multi_party_scenarios_file"; then
       printf 'Failed to list group multi-party reliability scenarios.\n' >&2
       return 1
     fi
