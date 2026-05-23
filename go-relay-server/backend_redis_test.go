@@ -149,6 +149,56 @@ func TestRedisInboxBackend_DedupesByMessageIDAcrossClients(t *testing.T) {
 	}
 }
 
+func TestRedisInboxBackend_DedupesByMessageIDPerRecipient(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	maxPerPeer := DefaultServerLimits().MaxInboxMessagesPerPeer
+	backendA := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
+	backendB := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
+
+	entry := inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"introduction","version":"2","messageId":"intro-shared::send::peer-A","senderPeerId":"peer-A","encrypted":{"kem":"...","ciphertext":"...","nonce":"..."}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	requireRedisInboxStoreResult(
+		t,
+		backendA,
+		"recipient-A",
+		entry,
+		InboxStoreResultStored,
+	)
+	requireRedisInboxStoreResult(
+		t,
+		backendB,
+		"recipient-B",
+		entry,
+		InboxStoreResultStored,
+	)
+
+	if count := backendA.Count("recipient-A"); count != 1 {
+		t.Fatalf("expected recipient-A inbox to keep shared message id, got %d", count)
+	}
+	if count := backendB.Count("recipient-B"); count != 1 {
+		t.Fatalf("expected recipient-B inbox to keep shared message id, got %d", count)
+	}
+
+	requireRedisInboxStoreResult(
+		t,
+		backendA,
+		"recipient-A",
+		entry,
+		InboxStoreResultDuplicate,
+	)
+	if count := backendA.Count("recipient-A"); count != 1 {
+		t.Fatalf("expected recipient-A duplicate to be deduped, got %d", count)
+	}
+	if count := backendB.Count("recipient-B"); count != 1 {
+		t.Fatalf("expected recipient-B inbox to remain unchanged, got %d", count)
+	}
+}
+
 func TestRedisInboxBackend_StoreReturnsErrorOnWriteFailure(t *testing.T) {
 	server := miniredis.RunT(t)
 

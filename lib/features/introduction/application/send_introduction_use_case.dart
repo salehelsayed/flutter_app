@@ -56,7 +56,9 @@ Future<List<IntroductionModel>> sendIntroductions({
   // Look up recipient contact to get their public keys
   final recipientContact = await contactRepo.getContact(recipientPeerId);
   final recipientPublicKey = recipientContact?.publicKey;
-  final recipientMlKemPk = recipientContact?.mlKemPublicKey;
+  final effectiveRecipientMlKemPublicKey =
+      _normalizeOptionalKey(recipientMlKemPublicKey) ??
+      _normalizeOptionalKey(recipientContact?.mlKemPublicKey);
 
   for (
     var startIndex = 0;
@@ -82,8 +84,7 @@ Future<List<IntroductionModel>> sendIntroductions({
           recipientPeerId: recipientPeerId,
           recipientUsername: recipientUsername,
           recipientPublicKey: recipientPublicKey,
-          recipientMlKemPublicKey: recipientMlKemPublicKey,
-          recipientPayloadMlKemPublicKey: recipientMlKemPk,
+          recipientMlKemPublicKey: effectiveRecipientMlKemPublicKey,
           friend: friend,
           now: now,
         );
@@ -117,11 +118,10 @@ Future<IntroductionModel> _sendIntroductionChain({
   required String recipientUsername,
   required String? recipientPublicKey,
   required String? recipientMlKemPublicKey,
-  required String? recipientPayloadMlKemPublicKey,
   required ContactModel friend,
   required String now,
 }) async {
-  await _deleteExistingIntroductionsForPair(
+  final existingPairIntroductions = await _loadExistingIntroductionsForPair(
     introRepo: introRepo,
     introducerPeerId: introducerPeerId,
     recipientPeerId: recipientPeerId,
@@ -143,7 +143,7 @@ Future<IntroductionModel> _sendIntroductionChain({
     introducedPublicKey: friend.publicKey,
     introducedMlKemPublicKey: friend.mlKemPublicKey,
     recipientPublicKey: recipientPublicKey,
-    recipientMlKemPublicKey: recipientPayloadMlKemPublicKey,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
     timestamp: now,
   );
 
@@ -161,12 +161,12 @@ Future<IntroductionModel> _sendIntroductionChain({
     introducedPublicKey: friend.publicKey,
     introducedMlKemPublicKey: friend.mlKemPublicKey,
     recipientPublicKey: recipientPublicKey,
-    recipientMlKemPublicKey: recipientPayloadMlKemPublicKey,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
     timestamp: now,
   );
 
-  // Persist before outbound staging so a sender crash cannot leave remote
-  // recipients ahead of the sender's own intro truth.
+  // The intro row and both outbound target rows are committed together before
+  // any network attempt so either target can be retried after a sender crash.
   final model = IntroductionModel(
     id: introId,
     introducerId: introducerPeerId,
@@ -178,31 +178,50 @@ Future<IntroductionModel> _sendIntroductionChain({
     introducedPublicKey: friend.publicKey,
     introducedMlKemPublicKey: friend.mlKemPublicKey,
     recipientPublicKey: recipientPublicKey,
-    recipientMlKemPublicKey: recipientPayloadMlKemPublicKey,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
     createdAt: now,
   );
-  await introRepo.saveIntroduction(model);
 
-  // Send to recipient (User-B)
-  await deliverIntroductionPayloadReliably(
-    introRepo: introRepo,
-    p2pService: p2pService,
+  final deliveryForRecipient = await createIntroductionOutboxDelivery(
     bridge: bridge,
     senderPeerId: introducerPeerId,
     targetPeerId: recipientPeerId,
     targetMlKemPublicKey: recipientMlKemPublicKey,
     payload: payloadForRecipient,
   );
-
-  // Send to introduced friend (User-C)
-  await deliverIntroductionPayloadReliably(
-    introRepo: introRepo,
-    p2pService: p2pService,
+  final deliveryForIntroduced = await createIntroductionOutboxDelivery(
     bridge: bridge,
     senderPeerId: introducerPeerId,
     targetPeerId: friend.peerId,
     targetMlKemPublicKey: friend.mlKemPublicKey,
     payload: payloadForIntroduced,
+  );
+
+  final deliveryRows = [deliveryForRecipient, deliveryForIntroduced];
+  if (existingPairIntroductions.isEmpty) {
+    await introRepo.saveIntroductionWithOutboxDeliveries(model, deliveryRows);
+  } else {
+    await introRepo.replaceIntroductionWithPendingResponseMigration(
+      intro: model,
+      deliveries: deliveryRows,
+      replacedIntroductionIds: existingPairIntroductions
+          .map((intro) => intro.id)
+          .toList(growable: false),
+    );
+  }
+
+  // Send to recipient (User-B)
+  await deliverStagedIntroductionDelivery(
+    introRepo: introRepo,
+    p2pService: p2pService,
+    delivery: deliveryForRecipient,
+  );
+
+  // Send to introduced friend (User-C)
+  await deliverStagedIntroductionDelivery(
+    introRepo: introRepo,
+    p2pService: p2pService,
+    delivery: deliveryForIntroduced,
   );
 
   emitFlowEvent(
@@ -219,7 +238,15 @@ Future<IntroductionModel> _sendIntroductionChain({
   return model;
 }
 
-Future<void> _deleteExistingIntroductionsForPair({
+String? _normalizeOptionalKey(String? key) {
+  final trimmed = key?.trim();
+  if (trimmed == null || trimmed.isEmpty) {
+    return null;
+  }
+  return trimmed;
+}
+
+Future<List<IntroductionModel>> _loadExistingIntroductionsForPair({
   required IntroductionRepository introRepo,
   required String introducerPeerId,
   required String recipientPeerId,
@@ -240,9 +267,7 @@ Future<void> _deleteExistingIntroductionsForPair({
       })
       .toList(growable: false);
 
-  for (final intro in duplicates) {
-    await introRepo.deleteIntroduction(intro.id);
-  }
+  return duplicates;
 }
 
 bool _isSameIntroductionPair({

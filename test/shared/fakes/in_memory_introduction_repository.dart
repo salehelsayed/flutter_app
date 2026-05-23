@@ -15,6 +15,104 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
   }
 
   @override
+  Future<void> saveIntroductionWithOutboxDeliveries(
+    IntroductionModel intro,
+    List<IntroductionOutboxDelivery> deliveries,
+  ) async {
+    _store[intro.id] = intro;
+    for (final delivery in deliveries) {
+      _outboxDeliveries[delivery.deliveryId] = delivery;
+    }
+  }
+
+  @override
+  Future<void> replaceIntroductionWithPendingResponseMigration({
+    required IntroductionModel intro,
+    required List<IntroductionOutboxDelivery> deliveries,
+    required List<String> replacedIntroductionIds,
+  }) async {
+    final replacedIdSet = replacedIntroductionIds.toSet();
+    final pendingToMigrate = _pendingResponses.values
+        .where((response) => replacedIdSet.contains(response.introductionId))
+        .toList(growable: false);
+
+    _store.removeWhere((id, _) => replacedIdSet.contains(id));
+    _pendingResponses.removeWhere(
+      (_, response) => replacedIdSet.contains(response.introductionId),
+    );
+    _outboxDeliveries.removeWhere(
+      (_, delivery) => replacedIdSet.contains(delivery.introductionId),
+    );
+
+    _store[intro.id] = intro;
+    for (final delivery in deliveries) {
+      _outboxDeliveries[delivery.deliveryId] = delivery;
+    }
+    for (final response in pendingToMigrate) {
+      final migrated = PendingIntroductionResponse(
+        responseKey: PendingIntroductionResponse.buildResponseKey(
+          introductionId: intro.id,
+          responderId: response.responderId,
+          action: response.action,
+        ),
+        introductionId: intro.id,
+        action: response.action,
+        responderId: response.responderId,
+        transportSenderPeerId: response.transportSenderPeerId,
+        responderUsername: response.responderUsername,
+        createdAt: response.createdAt,
+      );
+      _pendingResponses[migrated.responseKey] = migrated;
+    }
+  }
+
+  @override
+  Future<bool> saveIntroductionResponseWithOutboxDeliveries({
+    required String introductionId,
+    required bool isRecipient,
+    required IntroductionStatus responseStatus,
+    required IntroductionOverallStatus overallStatus,
+    required String respondedAt,
+    required List<IntroductionOutboxDelivery> deliveries,
+  }) async {
+    final intro = _store[introductionId];
+    if (intro == null) return false;
+    final partyStatus = isRecipient
+        ? intro.recipientStatus
+        : intro.introducedStatus;
+    if (intro.status != IntroductionOverallStatus.pending ||
+        partyStatus != IntroductionStatus.pending) {
+      return false;
+    }
+    final recipientStatus = isRecipient
+        ? responseStatus
+        : intro.recipientStatus;
+    final introducedStatus = isRecipient
+        ? intro.introducedStatus
+        : responseStatus;
+    final derivedOverallStatus = IntroductionModel.deriveStatus(
+      recipientStatus: recipientStatus,
+      introducedStatus: introducedStatus,
+      createdAt: intro.createdAt,
+    );
+    _store[introductionId] = intro.copyWith(
+      recipientStatus: recipientStatus,
+      introducedStatus: introducedStatus,
+      status: derivedOverallStatus,
+      recipientRespondedAt: isRecipient
+          ? respondedAt
+          : intro.recipientRespondedAt,
+      introducedRespondedAt: isRecipient
+          ? intro.introducedRespondedAt
+          : respondedAt,
+    );
+    for (final delivery in deliveries) {
+      _outboxDeliveries[delivery.deliveryId] = delivery;
+    }
+    return true;
+  }
+
+  @override
   Future<IntroductionModel?> getIntroduction(String id) async {
     return _store[id];
   }
@@ -64,29 +162,39 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
   }
 
   @override
-  Future<void> updateRecipientStatus(
+  Future<bool> updateRecipientStatus(
     String id,
     IntroductionStatus status,
   ) async {
     final intro = _store[id];
-    if (intro == null) return;
+    if (intro == null) return false;
+    if (intro.status != IntroductionOverallStatus.pending ||
+        intro.recipientStatus != IntroductionStatus.pending) {
+      return false;
+    }
     _store[id] = intro.copyWith(
       recipientStatus: status,
       recipientRespondedAt: DateTime.now().toUtc().toIso8601String(),
     );
+    return true;
   }
 
   @override
-  Future<void> updateIntroducedStatus(
+  Future<bool> updateIntroducedStatus(
     String id,
     IntroductionStatus status,
   ) async {
     final intro = _store[id];
-    if (intro == null) return;
+    if (intro == null) return false;
+    if (intro.status != IntroductionOverallStatus.pending ||
+        intro.introducedStatus != IntroductionStatus.pending) {
+      return false;
+    }
     _store[id] = intro.copyWith(
       introducedStatus: status,
       introducedRespondedAt: DateTime.now().toUtc().toIso8601String(),
     );
+    return true;
   }
 
   @override
@@ -96,6 +204,7 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
   ) async {
     final intro = _store[id];
     if (intro == null) return;
+    if (intro.status != IntroductionOverallStatus.pending) return;
     _store[id] = intro.copyWith(status: status);
   }
 

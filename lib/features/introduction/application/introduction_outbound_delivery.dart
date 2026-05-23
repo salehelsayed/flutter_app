@@ -21,6 +21,28 @@ Future<void> deliverIntroductionPayloadReliably({
   required String? targetMlKemPublicKey,
   required IntroductionPayload payload,
 }) async {
+  final staged = await createIntroductionOutboxDelivery(
+    bridge: bridge,
+    senderPeerId: senderPeerId,
+    targetPeerId: targetPeerId,
+    targetMlKemPublicKey: targetMlKemPublicKey,
+    payload: payload,
+  );
+  await introRepo.saveOutboxDelivery(staged);
+  await deliverStagedIntroductionDelivery(
+    introRepo: introRepo,
+    p2pService: p2pService,
+    delivery: staged,
+  );
+}
+
+Future<IntroductionOutboxDelivery> createIntroductionOutboxDelivery({
+  required Bridge bridge,
+  required String senderPeerId,
+  required String targetPeerId,
+  required String? targetMlKemPublicKey,
+  required IntroductionPayload payload,
+}) async {
   final envelopeMessageId = IntroductionPayload.buildEnvelopeMessageId(
     introductionId: payload.introductionId,
     action: payload.action,
@@ -52,12 +74,36 @@ Future<void> deliverIntroductionPayloadReliably({
     createdAt: now,
     updatedAt: now,
   );
-  await introRepo.saveOutboxDelivery(staged);
+  return staged;
+}
 
+Future<void> deliverStagedIntroductionDelivery({
+  required IntroductionRepository introRepo,
+  required P2PService p2pService,
+  required IntroductionOutboxDelivery delivery,
+}) async {
+  final envelopeMessageId = IntroductionPayload.buildEnvelopeMessageId(
+    introductionId: delivery.introductionId,
+    action: delivery.action,
+    senderPeerId: delivery.senderPeerId,
+  );
+  final normalizedEnvelope = IntroductionPayload.ensureEnvelopeMessageId(
+    delivery.rawEnvelope,
+    envelopeMessageId,
+  );
+  final staged = normalizedEnvelope == delivery.rawEnvelope
+      ? delivery
+      : delivery.copyWith(
+          rawEnvelope: normalizedEnvelope,
+          updatedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+  if (!identical(staged, delivery)) {
+    await introRepo.saveOutboxDelivery(staged);
+  }
   final result = await _deliverEnvelope(
     p2pService: p2pService,
-    senderPeerId: senderPeerId,
-    targetPeerId: targetPeerId,
+    senderPeerId: staged.senderPeerId,
+    targetPeerId: staged.targetPeerId,
     rawEnvelope: normalizedEnvelope,
   );
 
@@ -71,7 +117,7 @@ Future<void> deliverIntroductionPayloadReliably({
         updatedAt: updatedAt,
       );
       await introRepo.saveOutboxDelivery(deliveredRow);
-      await introRepo.deleteOutboxDelivery(deliveryId);
+      await introRepo.deleteOutboxDelivery(staged.deliveryId);
       return;
     case _IntroductionDeliveryState.sent:
       await introRepo.saveOutboxDelivery(
@@ -154,15 +200,50 @@ Future<int> retryPendingIntroductionDeliveries({
       );
     }
 
-    await introRepo.saveOutboxDelivery(
-      delivery.copyWith(
-        rawEnvelope: normalizedEnvelope,
-        deliveryStatus: IntroductionOutboxDeliveryStatus.failed,
-        deliveryPath: delivery.deliveryPath,
-        lastError: 'inbox_retry_failed',
-        updatedAt: DateTime.now().toUtc().toIso8601String(),
-      ),
+    final result = await _deliverEnvelope(
+      p2pService: p2pService,
+      senderPeerId: delivery.senderPeerId,
+      targetPeerId: delivery.targetPeerId,
+      rawEnvelope: normalizedEnvelope,
+      allowInboxFallback: false,
     );
+    final updatedAt = DateTime.now().toUtc().toIso8601String();
+    switch (result.state) {
+      case _IntroductionDeliveryState.delivered:
+        await introRepo.saveOutboxDelivery(
+          delivery.copyWith(
+            rawEnvelope: normalizedEnvelope,
+            deliveryStatus: IntroductionOutboxDeliveryStatus.delivered,
+            deliveryPath: result.via ?? IntroductionOutboxDeliveryPath.direct,
+            lastError: null,
+            updatedAt: updatedAt,
+          ),
+        );
+        await introRepo.deleteOutboxDelivery(delivery.deliveryId);
+        deliveredCount++;
+        continue;
+      case _IntroductionDeliveryState.sent:
+        await introRepo.saveOutboxDelivery(
+          delivery.copyWith(
+            rawEnvelope: normalizedEnvelope,
+            deliveryStatus: IntroductionOutboxDeliveryStatus.sent,
+            deliveryPath: result.via ?? IntroductionOutboxDeliveryPath.direct,
+            lastError: null,
+            updatedAt: updatedAt,
+          ),
+        );
+        continue;
+      case _IntroductionDeliveryState.failed:
+        await introRepo.saveOutboxDelivery(
+          delivery.copyWith(
+            rawEnvelope: normalizedEnvelope,
+            deliveryStatus: IntroductionOutboxDeliveryStatus.failed,
+            deliveryPath: result.via ?? IntroductionOutboxDeliveryPath.pending,
+            lastError: result.reason ?? 'send_failed',
+            updatedAt: updatedAt,
+          ),
+        );
+    }
   }
 
   return deliveredCount;
@@ -203,6 +284,7 @@ Future<_DeliveryAttemptResult> _deliverEnvelope({
   required String senderPeerId,
   required String targetPeerId,
   required String rawEnvelope,
+  bool allowInboxFallback = true,
 }) async {
   final alreadyConnected =
       p2pService.isConnectedToPeer(targetPeerId) ||
@@ -265,15 +347,17 @@ Future<_DeliveryAttemptResult> _deliverEnvelope({
     failureReason = relayProbeResult.reason ?? failureReason;
   }
 
-  try {
-    final stored = await p2pService.storeInInbox(targetPeerId, rawEnvelope);
-    if (stored) {
-      return const _DeliveryAttemptResult(
-        state: _IntroductionDeliveryState.delivered,
-        via: IntroductionOutboxDeliveryPath.inbox,
-      );
-    }
-  } catch (_) {}
+  if (allowInboxFallback) {
+    try {
+      final stored = await p2pService.storeInInbox(targetPeerId, rawEnvelope);
+      if (stored) {
+        return const _DeliveryAttemptResult(
+          state: _IntroductionDeliveryState.delivered,
+          via: IntroductionOutboxDeliveryPath.inbox,
+        );
+      }
+    } catch (_) {}
+  }
 
   return _DeliveryAttemptResult(
     state: _IntroductionDeliveryState.failed,

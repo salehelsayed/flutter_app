@@ -268,6 +268,29 @@ class FakeIntroductionRepository implements IntroductionRepository {
   Future<void> saveIntroduction(IntroductionModel intro) async {}
 
   @override
+  Future<void> saveIntroductionWithOutboxDeliveries(
+    IntroductionModel intro,
+    List<IntroductionOutboxDelivery> deliveries,
+  ) async {}
+
+  @override
+  Future<void> replaceIntroductionWithPendingResponseMigration({
+    required IntroductionModel intro,
+    required List<IntroductionOutboxDelivery> deliveries,
+    required List<String> replacedIntroductionIds,
+  }) async {}
+
+  @override
+  Future<bool> saveIntroductionResponseWithOutboxDeliveries({
+    required String introductionId,
+    required bool isRecipient,
+    required IntroductionStatus responseStatus,
+    required IntroductionOverallStatus overallStatus,
+    required String respondedAt,
+    required List<IntroductionOutboxDelivery> deliveries,
+  }) async => true;
+
+  @override
   Future<IntroductionModel?> getIntroduction(String id) async {
     for (final intro in introductions) {
       if (intro.id == id) {
@@ -317,16 +340,16 @@ class FakeIntroductionRepository implements IntroductionRepository {
   ) async => const [];
 
   @override
-  Future<void> updateRecipientStatus(
+  Future<bool> updateRecipientStatus(
     String id,
     IntroductionStatus status,
-  ) async {}
+  ) async => true;
 
   @override
-  Future<void> updateIntroducedStatus(
+  Future<bool> updateIntroducedStatus(
     String id,
     IntroductionStatus status,
-  ) async {}
+  ) async => true;
 
   @override
   Future<void> updateOverallStatus(

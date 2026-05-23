@@ -6,6 +6,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/handle_mutual_acceptance_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 
@@ -48,12 +49,32 @@ Future<IntroductionModel?> acceptIntroduction({
     emitFlowEvent(
       layer: 'UC',
       event: 'ACCEPT_INTRO_NON_PARTY_CALLER',
-      details: {
-        'introductionId': introductionId,
-        'ownPeerId': ownPeerId,
-      },
+      details: {'introductionId': introductionId, 'ownPeerId': ownPeerId},
     );
     return null;
+  }
+
+  if (_isTerminalOverallStatus(intro.status) ||
+      _ownPartyStatus(intro: intro, isRecipient: isRecipient) !=
+          IntroductionStatus.pending) {
+    if (intro.status == IntroductionOverallStatus.mutualAccepted) {
+      await handleMutualAcceptance(
+        introduction: intro,
+        contactRepo: contactRepo,
+        ownPeerId: ownPeerId,
+        messageRepo: messageRepo,
+        bridge: bridge,
+      );
+    }
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'ACCEPT_INTRO_NOOP_TERMINAL_OR_ANSWERED',
+      details: {
+        'introductionId': introductionId,
+        'status': intro.status.toDbString(),
+      },
+    );
+    return intro;
   }
 
   final otherPeerId = isRecipient ? intro.introducedId : intro.recipientId;
@@ -68,36 +89,23 @@ Future<IntroductionModel?> acceptIntroduction({
     emitFlowEvent(
       layer: 'UC',
       event: 'ACCEPT_INTRO_STRANGER_KEY_MISMATCH',
-      details: {
-        'introductionId': introductionId,
-        'targetPeerId': otherPeerId,
-      },
+      details: {'introductionId': introductionId, 'targetPeerId': otherPeerId},
     );
     return null;
   }
 
-  if (isRecipient) {
-    await introRepo.updateRecipientStatus(
-      introductionId,
-      IntroductionStatus.accepted,
-    );
-  } else {
-    await introRepo.updateIntroducedStatus(
-      introductionId,
-      IntroductionStatus.accepted,
-    );
-  }
-
-  // Derive new overall status
-  final updatedIntro = await introRepo.getIntroduction(introductionId);
-  if (updatedIntro == null) return null;
-
+  final respondedAt = DateTime.now().toUtc().toIso8601String();
+  final recipientStatus = isRecipient
+      ? IntroductionStatus.accepted
+      : intro.recipientStatus;
+  final introducedStatus = isRecipient
+      ? intro.introducedStatus
+      : IntroductionStatus.accepted;
   final newOverall = IntroductionModel.deriveStatus(
-    recipientStatus: updatedIntro.recipientStatus,
-    introducedStatus: updatedIntro.introducedStatus,
-    createdAt: updatedIntro.createdAt,
+    recipientStatus: recipientStatus,
+    introducedStatus: introducedStatus,
+    createdAt: intro.createdAt,
   );
-  await introRepo.updateOverallStatus(introductionId, newOverall);
 
   // Build accept payload
   final acceptPayload = IntroductionPayload(
@@ -105,13 +113,10 @@ Future<IntroductionModel?> acceptIntroduction({
     introductionId: introductionId,
     responderId: ownPeerId,
     responderUsername: ownUsername,
-    timestamp: DateTime.now().toUtc().toIso8601String(),
+    timestamp: respondedAt,
   );
 
-  // Send to introducer
-  await _sendPayloadToContact(
-    introRepo: introRepo,
-    p2pService: p2pService,
+  final deliveryForIntroducer = await _createPayloadDeliveryForContact(
     bridge: bridge,
     contactRepo: contactRepo,
     ownPeerId: ownPeerId,
@@ -119,11 +124,7 @@ Future<IntroductionModel?> acceptIntroduction({
     payload: acceptPayload,
   );
 
-  // Send to other party — pass ML-KEM key from intro record since
-  // the other party isn't a contact yet (contact lookup would miss them).
-  await _sendPayloadToContact(
-    introRepo: introRepo,
-    p2pService: p2pService,
+  final deliveryForOtherParty = await _createPayloadDeliveryForContact(
     bridge: bridge,
     contactRepo: contactRepo,
     ownPeerId: ownPeerId,
@@ -132,17 +133,51 @@ Future<IntroductionModel?> acceptIntroduction({
     mlKemPublicKey: otherMlKemKey,
   );
 
-  if (newOverall == IntroductionOverallStatus.mutualAccepted) {
+  final didSave = await introRepo.saveIntroductionResponseWithOutboxDeliveries(
+    introductionId: introductionId,
+    isRecipient: isRecipient,
+    responseStatus: IntroductionStatus.accepted,
+    overallStatus: newOverall,
+    respondedAt: respondedAt,
+    deliveries: [deliveryForIntroducer, deliveryForOtherParty],
+  );
+  if (!didSave) {
+    final latestIntro = await introRepo.getIntroduction(introductionId);
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'ACCEPT_INTRO_NOOP_GUARDED_UPDATE',
+      details: {'introductionId': introductionId},
+    );
+    return latestIntro ?? intro;
+  }
+  var persistedIntro = await introRepo.getIntroduction(introductionId);
+  final persistedOverall = persistedIntro?.status ?? newOverall;
+
+  // Send to introducer.
+  await deliverStagedIntroductionDelivery(
+    introRepo: introRepo,
+    p2pService: p2pService,
+    delivery: deliveryForIntroducer,
+  );
+
+  // Send to other party.
+  await deliverStagedIntroductionDelivery(
+    introRepo: introRepo,
+    p2pService: p2pService,
+    delivery: deliveryForOtherParty,
+  );
+
+  if (persistedOverall == IntroductionOverallStatus.mutualAccepted) {
     emitFlowEvent(
       layer: 'UC',
       event: 'INTRO_MUTUAL_ACCEPTANCE',
       details: {'introductionId': introductionId},
     );
 
-    final latestIntro = await introRepo.getIntroduction(introductionId);
-    if (latestIntro != null) {
+    persistedIntro ??= await introRepo.getIntroduction(introductionId);
+    if (persistedIntro != null) {
       await handleMutualAcceptance(
-        introduction: latestIntro,
+        introduction: persistedIntro,
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
         messageRepo: messageRepo,
@@ -158,11 +193,25 @@ Future<IntroductionModel?> acceptIntroduction({
     event: 'ACCEPT_INTRO_DONE',
     details: {
       'introductionId': introductionId,
-      'overallStatus': newOverall.toDbString(),
+      'overallStatus': (finalIntro?.status ?? persistedOverall).toDbString(),
     },
   );
 
   return finalIntro;
+}
+
+bool _isTerminalOverallStatus(IntroductionOverallStatus status) {
+  return status == IntroductionOverallStatus.mutualAccepted ||
+      status == IntroductionOverallStatus.passed ||
+      status == IntroductionOverallStatus.expired ||
+      status == IntroductionOverallStatus.alreadyConnected;
+}
+
+IntroductionStatus _ownPartyStatus({
+  required IntroductionModel intro,
+  required bool isRecipient,
+}) {
+  return isRecipient ? intro.recipientStatus : intro.introducedStatus;
 }
 
 Future<bool> _hasIntroContactMlKemMismatch({
@@ -183,13 +232,9 @@ Future<bool> _hasIntroContactMlKemMismatch({
   return contactMlKemPublicKey != introMlKemPublicKey;
 }
 
-/// Sends an introduction payload to a contact, encrypting with ML-KEM
-/// if the contact has a public key. Falls back to relay inbox if direct
-/// send fails (e.g. the other party in an introduction isn't a contact
-/// yet, so we have no direct address for them).
-Future<void> _sendPayloadToContact({
-  required IntroductionRepository introRepo,
-  required P2PService p2pService,
+/// Builds an introduction outbox row for a contact, encrypting with ML-KEM
+/// if the contact has a public key.
+Future<IntroductionOutboxDelivery> _createPayloadDeliveryForContact({
   required Bridge bridge,
   required ContactRepository contactRepo,
   required String ownPeerId,
@@ -204,9 +249,7 @@ Future<void> _sendPayloadToContact({
     effectiveMlKemKey = contact?.mlKemPublicKey;
   }
 
-  await deliverIntroductionPayloadReliably(
-    introRepo: introRepo,
-    p2pService: p2pService,
+  return createIntroductionOutboxDelivery(
     bridge: bridge,
     senderPeerId: ownPeerId,
     targetPeerId: targetPeerId,

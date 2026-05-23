@@ -26,12 +26,20 @@ void main() {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pending_introduction_responses'",
     );
     expect(tables, hasLength(1));
+    final columns = await db.rawQuery(
+      'PRAGMA table_info(pending_introduction_responses)',
+    );
+    expect(
+      columns.map((column) => column['name']),
+      contains('transport_sender_peer_id'),
+    );
 
     await db.insert('pending_introduction_responses', {
       'response_key': 'intro-1::peer-b::accept',
       'introduction_id': 'intro-1',
       'action': 'accept',
       'responder_id': 'peer-b',
+      'transport_sender_peer_id': 'peer-b',
       'responder_username': 'Bob',
       'created_at': '2026-04-03T10:00:00.000Z',
     });
@@ -44,6 +52,7 @@ void main() {
     );
     expect(rows, hasLength(1));
     expect(rows.single['action'], 'accept');
+    expect(rows.single['transport_sender_peer_id'], 'peer-b');
   });
 
   test('is idempotent when rerun', () async {

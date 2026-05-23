@@ -92,6 +92,7 @@ import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_a
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
+import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -307,7 +308,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 70,
+    version: 71,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -379,6 +380,7 @@ void main() async {
       await runRemovedGroupMemberSnapshotsMigration(db);
       await runGroupMessageLocalDeletionsMigration(db);
       await runGroupKeyRotationDraftsMigration(db);
+      await runPendingIntroductionResponseTransportSenderMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -585,6 +587,9 @@ void main() async {
       }
       if (oldVersion < 70) {
         await runGroupKeyRotationDraftsMigration(db);
+      }
+      if (oldVersion < 71) {
+        await runPendingIntroductionResponseTransportSenderMigration(db);
       }
     },
   );
@@ -1208,6 +1213,40 @@ void main() async {
         dbDeletePendingIntroductionResponse(db, responseKey),
     dbUpsertIntroductionOutboxDelivery: (row) =>
         dbUpsertIntroductionOutboxDelivery(db, row),
+    dbSaveIntroductionWithOutboxDeliveries: (introductionRow, deliveryRows) =>
+        dbSaveIntroductionWithOutboxDeliveries(
+          db,
+          introductionRow,
+          deliveryRows,
+        ),
+    dbReplaceIntroductionWithPendingResponseMigration:
+        ({
+          required introductionRow,
+          required deliveryRows,
+          required replacedIntroductionIds,
+        }) => dbReplaceIntroductionWithPendingResponseMigration(
+          db,
+          introductionRow: introductionRow,
+          deliveryRows: deliveryRows,
+          replacedIntroductionIds: replacedIntroductionIds,
+        ),
+    dbSaveIntroductionResponseWithOutboxDeliveries:
+        ({
+          required introductionId,
+          required isRecipient,
+          required responseStatus,
+          required respondedAt,
+          required overallStatus,
+          required deliveryRows,
+        }) => dbSaveIntroductionResponseWithOutboxDeliveries(
+          db,
+          introductionId: introductionId,
+          isRecipient: isRecipient,
+          responseStatus: responseStatus,
+          respondedAt: respondedAt,
+          overallStatus: overallStatus,
+          deliveryRows: deliveryRows,
+        ),
     dbLoadIntroductionOutboxDeliveriesForIntroduction: (introductionId) =>
         dbLoadIntroductionOutboxDeliveriesForIntroduction(db, introductionId),
     dbLoadRetryableIntroductionOutboxDeliveries:

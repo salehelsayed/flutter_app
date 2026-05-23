@@ -21,9 +21,9 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     String introducerId,
   )
   dbLoadIntroductionsForRecipientAndIntroducer;
-  final Future<void> Function(String id, String status, String respondedAt)
+  final Future<bool> Function(String id, String status, String respondedAt)
   dbUpdateRecipientStatus;
-  final Future<void> Function(String id, String status, String respondedAt)
+  final Future<bool> Function(String id, String status, String respondedAt)
   dbUpdateIntroducedStatus;
   final Future<void> Function(String id, String status) dbUpdateOverallStatus;
   final Future<List<Map<String, Object?>>> Function(String peerId)
@@ -37,6 +37,26 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   dbDeletePendingIntroductionResponse;
   final Future<void> Function(Map<String, Object?> row)
   dbUpsertIntroductionOutboxDelivery;
+  final Future<void> Function(
+    Map<String, Object?> introductionRow,
+    List<Map<String, Object?>> deliveryRows,
+  )
+  dbSaveIntroductionWithOutboxDeliveries;
+  final Future<void> Function({
+    required Map<String, Object?> introductionRow,
+    required List<Map<String, Object?>> deliveryRows,
+    required List<String> replacedIntroductionIds,
+  })
+  dbReplaceIntroductionWithPendingResponseMigration;
+  final Future<bool> Function({
+    required String introductionId,
+    required bool isRecipient,
+    required String responseStatus,
+    required String respondedAt,
+    required String overallStatus,
+    required List<Map<String, Object?>> deliveryRows,
+  })
+  dbSaveIntroductionResponseWithOutboxDeliveries;
   final Future<List<Map<String, Object?>>> Function(String introductionId)
   dbLoadIntroductionOutboxDeliveriesForIntroduction;
   final Future<List<Map<String, Object?>>> Function({
@@ -66,6 +86,9 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     required this.dbLoadPendingIntroductionResponses,
     required this.dbDeletePendingIntroductionResponse,
     required this.dbUpsertIntroductionOutboxDelivery,
+    required this.dbSaveIntroductionWithOutboxDeliveries,
+    required this.dbReplaceIntroductionWithPendingResponseMigration,
+    required this.dbSaveIntroductionResponseWithOutboxDeliveries,
     required this.dbLoadIntroductionOutboxDeliveriesForIntroduction,
     required this.dbLoadRetryableIntroductionOutboxDeliveries,
     required this.dbDeleteIntroductionOutboxDelivery,
@@ -100,6 +123,53 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
       );
       rethrow;
     }
+  }
+
+  @override
+  Future<void> saveIntroductionWithOutboxDeliveries(
+    IntroductionModel intro,
+    List<IntroductionOutboxDelivery> deliveries,
+  ) async {
+    await dbSaveIntroductionWithOutboxDeliveries(
+      intro.toMap(),
+      deliveries.map((delivery) => delivery.toMap()).toList(growable: false),
+    );
+  }
+
+  @override
+  Future<void> replaceIntroductionWithPendingResponseMigration({
+    required IntroductionModel intro,
+    required List<IntroductionOutboxDelivery> deliveries,
+    required List<String> replacedIntroductionIds,
+  }) async {
+    await dbReplaceIntroductionWithPendingResponseMigration(
+      introductionRow: intro.toMap(),
+      deliveryRows: deliveries
+          .map((delivery) => delivery.toMap())
+          .toList(growable: false),
+      replacedIntroductionIds: replacedIntroductionIds,
+    );
+  }
+
+  @override
+  Future<bool> saveIntroductionResponseWithOutboxDeliveries({
+    required String introductionId,
+    required bool isRecipient,
+    required IntroductionStatus responseStatus,
+    required IntroductionOverallStatus overallStatus,
+    required String respondedAt,
+    required List<IntroductionOutboxDelivery> deliveries,
+  }) async {
+    return dbSaveIntroductionResponseWithOutboxDeliveries(
+      introductionId: introductionId,
+      isRecipient: isRecipient,
+      responseStatus: responseStatus.toDbString(),
+      respondedAt: respondedAt,
+      overallStatus: overallStatus.toDbString(),
+      deliveryRows: deliveries
+          .map((delivery) => delivery.toMap())
+          .toList(growable: false),
+    );
   }
 
   @override
@@ -156,7 +226,7 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   }
 
   @override
-  Future<void> updateRecipientStatus(
+  Future<bool> updateRecipientStatus(
     String id,
     IntroductionStatus status,
   ) async {
@@ -171,7 +241,11 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
 
     try {
       final respondedAt = DateTime.now().toUtc().toIso8601String();
-      await dbUpdateRecipientStatus(id, status.toDbString(), respondedAt);
+      final updated = await dbUpdateRecipientStatus(
+        id,
+        status.toDbString(),
+        respondedAt,
+      );
 
       emitFlowEvent(
         layer: 'FL',
@@ -179,8 +253,10 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
         details: {
           'id': id.length > 10 ? id.substring(0, 10) : id,
           'status': status.toDbString(),
+          'updated': updated,
         },
       );
+      return updated;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -192,7 +268,7 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   }
 
   @override
-  Future<void> updateIntroducedStatus(
+  Future<bool> updateIntroducedStatus(
     String id,
     IntroductionStatus status,
   ) async {
@@ -207,7 +283,11 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
 
     try {
       final respondedAt = DateTime.now().toUtc().toIso8601String();
-      await dbUpdateIntroducedStatus(id, status.toDbString(), respondedAt);
+      final updated = await dbUpdateIntroducedStatus(
+        id,
+        status.toDbString(),
+        respondedAt,
+      );
 
       emitFlowEvent(
         layer: 'FL',
@@ -215,8 +295,10 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
         details: {
           'id': id.length > 10 ? id.substring(0, 10) : id,
           'status': status.toDbString(),
+          'updated': updated,
         },
       );
+      return updated;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

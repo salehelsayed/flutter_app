@@ -3,7 +3,10 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../../utils/flow_event_emitter.dart';
 
 /// Inserts or replaces an introduction row.
-Future<void> dbInsertIntroduction(Database db, Map<String, Object?> row) async {
+Future<void> dbInsertIntroduction(
+  DatabaseExecutor db,
+  Map<String, Object?> row,
+) async {
   final id = row['id'] as String? ?? '';
 
   emitFlowEvent(
@@ -272,7 +275,7 @@ Future<List<Map<String, Object?>>> dbLoadIntroductionsForRecipientAndIntroducer(
 }
 
 /// Updates the recipient's status and responded timestamp.
-Future<void> dbUpdateRecipientStatus(
+Future<bool> dbUpdateRecipientStatus(
   Database db,
   String id,
   String status,
@@ -288,9 +291,9 @@ Future<void> dbUpdateRecipientStatus(
   );
 
   try {
-    await db.rawUpdate(
-      'UPDATE introductions SET recipient_status = ?, recipient_responded_at = ? WHERE id = ?',
-      [status, respondedAt, id],
+    final rowsUpdated = await db.rawUpdate(
+      'UPDATE introductions SET recipient_status = ?, recipient_responded_at = ? WHERE id = ? AND recipient_status = ? AND status = ?',
+      [status, respondedAt, id, 'pending', 'pending'],
     );
 
     emitFlowEvent(
@@ -299,8 +302,10 @@ Future<void> dbUpdateRecipientStatus(
       details: {
         'id': id.length > 10 ? id.substring(0, 10) : id,
         'status': status,
+        'updated': rowsUpdated,
       },
     );
+    return rowsUpdated > 0;
   } catch (e) {
     emitFlowEvent(
       layer: 'DB',
@@ -312,7 +317,7 @@ Future<void> dbUpdateRecipientStatus(
 }
 
 /// Updates the introduced party's status and responded timestamp.
-Future<void> dbUpdateIntroducedStatus(
+Future<bool> dbUpdateIntroducedStatus(
   Database db,
   String id,
   String status,
@@ -328,9 +333,9 @@ Future<void> dbUpdateIntroducedStatus(
   );
 
   try {
-    await db.rawUpdate(
-      'UPDATE introductions SET introduced_status = ?, introduced_responded_at = ? WHERE id = ?',
-      [status, respondedAt, id],
+    final rowsUpdated = await db.rawUpdate(
+      'UPDATE introductions SET introduced_status = ?, introduced_responded_at = ? WHERE id = ? AND introduced_status = ? AND status = ?',
+      [status, respondedAt, id, 'pending', 'pending'],
     );
 
     emitFlowEvent(
@@ -339,8 +344,10 @@ Future<void> dbUpdateIntroducedStatus(
       details: {
         'id': id.length > 10 ? id.substring(0, 10) : id,
         'status': status,
+        'updated': rowsUpdated,
       },
     );
+    return rowsUpdated > 0;
   } catch (e) {
     emitFlowEvent(
       layer: 'DB',
@@ -367,10 +374,10 @@ Future<void> dbUpdateOverallStatus(
   );
 
   try {
-    await db.rawUpdate('UPDATE introductions SET status = ? WHERE id = ?', [
-      status,
-      id,
-    ]);
+    final rowsUpdated = await db.rawUpdate(
+      'UPDATE introductions SET status = ? WHERE id = ? AND status = ?',
+      [status, id, 'pending'],
+    );
 
     emitFlowEvent(
       layer: 'DB',
@@ -378,6 +385,7 @@ Future<void> dbUpdateOverallStatus(
       details: {
         'id': id.length > 10 ? id.substring(0, 10) : id,
         'status': status,
+        'updated': rowsUpdated,
       },
     );
   } catch (e) {

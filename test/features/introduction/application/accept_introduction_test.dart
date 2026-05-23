@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -32,99 +33,113 @@ void main() {
     introRepo = InMemoryIntroductionRepository();
 
     // Add contacts so accept can look up ML-KEM keys for encryption
-    contactRepo.addTestContact(ContactModel(
-      peerId: 'peer-A',
-      publicKey: 'pk-peer-A',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Alice',
-      signature: 'sig-peer-A',
-      scannedAt: now,
-      mlKemPublicKey: 'test-mlkem-pk-peer-A',
-    ));
-    contactRepo.addTestContact(ContactModel(
-      peerId: 'peer-B',
-      publicKey: 'pk-peer-B',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Bob',
-      signature: 'sig-peer-B',
-      scannedAt: now,
-      mlKemPublicKey: 'test-mlkem-pk-peer-B',
-    ));
-    contactRepo.addTestContact(ContactModel(
-      peerId: 'peer-C',
-      publicKey: 'pk-peer-C',
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Charlie',
-      signature: 'sig-peer-C',
-      scannedAt: now,
-      mlKemPublicKey: 'test-mlkem-pk-peer-C',
-    ));
+    contactRepo.addTestContact(
+      ContactModel(
+        peerId: 'peer-A',
+        publicKey: 'pk-peer-A',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Alice',
+        signature: 'sig-peer-A',
+        scannedAt: now,
+        mlKemPublicKey: 'test-mlkem-pk-peer-A',
+      ),
+    );
+    contactRepo.addTestContact(
+      ContactModel(
+        peerId: 'peer-B',
+        publicKey: 'pk-peer-B',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Bob',
+        signature: 'sig-peer-B',
+        scannedAt: now,
+        mlKemPublicKey: 'test-mlkem-pk-peer-B',
+      ),
+    );
+    contactRepo.addTestContact(
+      ContactModel(
+        peerId: 'peer-C',
+        publicKey: 'pk-peer-C',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Charlie',
+        signature: 'sig-peer-C',
+        scannedAt: now,
+        mlKemPublicKey: 'test-mlkem-pk-peer-C',
+      ),
+    );
 
     // Pre-seed a pending introduction
-    introRepo.saveIntroduction(IntroductionModel(
-      id: 'intro-1',
-      introducerId: 'peer-A',
-      recipientId: 'peer-B',
-      introducedId: 'peer-C',
-      introducerUsername: 'Alice',
-      recipientUsername: 'Bob',
-      introducedUsername: 'Charlie',
-      createdAt: now,
-    ));
-  });
-
-  test('accept sets recipientStatus to accepted when user is recipient',
-      () async {
-    final result = await acceptIntroduction(
-      introRepo: introRepo,
-      contactRepo: contactRepo,
-      p2pService: p2pServiceB,
-      bridge: bridge,
-      introductionId: 'intro-1',
-      ownPeerId: 'peer-B',
-      ownUsername: 'Bob',
+    introRepo.saveIntroduction(
+      IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        createdAt: now,
+      ),
     );
-
-    expect(result, isNotNull);
-    expect(result!.recipientStatus, IntroductionStatus.accepted);
-    // Introduced status should still be pending
-    expect(result.introducedStatus, IntroductionStatus.pending);
-  });
-
-  test('accept sets introducedStatus to accepted when user is introduced',
-      () async {
-    final result = await acceptIntroduction(
-      introRepo: introRepo,
-      contactRepo: contactRepo,
-      p2pService: p2pServiceC,
-      bridge: bridge,
-      introductionId: 'intro-1',
-      ownPeerId: 'peer-C',
-      ownUsername: 'Charlie',
-    );
-
-    expect(result, isNotNull);
-    expect(result!.introducedStatus, IntroductionStatus.accepted);
-    // Recipient status should still be pending
-    expect(result.recipientStatus, IntroductionStatus.pending);
   });
 
   test(
-      'single-side accept does NOT change overall to mutualAccepted', () async {
-    final result = await acceptIntroduction(
-      introRepo: introRepo,
-      contactRepo: contactRepo,
-      p2pService: p2pServiceB,
-      bridge: bridge,
-      introductionId: 'intro-1',
-      ownPeerId: 'peer-B',
-      ownUsername: 'Bob',
-    );
+    'accept sets recipientStatus to accepted when user is recipient',
+    () async {
+      final result = await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
 
-    expect(result, isNotNull);
-    expect(result!.status, isNot(IntroductionOverallStatus.mutualAccepted));
-    expect(result.status, IntroductionOverallStatus.pending);
-  });
+      expect(result, isNotNull);
+      expect(result!.recipientStatus, IntroductionStatus.accepted);
+      // Introduced status should still be pending
+      expect(result.introducedStatus, IntroductionStatus.pending);
+    },
+  );
+
+  test(
+    'accept sets introducedStatus to accepted when user is introduced',
+    () async {
+      final result = await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceC,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-C',
+        ownUsername: 'Charlie',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.introducedStatus, IntroductionStatus.accepted);
+      // Recipient status should still be pending
+      expect(result.recipientStatus, IntroductionStatus.pending);
+    },
+  );
+
+  test(
+    'single-side accept does NOT change overall to mutualAccepted',
+    () async {
+      final result = await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.status, isNot(IntroductionOverallStatus.mutualAccepted));
+      expect(result.status, IntroductionOverallStatus.pending);
+    },
+  );
 
   test('both sides accepting sets status to mutualAccepted', () async {
     // B accepts first
@@ -155,6 +170,43 @@ void main() {
     expect(result.status, IntroductionOverallStatus.mutualAccepted);
   });
 
+  test(
+    'accepting a passed intro does not revive terminal state or send fan-out',
+    () async {
+      introRepo.clear();
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-terminal-passed',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.passed,
+          introducedStatus: IntroductionStatus.accepted,
+          status: IntroductionOverallStatus.passed,
+          createdAt: now,
+        ),
+      );
+      network.resetCounters();
+
+      final result = await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-terminal-passed',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.recipientStatus, IntroductionStatus.passed);
+      expect(result.introducedStatus, IntroductionStatus.accepted);
+      expect(result.status, IntroductionOverallStatus.passed);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
+
   test('accept returns null for non-existent introduction', () async {
     final result = await acceptIntroduction(
       introRepo: introRepo,
@@ -169,29 +221,31 @@ void main() {
     expect(result, isNull);
   });
 
-  test('non-party caller cannot accept and does not mutate intro state',
-      () async {
-    network.resetCounters();
+  test(
+    'non-party caller cannot accept and does not mutate intro state',
+    () async {
+      network.resetCounters();
 
-    final result = await acceptIntroduction(
-      introRepo: introRepo,
-      contactRepo: contactRepo,
-      p2pService: p2pServiceB,
-      bridge: bridge,
-      introductionId: 'intro-1',
-      ownPeerId: 'peer-X',
-      ownUsername: 'Mallory',
-    );
+      final result = await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-X',
+        ownUsername: 'Mallory',
+      );
 
-    final intro = await introRepo.getIntroduction('intro-1');
-    expect(result, isNull);
-    expect(intro, isNotNull);
-    expect(intro!.recipientStatus, IntroductionStatus.pending);
-    expect(intro.introducedStatus, IntroductionStatus.pending);
-    expect(intro.status, IntroductionOverallStatus.pending);
-    expect(network.deliverCallCount, 0);
-    expect(network.storeInInboxCallCount, 0);
-  });
+      final intro = await introRepo.getIntroduction('intro-1');
+      expect(result, isNull);
+      expect(intro, isNotNull);
+      expect(intro!.recipientStatus, IntroductionStatus.pending);
+      expect(intro.introducedStatus, IntroductionStatus.pending);
+      expect(intro.status, IntroductionOverallStatus.pending);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
 
   test('accept sends notification to introducer', () async {
     network.resetCounters();
@@ -227,6 +281,70 @@ void main() {
     expect(network.deliverCallCount, 2);
   });
 
+  test(
+    'persists local accept and both fan-out rows before a delivery-stage crash',
+    () async {
+      final crashingRepo = _CrashAfterNthOutboxSaveIntroductionRepository(
+        crashOnSaveNumber: 1,
+      );
+      introRepo = crashingRepo;
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-1',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          introducerUsername: 'Alice',
+          recipientUsername: 'Bob',
+          introducedUsername: 'Charlie',
+          createdAt: now,
+        ),
+      );
+
+      await expectLater(
+        acceptIntroduction(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pServiceB,
+          bridge: bridge,
+          introductionId: 'intro-1',
+          ownPeerId: 'peer-B',
+          ownUsername: 'Bob',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated crash after accept fan-out staging',
+          ),
+        ),
+      );
+
+      final intro = await crashingRepo.getIntroduction('intro-1');
+      expect(intro, isNotNull);
+      expect(intro!.recipientStatus, IntroductionStatus.accepted);
+      expect(intro.introducedStatus, IntroductionStatus.pending);
+      expect(intro.status, IntroductionOverallStatus.pending);
+
+      final deliveries = await crashingRepo.loadOutboxDeliveriesForIntroduction(
+        'intro-1',
+      );
+      expect(
+        deliveries.map((delivery) => delivery.action),
+        everyElement('accept'),
+      );
+      expect(deliveries.map((delivery) => delivery.targetPeerId).toSet(), {
+        'peer-A',
+        'peer-C',
+      });
+      expect(
+        deliveries.map((delivery) => delivery.deliveryStatus),
+        everyElement(IntroductionOutboxDeliveryStatus.sending),
+      );
+      expect(network.deliverCallCount, 1);
+    },
+  );
+
   group('v2 encryption to stranger', () {
     test('v2 encryption used for stranger when intro has ML-KEM key', () async {
       // Remove peer-C from contacts so it's a "stranger"
@@ -234,18 +352,20 @@ void main() {
 
       // Seed intro with ML-KEM keys
       introRepo.clear();
-      await introRepo.saveIntroduction(IntroductionModel(
-        id: 'intro-1',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Charlie',
-        introducedMlKemPublicKey: 'mlkem-pk-charlie',
-        recipientMlKemPublicKey: 'mlkem-pk-bob',
-        createdAt: now,
-      ));
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-1',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          introducerUsername: 'Alice',
+          recipientUsername: 'Bob',
+          introducedUsername: 'Charlie',
+          introducedMlKemPublicKey: 'mlkem-pk-charlie',
+          recipientMlKemPublicKey: 'mlkem-pk-bob',
+          createdAt: now,
+        ),
+      );
 
       bridge.commandLog.clear();
 
@@ -261,14 +381,15 @@ void main() {
       );
 
       // Should have called message.encrypt for both sends
-      final encryptCalls =
-          bridge.commandLog.where((c) => c == 'message.encrypt').length;
-      expect(encryptCalls, 2, reason: 'encrypt called for introducer + stranger');
+      final encryptCalls = bridge.commandLog
+          .where((c) => c == 'message.encrypt')
+          .length;
+      expect(
+        encryptCalls,
+        2,
+        reason: 'encrypt called for introducer + stranger',
+      );
 
-      // Verify the message delivered to peer-C is v2 envelope
-      final cInbox = network.retrieveInbox('peer-C');
-      // Messages went via deliver (not inbox) since peer-C is registered
-      // Check network deliverCallCount instead
       expect(network.deliverCallCount, 2);
     });
 
@@ -278,29 +399,33 @@ void main() {
       final introRepoC = InMemoryIntroductionRepository();
 
       // C only knows A (the introducer)
-      contactRepoC.addTestContact(ContactModel(
-        peerId: 'peer-A',
-        publicKey: 'pk-peer-A',
-        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-        username: 'Alice',
-        signature: 'sig-peer-A',
-        scannedAt: now,
-        mlKemPublicKey: 'test-mlkem-pk-peer-A',
-      ));
+      contactRepoC.addTestContact(
+        ContactModel(
+          peerId: 'peer-A',
+          publicKey: 'pk-peer-A',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Alice',
+          signature: 'sig-peer-A',
+          scannedAt: now,
+          mlKemPublicKey: 'test-mlkem-pk-peer-A',
+        ),
+      );
 
       // Seed intro with ML-KEM keys
-      await introRepoC.saveIntroduction(IntroductionModel(
-        id: 'intro-1',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Charlie',
-        introducedMlKemPublicKey: 'mlkem-pk-charlie',
-        recipientMlKemPublicKey: 'mlkem-pk-bob',
-        createdAt: now,
-      ));
+      await introRepoC.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-1',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          introducerUsername: 'Alice',
+          recipientUsername: 'Bob',
+          introducedUsername: 'Charlie',
+          introducedMlKemPublicKey: 'mlkem-pk-charlie',
+          recipientMlKemPublicKey: 'mlkem-pk-bob',
+          createdAt: now,
+        ),
+      );
 
       final bridgeC = PassthroughCryptoBridge();
 
@@ -316,49 +441,58 @@ void main() {
       );
 
       // Should encrypt for both: A (from contact lookup) and B (from intro record)
-      final encryptCalls =
-          bridgeC.commandLog.where((c) => c == 'message.encrypt').length;
+      final encryptCalls = bridgeC.commandLog
+          .where((c) => c == 'message.encrypt')
+          .length;
       expect(encryptCalls, 2);
     });
 
-    test('v1 fallback when intro record has null ML-KEM key for stranger',
-        () async {
-      // Remove peer-C from contacts
-      await contactRepo.deleteContact('peer-C');
+    test(
+      'v1 fallback when intro record has null ML-KEM key for stranger',
+      () async {
+        // Remove peer-C from contacts
+        await contactRepo.deleteContact('peer-C');
 
-      // Seed intro WITHOUT ML-KEM keys
-      introRepo.clear();
-      await introRepo.saveIntroduction(IntroductionModel(
-        id: 'intro-1',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Charlie',
-        // No ML-KEM keys
-        createdAt: now,
-      ));
+        // Seed intro WITHOUT ML-KEM keys
+        introRepo.clear();
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-1',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            introducerUsername: 'Alice',
+            recipientUsername: 'Bob',
+            introducedUsername: 'Charlie',
+            // No ML-KEM keys
+            createdAt: now,
+          ),
+        );
 
-      bridge.commandLog.clear();
+        bridge.commandLog.clear();
 
-      await acceptIntroduction(
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pServiceB,
-        bridge: bridge,
-        introductionId: 'intro-1',
-        ownPeerId: 'peer-B',
-        ownUsername: 'Bob',
-      );
+        await acceptIntroduction(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pServiceB,
+          bridge: bridge,
+          introductionId: 'intro-1',
+          ownPeerId: 'peer-B',
+          ownUsername: 'Bob',
+        );
 
-      // Only 1 encrypt call (for the introducer who IS a contact with ML-KEM key)
-      // The stranger send should be v1 (no encrypt call)
-      final encryptCalls =
-          bridge.commandLog.where((c) => c == 'message.encrypt').length;
-      expect(encryptCalls, 1,
-          reason: 'only introducer encrypted, stranger gets v1');
-    });
+        // Only 1 encrypt call (for the introducer who IS a contact with ML-KEM key)
+        // The stranger send should be v1 (no encrypt call)
+        final encryptCalls = bridge.commandLog
+            .where((c) => c == 'message.encrypt')
+            .length;
+        expect(
+          encryptCalls,
+          1,
+          reason: 'only introducer encrypted, stranger gets v1',
+        );
+      },
+    );
 
     test('v1 fallback when encryption fails for stranger', () async {
       // Remove peer-C from contacts
@@ -366,22 +500,26 @@ void main() {
 
       // Seed intro with ML-KEM keys
       introRepo.clear();
-      await introRepo.saveIntroduction(IntroductionModel(
-        id: 'intro-1',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Charlie',
-        introducedMlKemPublicKey: 'mlkem-pk-charlie',
-        recipientMlKemPublicKey: 'mlkem-pk-bob',
-        createdAt: now,
-      ));
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-1',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          introducerUsername: 'Alice',
+          recipientUsername: 'Bob',
+          introducedUsername: 'Charlie',
+          introducedMlKemPublicKey: 'mlkem-pk-charlie',
+          recipientMlKemPublicKey: 'mlkem-pk-bob',
+          createdAt: now,
+        ),
+      );
 
       // Use a bridge that fails encryption
       final failBridge = FakeBridge(
-        initialResponses: {'message.encrypt': {'ok': false}},
+        initialResponses: {
+          'message.encrypt': {'ok': false},
+        },
       );
 
       await acceptIntroduction(
@@ -399,84 +537,113 @@ void main() {
     });
 
     test(
-        'contact ML-KEM key is used for stranger when intro record omits it',
-        () async {
-      introRepo.clear();
-      await introRepo.saveIntroduction(IntroductionModel(
-        id: 'intro-1',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Charlie',
-        recipientMlKemPublicKey: 'mlkem-pk-bob',
-        createdAt: now,
-      ));
+      'contact ML-KEM key is used for stranger when intro record omits it',
+      () async {
+        introRepo.clear();
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-1',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            introducerUsername: 'Alice',
+            recipientUsername: 'Bob',
+            introducedUsername: 'Charlie',
+            recipientMlKemPublicKey: 'mlkem-pk-bob',
+            createdAt: now,
+          ),
+        );
 
-      bridge.sentMessages.clear();
-      bridge.commandLog.clear();
+        bridge.sentMessages.clear();
+        bridge.commandLog.clear();
 
-      await acceptIntroduction(
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pServiceB,
-        bridge: bridge,
-        introductionId: 'intro-1',
-        ownPeerId: 'peer-B',
-        ownUsername: 'Bob',
-      );
+        await acceptIntroduction(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pServiceB,
+          bridge: bridge,
+          introductionId: 'intro-1',
+          ownPeerId: 'peer-B',
+          ownUsername: 'Bob',
+        );
 
-      final encryptRecipientKeys = bridge.sentMessages
-          .map((message) => jsonDecode(message) as Map<String, dynamic>)
-          .where((request) => request['cmd'] == 'message.encrypt')
-          .map((request) =>
-              (request['payload'] as Map<String, dynamic>)['recipientPublicKey']
-                  as String)
-          .toList();
+        final encryptRecipientKeys = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((request) => request['cmd'] == 'message.encrypt')
+            .map(
+              (request) =>
+                  (request['payload']
+                          as Map<String, dynamic>)['recipientPublicKey']
+                      as String,
+            )
+            .toList();
 
-      expect(encryptRecipientKeys, hasLength(2));
-      expect(encryptRecipientKeys, contains('test-mlkem-pk-peer-A'));
-      expect(encryptRecipientKeys, contains('test-mlkem-pk-peer-C'));
-    });
+        expect(encryptRecipientKeys, hasLength(2));
+        expect(encryptRecipientKeys, contains('test-mlkem-pk-peer-A'));
+        expect(encryptRecipientKeys, contains('test-mlkem-pk-peer-C'));
+      },
+    );
 
-    test('rejects intro/contact stranger ML-KEM mismatches before mutation',
-        () async {
-      introRepo.clear();
-      await introRepo.saveIntroduction(IntroductionModel(
-        id: 'intro-1',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Charlie',
-        introducedMlKemPublicKey: 'mlkem-pk-charlie-stale',
-        recipientMlKemPublicKey: 'mlkem-pk-bob',
-        createdAt: now,
-      ));
+    test(
+      'rejects intro/contact stranger ML-KEM mismatches before mutation',
+      () async {
+        introRepo.clear();
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-1',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            introducerUsername: 'Alice',
+            recipientUsername: 'Bob',
+            introducedUsername: 'Charlie',
+            introducedMlKemPublicKey: 'mlkem-pk-charlie-stale',
+            recipientMlKemPublicKey: 'mlkem-pk-bob',
+            createdAt: now,
+          ),
+        );
 
-      bridge.commandLog.clear();
+        bridge.commandLog.clear();
 
-      final result = await acceptIntroduction(
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pServiceB,
-        bridge: bridge,
-        introductionId: 'intro-1',
-        ownPeerId: 'peer-B',
-        ownUsername: 'Bob',
-      );
+        final result = await acceptIntroduction(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pServiceB,
+          bridge: bridge,
+          introductionId: 'intro-1',
+          ownPeerId: 'peer-B',
+          ownUsername: 'Bob',
+        );
 
-      expect(result, isNull);
+        expect(result, isNull);
 
-      final intro = await introRepo.getIntroduction('intro-1');
-      expect(intro, isNotNull);
-      expect(intro!.recipientStatus, IntroductionStatus.pending);
-      expect(intro.introducedStatus, IntroductionStatus.pending);
-      expect(intro.status, IntroductionOverallStatus.pending);
-      expect(network.deliverCallCount, 0);
-      expect(bridge.commandLog, isEmpty);
-    });
+        final intro = await introRepo.getIntroduction('intro-1');
+        expect(intro, isNotNull);
+        expect(intro!.recipientStatus, IntroductionStatus.pending);
+        expect(intro.introducedStatus, IntroductionStatus.pending);
+        expect(intro.status, IntroductionOverallStatus.pending);
+        expect(network.deliverCallCount, 0);
+        expect(bridge.commandLog, isEmpty);
+      },
+    );
   });
+}
+
+class _CrashAfterNthOutboxSaveIntroductionRepository
+    extends InMemoryIntroductionRepository {
+  _CrashAfterNthOutboxSaveIntroductionRepository({
+    required this.crashOnSaveNumber,
+  });
+
+  final int crashOnSaveNumber;
+  int _saveOutboxDeliveryCalls = 0;
+
+  @override
+  Future<void> saveOutboxDelivery(IntroductionOutboxDelivery delivery) async {
+    _saveOutboxDeliveryCalls++;
+    if (_saveOutboxDeliveryCalls == crashOnSaveNumber) {
+      throw StateError('simulated crash after accept fan-out staging');
+    }
+    await super.saveOutboxDelivery(delivery);
+  }
 }

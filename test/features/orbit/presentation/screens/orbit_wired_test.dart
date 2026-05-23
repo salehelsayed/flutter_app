@@ -3608,7 +3608,7 @@ class _BlockingIntroductionRepository extends InMemoryIntroductionRepository {
   int passedUpdates = 0;
 
   @override
-  Future<void> updateRecipientStatus(
+  Future<bool> updateRecipientStatus(
     String id,
     IntroductionStatus status,
   ) async {
@@ -3617,7 +3617,7 @@ class _BlockingIntroductionRepository extends InMemoryIntroductionRepository {
   }
 
   @override
-  Future<void> updateIntroducedStatus(
+  Future<bool> updateIntroducedStatus(
     String id,
     IntroductionStatus status,
   ) async {

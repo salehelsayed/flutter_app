@@ -29,6 +29,7 @@ handleIncomingIntroduction({
   required IntroductionRepository introRepo,
   required ContactRepository contactRepo,
   required String ownPeerId,
+  String? transportSenderPeerId,
   MessageRepository? messageRepo,
   Bridge? bridge,
 }) async {
@@ -42,6 +43,22 @@ handleIncomingIntroduction({
   );
 
   try {
+    if (_hasTransportSenderMismatch(
+      payload: payload,
+      transportSenderPeerId: transportSenderPeerId,
+    )) {
+      emitFlowEvent(
+        layer: 'UC',
+        event: 'HANDLE_INCOMING_INTRO_TRANSPORT_SENDER_MISMATCH',
+        details: {
+          'introductionId': payload.introductionId,
+          'action': payload.action,
+          'transportSenderPeerId': transportSenderPeerId ?? '',
+        },
+      );
+      return (HandleIntroductionResult.rejected, null);
+    }
+
     if (payload.action == 'send') {
       return await _handleSend(
         payload: payload,
@@ -57,6 +74,7 @@ handleIncomingIntroduction({
         introRepo: introRepo,
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
+        transportSenderPeerId: transportSenderPeerId,
         messageRepo: messageRepo,
         bridge: bridge,
       );
@@ -81,6 +99,25 @@ handleIncomingIntroduction({
   }
 }
 
+bool _hasTransportSenderMismatch({
+  required IntroductionPayload payload,
+  required String? transportSenderPeerId,
+}) {
+  if (transportSenderPeerId == null || transportSenderPeerId.isEmpty) {
+    return false;
+  }
+
+  if (payload.action == 'send') {
+    return payload.introducerId != transportSenderPeerId;
+  }
+
+  if (payload.action == 'accept' || payload.action == 'pass') {
+    return payload.responderId != transportSenderPeerId;
+  }
+
+  return false;
+}
+
 Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
   required IntroductionPayload payload,
   required IntroductionRepository introRepo,
@@ -89,6 +126,37 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
   MessageRepository? messageRepo,
   Bridge? bridge,
 }) async {
+  final introducerId = payload.introducerId?.trim() ?? '';
+  final recipientId = payload.recipientId?.trim() ?? '';
+  final introducedId = payload.introducedId?.trim() ?? '';
+  if (introducerId.isEmpty || recipientId.isEmpty || introducedId.isEmpty) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'HANDLE_INCOMING_INTRO_INVALID_SEND',
+      details: {
+        'introductionId': payload.introductionId,
+        'hasIntroducerId': introducerId.isNotEmpty,
+        'hasRecipientId': recipientId.isNotEmpty,
+        'hasIntroducedId': introducedId.isNotEmpty,
+      },
+    );
+    return (HandleIntroductionResult.rejected, null);
+  }
+
+  final isRecipient = ownPeerId == recipientId;
+  final isIntroduced = ownPeerId == introducedId;
+  if (!isRecipient && !isIntroduced) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'HANDLE_INCOMING_INTRO_SEND_NOT_ADDRESSED',
+      details: {
+        'introductionId': payload.introductionId,
+        'ownPeerId': ownPeerId,
+      },
+    );
+    return (HandleIntroductionResult.rejected, null);
+  }
+
   // Check if introduction already exists
   final existing = await introRepo.getIntroduction(payload.introductionId);
   if (existing != null) {
@@ -127,15 +195,11 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
     return (HandleIntroductionResult.alreadyExists, latestPairIntroduction);
   }
 
-  for (final intro in existingPairIntroductions) {
-    await introRepo.deleteIntroduction(intro.id);
-  }
-
   final model = IntroductionModel(
     id: payload.introductionId,
-    introducerId: payload.introducerId ?? '',
-    recipientId: payload.recipientId ?? '',
-    introducedId: payload.introducedId ?? '',
+    introducerId: introducerId,
+    recipientId: recipientId,
+    introducedId: introducedId,
     createdAt: payload.timestamp,
     introducerUsername: payload.introducerUsername,
     recipientUsername: payload.recipientUsername,
@@ -146,13 +210,20 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
     recipientMlKemPublicKey: payload.recipientMlKemPublicKey,
   );
 
-  await introRepo.saveIntroduction(model);
+  if (existingPairIntroductions.isEmpty) {
+    await introRepo.saveIntroduction(model);
+  } else {
+    await introRepo.replaceIntroductionWithPendingResponseMigration(
+      intro: model,
+      deliveries: const [],
+      replacedIntroductionIds: existingPairIntroductions
+          .map((intro) => intro.id)
+          .toList(growable: false),
+    );
+  }
 
   // Check if the other party is already a contact
-  final isRecipient = ownPeerId == payload.recipientId;
-  final otherPeerId = isRecipient
-      ? (payload.introducedId ?? '')
-      : (payload.recipientId ?? '');
+  final otherPeerId = isRecipient ? introducedId : recipientId;
 
   if (otherPeerId.isNotEmpty && await contactRepo.contactExists(otherPeerId)) {
     await introRepo.updateOverallStatus(
@@ -186,7 +257,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
     event: 'HANDLE_INCOMING_INTRO_SAVED',
     details: {
       'introductionId': payload.introductionId,
-      'introducerId': payload.introducerId ?? '',
+      'introducerId': introducerId,
     },
   );
 
@@ -197,9 +268,9 @@ Future<List<IntroductionModel>> _loadExistingPairIntroductions({
   required IntroductionRepository introRepo,
   required IntroductionPayload payload,
 }) async {
-  final recipientId = payload.recipientId ?? '';
-  final introducedId = payload.introducedId ?? '';
-  final introducerId = payload.introducerId ?? '';
+  final recipientId = payload.recipientId?.trim() ?? '';
+  final introducedId = payload.introducedId?.trim() ?? '';
+  final introducerId = payload.introducerId?.trim() ?? '';
   if (recipientId.isEmpty || introducedId.isEmpty || introducerId.isEmpty) {
     return const <IntroductionModel>[];
   }
@@ -275,6 +346,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
   required IntroductionRepository introRepo,
   required ContactRepository contactRepo,
   required String ownPeerId,
+  String? transportSenderPeerId,
   MessageRepository? messageRepo,
   Bridge? bridge,
 }) async {
@@ -291,7 +363,10 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
   final existing = await introRepo.getIntroduction(payload.introductionId);
   if (existing == null) {
     await introRepo.savePendingResponse(
-      PendingIntroductionResponse.fromPayload(payload),
+      PendingIntroductionResponse.fromPayload(
+        payload,
+        transportSenderPeerId: transportSenderPeerId,
+      ),
     );
     emitFlowEvent(
       layer: 'UC',
@@ -347,46 +422,102 @@ _applyResponseToExistingIntroduction({
       ? IntroductionStatus.accepted
       : IntroductionStatus.passed;
 
-  final alreadyApplied =
-      (isRecipient && existing.recipientStatus == status) ||
-      (isIntroduced && existing.introducedStatus == status);
-  final isTerminalReplayTarget =
-      existing.status == IntroductionOverallStatus.mutualAccepted ||
-      existing.status == IntroductionOverallStatus.passed ||
-      existing.status == IntroductionOverallStatus.expired ||
-      existing.status == IntroductionOverallStatus.alreadyConnected;
-  if (alreadyApplied && isTerminalReplayTarget) {
-    if (existing.status == IntroductionOverallStatus.mutualAccepted) {
-      await handleMutualAcceptance(
-        introduction: existing,
+  if (_isTerminalOverallStatus(existing.status)) {
+    return _handleTerminalResponseReplay(
+      payload: payload,
+      existing: existing,
+      contactRepo: contactRepo,
+      ownPeerId: ownPeerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
+    );
+  }
+
+  final existingPartyStatus = isRecipient
+      ? existing.recipientStatus
+      : existing.introducedStatus;
+  if (existingPartyStatus != IntroductionStatus.pending) {
+    final latestIntro = existingPartyStatus == status
+        ? await _reconcilePendingDerivedTerminalStatus(
+            existing: existing,
+            introRepo: introRepo,
+            contactRepo: contactRepo,
+            ownPeerId: ownPeerId,
+            messageRepo: messageRepo,
+            bridge: bridge,
+          )
+        : existing;
+    final result = existingPartyStatus == status
+        ? HandleIntroductionResult.alreadyExists
+        : HandleIntroductionResult.rejected;
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'HANDLE_INCOMING_INTRO_ALREADY_ANSWERED',
+      details: {
+        'introductionId': payload.introductionId,
+        'responderId': responderId,
+        'action': payload.action,
+        'existingStatus': existingPartyStatus.toDbString(),
+      },
+    );
+    return (result, latestIntro);
+  }
+
+  final didUpdate = isRecipient
+      ? await introRepo.updateRecipientStatus(payload.introductionId, status)
+      : await introRepo.updateIntroducedStatus(payload.introductionId, status);
+  if (!didUpdate) {
+    final latestIntro =
+        await introRepo.getIntroduction(payload.introductionId) ?? existing;
+    if (_isTerminalOverallStatus(latestIntro.status)) {
+      return _handleTerminalResponseReplay(
+        payload: payload,
+        existing: latestIntro,
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
         messageRepo: messageRepo,
         bridge: bridge,
       );
     }
+    final latestPartyStatus = isRecipient
+        ? latestIntro.recipientStatus
+        : latestIntro.introducedStatus;
+    if (latestPartyStatus != IntroductionStatus.pending &&
+        latestPartyStatus != status) {
+      return (HandleIntroductionResult.rejected, latestIntro);
+    }
+    final reconciledIntro = latestPartyStatus == status
+        ? await _reconcilePendingDerivedTerminalStatus(
+            existing: latestIntro,
+            introRepo: introRepo,
+            contactRepo: contactRepo,
+            ownPeerId: ownPeerId,
+            messageRepo: messageRepo,
+            bridge: bridge,
+          )
+        : latestIntro;
     emitFlowEvent(
       layer: 'UC',
-      event: 'HANDLE_INCOMING_INTRO_ALREADY_EXISTS',
-      details: {
-        'introductionId': payload.introductionId,
-        'responderId': responderId,
-        'action': payload.action,
-      },
+      event: 'HANDLE_INCOMING_INTRO_GUARDED_UPDATE_SKIPPED',
+      details: {'introductionId': payload.introductionId},
     );
-    return (HandleIntroductionResult.alreadyExists, existing);
-  }
-
-  if (isRecipient) {
-    await introRepo.updateRecipientStatus(payload.introductionId, status);
-  } else {
-    await introRepo.updateIntroducedStatus(payload.introductionId, status);
+    return (HandleIntroductionResult.alreadyExists, reconciledIntro);
   }
 
   // Re-fetch to get updated individual statuses
   final updatedIntro = await introRepo.getIntroduction(payload.introductionId);
   if (updatedIntro == null) {
     return (HandleIntroductionResult.error, null);
+  }
+  if (_isTerminalOverallStatus(updatedIntro.status)) {
+    return _handleTerminalResponseReplay(
+      payload: payload,
+      existing: updatedIntro,
+      contactRepo: contactRepo,
+      ownPeerId: ownPeerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
+    );
   }
 
   // Derive and update overall status
@@ -426,6 +557,90 @@ _applyResponseToExistingIntroduction({
   return (HandleIntroductionResult.success, finalIntro);
 }
 
+Future<IntroductionModel> _reconcilePendingDerivedTerminalStatus({
+  required IntroductionModel existing,
+  required IntroductionRepository introRepo,
+  required ContactRepository contactRepo,
+  required String ownPeerId,
+  MessageRepository? messageRepo,
+  Bridge? bridge,
+}) async {
+  if (existing.status != IntroductionOverallStatus.pending) {
+    return existing;
+  }
+
+  final derived = IntroductionModel.deriveStatus(
+    recipientStatus: existing.recipientStatus,
+    introducedStatus: existing.introducedStatus,
+    createdAt: existing.createdAt,
+  );
+  if (derived == IntroductionOverallStatus.pending) {
+    return existing;
+  }
+
+  await introRepo.updateOverallStatus(existing.id, derived);
+  final latestIntro =
+      await introRepo.getIntroduction(existing.id) ??
+      existing.copyWith(status: derived);
+  if (latestIntro.status == IntroductionOverallStatus.mutualAccepted) {
+    await handleMutualAcceptance(
+      introduction: latestIntro,
+      contactRepo: contactRepo,
+      ownPeerId: ownPeerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
+    );
+  }
+  return latestIntro;
+}
+
+Future<(HandleIntroductionResult, IntroductionModel?)>
+_handleTerminalResponseReplay({
+  required IntroductionPayload payload,
+  required IntroductionModel existing,
+  required ContactRepository contactRepo,
+  required String ownPeerId,
+  MessageRepository? messageRepo,
+  Bridge? bridge,
+}) async {
+  if (existing.status == IntroductionOverallStatus.mutualAccepted) {
+    await handleMutualAcceptance(
+      introduction: existing,
+      contactRepo: contactRepo,
+      ownPeerId: ownPeerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
+    );
+  }
+
+  final result =
+      existing.status == IntroductionOverallStatus.passed ||
+          existing.status == IntroductionOverallStatus.expired
+      ? HandleIntroductionResult.rejected
+      : HandleIntroductionResult.alreadyExists;
+
+  emitFlowEvent(
+    layer: 'UC',
+    event: 'HANDLE_INCOMING_INTRO_TERMINAL_RESPONSE_IGNORED',
+    details: {
+      'introductionId': payload.introductionId,
+      'responderId': payload.responderId ?? '',
+      'action': payload.action,
+      'status': existing.status.toDbString(),
+      'result': result.name,
+    },
+  );
+
+  return (result, existing);
+}
+
+bool _isTerminalOverallStatus(IntroductionOverallStatus status) {
+  return status == IntroductionOverallStatus.mutualAccepted ||
+      status == IntroductionOverallStatus.passed ||
+      status == IntroductionOverallStatus.expired ||
+      status == IntroductionOverallStatus.alreadyConnected;
+}
+
 Future<void> _replayPendingResponses({
   required String introductionId,
   required IntroductionRepository introRepo,
@@ -449,6 +664,23 @@ Future<void> _replayPendingResponses({
   );
 
   for (final pending in pendingResponses) {
+    final pendingTransportSenderPeerId =
+        pending.transportSenderPeerId ?? pending.responderId;
+    if (pendingTransportSenderPeerId != pending.responderId) {
+      emitFlowEvent(
+        layer: 'UC',
+        event: 'HANDLE_INCOMING_INTRO_PENDING_RESPONSE_SENDER_MISMATCH',
+        details: {
+          'introductionId': introductionId,
+          'responseKey': pending.responseKey,
+          'transportSenderPeerId': pendingTransportSenderPeerId,
+          'responderId': pending.responderId,
+        },
+      );
+      await introRepo.deletePendingResponse(pending.responseKey);
+      continue;
+    }
+
     final existing = await introRepo.getIntroduction(introductionId);
     if (existing == null) {
       throw StateError(
@@ -467,7 +699,8 @@ Future<void> _replayPendingResponses({
     );
 
     if (result == HandleIntroductionResult.success ||
-        result == HandleIntroductionResult.rejected) {
+        result == HandleIntroductionResult.rejected ||
+        result == HandleIntroductionResult.alreadyExists) {
       await introRepo.deletePendingResponse(pending.responseKey);
       continue;
     }
