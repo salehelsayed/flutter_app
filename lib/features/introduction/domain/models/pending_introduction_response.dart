@@ -6,6 +6,7 @@ class PendingIntroductionResponse {
   final String introductionId;
   final String action;
   final String responderId;
+  final String? transportSenderPeerId;
   final String? responderUsername;
   final String createdAt;
 
@@ -14,6 +15,7 @@ class PendingIntroductionResponse {
     required this.introductionId,
     required this.action,
     required this.responderId,
+    this.transportSenderPeerId,
     this.responderUsername,
     required this.createdAt,
   });
@@ -24,12 +26,16 @@ class PendingIntroductionResponse {
       introductionId: map['introduction_id'] as String,
       action: map['action'] as String,
       responderId: map['responder_id'] as String,
+      transportSenderPeerId: map['transport_sender_peer_id'] as String?,
       responderUsername: map['responder_username'] as String?,
       createdAt: map['created_at'] as String,
     );
   }
 
-  factory PendingIntroductionResponse.fromPayload(IntroductionPayload payload) {
+  factory PendingIntroductionResponse.fromPayload(
+    IntroductionPayload payload, {
+    String? transportSenderPeerId,
+  }) {
     final responderId = payload.responderId ?? '';
     return PendingIntroductionResponse(
       responseKey: buildResponseKey(
@@ -40,6 +46,7 @@ class PendingIntroductionResponse {
       introductionId: payload.introductionId,
       action: payload.action,
       responderId: responderId,
+      transportSenderPeerId: transportSenderPeerId ?? responderId,
       responderUsername: payload.responderUsername,
       createdAt: payload.timestamp,
     );
@@ -51,6 +58,7 @@ class PendingIntroductionResponse {
       'introduction_id': introductionId,
       'action': action,
       'responder_id': responderId,
+      'transport_sender_peer_id': transportSenderPeerId,
       'responder_username': responderUsername,
       'created_at': createdAt,
     };

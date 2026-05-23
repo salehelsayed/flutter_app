@@ -82,10 +82,7 @@ void main() {
         .toList(growable: false);
   }
 
-  ContactModel makeContact({
-    required String peerId,
-    required String username,
-  }) {
+  ContactModel makeContact({required String peerId, required String username}) {
     return ContactModel(
       peerId: peerId,
       publicKey: 'pk-$peerId',
@@ -328,7 +325,105 @@ void main() {
         expect(systemMessages.single.text, 'Noor introduced Sarah to you');
 
         expect(notificationService.shownGeneric, hasLength(1));
-        expect(notificationService.shownGeneric.single.title, 'New Introduction');
+        expect(
+          notificationService.shownGeneric.single.title,
+          'New Introduction',
+        );
+      },
+    );
+
+    test(
+      'rejects send when transport sender does not match payload introducer',
+      () async {
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: 'peer-forger',
+            to: 'own-peer',
+            content: IntroductionPayload(
+              action: 'send',
+              introductionId: 'intro-forged-send',
+              introducerId: 'peer-A',
+              introducerUsername: 'Noor',
+              recipientId: 'own-peer',
+              recipientUsername: 'Me',
+              introducedId: 'peer-C',
+              introducedUsername: 'Sarah',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+            ).toJson(),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, IntroductionMessageProcessState.rejected);
+        expect(outcome.reasonCode, 'transport_sender_mismatch');
+        expect(await introRepo.getIntroduction('intro-forged-send'), isNull);
+        expect(notificationService.shownGeneric, isEmpty);
+        expect(await messageRepo.getMessagesForContact('peer-A'), isEmpty);
+      },
+    );
+
+    test(
+      'rejects deferred response when transport sender does not match responder',
+      () async {
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: 'peer-forger',
+            to: 'own-peer',
+            content: IntroductionPayload(
+              action: 'accept',
+              introductionId: 'intro-forged-deferred-accept',
+              responderId: 'peer-C',
+              responderUsername: 'Sarah',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+            ).toJson(),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, IntroductionMessageProcessState.rejected);
+        expect(outcome.reasonCode, 'transport_sender_mismatch');
+        expect(
+          await introRepo.loadPendingResponses('intro-forged-deferred-accept'),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'rejects v2 envelope when cleartext envelope sender differs from transport sender',
+      () async {
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: 'peer-forger',
+            to: 'own-peer',
+            content: IntroductionPayload.buildEncryptedEnvelope(
+              introductionId: 'intro-v2-forged-envelope',
+              senderPeerId: 'peer-A',
+              kem: 'fake-kem',
+              ciphertext: IntroductionPayload(
+                action: 'send',
+                introductionId: 'intro-v2-forged-envelope',
+                introducerId: 'peer-A',
+                recipientId: 'own-peer',
+                introducedId: 'peer-C',
+                timestamp: DateTime.now().toUtc().toIso8601String(),
+              ).toInnerJson(),
+              nonce: 'fake-nonce',
+            ),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, IntroductionMessageProcessState.rejected);
+        expect(outcome.reasonCode, 'transport_sender_mismatch');
+        expect(
+          await introRepo.getIntroduction('intro-v2-forged-envelope'),
+          isNull,
+        );
+        expect(bridge.commandLog, isNot(contains('message.decrypt')));
       },
     );
 
@@ -449,10 +544,7 @@ void main() {
           'peer-B',
         );
         expect(systemMessages, hasLength(1));
-        expect(
-          systemMessages.single.text,
-          'Lina accepted your intro to Sarah',
-        );
+        expect(systemMessages.single.text, 'Lina accepted your intro to Sarah');
 
         expect(notificationService.shownGeneric, isEmpty);
       },
@@ -461,7 +553,9 @@ void main() {
     test(
       'introducer-side mutual acceptance writes a recipient-thread connection message and a role-correct notification',
       () async {
-        contactRepo.addTestContact(makeContact(peerId: 'peer-B', username: 'Lina'));
+        contactRepo.addTestContact(
+          makeContact(peerId: 'peer-B', username: 'Lina'),
+        );
         contactRepo.addTestContact(
           makeContact(peerId: 'peer-C', username: 'Sarah'),
         );
@@ -504,10 +598,7 @@ void main() {
           'peer-B',
         );
         expect(systemMessages, hasLength(1));
-        expect(
-          systemMessages.single.text,
-          'Lina and Sarah are now connected',
-        );
+        expect(systemMessages.single.text, 'Lina and Sarah are now connected');
 
         expect(notificationService.shownGeneric, hasLength(1));
         expect(notificationService.shownGeneric.single.title, 'New Connection');
@@ -568,7 +659,9 @@ void main() {
     test(
       'duplicate introducer mutual-accept replay does not duplicate recipient-thread messages or notifications',
       () async {
-        contactRepo.addTestContact(makeContact(peerId: 'peer-B', username: 'Lina'));
+        contactRepo.addTestContact(
+          makeContact(peerId: 'peer-B', username: 'Lina'),
+        );
         contactRepo.addTestContact(
           makeContact(peerId: 'peer-C', username: 'Sarah'),
         );
@@ -619,10 +712,7 @@ void main() {
           'peer-B',
         );
         expect(systemMessages, hasLength(1));
-        expect(
-          systemMessages.single.text,
-          'Lina and Sarah are now connected',
-        );
+        expect(systemMessages.single.text, 'Lina and Sarah are now connected');
 
         expect(notificationService.shownGeneric, hasLength(1));
         expect(
@@ -679,7 +769,10 @@ void main() {
 
         expect(await contactRepo.contactExists('peer-C'), isTrue);
         final contacts = await contactRepo.getAllContacts();
-        expect(contacts.where((contact) => contact.peerId == 'peer-C'), hasLength(1));
+        expect(
+          contacts.where((contact) => contact.peerId == 'peer-C'),
+          hasLength(1),
+        );
 
         final systemMessages = await messageRepo.getMessagesForContact(
           'peer-C',
@@ -810,7 +903,7 @@ void main() {
             introductionId: 'intro-replay',
             introducerId: 'peer-A',
             recipientId: 'peer-B',
-            introducedId: 'peer-C',
+            introducedId: 'own-peer',
             timestamp: DateTime.now().toUtc().toIso8601String(),
           ).toJson(),
           timestamp: DateTime.now().toUtc().toIso8601String(),

@@ -2,6 +2,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/handle_incoming_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
+import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -58,7 +59,7 @@ void main() {
         payload: payload,
         introRepo: introRepo,
         contactRepo: contactRepo,
-        ownPeerId: ownPeerId,
+        ownPeerId: 'peer-B',
       );
 
       expect(result, HandleIntroductionResult.success);
@@ -73,6 +74,66 @@ void main() {
       // Verify it was persisted
       final stored = await introRepo.getIntroduction('intro-1');
       expect(stored, isNotNull);
+    });
+
+    test('rejects send not addressed to this user', () async {
+      final (result, model) = await handleIncomingIntroduction(
+        payload: IntroductionPayload(
+          action: 'send',
+          introductionId: 'intro-misaddressed',
+          introducerId: 'peer-A',
+          recipientId: 'peer-X',
+          introducedId: 'peer-C',
+          timestamp: now,
+        ),
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        ownPeerId: 'peer-B',
+      );
+
+      expect(result, HandleIntroductionResult.rejected);
+      expect(model, isNull);
+      expect(await introRepo.getIntroduction('intro-misaddressed'), isNull);
+    });
+
+    test('rejects send with missing or blank required peer ids', () async {
+      final payloads = <IntroductionPayload>[
+        IntroductionPayload(
+          action: 'send',
+          introductionId: 'intro-missing-introducer',
+          recipientId: ownPeerId,
+          introducedId: 'peer-C',
+          timestamp: now,
+        ),
+        IntroductionPayload(
+          action: 'send',
+          introductionId: 'intro-missing-recipient',
+          introducerId: 'peer-A',
+          introducedId: ownPeerId,
+          timestamp: now,
+        ),
+        IntroductionPayload(
+          action: 'send',
+          introductionId: 'intro-blank-introduced',
+          introducerId: 'peer-A',
+          recipientId: ownPeerId,
+          introducedId: '   ',
+          timestamp: now,
+        ),
+      ];
+
+      for (final payload in payloads) {
+        final (result, model) = await handleIncomingIntroduction(
+          payload: payload,
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: ownPeerId,
+        );
+
+        expect(result, HandleIntroductionResult.rejected);
+        expect(model, isNull);
+        expect(await introRepo.getIntroduction(payload.introductionId), isNull);
+      }
     });
 
     test('detects duplicate and returns alreadyExists', () async {
@@ -90,7 +151,7 @@ void main() {
         payload: payload,
         introRepo: introRepo,
         contactRepo: contactRepo,
-        ownPeerId: ownPeerId,
+        ownPeerId: 'peer-B',
       );
 
       // Second send is a duplicate
@@ -98,7 +159,7 @@ void main() {
         payload: payload,
         introRepo: introRepo,
         contactRepo: contactRepo,
-        ownPeerId: ownPeerId,
+        ownPeerId: 'peer-B',
       );
 
       expect(result, HandleIntroductionResult.alreadyExists);
@@ -133,7 +194,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(result, HandleIntroductionResult.alreadyExists);
@@ -172,7 +233,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(result, HandleIntroductionResult.success);
@@ -182,6 +243,61 @@ void main() {
         expect(model.introducedStatus, IntroductionStatus.pending);
         expect(model.status, IntroductionOverallStatus.pending);
         expect(await introRepo.getIntroduction('intro-old'), isNull);
+      },
+    );
+
+    test(
+      'newer replacement send replays deferred responses from the replaced intro id',
+      () async {
+        final replacementCreatedAt = DateTime.now().toUtc();
+        final oldCreatedAt = replacementCreatedAt.subtract(
+          const Duration(hours: 1),
+        );
+        final pendingCreatedAt = oldCreatedAt.add(const Duration(minutes: 5));
+
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-old',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            createdAt: oldCreatedAt.toIso8601String(),
+          ),
+        );
+        await introRepo.savePendingResponse(
+          PendingIntroductionResponse(
+            responseKey: 'intro-old::peer-C::accept',
+            introductionId: 'intro-old',
+            action: 'accept',
+            responderId: 'peer-C',
+            responderUsername: 'Charlie',
+            createdAt: pendingCreatedAt.toIso8601String(),
+          ),
+        );
+
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-new',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            timestamp: replacementCreatedAt.toIso8601String(),
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+        );
+
+        expect(result, HandleIntroductionResult.success);
+        expect(model, isNotNull);
+        expect(model!.id, 'intro-new');
+        expect(model.recipientStatus, IntroductionStatus.pending);
+        expect(model.introducedStatus, IntroductionStatus.accepted);
+        expect(model.status, IntroductionOverallStatus.pending);
+        expect(await introRepo.getIntroduction('intro-old'), isNull);
+        expect(await introRepo.loadPendingResponses('intro-old'), isEmpty);
+        expect(await introRepo.loadPendingResponses('intro-new'), isEmpty);
       },
     );
 
@@ -209,7 +325,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(result, HandleIntroductionResult.alreadyExists);
@@ -246,7 +362,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(result, HandleIntroductionResult.alreadyExists);
@@ -292,7 +408,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(result, HandleIntroductionResult.alreadyExists);
@@ -334,7 +450,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(result, HandleIntroductionResult.alreadyExists);
@@ -542,7 +658,7 @@ void main() {
         ),
         introRepo: introRepo,
         contactRepo: contactRepo,
-        ownPeerId: ownPeerId,
+        ownPeerId: 'peer-B',
       );
 
       // Introduced accepts
@@ -584,6 +700,363 @@ void main() {
       expect(model.status, IntroductionOverallStatus.passed);
     });
 
+    test('late pass does not downgrade a mutually accepted intro', () async {
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-C',
+          publicKey: 'pk-peer-C',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Charlie',
+          signature: 'sig-peer-C',
+          scannedAt: now,
+        ),
+      );
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-terminal-mutual',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.accepted,
+          status: IntroductionOverallStatus.mutualAccepted,
+          createdAt: now,
+        ),
+      );
+
+      expect(await contactRepo.contactExists('peer-C'), isTrue);
+
+      final (result, model) = await handleIncomingIntroduction(
+        payload: IntroductionPayload(
+          action: 'pass',
+          introductionId: 'intro-terminal-mutual',
+          responderId: 'peer-B',
+          timestamp: now,
+        ),
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        ownPeerId: 'peer-B',
+      );
+
+      expect(result, HandleIntroductionResult.alreadyExists);
+      expect(model, isNotNull);
+      expect(model!.recipientStatus, IntroductionStatus.accepted);
+      expect(model.introducedStatus, IntroductionStatus.accepted);
+      expect(model.status, IntroductionOverallStatus.mutualAccepted);
+      expect(await contactRepo.contactExists('peer-C'), isTrue);
+    });
+
+    test('late accept does not revive a passed intro', () async {
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-terminal-passed',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.passed,
+          introducedStatus: IntroductionStatus.accepted,
+          status: IntroductionOverallStatus.passed,
+          createdAt: now,
+        ),
+      );
+
+      expect(await contactRepo.contactExists('peer-C'), isFalse);
+
+      final (result, model) = await handleIncomingIntroduction(
+        payload: IntroductionPayload(
+          action: 'accept',
+          introductionId: 'intro-terminal-passed',
+          responderId: 'peer-B',
+          timestamp: now,
+        ),
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        ownPeerId: 'peer-B',
+      );
+
+      expect(result, HandleIntroductionResult.rejected);
+      expect(model, isNotNull);
+      expect(model!.recipientStatus, IntroductionStatus.passed);
+      expect(model.introducedStatus, IntroductionStatus.accepted);
+      expect(model.status, IntroductionOverallStatus.passed);
+      expect(await contactRepo.contactExists('peer-C'), isFalse);
+
+      final stored = await introRepo.getIntroduction('intro-terminal-passed');
+      expect(stored, isNotNull);
+      expect(stored!.recipientStatus, IntroductionStatus.passed);
+      expect(stored.introducedStatus, IntroductionStatus.accepted);
+      expect(stored.status, IntroductionOverallStatus.passed);
+    });
+
+    test('late accept does not revive an expired intro', () async {
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-terminal-expired',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.pending,
+          introducedStatus: IntroductionStatus.pending,
+          status: IntroductionOverallStatus.expired,
+          createdAt: '2026-03-01T11:00:00.000Z',
+        ),
+      );
+
+      expect(await contactRepo.contactExists('peer-C'), isFalse);
+
+      final (result, model) = await handleIncomingIntroduction(
+        payload: IntroductionPayload(
+          action: 'accept',
+          introductionId: 'intro-terminal-expired',
+          responderId: 'peer-C',
+          timestamp: now,
+        ),
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        ownPeerId: 'peer-B',
+      );
+
+      expect(result, HandleIntroductionResult.rejected);
+      expect(model, isNotNull);
+      expect(model!.recipientStatus, IntroductionStatus.pending);
+      expect(model.introducedStatus, IntroductionStatus.pending);
+      expect(model.status, IntroductionOverallStatus.expired);
+      expect(await contactRepo.contactExists('peer-C'), isFalse);
+
+      final stored = await introRepo.getIntroduction('intro-terminal-expired');
+      expect(stored, isNotNull);
+      expect(stored!.recipientStatus, IntroductionStatus.pending);
+      expect(stored.introducedStatus, IntroductionStatus.pending);
+      expect(stored.status, IntroductionOverallStatus.expired);
+    });
+
+    test('duplicate accept reconciles stale pending overall state', () async {
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-stale-overall',
+          introducerId: 'peer-A',
+          introducerUsername: 'Alice',
+          recipientId: 'peer-B',
+          recipientUsername: 'Bob',
+          introducedId: 'peer-C',
+          introducedUsername: 'Charlie',
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.accepted,
+          status: IntroductionOverallStatus.pending,
+          createdAt: now,
+        ),
+      );
+
+      final (result, model) = await handleIncomingIntroduction(
+        payload: IntroductionPayload(
+          action: 'accept',
+          introductionId: 'intro-stale-overall',
+          responderId: 'peer-C',
+          responderUsername: 'Charlie',
+          timestamp: now,
+        ),
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        ownPeerId: 'peer-B',
+      );
+
+      expect(result, HandleIntroductionResult.alreadyExists);
+      expect(model, isNotNull);
+      expect(model!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(await contactRepo.contactExists('peer-C'), isTrue);
+    });
+
+    test(
+      'deferred response replay does not downgrade an alreadyConnected intro',
+      () async {
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: 'peer-C',
+            publicKey: 'pk-peer-C',
+            rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+            username: 'Charlie',
+            signature: 'sig-peer-C',
+            scannedAt: now,
+          ),
+        );
+        await introRepo.savePendingResponse(
+          PendingIntroductionResponse(
+            responseKey: PendingIntroductionResponse.buildResponseKey(
+              introductionId: 'intro-already-connected-replay',
+              responderId: 'peer-C',
+              action: 'accept',
+            ),
+            introductionId: 'intro-already-connected-replay',
+            action: 'accept',
+            responderId: 'peer-C',
+            responderUsername: 'Charlie',
+            createdAt: now,
+          ),
+        );
+
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-already-connected-replay',
+            introducerId: 'peer-A',
+            recipientId: ownPeerId,
+            introducedId: 'peer-C',
+            timestamp: now,
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: ownPeerId,
+        );
+
+        expect(result, HandleIntroductionResult.success);
+        expect(model, isNotNull);
+        expect(model!.recipientStatus, IntroductionStatus.pending);
+        expect(model.introducedStatus, IntroductionStatus.pending);
+        expect(model.status, IntroductionOverallStatus.alreadyConnected);
+        expect(
+          await introRepo.loadPendingResponses(
+            'intro-already-connected-replay',
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test('transport sender mismatch rejects response before staging', () async {
+      final (result, model) = await handleIncomingIntroduction(
+        payload: IntroductionPayload(
+          action: 'accept',
+          introductionId: 'intro-forged-transport',
+          responderId: 'peer-C',
+          responderUsername: 'Charlie',
+          timestamp: now,
+        ),
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        ownPeerId: ownPeerId,
+        transportSenderPeerId: 'peer-forger',
+      );
+
+      expect(result, HandleIntroductionResult.rejected);
+      expect(model, isNull);
+      expect(
+        await introRepo.loadPendingResponses('intro-forged-transport'),
+        isEmpty,
+      );
+    });
+
+    test(
+      'valid existing intro rejects forged live accept and pass without state changes',
+      () async {
+        for (final action in ['accept', 'pass']) {
+          final introId = 'intro-existing-forged-$action';
+          await introRepo.saveIntroduction(
+            IntroductionModel(
+              id: introId,
+              introducerId: 'peer-A',
+              recipientId: ownPeerId,
+              introducedId: 'peer-C',
+              recipientStatus: IntroductionStatus.pending,
+              introducedStatus: IntroductionStatus.pending,
+              status: IntroductionOverallStatus.pending,
+              createdAt: now,
+            ),
+          );
+
+          final before = await introRepo.getIntroduction(introId);
+          expect(before, isNotNull);
+          expect(before!.recipientStatus, IntroductionStatus.pending);
+          expect(before.introducedStatus, IntroductionStatus.pending);
+          expect(before.status, IntroductionOverallStatus.pending);
+          expect(await introRepo.loadPendingResponses(introId), isEmpty);
+          expect(await contactRepo.contactExists('peer-C'), isFalse);
+
+          final (result, model) = await handleIncomingIntroduction(
+            payload: IntroductionPayload(
+              action: action,
+              introductionId: introId,
+              responderId: 'peer-C',
+              responderUsername: 'Charlie',
+              timestamp: now,
+            ),
+            introRepo: introRepo,
+            contactRepo: contactRepo,
+            ownPeerId: ownPeerId,
+            transportSenderPeerId: 'peer-forger',
+          );
+
+          expect(result, HandleIntroductionResult.rejected);
+          expect(model, isNull);
+
+          final stored = await introRepo.getIntroduction(introId);
+          expect(stored, isNotNull);
+          expect(stored!.introducerId, before.introducerId);
+          expect(stored.recipientId, before.recipientId);
+          expect(stored.introducedId, before.introducedId);
+          expect(stored.recipientStatus, before.recipientStatus);
+          expect(stored.introducedStatus, before.introducedStatus);
+          expect(stored.status, before.status);
+          expect(stored.recipientRespondedAt, before.recipientRespondedAt);
+          expect(stored.introducedRespondedAt, before.introducedRespondedAt);
+          expect(await introRepo.loadPendingResponses(introId), isEmpty);
+          expect(await contactRepo.contactExists('peer-C'), isFalse);
+        }
+      },
+    );
+
+    test(
+      'pending response with mismatched transport sender is discarded during replay',
+      () async {
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-forged-pending-replay',
+            introducerId: 'peer-A',
+            recipientId: ownPeerId,
+            introducedId: 'peer-C',
+            createdAt: now,
+          ),
+        );
+        await introRepo.savePendingResponse(
+          PendingIntroductionResponse(
+            responseKey: PendingIntroductionResponse.buildResponseKey(
+              introductionId: 'intro-forged-pending-replay',
+              responderId: 'peer-C',
+              action: 'accept',
+            ),
+            introductionId: 'intro-forged-pending-replay',
+            action: 'accept',
+            responderId: 'peer-C',
+            transportSenderPeerId: 'peer-forger',
+            responderUsername: 'Charlie',
+            createdAt: now,
+          ),
+        );
+
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-forged-pending-replay',
+            introducerId: 'peer-A',
+            recipientId: ownPeerId,
+            introducedId: 'peer-C',
+            timestamp: now,
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: ownPeerId,
+          transportSenderPeerId: 'peer-A',
+        );
+
+        expect(result, HandleIntroductionResult.alreadyExists);
+        expect(model, isNotNull);
+        expect(model!.introducedStatus, IntroductionStatus.pending);
+        expect(
+          await introRepo.loadPendingResponses('intro-forged-pending-replay'),
+          isEmpty,
+        );
+      },
+    );
+
     test(
       'accept before send is deferred and replayed when send arrives',
       () async {
@@ -623,7 +1096,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(sendResult, HandleIntroductionResult.success);
@@ -677,7 +1150,7 @@ void main() {
           ),
           introRepo: introRepo,
           contactRepo: contactRepo,
-          ownPeerId: ownPeerId,
+          ownPeerId: 'peer-B',
         );
 
         expect(sendResult, HandleIntroductionResult.success);

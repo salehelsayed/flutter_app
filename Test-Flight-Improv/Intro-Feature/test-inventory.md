@@ -435,8 +435,10 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | inbox fallback success clears the outbox delivery | Inbox fallback cleanup |
 | failed live send and inbox fallback keeps a failed outbox delivery | Double-failure state |
 | retryPendingIntroductionDeliveries replays a sent row through inbox | Retry mechanism |
+| retryPendingIntroductionDeliveries delivers a failed row through direct send when inbox storage fails | Direct retry after inbox failure |
+| retryPendingIntroductionDeliveries delivers a failed row through relay probe when inbox storage fails | Relay-probe retry after inbox failure |
 | retryPendingIntroductionDeliveries processes multiple stalled and failed rows and cleans delivered inbox rows | Multi-row retry cleanup |
-| handleAppResumed replays a sent intro row through inbox-only retry | Resume-triggered inbox-only replay |
+| handleAppResumed replays a sent intro row through inbox retry | Resume-triggered inbox retry |
 
 ### 3.15 expireOldIntroductions
 **File:** `test/features/introduction/application/expire_old_introductions_use_case_test.dart`
@@ -850,7 +852,7 @@ that used to lack direct coverage:
 
 ### 8.2 Application Layer
 - **Delivery cascade tiers**: The local/direct race is now covered on 2026-04-09 by `local/direct race converges to one intro row and one system message on the receiver` in `test/features/introduction/integration/introduction_smoke_test.dart`, and relay probe is covered by `relay-probe fallback delivers after the direct path fails` in `test/features/introduction/application/introduction_outbound_delivery_test.dart`; the already-connected fast path still is not tested in isolation.
-- **retryPendingIntroductionDeliveries on app resume**: Covered on 2026-04-09 by `retryPendingIntroductionDeliveries processes multiple stalled and failed rows and cleans delivered inbox rows` in `test/features/introduction/application/introduction_outbound_delivery_test.dart` plus the existing intro-retry ordering proof in `test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart`.
+- **retryPendingIntroductionDeliveries on app resume and failed-inbox retry parity**: Covered on 2026-05-22 by `retryPendingIntroductionDeliveries delivers a failed row through direct send when inbox storage fails`, `retryPendingIntroductionDeliveries delivers a failed row through relay probe when inbox storage fails`, `retryPendingIntroductionDeliveries processes multiple stalled and failed rows and cleans delivered inbox rows`, and `handleAppResumed replays a sent intro row through inbox retry` in `test/features/introduction/application/introduction_outbound_delivery_test.dart`, plus the existing intro-retry ordering proof in `test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart`. Verified by the full direct file passing with 11 tests, `./scripts/run_test_gates.sh intro` passing with 204 tests, `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD ./scripts/run_test_gates.sh transport` passing, and `INTRO_E2E_SCENARIO=pass-fallback ./smoke_test_friends.sh` passing.
 - **insertIntroSystemMessage**: No dedicated tests (covered indirectly by `create_connection_on_mutual_acceptance_test` and listener tests).
 - **Avatar download on mutual acceptance**: Covered on 2026-04-13 by the no-rollback regression plus `existing mutual-acceptance contact without avatar retries settlement without duplicating system message` in `test/features/introduction/application/create_connection_on_mutual_acceptance_test.dart`, `later recovery settles avatar for an already-mutual-accepted contact without duplicating side effects` in `test/features/introduction/application/expire_old_introductions_use_case_test.dart`, and green reruns of `flutter test --no-pub test/features/introduction/application`, `./scripts/run_test_gates.sh intro`, and `./scripts/run_test_gates.sh baseline`.
 - **Batch progress callback edge cases**: Partial batch failure mid-stream, network drop during batch.

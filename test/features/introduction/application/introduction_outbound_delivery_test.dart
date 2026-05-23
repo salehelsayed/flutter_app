@@ -259,6 +259,94 @@ void main() {
   );
 
   test(
+    'retryPendingIntroductionDeliveries delivers a failed row through direct send when inbox storage fails',
+    () async {
+      p2pService.storeInInboxResult = false;
+      p2pService.sendMessageWithReplyResult = const SendMessageResult(
+        sent: true,
+        acked: true,
+        transport: IntroductionOutboxDeliveryPath.direct,
+      );
+      await introRepo.saveOutboxDelivery(
+        IntroductionOutboxDelivery(
+          deliveryId: 'delivery-direct',
+          introductionId: 'intro-1',
+          action: 'send',
+          targetPeerId: 'peer-B',
+          senderPeerId: 'peer-A',
+          rawEnvelope: payload.toJson(),
+          deliveryStatus: IntroductionOutboxDeliveryStatus.failed,
+          deliveryPath: IntroductionOutboxDeliveryPath.pending,
+          lastError: 'previous_failure',
+          createdAt: '2025-04-04T12:00:00.000Z',
+          updatedAt: '2025-04-04T12:00:00.000Z',
+        ),
+      );
+
+      final delivered = await retryPendingIntroductionDeliveries(
+        introRepo: introRepo,
+        p2pService: p2pService,
+      );
+
+      expect(delivered, 1);
+      expect(introRepo.allOutboxDeliveries(), isEmpty);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.sendMessageWithReplyCallCount, 1);
+    },
+  );
+
+  test(
+    'retryPendingIntroductionDeliveries delivers a failed row through relay probe when inbox storage fails',
+    () async {
+      final relayProbeService = _RelayProbeFakeP2PService(
+        initialState: const NodeState(isStarted: true),
+        discoverPeerResult: const DiscoveredPeer(
+          id: 'peer-B',
+          addresses: ['/ip4/127.0.0.1/tcp/4001/p2p/peer-B'],
+        ),
+        dialPeerResult: false,
+        storeInInboxResult: false,
+        sendMessageWithReplyResult: const SendMessageResult(
+          sent: true,
+          acked: true,
+          transport: IntroductionOutboxDeliveryPath.relay,
+        ),
+        relayProbeResult: RelayProbeResult.connected,
+      );
+      p2pService = relayProbeService;
+      await introRepo.saveOutboxDelivery(
+        IntroductionOutboxDelivery(
+          deliveryId: 'delivery-relay-probe',
+          introductionId: 'intro-1',
+          action: 'send',
+          targetPeerId: 'peer-B',
+          senderPeerId: 'peer-A',
+          rawEnvelope: payload.toJson(),
+          deliveryStatus: IntroductionOutboxDeliveryStatus.failed,
+          deliveryPath: IntroductionOutboxDeliveryPath.pending,
+          lastError: 'previous_failure',
+          createdAt: '2025-04-04T12:00:00.000Z',
+          updatedAt: '2025-04-04T12:00:00.000Z',
+        ),
+      );
+
+      final delivered = await retryPendingIntroductionDeliveries(
+        introRepo: introRepo,
+        p2pService: p2pService,
+      );
+
+      expect(delivered, 1);
+      expect(introRepo.allOutboxDeliveries(), isEmpty);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.discoverPeerCallCount, 1);
+      expect(p2pService.dialPeerCallCount, 2);
+      expect(p2pService.sendMessageWithReplyCallCount, 1);
+      expect(p2pService.lastSendMessagePeerId, 'peer-B');
+      expect(relayProbeService.probeRelayCallCount, 1);
+    },
+  );
+
+  test(
     'retryPendingIntroductionDeliveries processes multiple stalled and failed rows and cleans delivered inbox rows',
     () async {
       await introRepo.saveOutboxDelivery(
@@ -317,7 +405,7 @@ void main() {
   );
 
   test(
-    'handleAppResumed replays a sent intro row through inbox-only retry',
+    'handleAppResumed replays a sent intro row through inbox retry',
     () async {
       await introRepo.saveOutboxDelivery(
         IntroductionOutboxDelivery(

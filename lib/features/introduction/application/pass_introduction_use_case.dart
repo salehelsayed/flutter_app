@@ -45,12 +45,23 @@ Future<IntroductionModel?> passIntroduction({
     emitFlowEvent(
       layer: 'UC',
       event: 'PASS_INTRO_NON_PARTY_CALLER',
-      details: {
-        'introductionId': introductionId,
-        'ownPeerId': ownPeerId,
-      },
+      details: {'introductionId': introductionId, 'ownPeerId': ownPeerId},
     );
     return null;
+  }
+
+  if (_isTerminalOverallStatus(intro.status) ||
+      _ownPartyStatus(intro: intro, isRecipient: isRecipient) !=
+          IntroductionStatus.pending) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'PASS_INTRO_NOOP_TERMINAL_OR_ANSWERED',
+      details: {
+        'introductionId': introductionId,
+        'status': intro.status.toDbString(),
+      },
+    );
+    return intro;
   }
 
   final otherPeerId = isRecipient ? intro.introducedId : intro.recipientId;
@@ -65,24 +76,28 @@ Future<IntroductionModel?> passIntroduction({
     emitFlowEvent(
       layer: 'UC',
       event: 'PASS_INTRO_STRANGER_KEY_MISMATCH',
-      details: {
-        'introductionId': introductionId,
-        'targetPeerId': otherPeerId,
-      },
+      details: {'introductionId': introductionId, 'targetPeerId': otherPeerId},
     );
     return null;
   }
 
-  if (isRecipient) {
-    await introRepo.updateRecipientStatus(
-      introductionId,
-      IntroductionStatus.passed,
+  final didUpdate = isRecipient
+      ? await introRepo.updateRecipientStatus(
+          introductionId,
+          IntroductionStatus.passed,
+        )
+      : await introRepo.updateIntroducedStatus(
+          introductionId,
+          IntroductionStatus.passed,
+        );
+  if (!didUpdate) {
+    final latestIntro = await introRepo.getIntroduction(introductionId);
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'PASS_INTRO_NOOP_GUARDED_UPDATE',
+      details: {'introductionId': introductionId},
     );
-  } else {
-    await introRepo.updateIntroducedStatus(
-      introductionId,
-      IntroductionStatus.passed,
-    );
+    return latestIntro ?? intro;
   }
 
   // Derive new overall status
@@ -141,6 +156,20 @@ Future<IntroductionModel?> passIntroduction({
   );
 
   return finalIntro;
+}
+
+bool _isTerminalOverallStatus(IntroductionOverallStatus status) {
+  return status == IntroductionOverallStatus.mutualAccepted ||
+      status == IntroductionOverallStatus.passed ||
+      status == IntroductionOverallStatus.expired ||
+      status == IntroductionOverallStatus.alreadyConnected;
+}
+
+IntroductionStatus _ownPartyStatus({
+  required IntroductionModel intro,
+  required bool isRecipient,
+}) {
+  return isRecipient ? intro.recipientStatus : intro.introducedStatus;
 }
 
 Future<bool> _hasIntroContactMlKemMismatch({

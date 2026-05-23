@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
+import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -70,7 +72,7 @@ void main() {
     contactRepo.addTestContact(contactD);
   });
 
-  ContactModel _createFriend(int index, {bool hasMlKemKey = true}) {
+  ContactModel createFriend(int index, {bool hasMlKemKey = true}) {
     final suffix = index.toString().padLeft(2, '0');
     final contact = ContactModel(
       peerId: 'peer-F$suffix',
@@ -86,11 +88,12 @@ void main() {
     return contact;
   }
 
-  List<ContactModel> _createFriends(int count) =>
-      List.generate(count, (index) => _createFriend(index + 1));
+  List<ContactModel> createFriends(int count) =>
+      List.generate(count, (index) => createFriend(index + 1));
 
-  Future<List<IntroductionModel>> _sendFriends(
+  Future<List<IntroductionModel>> sendFriends(
     List<ContactModel> friends, {
+    String? recipientMlKemPublicKey,
     void Function(int completed, int total)? onProgress,
   }) {
     return sendIntroductions(
@@ -102,30 +105,31 @@ void main() {
       introducerUsername: 'Alice',
       recipientPeerId: 'peer-B',
       recipientUsername: 'Bob',
-      recipientMlKemPublicKey: contactB.mlKemPublicKey,
+      recipientMlKemPublicKey:
+          recipientMlKemPublicKey ?? contactB.mlKemPublicKey,
       friendsToIntroduce: friends,
       onProgress: onProgress,
     );
   }
 
-  Future<List<IntroductionModel>> _sendTwoFriends() {
-    return _sendFriends([contactC, contactD]);
+  Future<List<IntroductionModel>> sendTwoFriends() {
+    return sendFriends([contactC, contactD]);
   }
 
   test('creates N introduction records for N selected friends', () async {
-    final results = await _sendTwoFriends();
+    final results = await sendTwoFriends();
     expect(results.length, 2);
   });
 
   test('each record has correct introducerId', () async {
-    final results = await _sendTwoFriends();
+    final results = await sendTwoFriends();
     for (final model in results) {
       expect(model.introducerId, 'peer-A');
     }
   });
 
   test('each record has correct recipientId and introducedId', () async {
-    final results = await _sendTwoFriends();
+    final results = await sendTwoFriends();
     expect(results[0].recipientId, 'peer-B');
     expect(results[0].introducedId, 'peer-C');
     expect(results[1].recipientId, 'peer-B');
@@ -133,7 +137,7 @@ void main() {
   });
 
   test('each record initializes with pending statuses', () async {
-    final results = await _sendTwoFriends();
+    final results = await sendTwoFriends();
     for (final model in results) {
       expect(model.recipientStatus, IntroductionStatus.pending);
       expect(model.introducedStatus, IntroductionStatus.pending);
@@ -142,33 +146,85 @@ void main() {
   });
 
   test('introsSentAt is set on the recipient contact', () async {
-    await _sendTwoFriends();
+    await sendTwoFriends();
     final updatedContact = await contactRepo.getContact('peer-B');
     expect(updatedContact, isNotNull);
     expect(updatedContact!.introsSentAt, isNotNull);
   });
 
   test('payload sent to recipient via P2P', () async {
-    await _sendTwoFriends();
+    await sendTwoFriends();
     // 2 friends x 2 messages each (one to recipient, one to friend) = 4 deliveries
     // At minimum, 2 messages go to the recipient (one per friend)
     expect(network.deliverCallCount, greaterThanOrEqualTo(2));
   });
 
   test('payload sent to introduced friend via P2P', () async {
-    await _sendTwoFriends();
+    await sendTwoFriends();
     // 2 friends: each gets 1 message to recipient + 1 message to friend = 4 total
     expect(network.deliverCallCount, 4);
   });
 
   test('v2 encryption used when target has ML-KEM key', () async {
-    await _sendTwoFriends();
+    await sendTwoFriends();
     // All 4 targets (recipient x2, friend-C, friend-D) have ML-KEM keys
     final encryptCalls = bridge.commandLog
         .where((cmd) => cmd == 'message.encrypt')
         .length;
     expect(encryptCalls, 4);
   });
+
+  test(
+    'uses the effective recipient ML-KEM key consistently for encryption and intro metadata',
+    () async {
+      contactRepo.addTestContact(
+        contactB.copyWith(mlKemPublicKey: 'stale-repo-mlkem-peer-B'),
+      );
+
+      final results = await sendFriends([
+        contactC,
+      ], recipientMlKemPublicKey: 'fresh-argument-mlkem-peer-B');
+
+      expect(
+        results.single.recipientMlKemPublicKey,
+        'fresh-argument-mlkem-peer-B',
+      );
+
+      final persisted = await introRepo.getIntroduction(results.single.id);
+      expect(persisted, isNotNull);
+      expect(persisted!.recipientMlKemPublicKey, 'fresh-argument-mlkem-peer-B');
+
+      final encryptRequests = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .where((request) => request['cmd'] == 'message.encrypt')
+          .toList(growable: false);
+      expect(encryptRequests, hasLength(2));
+
+      final encryptionTargetKeys = encryptRequests
+          .map(
+            (request) =>
+                (request['payload']
+                        as Map<String, dynamic>)['recipientPublicKey']
+                    as String,
+          )
+          .toList(growable: false);
+      expect(encryptionTargetKeys, contains('fresh-argument-mlkem-peer-B'));
+      expect(encryptionTargetKeys, contains(contactC.mlKemPublicKey));
+
+      final payloadRecipientKeys = encryptRequests
+          .map(
+            (request) =>
+                jsonDecode(
+                      (request['payload'] as Map<String, dynamic>)['plaintext']
+                          as String,
+                    )
+                    as Map<String, dynamic>,
+          )
+          .map((payload) => payload['recipientMlKemPublicKey'])
+          .toList(growable: false);
+      expect(payloadRecipientKeys, everyElement('fresh-argument-mlkem-peer-B'));
+    },
+  );
 
   test('v1 plaintext used when target lacks ML-KEM key', () async {
     // Create a friend without ML-KEM key
@@ -182,6 +238,17 @@ void main() {
       mlKemPublicKey: null,
     );
     contactRepo.addTestContact(contactNoMlKem);
+    await contactRepo.deleteContact('peer-B');
+    contactRepo.addTestContact(
+      ContactModel(
+        peerId: 'peer-B',
+        publicKey: 'pk-peer-B',
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Bob',
+        signature: 'sig-peer-B',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
     // Register receiver on network so delivery succeeds
     FakeP2PService(peerId: 'peer-E', network: network);
 
@@ -208,7 +275,7 @@ void main() {
   });
 
   test('returns list of created IntroductionModels', () async {
-    final results = await _sendTwoFriends();
+    final results = await sendTwoFriends();
     expect(results, isList);
     expect(results.length, 2);
     // Each result should have a non-empty ID
@@ -218,7 +285,7 @@ void main() {
   });
 
   test('records are persisted in introRepo', () async {
-    final results = await _sendTwoFriends();
+    final results = await sendTwoFriends();
     for (final model in results) {
       final persisted = await introRepo.getIntroduction(model.id);
       expect(persisted, isNotNull);
@@ -229,7 +296,7 @@ void main() {
   });
 
   test('re-sending the same pair replaces the older local intro row', () async {
-    final firstRound = await _sendFriends([contactC]);
+    final firstRound = await sendFriends([contactC]);
     final firstIntro = firstRound.single;
 
     await introRepo.updateRecipientStatus(
@@ -241,7 +308,7 @@ void main() {
       IntroductionOverallStatus.passed,
     );
 
-    final secondRound = await _sendFriends([contactC]);
+    final secondRound = await sendFriends([contactC]);
     final secondIntro = secondRound.single;
 
     expect(secondIntro.id, isNot(firstIntro.id));
@@ -262,9 +329,50 @@ void main() {
   });
 
   test(
+    're-sending the same pair rekeys pending responses from the replaced intro id',
+    () async {
+      final firstRound = await sendFriends([contactC]);
+      final firstIntro = firstRound.single;
+      await introRepo.savePendingResponse(
+        PendingIntroductionResponse(
+          responseKey: PendingIntroductionResponse.buildResponseKey(
+            introductionId: firstIntro.id,
+            responderId: 'peer-C',
+            action: 'accept',
+          ),
+          introductionId: firstIntro.id,
+          action: 'accept',
+          responderId: 'peer-C',
+          responderUsername: 'Charlie',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+
+      final secondRound = await sendFriends([contactC]);
+      final secondIntro = secondRound.single;
+
+      expect(await introRepo.loadPendingResponses(firstIntro.id), isEmpty);
+      final migratedResponses = await introRepo.loadPendingResponses(
+        secondIntro.id,
+      );
+      expect(migratedResponses, hasLength(1));
+      expect(
+        migratedResponses.single.responseKey,
+        PendingIntroductionResponse.buildResponseKey(
+          introductionId: secondIntro.id,
+          responderId: 'peer-C',
+          action: 'accept',
+        ),
+      );
+      expect(migratedResponses.single.responderId, 'peer-C');
+      expect(migratedResponses.single.action, 'accept');
+    },
+  );
+
+  test(
     're-sending the same pair after expiry replaces the expired local row with a fresh pending intro',
     () async {
-      final firstRound = await _sendFriends([contactC]);
+      final firstRound = await sendFriends([contactC]);
       final firstIntro = firstRound.single;
       final thirtyOneDaysAgo = DateTime.now()
           .toUtc()
@@ -280,7 +388,7 @@ void main() {
 
       expect(await introRepo.countPendingIntroductions('peer-B'), 0);
 
-      final secondRound = await _sendFriends([contactC]);
+      final secondRound = await sendFriends([contactC]);
       final secondIntro = secondRound.single;
 
       expect(secondIntro.id, isNot(firstIntro.id));
@@ -303,15 +411,15 @@ void main() {
   );
 
   test(
-    'persists the sender local intro row before a later delivery-stage crash',
+    'persists both outbound target rows before a delivery-stage crash',
     () async {
       final crashingRepo = _CrashAfterNthOutboxSaveIntroductionRepository(
-        crashOnSaveNumber: 3,
+        crashOnSaveNumber: 1,
       );
       introRepo = crashingRepo;
 
       await expectLater(
-        _sendFriends([contactC]),
+        sendFriends([contactC]),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
@@ -326,6 +434,18 @@ void main() {
       expect(stored.single.recipientId, 'peer-B');
       expect(stored.single.introducedId, 'peer-C');
       expect(stored.single.status, IntroductionOverallStatus.pending);
+
+      final deliveries = await crashingRepo.loadOutboxDeliveriesForIntroduction(
+        stored.single.id,
+      );
+      expect(deliveries.map((delivery) => delivery.targetPeerId).toSet(), {
+        'peer-B',
+        'peer-C',
+      });
+      expect(
+        deliveries.map((delivery) => delivery.deliveryStatus),
+        everyElement(IntroductionOutboxDeliveryStatus.sending),
+      );
       expect(network.deliverCallCount, 1);
     },
   );
@@ -333,10 +453,10 @@ void main() {
   test(
     'caps active intro work at 10 and splits later friends into a second batch',
     () async {
-      final friends = _createFriends(15);
+      final friends = createFriends(15);
       p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
 
-      final sendFuture = _sendFriends(friends);
+      final sendFuture = sendFriends(friends);
 
       await p2pServiceA.waitForBlockedSendCount(10);
       expect(p2pServiceA.activeBlockedSends, 10);
@@ -364,12 +484,12 @@ void main() {
   test(
     'continues across inbox fallback in the same and later batches',
     () async {
-      final friends = _createFriends(12);
+      final friends = createFriends(12);
       final fallbackTargets = {friends[2].peerId, friends[10].peerId};
       p2pServiceA.failMatcher = (targetPeerId, _) =>
           fallbackTargets.contains(targetPeerId);
 
-      final results = await _sendFriends(friends);
+      final results = await sendFriends(friends);
 
       expect(results.length, 12);
       expect(
@@ -384,10 +504,10 @@ void main() {
   test(
     'returns results in input friend order instead of completion order',
     () async {
-      final friends = _createFriends(3);
+      final friends = createFriends(3);
       p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
 
-      final sendFuture = _sendFriends(friends);
+      final sendFuture = sendFriends(friends);
 
       await p2pServiceA.waitForBlockedSendCount(3);
 
@@ -409,10 +529,10 @@ void main() {
   );
 
   test('sets introsSentAt once after all batches finish', () async {
-    final friends = _createFriends(12);
+    final friends = createFriends(12);
     p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
 
-    final sendFuture = _sendFriends(friends);
+    final sendFuture = sendFriends(friends);
 
     await p2pServiceA.waitForBlockedSendCount(10);
     expect(contactRepo.setIntrosSentAtCallCount, 0);
@@ -429,11 +549,11 @@ void main() {
   });
 
   test('reports truthful progress only when an intro chain settles', () async {
-    final friends = _createFriends(3);
+    final friends = createFriends(3);
     final progressUpdates = <String>[];
     p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
 
-    final sendFuture = _sendFriends(
+    final sendFuture = sendFriends(
       friends,
       onProgress: (completed, total) {
         progressUpdates.add('$completed/$total');
@@ -525,7 +645,11 @@ class _ControlledP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     storeInInboxTargets.add(toPeerId);
     return super.storeInInbox(toPeerId, message);
   }

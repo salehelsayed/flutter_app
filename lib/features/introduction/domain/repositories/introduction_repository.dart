@@ -9,6 +9,30 @@ abstract class IntroductionRepository {
   /// If an introduction with the same ID already exists, it will be replaced.
   Future<void> saveIntroduction(IntroductionModel intro);
 
+  /// Atomically saves an introduction and its initial durable outbound rows.
+  Future<void> saveIntroductionWithOutboxDeliveries(
+    IntroductionModel intro,
+    List<IntroductionOutboxDelivery> deliveries,
+  );
+
+  /// Atomically replaces old same-pair introductions with a new intro,
+  /// migrates staged responses from the replaced IDs, and stages outbox rows.
+  Future<void> replaceIntroductionWithPendingResponseMigration({
+    required IntroductionModel intro,
+    required List<IntroductionOutboxDelivery> deliveries,
+    required List<String> replacedIntroductionIds,
+  });
+
+  /// Atomically saves a local intro response and its outbound fan-out rows.
+  Future<bool> saveIntroductionResponseWithOutboxDeliveries({
+    required String introductionId,
+    required bool isRecipient,
+    required IntroductionStatus responseStatus,
+    required IntroductionOverallStatus overallStatus,
+    required String respondedAt,
+    required List<IntroductionOutboxDelivery> deliveries,
+  });
+
   /// Retrieves an introduction by its ID.
   ///
   /// Returns null if no introduction with the given ID exists.
@@ -39,10 +63,10 @@ abstract class IntroductionRepository {
   );
 
   /// Updates the recipient's response status.
-  Future<void> updateRecipientStatus(String id, IntroductionStatus status);
+  Future<bool> updateRecipientStatus(String id, IntroductionStatus status);
 
   /// Updates the introduced party's response status.
-  Future<void> updateIntroducedStatus(String id, IntroductionStatus status);
+  Future<bool> updateIntroducedStatus(String id, IntroductionStatus status);
 
   /// Updates the overall introduction status.
   Future<void> updateOverallStatus(String id, IntroductionOverallStatus status);

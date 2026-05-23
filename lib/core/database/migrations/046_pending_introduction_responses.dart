@@ -17,6 +17,7 @@ Future<void> runPendingIntroductionResponsesMigration(Database db) async {
         introduction_id TEXT NOT NULL,
         action TEXT NOT NULL CHECK(action IN ('accept', 'pass')),
         responder_id TEXT NOT NULL,
+        transport_sender_peer_id TEXT,
         responder_username TEXT,
         created_at TEXT NOT NULL
       )

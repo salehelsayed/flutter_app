@@ -67,6 +67,7 @@ import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_a
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
+import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -157,6 +158,7 @@ void main() {
     await runRemovedGroupMemberSnapshotsMigration(db);
     await runGroupMessageLocalDeletionsMigration(db);
     await runGroupKeyRotationDraftsMigration(db);
+    await runPendingIntroductionResponseTransportSenderMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -188,6 +190,11 @@ void main() {
     expect(await getTableNames(db), contains('group_key_rotation_drafts'));
     final groupMessageCols61 = await getColumnNames(db, 'group_messages');
     expect(groupMessageCols61, contains('transport_peer_id'));
+    final pendingIntroResponseCols71 = await getColumnNames(
+      db,
+      'pending_introduction_responses',
+    );
+    expect(pendingIntroResponseCols71, contains('transport_sender_peer_id'));
   }
 
   Future<void> runUpgradePathFromV1ThroughV65(
@@ -256,6 +263,7 @@ void main() {
     await runRemovedGroupMemberSnapshotsMigration(db);
     await runGroupMessageLocalDeletionsMigration(db);
     await runGroupKeyRotationDraftsMigration(db);
+    await runPendingIntroductionResponseTransportSenderMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -350,6 +358,40 @@ void main() {
           dbDeletePendingIntroductionResponse(db, responseKey),
       dbUpsertIntroductionOutboxDelivery: (row) =>
           dbUpsertIntroductionOutboxDelivery(db, row),
+      dbSaveIntroductionWithOutboxDeliveries: (introductionRow, deliveryRows) =>
+          dbSaveIntroductionWithOutboxDeliveries(
+            db,
+            introductionRow,
+            deliveryRows,
+          ),
+      dbReplaceIntroductionWithPendingResponseMigration:
+          ({
+            required introductionRow,
+            required deliveryRows,
+            required replacedIntroductionIds,
+          }) => dbReplaceIntroductionWithPendingResponseMigration(
+            db,
+            introductionRow: introductionRow,
+            deliveryRows: deliveryRows,
+            replacedIntroductionIds: replacedIntroductionIds,
+          ),
+      dbSaveIntroductionResponseWithOutboxDeliveries:
+          ({
+            required introductionId,
+            required isRecipient,
+            required responseStatus,
+            required respondedAt,
+            required overallStatus,
+            required deliveryRows,
+          }) => dbSaveIntroductionResponseWithOutboxDeliveries(
+            db,
+            introductionId: introductionId,
+            isRecipient: isRecipient,
+            responseStatus: responseStatus,
+            respondedAt: respondedAt,
+            overallStatus: overallStatus,
+            deliveryRows: deliveryRows,
+          ),
       dbLoadIntroductionOutboxDeliveriesForIntroduction: (introductionId) =>
           dbLoadIntroductionOutboxDeliveriesForIntroduction(db, introductionId),
       dbLoadRetryableIntroductionOutboxDeliveries:
@@ -1081,6 +1123,7 @@ void main() {
       await runContactIntroducedByPeerIdMigration(db);
       await runIntroductionAlreadyConnectedMigration(db);
       await runGroupQuotedMessageIdMigration(db);
+      await runPendingIntroductionResponsesMigration(db);
       await runGroupEventLogMigration(db);
       await runGroupPendingKeyRepairsMigration(db);
       await runGroupWelcomeKeyPackageTombstonesMigration(db);
@@ -1090,6 +1133,7 @@ void main() {
       await runRemovedGroupMemberSnapshotsMigration(db);
       await runGroupMessageLocalDeletionsMigration(db);
       await runGroupKeyRotationDraftsMigration(db);
+      await runPendingIntroductionResponseTransportSenderMigration(db);
 
       // Seed data
       await db.insert('identity', {
@@ -1119,6 +1163,7 @@ void main() {
       await runGroupsTablesMigration(db);
       await runGroupMessagesTablesMigration(db);
       await runGroupQuotedMessageIdMigration(db);
+      await runPendingIntroductionResponsesMigration(db);
       await runGroupEventLogMigration(db);
       await runGroupPendingKeyRepairsMigration(db);
       await runGroupWelcomeKeyPackageTombstonesMigration(db);
@@ -1128,6 +1173,7 @@ void main() {
       await runRemovedGroupMemberSnapshotsMigration(db);
       await runGroupMessageLocalDeletionsMigration(db);
       await runGroupKeyRotationDraftsMigration(db);
+      await runPendingIntroductionResponseTransportSenderMigration(db);
 
       // Re-run secrets migration (should be no-op)
       await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);

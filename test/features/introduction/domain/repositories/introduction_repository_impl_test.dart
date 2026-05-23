@@ -18,8 +18,8 @@ void main() {
         dbLoadIntroductionsByIntroduced: (_) async => const [],
         dbLoadIntroductionsByIntroducer: (_) async => const [],
         dbLoadIntroductionsForRecipientAndIntroducer: (_, __) async => const [],
-        dbUpdateRecipientStatus: (_, __, ___) async {},
-        dbUpdateIntroducedStatus: (_, __, ___) async {},
+        dbUpdateRecipientStatus: (_, __, ___) async => true,
+        dbUpdateIntroducedStatus: (_, __, ___) async => true,
         dbUpdateOverallStatus: (_, __) async {},
         dbLoadPendingIntroductionsForUser: (_) async => const [],
         dbCountPendingIntroductions: (_) async => 0,
@@ -47,6 +47,23 @@ void main() {
           operations.add('response:$responseKey');
         },
         dbUpsertIntroductionOutboxDelivery: (_) async {},
+        dbSaveIntroductionWithOutboxDeliveries:
+            (introductionRow, deliveryRows) async {},
+        dbReplaceIntroductionWithPendingResponseMigration:
+            ({
+              required introductionRow,
+              required deliveryRows,
+              required replacedIntroductionIds,
+            }) async {},
+        dbSaveIntroductionResponseWithOutboxDeliveries:
+            ({
+              required introductionId,
+              required isRecipient,
+              required responseStatus,
+              required respondedAt,
+              required overallStatus,
+              required deliveryRows,
+            }) async => true,
         dbLoadIntroductionOutboxDeliveriesForIntroduction: (_) async =>
             const [],
         dbLoadRetryableIntroductionOutboxDeliveries:

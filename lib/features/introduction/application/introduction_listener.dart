@@ -161,6 +161,8 @@ class IntroductionListener {
   Future<IntroductionMessageProcessOutcome> processIncomingMessage(
     ChatMessage message,
   ) async {
+    final transportSenderPeerId = message.from;
+
     Future<IntroductionMessageProcessOutcome> finish(
       IntroductionMessageProcessOutcome outcome,
     ) async {
@@ -187,6 +189,26 @@ class IntroductionListener {
       );
 
       if (envelope != null) {
+        final envelopeSenderPeerId = envelope['senderPeerId'] as String?;
+        if (envelopeSenderPeerId != null &&
+            envelopeSenderPeerId != transportSenderPeerId) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'INTRO_LISTENER_TRANSPORT_SENDER_MISMATCH',
+            details: {
+              'introductionId': envelope['messageId'] as String? ?? '',
+              'envelopeSenderPeerId': envelopeSenderPeerId,
+              'transportSenderPeerId': transportSenderPeerId,
+            },
+          );
+          return finish(
+            const IntroductionMessageProcessOutcome(
+              state: IntroductionMessageProcessState.rejected,
+              reasonCode: 'transport_sender_mismatch',
+            ),
+          );
+        }
+
         final encrypted = envelope['encrypted'] as Map<String, dynamic>;
         final ownSecretKey = await getOwnMlKemSecretKey();
         if (ownSecretKey != null) {
@@ -263,6 +285,27 @@ class IntroductionListener {
         );
       }
 
+      if (_payloadTransportSenderMismatch(
+        payload: payload,
+        transportSenderPeerId: transportSenderPeerId,
+      )) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'INTRO_LISTENER_TRANSPORT_SENDER_MISMATCH',
+          details: {
+            'introductionId': payload.introductionId,
+            'action': payload.action,
+            'transportSenderPeerId': transportSenderPeerId,
+          },
+        );
+        return finish(
+          const IntroductionMessageProcessOutcome(
+            state: IntroductionMessageProcessState.rejected,
+            reasonCode: 'transport_sender_mismatch',
+          ),
+        );
+      }
+
       // 4. Block check: only reject new introduction offers from blocked
       //    contacts. Accept/pass messages must always pass through — they
       //    complete the mutual-acceptance handshake and are not user content.
@@ -309,6 +352,7 @@ class IntroductionListener {
         introRepo: introRepo,
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
+        transportSenderPeerId: transportSenderPeerId,
         messageRepo: messageRepo,
         bridge: bridge,
       );
@@ -470,4 +514,19 @@ class IntroductionListener {
       );
     }
   }
+}
+
+bool _payloadTransportSenderMismatch({
+  required IntroductionPayload payload,
+  required String transportSenderPeerId,
+}) {
+  if (payload.action == 'send') {
+    return payload.introducerId != transportSenderPeerId;
+  }
+
+  if (payload.action == 'accept' || payload.action == 'pass') {
+    return payload.responderId != transportSenderPeerId;
+  }
+
+  return false;
 }
