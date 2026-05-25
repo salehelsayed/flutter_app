@@ -2169,10 +2169,11 @@ Future<void> _runOfflineCharlieRelaunchScenario({
       _log('ORCH', '$scenario/$role identity ready');
     }
 
+    final keepCharlieSeedProcess = scenario == 'private_offline_remove';
     final charlieSeed = await launchRole(
       'charlie',
       mode: 'seedOffline',
-      logLabel: 'charlie_seed',
+      logLabel: keepCharlieSeedProcess ? 'charlie' : 'charlie_seed',
     );
     final charlieIdentity = await _waitForJson(
       _signalPath(sharedDir, runId, 'charlie_identity.json'),
@@ -2186,39 +2187,57 @@ Future<void> _runOfflineCharlieRelaunchScenario({
       _signalPath(sharedDir, runId, 'charlie_old_state_persisted.json'),
       timeout: const Duration(minutes: 15),
     );
-    final seedExit = await charlieSeed.exitCode.timeout(
-      const Duration(minutes: 5),
-      onTimeout: () {
-        charlieSeed.kill();
-        return -1;
-      },
-    );
-    if (seedExit != 0) {
-      throw StateError(
-        '$scenario/charlie seed flutter process exitCode=$seedExit',
+    if (keepCharlieSeedProcess) {
+      await _waitForSignal(
+        _signalPath(sharedDir, runId, 'charlie_offline_before_removal'),
+        timeout: const Duration(minutes: 15),
       );
+      _log(
+        'ORCH',
+        '$scenario/charlie old state persisted; Charlie node offline',
+      );
+    } else {
+      final seedExit = await charlieSeed.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          charlieSeed.kill();
+          return -1;
+        },
+      );
+      if (seedExit != 0) {
+        throw StateError(
+          '$scenario/charlie seed flutter process exitCode=$seedExit',
+        );
+      }
+      processes.remove('charlie_seed');
+      await _terminateRunnerApp(
+        roleDevices['charlie']!,
+        '$scenario/charlie-seed',
+      );
+      File(
+        _signalPath(sharedDir, runId, 'charlie_offline_before_removal'),
+      ).writeAsStringSync('ok');
+      _log('ORCH', '$scenario/charlie old state persisted; Charlie offline');
     }
-    processes.remove('charlie_seed');
-    await _terminateRunnerApp(
-      roleDevices['charlie']!,
-      '$scenario/charlie-seed',
-    );
-    File(
-      _signalPath(sharedDir, runId, 'charlie_offline_before_removal'),
-    ).writeAsStringSync('ok');
-    _log('ORCH', '$scenario/charlie old state persisted; Charlie offline');
 
     await _waitForSignal(
       _signalPath(sharedDir, runId, 'charlie_relaunch_ready'),
       timeout: const Duration(minutes: 15),
     );
-    _log('ORCH', '$scenario relaunching Charlie after removal and sends');
-    await launchRole('charlie', restoreMnemonic: charlieMnemonic);
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_identity.json'),
-      timeout: const Duration(minutes: 15),
-    );
-    _log('ORCH', '$scenario/charlie reconnect identity ready');
+    if (keepCharlieSeedProcess) {
+      _log(
+        'ORCH',
+        '$scenario reconnecting Charlie inside seed harness after removal',
+      );
+    } else {
+      _log('ORCH', '$scenario relaunching Charlie after removal and sends');
+      await launchRole('charlie', restoreMnemonic: charlieMnemonic);
+      await _waitForJson(
+        _signalPath(sharedDir, runId, 'charlie_identity.json'),
+        timeout: const Duration(minutes: 15),
+      );
+      _log('ORCH', '$scenario/charlie reconnect identity ready');
+    }
 
     final verdicts = await Future.wait<Map<String, dynamic>>(
       roles.map(

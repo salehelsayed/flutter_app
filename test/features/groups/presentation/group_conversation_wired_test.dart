@@ -149,10 +149,22 @@ String _md012HashBytes(List<int> bytes) => sha256.convert(bytes).toString();
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
-  FakeIdentityRepository({this.identity});
+  Completer<IdentityModel?>? loadIdentityCompleter;
+  FakeIdentityRepository({this.identity, this.loadIdentityCompleter});
 
   @override
-  Future<IdentityModel?> loadIdentity() async => identity;
+  Future<IdentityModel?> loadIdentity() async {
+    final completer = loadIdentityCompleter;
+    if (completer != null) {
+      final loadedIdentity = await completer.future;
+      identity = loadedIdentity;
+      if (identical(loadIdentityCompleter, completer)) {
+        loadIdentityCompleter = null;
+      }
+      return loadedIdentity;
+    }
+    return identity;
+  }
 
   @override
   Future<void> saveIdentity(IdentityModel identity) async {
@@ -375,6 +387,7 @@ class _DelayedNotFoundGroupRepository extends InMemoryGroupRepository {
 class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
   int getMessagesPageCalls = 0;
   int getMessageCalls = 0;
+  int markAsReadCalls = 0;
 
   @override
   Future<List<GroupMessage>> getMessagesPage(
@@ -391,6 +404,12 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
     getMessageCalls++;
     return super.getMessage(id);
   }
+
+  @override
+  Future<void> markAsRead(String groupId) async {
+    markAsReadCalls++;
+    return super.markAsRead(groupId);
+  }
 }
 
 class SlowInitialPageGroupMessageRepository
@@ -404,6 +423,26 @@ class SlowInitialPageGroupMessageRepository
     int offset = 0,
   }) async {
     await firstPageGate.future;
+    return super.getMessagesPage(groupId, limit: limit, offset: offset);
+  }
+}
+
+class FailingInitialPageGroupMessageRepository
+    extends CountingGroupMessageRepository {
+  bool failNextPage = true;
+
+  @override
+  Future<List<GroupMessage>> getMessagesPage(
+    String groupId, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (failNextPage) {
+      failNextPage = false;
+      getMessagesPageCalls++;
+      throw StateError('simulated initial page failure');
+    }
+
     return super.getMessagesPage(groupId, limit: limit, offset: offset);
   }
 }
@@ -427,6 +466,13 @@ class CountingMediaAttachmentRepository
   ) async {
     getAttachmentsForMessagesCalls++;
     return super.getAttachmentsForMessages(messageIds);
+  }
+}
+
+class ThrowingSaveReactionRepository extends FakeReactionRepository {
+  @override
+  Future<void> saveReaction(MessageReaction reaction) async {
+    throw StateError('simulated reaction save failure');
   }
 }
 
@@ -466,6 +512,36 @@ GroupModel makeAnnouncementGroup({GroupRole role = GroupRole.admin}) =>
       createdBy: 'peer-admin',
       myRole: role,
     );
+
+Future<void> saveActiveGroupMembers(
+  InMemoryGroupRepository groupRepo,
+  GroupModel group,
+) async {
+  await groupRepo.saveMember(
+    GroupMember(
+      groupId: group.id,
+      peerId: testIdentity.peerId,
+      username: testIdentity.username,
+      role: group.myRole == GroupRole.admin
+          ? MemberRole.admin
+          : MemberRole.writer,
+      publicKey: testIdentity.publicKey,
+      mlKemPublicKey: testIdentity.mlKemPublicKey,
+      joinedAt: DateTime.utc(2026, 5, 1, 10),
+    ),
+  );
+  await groupRepo.saveMember(
+    GroupMember(
+      groupId: group.id,
+      peerId: 'peer-bob',
+      username: 'Bob',
+      role: MemberRole.writer,
+      publicKey: 'pk-peer-bob',
+      mlKemPublicKey: 'mlkem-peer-bob',
+      joinedAt: DateTime.utc(2026, 5, 1, 10, 1),
+    ),
+  );
+}
 
 GroupMessage makeMessage({
   required String id,
@@ -619,6 +695,7 @@ void main() {
       FakeGroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
       StreamController<ReactionChange>? reactionStreamController,
       StreamController<String>? removedStreamController,
+      ActiveConversationTracker? groupConversationTracker,
     }) {
       final g = group ?? makeChatGroup();
       return MaterialApp(
@@ -653,6 +730,7 @@ void main() {
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           reactionRepo: reactionRepo,
           groupReactionReplayOutboxRepository: reactionReplayOutboxRepo,
+          groupConversationTracker: groupConversationTracker,
         ),
       );
     }
@@ -1066,6 +1144,7 @@ void main() {
     testWidgets('sending a message calls bridge and refreshes', (tester) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
 
       await tester.pumpWidget(buildWidget(group: group));
       await pumpFrames(tester);
@@ -1096,6 +1175,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         final gatedBridge = _GatedPublishBridge();
         bridge = gatedBridge;
 
@@ -1154,6 +1234,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         final tempDir = Directory.systemTemp.createTempSync(
           'group-voice-send-guard-',
@@ -1200,6 +1281,13 @@ void main() {
           ),
         );
         await pumpFrames(tester, count: 20);
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.mediaMap.containsKey('msg-incoming-no-key') &&
+              screen.mediaMap.containsKey('msg-outgoing-no-key');
+        });
 
         final screen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
@@ -1501,6 +1589,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         final tempDir = Directory.systemTemp.createTempSync(
           'group-media-parent-row-',
@@ -1614,7 +1703,7 @@ void main() {
     );
 
     testWidgets(
-      'failed media upload leaves durable pending rows retryable and avoids group publish',
+      'failed media upload clears retryable durable rows and avoids group publish',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -1689,11 +1778,29 @@ void main() {
         await pumpFrames(tester, count: 5);
         expect(bridge.commandLog, isNot(contains('group:publish')));
 
-        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
-        expect(pending, hasLength(3));
         expect(
-          pending.every((att) => att.downloadStatus == 'upload_pending'),
-          isTrue,
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+        final failedMessage = (await msgRepo.getMessagesPage(
+          group.id,
+        )).singleWhere((message) => message.text == 'Fail media');
+        expect(failedMessage.status, 'failed');
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          failedMessage.id,
+        );
+        expect(attachments, hasLength(3));
+        expect(
+          attachments.where((att) => att.downloadStatus == 'upload_failed'),
+          hasLength(1),
+        );
+        expect(
+          attachments.where((att) => att.downloadStatus == 'done'),
+          hasLength(2),
+        );
+        expect(
+          attachments.any((att) => att.downloadStatus == 'upload_pending'),
+          isFalse,
         );
       },
     );
@@ -1799,9 +1906,12 @@ void main() {
 
         final pendingAfterFail = await mediaAttachmentRepo
             .getUploadPendingAttachments();
-        expect(pendingAfterFail, hasLength(1));
-        expect(pendingAfterFail.single.id, pendingBeforeFail.single.id);
-        expect(pendingAfterFail.single.downloadStatus, 'upload_pending');
+        expect(pendingAfterFail, isEmpty);
+        final failedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(messageId);
+        expect(failedAttachments, hasLength(1));
+        expect(failedAttachments.single.id, pendingBeforeFail.single.id);
+        expect(failedAttachments.single.downloadStatus, 'upload_failed');
 
         final failedScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
@@ -1811,6 +1921,86 @@ void main() {
         );
         expect(failedMessage.status, 'failed');
         expect(failedMessage.quotedMessageId, 'msg-parent-media-upload');
+      },
+    );
+
+    testWidgets(
+      'unauthorized text send shows a concrete error instead of disappearing silently',
+      (tester) async {
+        final widgetGroup = makeAnnouncementGroup(role: GroupRole.admin);
+        await groupRepo.saveGroup(
+          widgetGroup.copyWith(myRole: GroupRole.member),
+        );
+
+        await tester.pumpWidget(buildWidget(group: widgetGroup));
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(
+          find.byType(TextField),
+          'Unauthorized stale send',
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.messages.where(
+            (message) => message.text == 'Unauthorized stale send',
+          ),
+          isEmpty,
+        );
+        expect(
+          (await msgRepo.getMessagesPage(
+            widgetGroup.id,
+          )).where((message) => message.text == 'Unauthorized stale send'),
+          isEmpty,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          find.text(
+            'You no longer have permission to send messages in this group.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'missing-group text send shows a concrete error instead of disappearing silently',
+      (tester) async {
+        final missingGroup = makeChatGroup();
+
+        await tester.pumpWidget(buildWidget(group: missingGroup));
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(
+          find.byType(TextField),
+          'Missing group stale send',
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.messages.where(
+            (message) => message.text == 'Missing group stale send',
+          ),
+          isEmpty,
+        );
+        expect(
+          (await msgRepo.getMessagesPage(
+            missingGroup.id,
+          )).where((message) => message.text == 'Missing group stale send'),
+          isEmpty,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(find.text('This group is no longer available.'), findsOneWidget);
       },
     );
 
@@ -1981,6 +2171,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         final tempDir = Directory.systemTemp.createTempSync(
           'group-media-non-durable-',
@@ -2255,6 +2446,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
       await msgRepo.saveMessage(
         makeMessage(
           id: 'msg-parent',
@@ -2490,6 +2682,11 @@ void main() {
             mediaFileManager: mediaFileManager,
           ),
         );
+        await tester.pump();
+        await pumpUntil(
+          tester,
+          () => mediaAttachmentRepo.getAttachmentsForMessagesCalls > 0,
+        );
         await tester.runAsync(() async {
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
@@ -2583,6 +2780,130 @@ void main() {
         });
 
         expectHydratedOnce();
+      },
+    );
+
+    testWidgets(
+      'incoming done media without encryption metadata is quarantined but local outgoing owned media can display',
+      (tester) async {
+        final group = makeChatGroup();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-display-policy-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final contentHash = _md012HashBytes(_tinyPngBytes);
+
+        void writeRelativeMedia(String relativePath) {
+          final file = File(p.join(tempDir.path, relativePath));
+          file.parent.createSync(recursive: true);
+          file.writeAsBytesSync(_tinyPngBytes);
+        }
+
+        writeRelativeMedia('media/${group.id}/incoming-no-key.jpg');
+        writeRelativeMedia('media/${group.id}/outgoing-no-key.jpg');
+        await groupRepo.saveGroup(group);
+        await messageStreamController.close();
+        messageStreamController = StreamController<GroupMessage>.broadcast(
+          sync: true,
+        );
+
+        final incomingMessage = makeMessage(
+          id: 'msg-incoming-no-key',
+          text: 'Incoming media',
+          groupId: group.id,
+          isIncoming: true,
+        );
+        final outgoingMessage = makeMessage(
+          id: 'msg-outgoing-no-key',
+          text: 'Outgoing media',
+          groupId: group.id,
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'incoming-no-key',
+            messageId: 'msg-incoming-no-key',
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: 'media/${group.id}/incoming-no-key.jpg',
+            downloadStatus: kMediaDownloadStatusDone,
+            contentHash: contentHash,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'outgoing-no-key',
+            messageId: 'msg-outgoing-no-key',
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: 'media/${group.id}/outgoing-no-key.jpg',
+            downloadStatus: kMediaDownloadStatusDone,
+            contentHash: contentHash,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpUntil(tester, () => msgRepo.getMessagesPageCalls > 0);
+        await msgRepo.saveMessage(incomingMessage);
+        await msgRepo.saveMessage(outgoingMessage);
+        await tester.runAsync(() async {
+          messageStreamController.add(incomingMessage);
+          messageStreamController.add(outgoingMessage);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.mediaMap.containsKey('msg-incoming-no-key') &&
+              screen.mediaMap.containsKey('msg-outgoing-no-key');
+        });
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(msgRepo.getMessagesPageCalls, greaterThan(0));
+        expect(
+          screen.messages.map((message) => message.id),
+          containsAll(['msg-incoming-no-key', 'msg-outgoing-no-key']),
+        );
+        expect(
+          screen.mediaMap.keys,
+          containsAll(['msg-incoming-no-key', 'msg-outgoing-no-key']),
+        );
+        expect(
+          screen.mediaMap['msg-incoming-no-key']!.single.downloadStatus,
+          kMediaDownloadStatusIntegrityFailed,
+        );
+        expect(
+          screen.mediaMap['msg-incoming-no-key']!.single.localPath,
+          isNull,
+        );
+        expect(
+          screen.mediaMap['msg-outgoing-no-key']!.single.downloadStatus,
+          kMediaDownloadStatusDone,
+        );
+        expect(
+          screen.mediaMap['msg-outgoing-no-key']!.single.localPath,
+          contains('outgoing-no-key.jpg'),
+        );
       },
     );
 
@@ -2792,6 +3113,42 @@ void main() {
       expect(find.byKey(const ValueKey('group-loading-shell')), findsNothing);
       expect(find.text('Loaded after delay'), findsOneWidget);
     });
+
+    testWidgets(
+      'message load failure shows retryable error instead of empty conversation',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final failingRepo = FailingInitialPageGroupMessageRepository();
+        msgRepo = failingRepo;
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byKey(const ValueKey('group-loading-shell')), findsNothing);
+        expect(find.text("Couldn't load messages"), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-conversation-load-retry')),
+          findsOneWidget,
+        );
+        expect(find.text('Retry'), findsOneWidget);
+        expect(find.text('No messages yet'), findsNothing);
+
+        await failingRepo.saveMessage(
+          makeMessage(id: 'msg-recovered', text: 'Recovered on retry'),
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('group-conversation-load-retry')),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(failingRepo.getMessagesPageCalls, 2);
+        expect(find.text('Recovered on retry'), findsOneWidget);
+        expect(find.text("Couldn't load messages"), findsNothing);
+        expect(find.text('No messages yet'), findsNothing);
+      },
+    );
 
     testWidgets(
       'IR-018 shows recovery state while restart replay is pending and live messages still arrive',
@@ -3419,6 +3776,91 @@ void main() {
     );
 
     testWidgets(
+      'GCA-006 missing identity keeps composer read-only until late identity load',
+      (tester) async {
+        final group = makeChatGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.writer,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 5, 14, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            joinedAt: DateTime.utc(2026, 5, 14, 10, 1),
+          ),
+        );
+        final identityLoad = Completer<IdentityModel?>();
+        identityRepo = FakeIdentityRepository(
+          loadIdentityCompleter: identityLoad,
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 5);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.text('Waiting for your identity before you can send.'),
+          findsOneWidget,
+        );
+
+        final staleOnSend = screen.onSend as Future<void> Function(String);
+        await staleOnSend('GCA-006 missing identity send');
+        await pumpFrames(tester, count: 5);
+
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          (await msgRepo.getMessagesPage(group.id)).where(
+            (message) => message.text == 'GCA-006 missing identity send',
+          ),
+          isEmpty,
+        );
+
+        identityLoad.complete(testIdentity);
+        await pumpUntil(tester, () {
+          final currentScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return currentScreen.canWrite &&
+              currentScreen.ownPeerId == testIdentity.peerId;
+        });
+
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+        expect(find.byType(TextField), findsOneWidget);
+
+        final lateOnSend = screen.onSend as Future<void> Function(String);
+        await lateOnSend('GCA-006 late identity send');
+        await pumpFrames(tester, count: 20);
+
+        expect(bridge.commandLog, contains('group:publish'));
+        final savedMessages = await msgRepo.getMessagesPage(group.id);
+        final sentMessage = savedMessages.singleWhere(
+          (message) => message.text == 'GCA-006 late identity send',
+        );
+        expect(sentMessage.senderPeerId, testIdentity.peerId);
+        expect(sentMessage.senderUsername, testIdentity.username);
+      },
+    );
+
+    testWidgets(
       'dissolved groups hide reaction entry even when reaction deps are wired',
       (tester) async {
         final group = makeChatGroup().copyWith(
@@ -3503,6 +3945,121 @@ void main() {
         expect(find.text('\u{1F44D}'), findsNothing);
       },
     );
+
+    testWidgets(
+      'optimistic reaction add rolls back when the target message is gone',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await msgRepo.deleteMessage('msg-1');
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        final thumbsUp = find.descendant(
+          of: find.byKey(MessageContextOverlay.reactionBarKey),
+          matching: find.text('\u{1F44D}'),
+        );
+        await tester.tap(thumbsUp);
+        await pumpFrames(tester, count: 20);
+
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+        expect(find.text('\u{1F44D}'), findsNothing);
+      },
+    );
+
+    testWidgets('optimistic reaction remove rolls back on non-success result', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
+      await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+      final reactionRepo = FakeReactionRepository();
+      await reactionRepo.saveReaction(
+        MessageReaction(
+          id: 'rxn-self',
+          messageId: 'msg-1',
+          emoji: '\u{1F44D}',
+          senderPeerId: testIdentity.peerId,
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      final reactionReplayOutboxRepo =
+          FakeGroupReactionReplayOutboxRepository();
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        ),
+      );
+      await pumpFrames(tester);
+      await groupRepo.removeMember(group.id, testIdentity.peerId);
+
+      await tester.longPress(find.text('Hello'));
+      await pumpFrames(tester);
+
+      final thumbsUp = find.descendant(
+        of: find.byKey(MessageContextOverlay.reactionBarKey),
+        matching: find.text('\u{1F44D}'),
+      );
+      await tester.tap(thumbsUp);
+      await pumpFrames(tester, count: 20);
+
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+      expect(find.text('\u{1F44D}'), findsOneWidget);
+    });
+
+    testWidgets('optimistic reaction add rolls back when persistence throws', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
+      await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+      final reactionRepo = ThrowingSaveReactionRepository();
+      final reactionReplayOutboxRepo =
+          FakeGroupReactionReplayOutboxRepository();
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.text('Hello'));
+      await pumpFrames(tester);
+
+      final thumbsUp = find.descendant(
+        of: find.byKey(MessageContextOverlay.reactionBarKey),
+        matching: find.text('\u{1F44D}'),
+      );
+      await tester.tap(thumbsUp);
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('\u{1F44D}'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets(
       'non-admin in announcement group still has no voice stop/cancel callbacks when durable voice deps are enabled',
@@ -3723,6 +4280,135 @@ void main() {
       expect(tracker.isViewing('group:${group.id}'), isTrue);
     });
 
+    testWidgets(
+      'reused group conversation widget clears stale messages media and reactions when group id changes',
+      (tester) async {
+        final groupA = makeChatGroup();
+        final groupB = makeChatGroup().copyWith(
+          id: 'group-2',
+          name: 'Second Group',
+          topicName: 'topic-2',
+        );
+        await groupRepo.saveGroup(groupA);
+        await groupRepo.saveGroup(groupB);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-group-a', text: 'Group A only'),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-group-b',
+            text: 'Group B only',
+            groupId: groupB.id,
+          ),
+        );
+        final reactionRepo = FakeReactionRepository();
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-group-a',
+            messageId: 'msg-group-a',
+            emoji: '\u{1F44D}',
+            senderPeerId: 'peer-alice',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'media-group-a',
+            messageId: 'msg-group-a',
+            mime: 'image/png',
+            size: 1,
+            mediaType: 'image',
+            localPath: 'pending_uploads/msg-group-a/media.png',
+            downloadStatus: kMediaDownloadStatusDone,
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupA,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            reactionRepo: reactionRepo,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        expect(find.text('Group A only'), findsOneWidget);
+        expect(find.text('\u{1F44D}'), findsOneWidget);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: groupB,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            reactionRepo: reactionRepo,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.messages.map((message) => message.id), ['msg-group-b']);
+        expect(screen.mediaMap.containsKey('msg-group-a'), isFalse);
+        expect(screen.reactions.containsKey('msg-group-a'), isFalse);
+        expect(find.text('Group A only'), findsNothing);
+        expect(find.text('Group B only'), findsOneWidget);
+        expect(find.text('\u{1F44D}'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'read marking requires foreground lifecycle and matching active group key',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-unread', text: 'Unread while hidden'),
+        );
+        final tracker = ActiveConversationTracker();
+
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        addTearDown(() {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        });
+
+        await tester.pumpWidget(
+          buildWidget(group: group, groupConversationTracker: tracker),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(msgRepo.markAsReadCalls, 0);
+        expect(await msgRepo.getUnreadCount(group.id), 1);
+
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 10);
+        final callsAfterResume = msgRepo.markAsReadCalls;
+        expect(callsAfterResume, greaterThanOrEqualTo(1));
+
+        tracker.setActive('group:other');
+        final streamed = makeMessage(
+          id: 'msg-active-mismatch',
+          text: 'Active mismatch',
+          groupId: group.id,
+        );
+        await msgRepo.saveMessage(streamed);
+        messageStreamController.add(streamed);
+        await pumpFrames(tester, count: 20);
+
+        expect(msgRepo.markAsReadCalls, callsAfterResume);
+      },
+    );
+
     testWidgets('clears tracker on dispose', (tester) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
@@ -3757,6 +4443,43 @@ void main() {
       await pumpFrames(tester);
 
       expect(tracker.isViewing('group:${group.id}'), isFalse);
+    });
+
+    testWidgets('old group dispose does not clear newer active group key', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final tracker = ActiveConversationTracker();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: GroupConversationWired(
+            group: group,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupMessageListener: FakeGroupMessageListener(
+              messageStreamController.stream,
+            ),
+            bridge: bridge,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            groupConversationTracker: tracker,
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      tracker.setActive('group:newer-group');
+
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await pumpFrames(tester);
+
+      expect(tracker.isViewing('group:newer-group'), isTrue);
     });
 
     testWidgets(
@@ -3818,6 +4541,63 @@ void main() {
         expect(tracker.isViewing('group:${group.id}'), isFalse);
       },
     );
+
+    testWidgets('old group removal does not clear newer active group key', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final tracker = ActiveConversationTracker();
+      final removedStreamController = StreamController<String>.broadcast();
+      addTearDown(removedStreamController.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => GroupConversationWired(
+                        group: group,
+                        groupRepo: groupRepo,
+                        msgRepo: msgRepo,
+                        groupMessageListener: FakeGroupMessageListener(
+                          messageStreamController.stream,
+                          removedStream: removedStreamController.stream,
+                        ),
+                        bridge: bridge,
+                        identityRepo: identityRepo,
+                        contactRepo: contactRepo,
+                        p2pService: p2pService,
+                        groupConversationTracker: tracker,
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Open Group Conversation'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open Group Conversation'));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(GroupConversationScreen), findsOneWidget);
+      tracker.setActive('group:newer-group');
+
+      removedStreamController.add(group.id);
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(GroupConversationScreen), findsNothing);
+      expect(tracker.isViewing('group:newer-group'), isTrue);
+    });
 
     testWidgets('accepts empty initialAttachments without error', (
       tester,
@@ -4047,6 +4827,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         // Use a gated bridge that blocks group:publish until we release it
         final gatedBridge = _GatedPublishBridge();
@@ -4083,6 +4864,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
 
       final gatedBridge = _GatedPublishBridge();
       bridge = gatedBridge;
@@ -4117,6 +4899,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
 
       // Bridge returns failure for publish
       bridge = FakeBridge(
@@ -4149,6 +4932,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
 
         bridge = FakeBridge(
           initialResponses: {
@@ -4255,6 +5039,176 @@ void main() {
         'Retry upload',
       );
     });
+
+    testWidgets(
+      'durable media send rejects spoofed bytes before saving upload rows',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-spoofed-media-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File(p.join(tempDir.path, 'spoof.jpg'))
+          ..writeAsBytesSync(const <int>[0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]);
+        var uploadCalled = false;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: TrackingDurableMediaFileManager(tempDir),
+            initialAttachments: [attachment],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  uploadCalled = true;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Spoofed media');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 30);
+
+        expect(uploadCalled, isFalse);
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Spoofed media',
+        );
+      },
+    );
+
+    testWidgets(
+      'partial durable upload failure keeps successful uploads and clears retryable restored rows',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-partial-upload-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachmentA = File(p.join(tempDir.path, 'partial-a.png'))
+          ..writeAsBytesSync(_tinyPngBytes);
+        final attachmentB = File(p.join(tempDir.path, 'partial-b.png'))
+          ..writeAsBytesSync(_tinyPngBytes);
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final uploadedBlobIds = <String>[];
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: [attachmentA, attachmentB],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  uploadedBlobIds.add(blobId ?? 'missing-blob-id');
+                  if (uploadedBlobIds.length == 2) {
+                    return null;
+                  }
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: File(localFilePath).lengthSync(),
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager!.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: kMediaDownloadStatusDone,
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final sendFuture = await startScreenSend(tester, 'Partial upload');
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
+        await pumpFrames(tester, count: 5);
+
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+        final failedMessage = (await msgRepo.getMessagesPage(
+          group.id,
+        )).singleWhere((message) => message.text == 'Partial upload');
+        expect(failedMessage.status, 'failed');
+        final savedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(failedMessage.id);
+        expect(
+          savedAttachments.where(
+            (attachment) => attachment.downloadStatus == 'done',
+          ),
+          hasLength(1),
+        );
+        expect(
+          savedAttachments.where(
+            (attachment) => attachment.downloadStatus == 'upload_failed',
+          ),
+          hasLength(1),
+        );
+        expect(
+          savedAttachments
+              .singleWhere((attachment) => attachment.downloadStatus == 'done')
+              .id,
+          uploadedBlobIds.first,
+        );
+      },
+    );
 
     testWidgets('shows relay upload progress and blocks leaving mid-upload', (
       tester,
@@ -4526,6 +5480,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         final mediaFileManager = FakeMediaFileManager();
 
         String retryPayload({
@@ -5025,6 +5980,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
       await msgRepo.saveMessage(
         makeMessage(
           id: 'msg-parent-publish',
@@ -5584,6 +6540,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         final tempDir = Directory.systemTemp.createTempSync(
           'group-voice-success-',
         );
@@ -5746,6 +6703,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         final tempDir = Directory.systemTemp.createTempSync(
           'group-voice-caller-local-',
         );
@@ -5857,6 +6815,7 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
         final tempDir = Directory.systemTemp.createTempSync(
           'group-voice-zero-peers-',
         );
@@ -6063,6 +7022,15 @@ void main() {
         );
         groupRepo = delayedGroupRepo;
         await delayedGroupRepo.saveGroup(group);
+        await delayedGroupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: group.id,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-1',
+            createdAt: DateTime.utc(2026, 5, 1, 9),
+          ),
+        );
+        await saveActiveGroupMembers(delayedGroupRepo, group);
         await delayedGroupRepo.saveMember(
           GroupMember(
             groupId: group.id,
@@ -6283,6 +7251,7 @@ void main() {
     ) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
       await msgRepo.saveMessage(
         makeMessage(
           id: 'msg-parent-voice-publish',

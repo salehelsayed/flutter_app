@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -4263,8 +4264,8 @@ func TestJoinGroupTopic_DuplicateJoinPreservesDelivery(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on duplicate join")
 	}
-	if !strings.Contains(err.Error(), "already joined") {
-		t.Fatalf("expected 'already joined' error, got %q", err.Error())
+	if !errors.Is(err, ErrGroupAlreadyJoined) {
+		t.Fatalf("duplicate join error = %v, want ErrGroupAlreadyJoined", err)
 	}
 
 	msgId, peerCount, err := nodeA.PublishGroupMessage(

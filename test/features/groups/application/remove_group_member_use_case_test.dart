@@ -378,6 +378,136 @@ void main() {
     },
   );
 
+  test('G3-005 writer with remove permission cannot remove an admin', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-moderator',
+        username: 'Moderator',
+        role: MemberRole.writer,
+        permissions: const GroupMemberPermissions(removeMembers: true),
+        publicKey: 'pk-moderator',
+        joinedAt: DateTime.utc(2026, 5, 24, 8),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-other-admin',
+        username: 'Other Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-other-admin',
+        joinedAt: DateTime.utc(2026, 5, 24, 8, 1),
+      ),
+    );
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-other-admin',
+        selfPeerId: 'peer-moderator',
+        eventAt: DateTime.utc(2026, 5, 24, 8, 2),
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains(removeAdminRoleBoundaryBlockedMessage),
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-other-admin'), isNotNull);
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+  });
+
+  test(
+    'G3-006 rejects stale remove event before local or bridge mutation',
+    () async {
+      final watermark = DateTime.utc(2026, 5, 24, 9);
+      await groupRepo.updateGroup(
+        testGroup.copyWith(lastMembershipEventAt: watermark),
+      );
+
+      await expectLater(
+        removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-to-remove',
+          selfPeerId: 'peer-admin',
+          eventAt: watermark,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains(staleGroupMembershipEventMessage),
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test('G3-009 saves removed member snapshot before deleting member', () async {
+    final removedAt = DateTime.utc(2026, 5, 24, 10);
+
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-to-remove',
+      selfPeerId: 'peer-admin',
+      eventAt: removedAt,
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNull);
+    final snapshot = await groupRepo.getRemovedMemberSnapshot(
+      'group-1',
+      'peer-to-remove',
+    );
+    expect(snapshot, isNotNull);
+    expect(snapshot!.publicKey, 'pk-remove');
+    expect(snapshot.username, 'RemoveMe');
+  });
+
+  test('G3-010 rejects remove on dissolved group before mutation', () async {
+    final dissolvedAt = DateTime.utc(2026, 5, 24, 11);
+    await groupRepo.updateGroup(
+      testGroup.copyWith(
+        isDissolved: true,
+        dissolvedAt: dissolvedAt,
+        dissolvedBy: 'peer-admin',
+      ),
+    );
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        selfPeerId: 'peer-admin',
+        eventAt: dissolvedAt.add(const Duration(minutes: 1)),
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains(groupMembershipMutationDissolvedMessage),
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+  });
+
   test(
     'rechecks revoked remove permission before removing a queued target',
     () async {

@@ -15,6 +15,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 /// Result of removing an emoji reaction from a group message.
 enum RemoveGroupReactionResult {
+  /// Live publish was accepted and local/replay state was queued.
+  ///
+  /// This is not a remote delivery confirmation.
   success,
   groupNotFound,
   groupDissolved,
@@ -24,7 +27,7 @@ enum RemoveGroupReactionResult {
 
 const _uuid = Uuid();
 
-/// Sends a "remove" reaction to a group via GossipSub and deletes locally.
+/// Sends a "remove" reaction via live publish plus replay outbox and deletes locally.
 Future<RemoveGroupReactionResult> removeGroupReaction({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -132,10 +135,14 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
 
   emitFlowEvent(
     layer: 'FL',
-    event: 'GROUP_REACTION_REMOVE_SUCCESS',
+    event: 'GROUP_REACTION_REMOVE_QUEUED',
     details: {
       'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
       'emoji': emoji,
+      'deliveryMode': 'live_publish_replay_queued',
+      'deliveryConfirmed': false,
+      'localState': 'optimistic',
+      'replayStatus': 'pending',
     },
   );
 

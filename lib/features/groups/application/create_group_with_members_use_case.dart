@@ -19,11 +19,27 @@ import 'package:flutter_app/features/groups/domain/repositories/group_invite_del
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
+class CreateGroupMemberAddFailure {
+  final String peerId;
+  final String username;
+
+  const CreateGroupMemberAddFailure({
+    required this.peerId,
+    required this.username,
+  });
+
+  String get displayName {
+    final trimmed = username.trim();
+    return trimmed.isNotEmpty ? trimmed : peerId;
+  }
+}
+
 /// Result of creating a group with members.
 class CreateGroupWithMembersResult {
   final GroupModel group;
   final int membersAdded;
   final GroupInviteBatchResult? inviteBatchResult;
+  final List<CreateGroupMemberAddFailure> _addMemberFailures;
   final bool inviteDeliverySkippedMissingKey;
   final bool membershipSyncRolledBack;
   final bool membersAddedPublishFailed;
@@ -32,14 +48,19 @@ class CreateGroupWithMembersResult {
     required this.group,
     required this.membersAdded,
     this.inviteBatchResult,
+    List<CreateGroupMemberAddFailure> addMemberFailures = const [],
     this.inviteDeliverySkippedMissingKey = false,
     this.membershipSyncRolledBack = false,
     this.membersAddedPublishFailed = false,
-  });
+  }) : _addMemberFailures = addMemberFailures;
 
   int get invitesSent => inviteBatchResult?.successCount ?? 0;
 
+  List<CreateGroupMemberAddFailure> get addMemberFailures =>
+      List.unmodifiable(_addMemberFailures);
+
   bool get hasWarnings =>
+      _addMemberFailures.isNotEmpty ||
       inviteDeliverySkippedMissingKey ||
       membershipSyncRolledBack ||
       membersAddedPublishFailed ||
@@ -47,6 +68,11 @@ class CreateGroupWithMembersResult {
 
   String? buildCreateWarningMessage() {
     final issues = <String>[];
+    if (_addMemberFailures.isNotEmpty) {
+      issues.add(
+        'selected members were not added: ${_describeAddMemberFailures()}',
+      );
+    }
     if (membershipSyncRolledBack) {
       issues.add(
         'no one else was added because membership setup could not be synced',
@@ -67,6 +93,18 @@ class CreateGroupWithMembersResult {
       return null;
     }
     return 'Group created, but ${issues.join('; ')}.';
+  }
+
+  String _describeAddMemberFailures({int limit = 3}) {
+    final labels = _addMemberFailures
+        .take(limit)
+        .map((failure) => failure.displayName)
+        .toList(growable: false);
+    final hiddenCount = _addMemberFailures.length - labels.length;
+    if (hiddenCount > 0) {
+      labels.add('+$hiddenCount more');
+    }
+    return labels.join(', ');
   }
 }
 
@@ -135,6 +173,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
 
   // 3. Add each contact as a writer member
   final addedMembers = <GroupMember>[];
+  final addMemberFailures = <CreateGroupMemberAddFailure>[];
   for (final contact in uniqueContacts) {
     try {
       final newMember = GroupMember(
@@ -156,6 +195,12 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       );
       addedMembers.add(newMember);
     } catch (e) {
+      addMemberFailures.add(
+        CreateGroupMemberAddFailure(
+          peerId: contact.peerId,
+          username: contact.username,
+        ),
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'CREATE_GROUP_WITH_MEMBERS_ADD_MEMBER_ERROR',
@@ -186,6 +231,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     return CreateGroupWithMembersResult(
       group: group,
       membersAdded: 0,
+      addMemberFailures: addMemberFailures,
       membershipSyncRolledBack: true,
     );
   }
@@ -313,6 +359,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     group: group,
     membersAdded: addedMembers.length,
     inviteBatchResult: inviteBatchResult,
+    addMemberFailures: addMemberFailures,
     inviteDeliverySkippedMissingKey: inviteDeliverySkippedMissingKey,
     membersAddedPublishFailed: membersAddedPublishFailed,
   );

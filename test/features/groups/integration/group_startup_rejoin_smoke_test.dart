@@ -773,7 +773,9 @@ void main() {
         );
         const groupId = 'bb012-smoke-replay';
         const replayMessageId = 'bb012-smoke-replay-message';
-        final createdAt = DateTime.utc(2026, 5, 11, 14);
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(hours: 3),
+        );
         final replayAt = createdAt.add(const Duration(minutes: 5));
         final keyInfo = GroupKeyInfo(
           groupId: groupId,
@@ -920,7 +922,9 @@ void main() {
           ),
         );
         const groupIds = <String>['nw004-smoke-alpha', 'nw004-smoke-beta'];
-        final createdAt = DateTime.utc(2026, 5, 13, 9);
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(hours: 3),
+        );
 
         try {
           for (var i = 0; i < groupIds.length; i++) {
@@ -1087,7 +1091,9 @@ void main() {
         );
         const groupId = 'ir018-smoke-replay';
         const replayMessageId = 'ir018-smoke-replay-message';
-        final createdAt = DateTime.utc(2026, 5, 12, 10);
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(hours: 3),
+        );
         final replayAt = createdAt.add(const Duration(minutes: 6));
         final keyInfo = GroupKeyInfo(
           groupId: groupId,

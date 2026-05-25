@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -302,6 +303,43 @@ void main() {
           .map((command) => command['payload'] as Map<String, dynamic>)
           .toList();
     }
+
+    test(
+      'rejoins but skips recovery ack when group message repository is unavailable',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await seedRecoveryGroup(
+          groupId: 'group-no-msg-repo',
+          latestEpoch: 3,
+          latestKey: 'latest-key-no-msg-repo',
+          createdAt: DateTime.utc(2026, 5, 24, 10),
+        );
+
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+          groupRepo: groupRepo,
+        );
+
+        expect(bridge.commandLog, contains('group:join'));
+        expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
+        expect(bridge.commandLog, isNot(contains('group:acknowledgeRecovery')));
+        expect(
+          flowEvents,
+          contains(
+            predicate<Map<String, dynamic>>(
+              (event) =>
+                  event['event'] == 'APP_LIFECYCLE_RESUME_GROUP_ACK_SKIPPED' &&
+                  (event['details'] as Map<String, dynamic>)['reason'] ==
+                      'missing_group_message_repository',
+            ),
+          ),
+        );
+      },
+    );
 
     test(
       'BB-011 acknowledges recovery only after every persisted group rejoin succeeds',
@@ -1042,7 +1080,9 @@ void main() {
       () async {
         const groupId = 'ir018-life-pending-replay';
         const messageId = 'ir018-life-replay-message';
-        final createdAt = DateTime.utc(2026, 5, 12, 9);
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(hours: 2),
+        );
         final replayAt = createdAt.add(const Duration(minutes: 4));
         await seedRecoveryGroup(
           groupId: groupId,

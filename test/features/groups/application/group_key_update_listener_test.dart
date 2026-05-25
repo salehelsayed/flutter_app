@@ -12,6 +12,7 @@ import 'package:flutter_app/features/groups/application/group_pending_key_repair
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -2132,6 +2133,7 @@ void main() {
 
       await saveActiveGroup('group-race');
       final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      final repairRequests = <GroupKeyRepairRequest>[];
       listener.dispose();
       listener = GroupKeyUpdateListener(
         groupKeyUpdateStream: controller.stream,
@@ -2140,6 +2142,9 @@ void main() {
         getOwnMlKemSecretKey: () async => mlKemSecretKey,
         retryPendingGroupKeyRepairs: (request) async {
           repairCalls.add(request);
+        },
+        requestGroupKeyRepair: (request) {
+          repairRequests.add(request);
         },
       );
       listener.start();
@@ -2181,6 +2186,13 @@ void main() {
       expect(updateKeyCount, 1);
       expect(repairCalls, hasLength(1));
       expect(repairCalls.single.keyEpoch, 2);
+      expect(repairRequests, hasLength(1));
+      expect(repairRequests.single.groupId, 'group-race');
+      expect(repairRequests.single.keyEpoch, 2);
+      expect(
+        repairRequests.single.reason,
+        groupKeyRepairReasonSameEpochKeyConflict,
+      );
       expect(
         flowEvents.where(
           (event) =>
@@ -2383,7 +2395,8 @@ void main() {
           sameEpochConflicts++;
         }
         retainedMaterialByEpoch.removeWhere(
-          (generation, _) => generation < expectedLatestEpoch - 1,
+          (generation, _) =>
+              generation < minRetainedGroupKeyGeneration(expectedLatestEpoch),
         );
 
         controller.add(

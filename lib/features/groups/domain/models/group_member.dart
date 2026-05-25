@@ -528,8 +528,8 @@ class GroupMember {
           ? GroupMemberDeviceIdentity.listFromJson(map['devices'])
           : existing?.devices ?? const <GroupMemberDeviceIdentity>[],
       joinedAt:
-          existing?.joinedAt ??
           configJoinedAt ??
+          existing?.joinedAt ??
           joinedAt ??
           DateTime.now().toUtc(),
     );
@@ -703,13 +703,40 @@ String? _deviceKeyMaterialRejectReason(Object? rawDevices) {
   if (rawDevices is! List) {
     return 'invalid_devices';
   }
+  final seenDeviceIds = <String>{};
   for (final rawDevice in rawDevices) {
     if (rawDevice is! Map) {
       return 'invalid_device';
     }
-    final deviceSigningReason = _requiredKeyMaterialRejectReason(
+    final deviceIdReason = _requiredIdentityRejectReason(rawDevice, const [
+      'deviceId',
+    ], 'invalid_device_id');
+    if (deviceIdReason != null) {
+      return deviceIdReason;
+    }
+    final deviceId = _readFirstString(rawDevice, const ['deviceId'])!;
+    final normalizedDeviceId = deviceId.toLowerCase();
+    if (!seenDeviceIds.add(normalizedDeviceId)) {
+      return 'duplicate_device_id:$deviceId';
+    }
+
+    final transportPeerIdReason = _requiredIdentityRejectReason(
       rawDevice,
-      'deviceSigningPublicKey',
+      const ['transportPeerId', 'transportPeerID', 'peerId'],
+      'invalid_device_transport_peer_id',
+    );
+    if (transportPeerIdReason != null) {
+      return transportPeerIdReason;
+    }
+
+    final deviceSigningReason = _requiredKeyMaterialAliasRejectReason(
+      rawDevice,
+      const [
+        'deviceSigningPublicKey',
+        'signingPublicKey',
+        'devicePublicKey',
+        'publicKey',
+      ],
       'invalid_device_signing_public_key',
     );
     if (deviceSigningReason != null) {
@@ -721,11 +748,10 @@ String? _deviceKeyMaterialRejectReason(Object? rawDevices) {
           'mlKemPublicKey',
           'invalid_device_ml_kem_public_key',
         ) ??
-        _optionalKeyMaterialRejectReason(
-          rawDevice,
+        _optionalKeyMaterialAliasRejectReason(rawDevice, const [
           'keyPackagePublicMaterial',
-          'invalid_key_package_public_material',
-        );
+          'keyPackagePublicKey',
+        ], 'invalid_key_package_public_material');
     if (optionalReason != null) {
       return optionalReason;
     }
@@ -733,12 +759,24 @@ String? _deviceKeyMaterialRejectReason(Object? rawDevices) {
   return null;
 }
 
-String? _requiredKeyMaterialRejectReason(
+String? _requiredIdentityRejectReason(
   Map<dynamic, dynamic> value,
-  String key,
+  List<String> keys,
   String reason,
 ) {
-  final raw = value[key];
+  final raw = _readFirstPresent(value, keys);
+  if (raw is! String || _isMalformedIdentityText(raw)) {
+    return reason;
+  }
+  return null;
+}
+
+String? _requiredKeyMaterialAliasRejectReason(
+  Map<dynamic, dynamic> value,
+  List<String> keys,
+  String reason,
+) {
+  final raw = _readFirstPresent(value, keys);
   if (raw is! String || _isMalformedKeyMaterial(raw)) {
     return reason;
   }
@@ -761,6 +799,42 @@ String? _optionalKeyMaterialRejectReason(
     return '${reason}_type';
   }
   return _isMalformedKeyMaterial(raw) ? reason : null;
+}
+
+String? _optionalKeyMaterialAliasRejectReason(
+  Map<dynamic, dynamic> value,
+  List<String> keys,
+  String reason,
+) {
+  final raw = _readFirstPresent(value, keys);
+  if (raw == null) {
+    return null;
+  }
+  if (raw is! String) {
+    return '${reason}_type';
+  }
+  return _isMalformedKeyMaterial(raw) ? reason : null;
+}
+
+Object? _readFirstPresent(Map<dynamic, dynamic> value, List<String> keys) {
+  for (final key in keys) {
+    if (value.containsKey(key)) {
+      return value[key];
+    }
+  }
+  return null;
+}
+
+String? _readFirstString(Map<dynamic, dynamic> value, List<String> keys) {
+  final raw = _readFirstPresent(value, keys);
+  return raw is String ? raw.trim() : null;
+}
+
+bool _isMalformedIdentityText(String value) {
+  if (value.trim().isEmpty || value.trim() != value) {
+    return true;
+  }
+  return value.runes.any((rune) => rune <= 0x20 || rune == 0x7f);
 }
 
 bool _isMalformedKeyMaterial(String value) {

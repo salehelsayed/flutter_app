@@ -152,9 +152,10 @@ void main() {
     test('empty groupId on group_message is unroutable', () async {
       var oneToOneCalls = 0;
       final drainedGroups = <String>[];
+      late ForegroundRemoteMessageResult result;
 
       final events = await _captureFlowEvents(() async {
-        await handleForegroundRemoteMessage(
+        result = await handleForegroundRemoteMessage(
           data: groupMessageData(groupId: '', messageId: 'msg-empty'),
           messageId: 'fcm-8',
           drainOfflineInbox: () async {
@@ -168,10 +169,47 @@ void main() {
 
       expect(oneToOneCalls, 0);
       expect(drainedGroups, isEmpty);
+      expect(result, ForegroundRemoteMessageResult.unroutable);
       expect(events, hasLength(1));
-      expect(events.single.event, 'PUSH_FOREGROUND_MESSAGE_UNROUTABLE');
+      expect(events.single.event, 'PUSH_GROUP_ROUTE_MISSING_GROUP_ID');
       expect(events.single.details['type'], 'group_message');
     });
+
+    test(
+      'missing group id on group-message-like payload emits dedicated event',
+      () async {
+        var oneToOneCalls = 0;
+        final drainedGroups = <String>[];
+        late ForegroundRemoteMessageResult result;
+
+        final events = await _captureFlowEvents(() async {
+          result = await handleForegroundRemoteMessage(
+            data: const {
+              'payloadType': 'group_message',
+              'message_id': 'msg-missing-group',
+            },
+            messageId: 'fcm-missing-group',
+            drainOfflineInbox: () async {
+              oneToOneCalls += 1;
+            },
+            drainGroupOfflineInboxForGroup: (groupId) async {
+              drainedGroups.add(groupId);
+            },
+          );
+        });
+
+        expect(oneToOneCalls, 0);
+        expect(drainedGroups, isEmpty);
+        expect(result, ForegroundRemoteMessageResult.unroutable);
+        expect(events, hasLength(1));
+        expect(events.single.event, 'PUSH_GROUP_ROUTE_MISSING_GROUP_ID');
+        expect(events.single.details['payloadType'], 'group_message');
+        expect(events.single.details['hasGroupId'], isFalse);
+        expect(events.single.details['hasGroup_id'], isFalse);
+        expect(events.single.details['hasGid'], isFalse);
+        expect(events.single.details['hasConversationId'], isFalse);
+      },
+    );
 
     test(
       'payload-only group fallback still routes to the group drain',
@@ -200,36 +238,42 @@ void main() {
       },
     );
 
-    test('group drain failures are swallowed and logged', () async {
-      var oneToOneCalls = 0;
+    test(
+      'group drain failures request a local fallback notification',
+      () async {
+        var oneToOneCalls = 0;
+        late ForegroundRemoteMessageResult result;
 
-      final events = await _captureFlowEvents(() async {
-        await handleForegroundRemoteMessage(
-          data: groupMessageData(),
-          messageId: 'fcm-9',
-          drainOfflineInbox: () async {
-            oneToOneCalls += 1;
-          },
-          drainGroupOfflineInboxForGroup: (_) async {
-            throw StateError('boom');
-          },
-        );
-      });
+        final events = await _captureFlowEvents(() async {
+          result = await handleForegroundRemoteMessage(
+            data: groupMessageData(),
+            messageId: 'fcm-9',
+            drainOfflineInbox: () async {
+              oneToOneCalls += 1;
+            },
+            drainGroupOfflineInboxForGroup: (_) async {
+              throw StateError('boom');
+            },
+          );
+        });
 
-      expect(oneToOneCalls, 0);
-      expect(events.map((event) => event.event), [
-        'PUSH_FOREGROUND_MESSAGE_ROUTED',
-        'PUSH_FOREGROUND_DRAIN_ERROR',
-      ]);
-      expect(events.last.details['kind'], 'group');
-      expect(events.last.details['error'], contains('boom'));
-    });
+        expect(oneToOneCalls, 0);
+        expect(events.map((event) => event.event), [
+          'PUSH_FOREGROUND_MESSAGE_ROUTED',
+          'PUSH_FOREGROUND_DRAIN_ERROR',
+        ]);
+        expect(result, ForegroundRemoteMessageResult.notificationNeeded);
+        expect(events.last.details['kind'], 'group');
+        expect(events.last.details['error'], contains('boom'));
+      },
+    );
 
     test('1:1 drain failures are swallowed and logged', () async {
       final drainedGroups = <String>[];
+      late ForegroundRemoteMessageResult result;
 
       final events = await _captureFlowEvents(() async {
-        await handleForegroundRemoteMessage(
+        result = await handleForegroundRemoteMessage(
           data: newMessageData(),
           messageId: 'fcm-10',
           drainOfflineInbox: () async {
@@ -246,6 +290,7 @@ void main() {
         'PUSH_FOREGROUND_MESSAGE_ROUTED',
         'PUSH_FOREGROUND_DRAIN_ERROR',
       ]);
+      expect(result, ForegroundRemoteMessageResult.drained);
       expect(events.last.details['kind'], 'conversation');
       expect(events.last.details['error'], contains('boom'));
     });

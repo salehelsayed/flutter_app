@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_system_publish_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -116,9 +116,24 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
     eventAt: eventAt,
   );
 
+  final inboxPayload = jsonEncode({
+    'groupId': groupId,
+    'senderId': actorPeerId,
+    'senderUsername': actorUsername,
+    if (actorDeviceId != null && actorDeviceId.isNotEmpty)
+      'senderDeviceId': actorDeviceId,
+    if (actorTransportPeerId != null && actorTransportPeerId.isNotEmpty)
+      'transportPeerId': actorTransportPeerId,
+    'text': sysText,
+    'timestamp': eventAt.toIso8601String(),
+    'messageId': sourceEventId,
+  });
+
+  late final GroupSystemPublishResult systemPublish;
   try {
-    await callGroupPublish(
-      bridge,
+    systemPublish = await publishGroupSystemMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
       groupId: groupId,
       text: sysText,
       senderPeerId: actorPeerId,
@@ -129,6 +144,10 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
       senderTransportPeerId: actorTransportPeerId,
       senderKeyPackageId: actorKeyPackageId,
       messageId: sourceEventId,
+      replayPlaintext: inboxPayload,
+      recipientPeerIds: recipientPeerIds,
+      msgRepo: msgRepo,
+      timelineMessage: timelineMessage,
     );
   } catch (e) {
     emitFlowEvent(
@@ -142,48 +161,17 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
     return (DissolveGroupResult.bridgeError, null);
   }
 
-  var hadBridgeRecoveryGap = false;
-  if (recipientPeerIds.isNotEmpty) {
-    final inboxPayload = jsonEncode({
-      'groupId': groupId,
-      'senderId': actorPeerId,
-      'senderUsername': actorUsername,
-      if (actorDeviceId != null && actorDeviceId.isNotEmpty)
-        'senderDeviceId': actorDeviceId,
-      if (actorTransportPeerId != null && actorTransportPeerId.isNotEmpty)
-        'transportPeerId': actorTransportPeerId,
-      'text': sysText,
-      'timestamp': eventAt.toIso8601String(),
-      'messageId': sourceEventId,
-    });
-
-    try {
-      await storeGroupOfflineReplayEnvelope(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        groupId: groupId,
-        payloadType: groupOfflineReplayPayloadTypeMessage,
-        plaintext: inboxPayload,
-        senderPeerId: actorPeerId,
-        senderPublicKey: actorPublicKey,
-        senderPrivateKey: actorPrivateKey,
-        messageId: sourceEventId,
-        senderDeviceId: actorDeviceId,
-        senderTransportPeerId: actorTransportPeerId,
-        senderKeyPackageId: actorKeyPackageId,
-        recipientPeerIds: recipientPeerIds,
-      );
-    } catch (e) {
-      hadBridgeRecoveryGap = true;
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_DISSOLVE_USE_CASE_INBOX_STORE_ERROR',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'error': e.toString(),
-        },
-      );
-    }
+  var hadBridgeRecoveryGap =
+      recipientPeerIds.isNotEmpty && !systemPublish.inboxStored;
+  if (systemPublish.replayStorageError != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_DISSOLVE_USE_CASE_INBOX_STORE_ERROR',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'error': systemPublish.replayStorageError.toString(),
+      },
+    );
   }
 
   final updatedGroup = group.copyWith(
@@ -194,7 +182,7 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
   );
   await groupRepo.updateGroup(updatedGroup);
 
-  await msgRepo.saveMessage(timelineMessage);
+  await msgRepo.saveMessage(systemPublish.timelineMessage ?? timelineMessage);
 
   try {
     await callGroupLeave(bridge, groupId);

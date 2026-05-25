@@ -3,6 +3,7 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_change.
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// Result of handling an incoming group reaction.
@@ -10,6 +11,8 @@ enum HandleGroupReactionResult {
   success,
   parseError,
   unknownGroup,
+  unknownMessage,
+  messageGroupMismatch,
   unknownSender,
   senderMismatch,
   ignoredAfterDissolve,
@@ -26,11 +29,13 @@ Future<(HandleGroupReactionResult, ReactionChange?)>
 handleIncomingGroupReaction({
   required GroupRepository groupRepo,
   required ReactionRepository reactionRepo,
+  GroupMessageRepository? msgRepo,
   required String groupId,
   required String senderId,
   required String reactionJson,
   String? transportPeerId,
   String? senderDeviceId,
+  String? senderPublicKey,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -112,6 +117,7 @@ handleIncomingGroupReaction({
     member: member,
     senderDeviceId: senderDeviceId,
     transportPeerId: transportPeerId,
+    senderPublicKey: senderPublicKey,
   )) {
     emitFlowEvent(
       layer: 'FL',
@@ -124,8 +130,42 @@ handleIncomingGroupReaction({
     return (HandleGroupReactionResult.senderMismatch, null);
   }
 
-  // 5. Process action
-  if (payload.action == 'remove') {
+  // 5. Validate target message when the caller can provide local message state.
+  if (msgRepo != null) {
+    final targetMessage = await msgRepo.getMessage(payload.messageId);
+    if (targetMessage == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_RECEIVE_UNKNOWN_MESSAGE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'messageId': payload.messageId.length > 8
+              ? payload.messageId.substring(0, 8)
+              : payload.messageId,
+        },
+      );
+      return (HandleGroupReactionResult.unknownMessage, null);
+    }
+    if (targetMessage.groupId != groupId) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_RECEIVE_MESSAGE_GROUP_MISMATCH',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'targetGroupId': targetMessage.groupId.length > 8
+              ? targetMessage.groupId.substring(0, 8)
+              : targetMessage.groupId,
+          'messageId': payload.messageId.length > 8
+              ? payload.messageId.substring(0, 8)
+              : payload.messageId,
+        },
+      );
+      return (HandleGroupReactionResult.messageGroupMismatch, null);
+    }
+  }
+
+  // 6. Process action
+  if (payload.action == GroupReactionPayload.actionRemove) {
     await reactionRepo.removeReaction(payload.messageId, payload.senderPeerId);
     emitFlowEvent(
       layer: 'FL',
@@ -146,7 +186,10 @@ handleIncomingGroupReaction({
     );
   }
 
-  // action == 'add'
+  if (payload.action != GroupReactionPayload.actionAdd) {
+    return (HandleGroupReactionResult.parseError, null);
+  }
+
   final reaction = payload.toMessageReaction();
   await reactionRepo.saveReaction(reaction);
 
@@ -166,11 +209,18 @@ bool _isReactionSenderDeviceBound({
   required GroupMember member,
   required String? senderDeviceId,
   required String? transportPeerId,
+  required String? senderPublicKey,
 }) {
   final resolvedTransportPeerId = transportPeerId?.trim().isNotEmpty == true
       ? transportPeerId!.trim()
       : member.peerId;
+  final resolvedSenderPublicKey = senderPublicKey?.trim();
   if (member.devices.isEmpty) {
+    if (resolvedSenderPublicKey != null &&
+        resolvedSenderPublicKey.isNotEmpty &&
+        member.publicKey?.trim() != resolvedSenderPublicKey) {
+      return false;
+    }
     return resolvedTransportPeerId == member.peerId;
   }
   final device = senderDeviceId?.trim().isNotEmpty == true
@@ -178,13 +228,12 @@ bool _isReactionSenderDeviceBound({
       : member.findDeviceByTransportPeerId(resolvedTransportPeerId);
   return device != null &&
       device.isActive &&
-      device.transportPeerId == resolvedTransportPeerId;
+      device.transportPeerId == resolvedTransportPeerId &&
+      (resolvedSenderPublicKey == null ||
+          resolvedSenderPublicKey.isEmpty ||
+          device.deviceSigningPublicKey == resolvedSenderPublicKey);
 }
 
 DateTime _parseReactionTimestamp(String timestamp) {
-  try {
-    return DateTime.parse(timestamp).toUtc();
-  } catch (_) {
-    return DateTime.now().toUtc();
-  }
+  return DateTime.parse(timestamp).toUtc();
 }

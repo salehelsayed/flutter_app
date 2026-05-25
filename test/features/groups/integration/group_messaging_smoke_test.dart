@@ -30,6 +30,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
@@ -859,7 +860,7 @@ void main() {
           groupId: groupId,
           memberPeerId: charlie.peerId,
           memberUsername: charlie.username,
-          removedAt: createdAt.add(const Duration(minutes: 2)),
+          removedAt: createdAt.add(const Duration(minutes: 3)),
         );
         await pump();
         await Future.wait([
@@ -867,13 +868,13 @@ void main() {
             alice,
             2,
             'sv002-current-key',
-            createdAt.add(const Duration(minutes: 3)),
+            createdAt.add(const Duration(minutes: 4)),
           ),
           saveKey(
             bob,
             2,
             'sv002-current-key',
-            createdAt.add(const Duration(minutes: 3)),
+            createdAt.add(const Duration(minutes: 4)),
           ),
         ]);
 
@@ -887,7 +888,7 @@ void main() {
           'keyEpoch': 1,
           'text': staleText,
           'timestamp': createdAt
-              .add(const Duration(minutes: 4))
+              .add(const Duration(minutes: 5))
               .toIso8601String(),
           'messageId': staleMessageId,
           'transportPeerId': charlie.deviceId,
@@ -906,7 +907,7 @@ void main() {
               'action': 'add',
               'senderPeerId': charlie.peerId,
               'timestamp': createdAt
-                  .add(const Duration(minutes: 4, seconds: 1))
+                  .add(const Duration(minutes: 5, seconds: 1))
                   .toIso8601String(),
             }),
           },
@@ -1005,8 +1006,16 @@ void main() {
           name: 'SV-003 Pending Readd',
           createdAt: createdAt,
         );
-        await alice.addMember(groupId: groupId, invitee: bob);
-        await alice.addMember(groupId: groupId, invitee: charlie);
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
         await Future.wait([
           saveKey(alice, 1, 'sv003-old-key'),
           saveKey(bob, 1, 'sv003-old-key'),
@@ -1033,6 +1042,7 @@ void main() {
         );
         await charlie.groupRepo.removeAllKeys(groupId);
 
+        final commandStart = charlie.bridge.commandLog.length;
         final pendingSend = await charlie.sendGroupMessageViaBridge(
           groupId: groupId,
           text: 'SV-003 Charlie pending re-add before current key',
@@ -1043,7 +1053,7 @@ void main() {
         expect(pendingSend.$1.name, isNot('successNoPeers'));
         expect(pendingSend.$2, isNull);
         expect(await charlie.msgRepo.getMessage(pendingMessageId), isNull);
-        expect(charlie.bridge.commandLog, isEmpty);
+        expect(charlie.bridge.commandLog.skip(commandStart), isEmpty);
         await pump();
 
         for (final recipient in [alice, bob]) {
@@ -13499,6 +13509,7 @@ void main() {
           senderPublicKey: alice.publicKey,
           senderPrivateKey: alice.privateKey,
           senderUsername: alice.username,
+          sendP2PMessage: (_, _) async => true,
         );
         expect(rotatedKey, isNotNull);
         expect(rotatedKey!.keyGeneration, 2);
@@ -14801,7 +14812,8 @@ void main() {
             sameEpochConflicts++;
           }
           retainedMaterialByEpoch.removeWhere(
-            (generation, _) => generation < expectedLatestEpoch - 1,
+            (generation, _) =>
+                generation < minRetainedGroupKeyGeneration(expectedLatestEpoch),
           );
 
           final sourceEventId = 'st003-direct-key-update-$index';

@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,37 @@ const (
 	pubsubAuthorizationRejectDiagnosticWindow = time.Minute
 	pubsubAuthorizationRejectHashLength       = 12
 )
+
+// ErrGroupAlreadyJoined marks idempotent duplicate group topic joins.
+var ErrGroupAlreadyJoined = errors.New("group already joined")
+
+var groupTopicCleanupHook func(stage string)
+
+type builtGroupMessageEnvelope struct {
+	messageId    string
+	envelopeJSON string
+	timestamp    string
+	encryptMs    int64
+	signMs       int64
+}
+
+type groupSenderDeviceBinding struct {
+	deviceId        string
+	transportPeerId string
+	devicePublicKey string
+	keyPackageId    string
+}
+
+type GroupReliableSendResult struct {
+	MessageId              string
+	TopicPeerCount         int
+	ExpectedRecipientCount int
+	RecipientPeerIds       []string
+	InboxStored            bool
+	PublishSucceeded       bool
+	DeliveryMode           string
+	Envelope               string
+}
 
 // initPubSub creates a new GossipSub instance attached to the node's libp2p host.
 // Must be called after the host is created in Start().
@@ -56,17 +88,6 @@ func (n *Node) initPubSub() error {
 // It stores the config and key info, starts a subscription handler goroutine,
 // and registers a topic validator.
 func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *GroupKeyInfo) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	if n.pubsub == nil {
-		return fmt.Errorf("pubsub not initialized")
-	}
-
-	if _, exists := n.groupTopics[groupId]; exists {
-		return fmt.Errorf("already joined group topic: %s", groupId)
-	}
-
 	if keyInfo == nil {
 		return fmt.Errorf("missing group key info for group %s", groupId)
 	}
@@ -74,51 +95,103 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 	if config == nil {
 		return fmt.Errorf("missing group config for group %s", groupId)
 	}
-	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+	if _, err := validateGroupConfigAdmission(config); err != nil {
 		return fmt.Errorf("invalid group config for group %s: %w", groupId, err)
 	}
 
+	storedConfig := cloneGroupConfig(config)
+	storedKeyInfo := joinedGroupKeyInfo(keyInfo)
 	topicName := GroupTopicPrefix + groupId
 
+	n.mu.Lock()
+	if n.pubsub == nil {
+		n.mu.Unlock()
+		return fmt.Errorf("pubsub not initialized")
+	}
+
+	if _, exists := n.groupTopics[groupId]; exists {
+		n.mu.Unlock()
+		return fmt.Errorf("%w: %s", ErrGroupAlreadyJoined, groupId)
+	}
+
+	ps := n.pubsub
+	nodeCtx := n.ctx
+	relayReady := n.relayReady
+	subscribeHook := n.joinGroupTopicSubscribeHook
+
+	n.groupTopics[groupId] = nil
+	n.mu.Unlock()
+
+	cleanupReservedJoin := func() {
+		n.mu.Lock()
+		if topic, exists := n.groupTopics[groupId]; exists && topic == nil {
+			delete(n.groupTopics, groupId)
+		}
+		n.mu.Unlock()
+	}
+
 	// Register topic validator before joining.
-	err := n.pubsub.RegisterTopicValidator(topicName, n.groupTopicValidator(groupId))
+	err := ps.RegisterTopicValidator(topicName, n.groupTopicValidator(groupId))
 	if err != nil {
+		cleanupReservedJoin()
 		return fmt.Errorf("register topic validator: %w", err)
 	}
 
-	topic, err := n.pubsub.Join(topicName)
+	topic, err := ps.Join(topicName)
 	if err != nil {
-		_ = n.pubsub.UnregisterTopicValidator(topicName)
+		_ = ps.UnregisterTopicValidator(topicName)
+		cleanupReservedJoin()
 		return fmt.Errorf("join topic %s: %w", topicName, err)
 	}
 
 	var sub *pubsub.Subscription
-	if n.joinGroupTopicSubscribeHook != nil {
-		sub, err = n.joinGroupTopicSubscribeHook(topic)
+	if subscribeHook != nil {
+		sub, err = subscribeHook(topic)
 	} else {
 		sub, err = topic.Subscribe()
 	}
 	if err != nil {
 		_ = topic.Close()
-		_ = n.pubsub.UnregisterTopicValidator(topicName)
+		_ = ps.UnregisterTopicValidator(topicName)
+		cleanupReservedJoin()
 		return fmt.Errorf("subscribe to topic %s: %w", topicName, err)
 	}
+	if nodeCtx == nil {
+		sub.Cancel()
+		_ = topic.Close()
+		_ = ps.UnregisterTopicValidator(topicName)
+		cleanupReservedJoin()
+		return fmt.Errorf("node context not initialized")
+	}
 
-	// Store config and key.
+	ctx, cancel := context.WithCancel(nodeCtx)
+	discoveryCtx, discoveryCancel := context.WithCancel(nodeCtx)
+
+	n.mu.Lock()
+	currentTopic, reserved := n.groupTopics[groupId]
+	if n.pubsub != ps || !reserved || currentTopic != nil {
+		n.mu.Unlock()
+		cancel()
+		discoveryCancel()
+		sub.Cancel()
+		_ = topic.Close()
+		_ = ps.UnregisterTopicValidator(topicName)
+		if reserved && currentTopic != nil {
+			return fmt.Errorf("%w: %s", ErrGroupAlreadyJoined, groupId)
+		}
+		return fmt.Errorf("join group topic %s interrupted", groupId)
+	}
+
 	n.groupTopics[groupId] = topic
 	n.groupSubs[groupId] = sub
-	n.groupConfigs[groupId] = cloneGroupConfig(config)
-	n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
-
-	// Start subscription handler in a cancellable goroutine.
-	ctx, cancel := context.WithCancel(n.ctx)
+	n.groupConfigs[groupId] = storedConfig
+	n.groupKeys[groupId] = storedKeyInfo
 	n.groupSubCtx[groupId] = cancel
-	go n.handleGroupSubscription(ctx, groupId, sub)
-
-	// Start group peer discovery in background (register + periodic discover).
-	discoveryCtx, discoveryCancel := context.WithCancel(n.ctx)
 	n.groupDiscoveryCtx[groupId] = discoveryCancel
-	go n.groupPeerDiscoveryLoop(discoveryCtx, groupId, n.relayReady)
+	n.mu.Unlock()
+
+	go n.handleGroupSubscription(ctx, groupId, sub)
+	go n.groupPeerDiscoveryLoop(discoveryCtx, groupId, relayReady)
 
 	log.Printf("[PUBSUB] Joined group topic: %s", groupId)
 	return nil
@@ -126,44 +199,79 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 
 // LeaveGroupTopic unsubscribes from a group topic and cleans up resources.
 func (n *Node) LeaveGroupTopic(groupId string) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
 	topicName := GroupTopicPrefix + groupId
 
-	// Cancel discovery loop (triggers rendezvous unregister).
+	var discoveryCancel context.CancelFunc
+	var subscriptionCancel context.CancelFunc
+	var sub *pubsub.Subscription
+	var topic *pubsub.Topic
+	var ps *pubsub.PubSub
+
+	n.mu.Lock()
+	ps = n.pubsub
+	if existingTopic, ok := n.groupTopics[groupId]; ok {
+		if existingTopic == nil {
+			n.mu.Unlock()
+			return nil
+		}
+		topic = existingTopic
+		n.groupTopics[groupId] = nil
+	}
+
 	if cancel, ok := n.groupDiscoveryCtx[groupId]; ok {
-		cancel()
+		discoveryCancel = cancel
 		delete(n.groupDiscoveryCtx, groupId)
 	}
 
-	// Cancel subscription handler goroutine.
 	if cancel, ok := n.groupSubCtx[groupId]; ok {
-		cancel()
+		subscriptionCancel = cancel
 		delete(n.groupSubCtx, groupId)
 	}
 
-	// Cancel subscription.
-	if sub, ok := n.groupSubs[groupId]; ok {
-		sub.Cancel()
+	if storedSub, ok := n.groupSubs[groupId]; ok {
+		sub = storedSub
 		delete(n.groupSubs, groupId)
 	}
 
-	// Close topic.
-	if topic, ok := n.groupTopics[groupId]; ok {
-		topic.Close()
-		delete(n.groupTopics, groupId)
-	}
-
-	// Unregister validator.
-	_ = n.pubsub.UnregisterTopicValidator(topicName)
-
-	// Remove config and key.
 	delete(n.groupConfigs, groupId)
 	delete(n.groupKeys, groupId)
+	n.mu.Unlock()
+
+	if discoveryCancel != nil {
+		runGroupTopicCleanupHook("discovery_cancel")
+		discoveryCancel()
+	}
+	if subscriptionCancel != nil {
+		runGroupTopicCleanupHook("subscription_context_cancel")
+		subscriptionCancel()
+	}
+	if sub != nil {
+		runGroupTopicCleanupHook("subscription_cancel")
+		sub.Cancel()
+	}
+	if topic != nil {
+		runGroupTopicCleanupHook("topic_close")
+		_ = topic.Close()
+	}
+	if ps != nil {
+		runGroupTopicCleanupHook("validator_unregister")
+		_ = ps.UnregisterTopicValidator(topicName)
+	}
+
+	n.mu.Lock()
+	if currentTopic, ok := n.groupTopics[groupId]; ok && currentTopic == nil {
+		delete(n.groupTopics, groupId)
+	}
+	n.mu.Unlock()
 
 	log.Printf("[PUBSUB] Left group topic: %s", groupId)
 	return nil
+}
+
+func runGroupTopicCleanupHook(stage string) {
+	if groupTopicCleanupHook != nil {
+		groupTopicCleanupHook(stage)
+	}
 }
 
 // PublishGroupMessage encrypts, signs, and publishes a message to a group topic.
@@ -189,83 +297,13 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 		return "", 0, fmt.Errorf("sender not allowed to write in group")
 	}
 
-	// 1. Build GroupMessagePayload.
-	msgId := messageId
-	if msgId == "" {
-		msgId = uuid.New().String()
-	}
-	timestamp, err := resolveGroupPublishTimestamp(opts)
+	senderBinding, err := n.resolveGroupSenderDeviceBinding(config, senderPeerId, senderPublicKeyB64, opts)
 	if err != nil {
 		return "", 0, err
 	}
-
-	extra := buildGroupMessageExtra(msgId, opts)
-	extra["publishedAtNano"] = strconv.FormatInt(time.Now().UnixNano(), 10)
-
-	payload := &internal.GroupMessagePayload{
-		Text:      text,
-		Timestamp: timestamp,
-		Username:  senderUsername,
-		Extra:     extra,
-	}
-
-	payloadJSON, err := internal.MarshalGroupPayload(payload)
+	built, err := buildGroupMessageEnvelope(groupId, keyInfo, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId, opts, senderBinding)
 	if err != nil {
-		return "", 0, fmt.Errorf("marshal payload: %w", err)
-	}
-
-	// 2. Encrypt payload with group key.
-	encryptStart := time.Now()
-	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(keyInfo.Key, payloadJSON)
-	encryptMs := time.Since(encryptStart).Milliseconds()
-	if err != nil {
-		return "", 0, fmt.Errorf("encrypt group message: %w", err)
-	}
-
-	// 3. Build signature data and sign.
-	signStart := time.Now()
-	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, ctB64)
-	signature, err := mcrypto.SignPayload(privateKeyB64, sigData)
-	signMs := time.Since(signStart).Milliseconds()
-	if err != nil {
-		return "", 0, fmt.Errorf("sign group message: %w", err)
-	}
-
-	// 4. Build GroupEnvelope (v3).
-	senderDeviceId := groupPublishStringOpt(opts, "senderDeviceId")
-	if senderDeviceId == "" {
-		senderDeviceId = senderPeerId
-	}
-	senderTransportPeerId := groupPublishStringOpt(opts, "senderTransportPeerId")
-	if senderTransportPeerId == "" {
-		senderTransportPeerId = senderDeviceId
-	}
-	senderDevicePublicKey := groupPublishStringOpt(opts, "senderDevicePublicKey")
-	if senderDevicePublicKey == "" {
-		senderDevicePublicKey = senderPublicKeyB64
-	}
-	envelope := &internal.GroupEnvelope{
-		Version:               "3",
-		Type:                  "group_message",
-		GroupId:               groupId,
-		MessageId:             msgId,
-		SenderId:              senderPeerId,
-		SenderDeviceId:        senderDeviceId,
-		SenderTransportPeerId: senderTransportPeerId,
-		SenderDevicePublicKey: senderDevicePublicKey,
-		SenderKeyPackageId:    groupPublishStringOpt(opts, "senderKeyPackageId"),
-		SenderPublicKey:       senderPublicKeyB64,
-		Signature:             signature,
-		KeyEpoch:              keyInfo.KeyEpoch,
-		Encrypted: internal.GroupEncryptedPayload{
-			Ciphertext: ctB64,
-			Nonce:      nonceB64,
-		},
-	}
-
-	envelopeJSON, err := internal.MarshalGroupEnvelope(envelope)
-	if err != nil {
-		return "", 0, fmt.Errorf("marshal envelope: %w", err)
+		return "", 0, err
 	}
 
 	// 5. Publish to topic.
@@ -278,23 +316,324 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 		senderPeerId,
 		topic,
 	)
-	log.Printf("[PUBSUB] Publishing message %s to group %s (peers in topic: %d)", msgId, groupId, peerCount)
+	log.Printf("[PUBSUB] Publishing message %s to group %s (peers in topic: %d)", built.messageId, groupId, peerCount)
 
-	if err := topic.Publish(ctx, []byte(envelopeJSON)); err != nil {
+	if err := topic.Publish(ctx, []byte(built.envelopeJSON)); err != nil {
 		return "", 0, fmt.Errorf("publish to topic: %w", err)
 	}
 
 	n.emitEvent("group:publish_debug", map[string]interface{}{
 		"groupId":                    groupId,
-		"messageId":                  msgId,
+		"messageId":                  built.messageId,
 		"topicPeers":                 peerCount,
-		"encryptMs":                  encryptMs,
-		"signMs":                     signMs,
+		"encryptMs":                  built.encryptMs,
+		"signMs":                     built.signMs,
 		"requestedTimestampProvided": groupPublishStringOpt(opts, "timestamp") != "",
-		"payloadTimestamp":           timestamp,
+		"payloadTimestamp":           built.timestamp,
 	})
 
-	return msgId, peerCount, nil
+	return built.messageId, peerCount, nil
+}
+
+func (n *Node) SendGroupMessageReliable(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId string, opts map[string]interface{}) (GroupReliableSendResult, error) {
+	n.mu.RLock()
+	topic, topicOk := n.groupTopics[groupId]
+	config, configOk := n.groupConfigs[groupId]
+	keyInfo, keyOk := n.groupKeys[groupId]
+	n.mu.RUnlock()
+
+	if !topicOk || !configOk || config == nil || !keyOk || keyInfo == nil {
+		return GroupReliableSendResult{}, fmt.Errorf("group not joined: %s", groupId)
+	}
+	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+		return GroupReliableSendResult{}, fmt.Errorf("invalid group config for group %s: %w", groupId, err)
+	}
+	if !isAllowedWriter(config, senderPeerId) {
+		return GroupReliableSendResult{}, fmt.Errorf("sender not allowed to write in group")
+	}
+
+	senderBinding, err := n.resolveGroupSenderDeviceBinding(config, senderPeerId, senderPublicKeyB64, opts)
+	if err != nil {
+		return GroupReliableSendResult{}, err
+	}
+	built, err := buildGroupMessageEnvelope(groupId, keyInfo, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId, opts, senderBinding)
+	if err != nil {
+		return GroupReliableSendResult{}, err
+	}
+	recipients, err := activeGroupInboxRecipientsForConfig(
+		groupId,
+		config,
+		senderBinding.transportPeerId,
+	)
+	if err != nil {
+		return GroupReliableSendResult{}, err
+	}
+	result := GroupReliableSendResult{
+		MessageId:              built.messageId,
+		ExpectedRecipientCount: len(recipients),
+		RecipientPeerIds:       recipients,
+		Envelope:               built.envelopeJSON,
+	}
+
+	var wg sync.WaitGroup
+	var inboxErr error
+	attemptedInbox := len(recipients) > 0
+	if attemptedInbox {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			inboxErr = n.GroupInboxStore(groupId, built.envelopeJSON, recipients, "", "")
+		}()
+	}
+
+	var publishErr error
+	var topicPeerCount int
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(n.ctx, PubSubTimeout)
+		defer cancel()
+		topicPeerCount = n.ensureGroupTopicPeersBeforePublish(groupId, config, senderPeerId, topic)
+		publishErr = topic.Publish(ctx, []byte(built.envelopeJSON))
+	}()
+	wg.Wait()
+
+	result.TopicPeerCount = topicPeerCount
+	result.InboxStored = attemptedInbox && inboxErr == nil
+	result.PublishSucceeded = publishErr == nil
+	result.DeliveryMode = reliableGroupDeliveryMode(result.InboxStored, result.PublishSucceeded)
+	if result.PublishSucceeded {
+		n.emitEvent("group:publish_debug", map[string]interface{}{
+			"groupId":                    groupId,
+			"messageId":                  built.messageId,
+			"topicPeers":                 result.TopicPeerCount,
+			"expectedRecipientCount":     result.ExpectedRecipientCount,
+			"inboxStored":                result.InboxStored,
+			"deliveryMode":               result.DeliveryMode,
+			"encryptMs":                  built.encryptMs,
+			"signMs":                     built.signMs,
+			"requestedTimestampProvided": groupPublishStringOpt(opts, "timestamp") != "",
+			"payloadTimestamp":           built.timestamp,
+		})
+	}
+	return result, nil
+}
+
+func buildGroupMessageEnvelope(groupId string, keyInfo *GroupKeyInfo, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId string, opts map[string]interface{}, senderBinding groupSenderDeviceBinding) (*builtGroupMessageEnvelope, error) {
+	msgId := messageId
+	if msgId == "" {
+		msgId = uuid.New().String()
+	}
+	timestamp, err := resolveGroupPublishTimestamp(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	extra := buildGroupMessageExtra(msgId, opts)
+	extra["publishedAtNano"] = strconv.FormatInt(time.Now().UnixNano(), 10)
+	payload := &internal.GroupMessagePayload{
+		Text:      text,
+		Timestamp: timestamp,
+		Username:  senderUsername,
+		Extra:     extra,
+	}
+	payloadJSON, err := internal.MarshalGroupPayload(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
+
+	encryptStart := time.Now()
+	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(keyInfo.Key, payloadJSON)
+	encryptMs := time.Since(encryptStart).Milliseconds()
+	if err != nil {
+		return nil, fmt.Errorf("encrypt group message: %w", err)
+	}
+
+	signStart := time.Now()
+	signature, err := signGroupEnvelopePayload(privateKeyB64, senderBinding.devicePublicKey, groupId, keyInfo.KeyEpoch, ctB64)
+	signMs := time.Since(signStart).Milliseconds()
+	if err != nil {
+		return nil, fmt.Errorf("sign group message: %w", err)
+	}
+
+	envelopeJSON, err := internal.MarshalGroupEnvelope(&internal.GroupEnvelope{
+		Version:               "3",
+		Type:                  "group_message",
+		GroupId:               groupId,
+		MessageId:             msgId,
+		SenderId:              senderPeerId,
+		SenderDeviceId:        senderBinding.deviceId,
+		SenderTransportPeerId: senderBinding.transportPeerId,
+		SenderDevicePublicKey: senderBinding.devicePublicKey,
+		SenderKeyPackageId:    senderBinding.keyPackageId,
+		SenderPublicKey:       senderPublicKeyB64,
+		Signature:             signature,
+		KeyEpoch:              keyInfo.KeyEpoch,
+		Encrypted: internal.GroupEncryptedPayload{
+			Ciphertext: ctB64,
+			Nonce:      nonceB64,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal envelope: %w", err)
+	}
+
+	return &builtGroupMessageEnvelope{
+		messageId:    msgId,
+		envelopeJSON: envelopeJSON,
+		timestamp:    timestamp,
+		encryptMs:    encryptMs,
+		signMs:       signMs,
+	}, nil
+}
+
+func (n *Node) resolveGroupSenderDeviceBinding(config *GroupConfig, senderPeerId, senderPublicKeyB64 string, opts map[string]interface{}) (groupSenderDeviceBinding, error) {
+	member := findMember(config, senderPeerId)
+	if member == nil {
+		return groupSenderDeviceBinding{}, fmt.Errorf("sender not a member of group")
+	}
+
+	explicitDeviceId := groupPublishStringOpt(opts, "senderDeviceId")
+	explicitTransportPeerId := groupPublishStringOpt(opts, "senderTransportPeerId")
+	explicitDevicePublicKey := groupPublishStringOpt(opts, "senderDevicePublicKey")
+	explicitKeyPackageId := groupPublishStringOpt(opts, "senderKeyPackageId")
+
+	if len(member.Devices) == 0 {
+		deviceId := senderPeerId
+		transportPeerId := senderPeerId
+		devicePublicKey := senderPublicKeyB64
+		if explicitDeviceId != "" && explicitDeviceId != deviceId {
+			return groupSenderDeviceBinding{}, fmt.Errorf("sender device id mismatch for legacy member")
+		}
+		if explicitTransportPeerId != "" && explicitTransportPeerId != transportPeerId {
+			return groupSenderDeviceBinding{}, fmt.Errorf("sender transport peer id mismatch for legacy member")
+		}
+		if explicitDevicePublicKey != "" && explicitDevicePublicKey != devicePublicKey {
+			return groupSenderDeviceBinding{}, fmt.Errorf("sender device public key mismatch for legacy member")
+		}
+		return groupSenderDeviceBinding{
+			deviceId:        deviceId,
+			transportPeerId: transportPeerId,
+			devicePublicKey: devicePublicKey,
+			keyPackageId:    explicitKeyPackageId,
+		}, nil
+	}
+
+	localTransportPeerId := n.localTransportPeerId()
+	if localTransportPeerId == "" {
+		return groupSenderDeviceBinding{}, fmt.Errorf("missing local transport peer id")
+	}
+
+	var selected *GroupMemberDevice
+	if explicitDeviceId != "" {
+		for i := range member.Devices {
+			device := &member.Devices[i]
+			if device.DeviceId == explicitDeviceId && groupMemberDeviceIsActive(*device) {
+				selected = device
+				break
+			}
+		}
+		if selected == nil {
+			return groupSenderDeviceBinding{}, fmt.Errorf("sender device %q is not an active member device", explicitDeviceId)
+		}
+	} else {
+		for i := range member.Devices {
+			device := &member.Devices[i]
+			if !groupMemberDeviceIsActive(*device) || strings.TrimSpace(device.TransportPeerId) != localTransportPeerId {
+				continue
+			}
+			if selected != nil {
+				return groupSenderDeviceBinding{}, fmt.Errorf("ambiguous sender device for local transport peer %s", localTransportPeerId)
+			}
+			selected = device
+		}
+		if selected == nil {
+			return groupSenderDeviceBinding{}, fmt.Errorf("sender device not registered for local transport peer %s", localTransportPeerId)
+		}
+	}
+
+	selectedDeviceId := strings.TrimSpace(selected.DeviceId)
+	selectedTransportPeerId := strings.TrimSpace(selected.TransportPeerId)
+	selectedDevicePublicKey := strings.TrimSpace(selected.DeviceSigningPublicKey)
+	selectedKeyPackageId := strings.TrimSpace(selected.KeyPackageId)
+	if selectedDeviceId == "" {
+		return groupSenderDeviceBinding{}, fmt.Errorf("sender device id missing")
+	}
+	if selectedTransportPeerId != localTransportPeerId {
+		return groupSenderDeviceBinding{}, fmt.Errorf("sender device transport peer id %q does not match local transport peer %q", selected.TransportPeerId, localTransportPeerId)
+	}
+
+	transportPeerId := explicitTransportPeerId
+	if transportPeerId == "" {
+		transportPeerId = localTransportPeerId
+	}
+	if transportPeerId != selectedTransportPeerId {
+		return groupSenderDeviceBinding{}, fmt.Errorf("sender transport peer id mismatch for device %s", selectedDeviceId)
+	}
+
+	devicePublicKey := explicitDevicePublicKey
+	if devicePublicKey == "" {
+		devicePublicKey = selectedDevicePublicKey
+	}
+	if devicePublicKey == "" {
+		return groupSenderDeviceBinding{}, fmt.Errorf("sender device public key missing for device %s", selectedDeviceId)
+	}
+	if devicePublicKey != selectedDevicePublicKey {
+		return groupSenderDeviceBinding{}, fmt.Errorf("sender device public key mismatch for device %s", selectedDeviceId)
+	}
+
+	keyPackageId := explicitKeyPackageId
+	if keyPackageId == "" {
+		keyPackageId = selectedKeyPackageId
+	}
+	if explicitKeyPackageId != "" && explicitKeyPackageId != selectedKeyPackageId {
+		return groupSenderDeviceBinding{}, fmt.Errorf("sender key package id mismatch for device %s", selectedDeviceId)
+	}
+
+	return groupSenderDeviceBinding{
+		deviceId:        selectedDeviceId,
+		transportPeerId: transportPeerId,
+		devicePublicKey: devicePublicKey,
+		keyPackageId:    keyPackageId,
+	}, nil
+}
+
+func (n *Node) localTransportPeerId() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.host != nil {
+		return n.host.ID().String()
+	}
+	return strings.TrimSpace(n.peerId)
+}
+
+func signGroupEnvelopePayload(privateKeyB64, publicKeyB64, groupId string, keyEpoch int, ciphertext string) (string, error) {
+	sigData := mcrypto.BuildGroupSignatureData(groupId, keyEpoch, ciphertext)
+	signature, err := mcrypto.SignPayload(privateKeyB64, sigData)
+	if err != nil {
+		return "", err
+	}
+	valid, err := mcrypto.VerifyPayload(publicKeyB64, sigData, signature)
+	if err != nil {
+		return "", fmt.Errorf("verify local group envelope signature: %w", err)
+	}
+	if !valid {
+		return "", fmt.Errorf("private key does not match sender device public key")
+	}
+	return signature, nil
+}
+
+func reliableGroupDeliveryMode(inboxStored, publishSucceeded bool) string {
+	switch {
+	case inboxStored && publishSucceeded:
+		return "live_and_inbox"
+	case inboxStored:
+		return "inbox_only"
+	case publishSucceeded:
+		return "live_only"
+	default:
+		return "failed"
+	}
 }
 
 // PublishGroupReaction encrypts, signs, and publishes a reaction to a group topic.
@@ -320,6 +659,14 @@ func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, sender
 	if member == nil {
 		return fmt.Errorf("sender not a member of group")
 	}
+	reactionOpts := map[string]interface{}(nil)
+	if len(opts) > 0 {
+		reactionOpts = opts[0]
+	}
+	senderBinding, err := n.resolveGroupSenderDeviceBinding(config, senderPeerId, senderPublicKeyB64, reactionOpts)
+	if err != nil {
+		return err
+	}
 
 	// Encrypt reaction payload with group key.
 	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(keyInfo.Key, reactionJSON)
@@ -328,38 +675,21 @@ func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, sender
 	}
 
 	// Build signature and sign.
-	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, ctB64)
-	signature, err := mcrypto.SignPayload(privateKeyB64, sigData)
+	signature, err := signGroupEnvelopePayload(privateKeyB64, senderBinding.devicePublicKey, groupId, keyInfo.KeyEpoch, ctB64)
 	if err != nil {
 		return fmt.Errorf("sign group reaction: %w", err)
 	}
 
 	// Build GroupEnvelope with type "group_reaction".
-	reactionOpts := map[string]interface{}(nil)
-	if len(opts) > 0 {
-		reactionOpts = opts[0]
-	}
-	senderDeviceId := groupPublishStringOpt(reactionOpts, "senderDeviceId")
-	if senderDeviceId == "" {
-		senderDeviceId = senderPeerId
-	}
-	senderTransportPeerId := groupPublishStringOpt(reactionOpts, "senderTransportPeerId")
-	if senderTransportPeerId == "" {
-		senderTransportPeerId = senderDeviceId
-	}
-	senderDevicePublicKey := groupPublishStringOpt(reactionOpts, "senderDevicePublicKey")
-	if senderDevicePublicKey == "" {
-		senderDevicePublicKey = senderPublicKeyB64
-	}
 	envelope := &internal.GroupEnvelope{
 		Version:               "3",
 		Type:                  "group_reaction",
 		GroupId:               groupId,
 		SenderId:              senderPeerId,
-		SenderDeviceId:        senderDeviceId,
-		SenderTransportPeerId: senderTransportPeerId,
-		SenderDevicePublicKey: senderDevicePublicKey,
-		SenderKeyPackageId:    groupPublishStringOpt(reactionOpts, "senderKeyPackageId"),
+		SenderDeviceId:        senderBinding.deviceId,
+		SenderTransportPeerId: senderBinding.transportPeerId,
+		SenderDevicePublicKey: senderBinding.devicePublicKey,
+		SenderKeyPackageId:    senderBinding.keyPackageId,
 		SenderPublicKey:       senderPublicKeyB64,
 		Signature:             signature,
 		KeyEpoch:              keyInfo.KeyEpoch,
@@ -393,7 +723,7 @@ func (n *Node) UpdateGroupConfig(groupId string, config *GroupConfig) {
 		delete(n.groupConfigs, groupId)
 		return
 	}
-	if reason, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+	if reason, err := validateGroupConfigAdmission(config); err != nil {
 		log.Printf("[PUBSUB] Rejecting group config update for %s: %s: %v", groupId, reason, err)
 		return
 	}
@@ -401,8 +731,9 @@ func (n *Node) UpdateGroupConfig(groupId string, config *GroupConfig) {
 	n.groupConfigs[groupId] = cloneGroupConfig(config)
 }
 
-// RefreshJoinedGroupStateIfNewer atomically replaces config and key for an
-// already joined group when the supplied key epoch is newer than the stored one.
+// RefreshJoinedGroupStateIfNewer refreshes joined group config and key state
+// without replacing the existing topic/subscription. Key material remains
+// epoch-monotonic; config metadata can advance independently.
 func (n *Node) RefreshJoinedGroupStateIfNewer(groupId string, config *GroupConfig, keyInfo *GroupKeyInfo) (bool, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -416,29 +747,66 @@ func (n *Node) RefreshJoinedGroupStateIfNewer(groupId string, config *GroupConfi
 	if keyInfo == nil {
 		return false, fmt.Errorf("missing group key info for group %s", groupId)
 	}
-	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+	if _, err := validateGroupConfigAdmission(config); err != nil {
 		return false, fmt.Errorf("invalid group config for group %s: %w", groupId, err)
 	}
 
 	current := n.groupKeys[groupId]
-	if current != nil && keyInfo.KeyEpoch <= current.KeyEpoch {
+	shouldUpdateKey := current == nil || keyInfo.KeyEpoch > current.KeyEpoch
+	shouldUpdateConfig := shouldUpdateKey || shouldRefreshJoinedGroupConfig(n.groupConfigs[groupId], config)
+	if !shouldUpdateConfig && !shouldUpdateKey {
 		return false, nil
 	}
 
-	n.groupConfigs[groupId] = cloneGroupConfig(config)
-	if current == nil {
-		n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
-		return true, nil
+	if shouldUpdateConfig {
+		n.groupConfigs[groupId] = cloneGroupConfig(config)
 	}
-
-	n.groupKeys[groupId] = &GroupKeyInfo{
-		Key:           keyInfo.Key,
-		KeyEpoch:      keyInfo.KeyEpoch,
-		PrevKey:       current.Key,
-		PrevKeyEpoch:  current.KeyEpoch,
-		GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
+	if shouldUpdateKey {
+		if current == nil {
+			n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
+		} else {
+			n.groupKeys[groupId] = &GroupKeyInfo{
+				Key:           keyInfo.Key,
+				KeyEpoch:      keyInfo.KeyEpoch,
+				PrevKey:       current.Key,
+				PrevKeyEpoch:  current.KeyEpoch,
+				GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
+			}
+		}
 	}
 	return true, nil
+}
+
+func shouldRefreshJoinedGroupConfig(current *GroupConfig, incoming *GroupConfig) bool {
+	if incoming == nil {
+		return false
+	}
+	if current == nil {
+		return true
+	}
+
+	incomingVersion := strings.TrimSpace(incoming.ConfigVersion)
+	currentVersion := strings.TrimSpace(current.ConfigVersion)
+	if incomingVersion != "" || currentVersion != "" {
+		switch {
+		case incomingVersion == "":
+			return false
+		case currentVersion == "":
+			return true
+		case incomingVersion > currentVersion:
+			return true
+		case incomingVersion < currentVersion:
+			return false
+		}
+	}
+
+	incomingStateHash := strings.TrimSpace(incoming.StateHash)
+	currentStateHash := strings.TrimSpace(current.StateHash)
+	if incomingStateHash != "" || currentStateHash != "" {
+		return incomingStateHash != "" && incomingStateHash != currentStateHash
+	}
+
+	return false
 }
 
 // UpdateGroupKey updates the stored group encryption key.
@@ -622,6 +990,20 @@ func groupMemberDeviceDedupKey(device GroupMemberDevice) string {
 	return ""
 }
 
+// ValidateGroupConfigAdmission checks whether a config may be accepted into
+// joined group state.
+func ValidateGroupConfigAdmission(config *GroupConfig) error {
+	_, err := validateGroupConfigAdmission(config)
+	return err
+}
+
+func validateGroupConfigAdmission(config *GroupConfig) (string, error) {
+	if err := validateGroupConfigActiveDeviceEntries(config); err != nil {
+		return "invalid_active_device", err
+	}
+	return validateGroupConfigIdentityUniqueness(config)
+}
+
 func validateGroupConfigIdentityUniqueness(config *GroupConfig) (string, error) {
 	if err := validateGroupConfigPeerIdentity(config); err != nil {
 		return "invalid_peer_identity", err
@@ -633,6 +1015,48 @@ func validateGroupConfigIdentityUniqueness(config *GroupConfig) (string, error) 
 		return "ambiguous_transport_peer", err
 	}
 	return "", nil
+}
+
+func validateGroupConfigActiveDeviceEntries(config *GroupConfig) error {
+	if config == nil {
+		return nil
+	}
+	for i, member := range config.Members {
+		for j, device := range member.Devices {
+			if !groupMemberDeviceIsActive(device) {
+				continue
+			}
+			if _, err := requiredExactTrimmedGroupConfigField("deviceId", device.DeviceId); err != nil {
+				return fmt.Errorf("member[%d] device[%d] %w", i, j, err)
+			}
+			transportPeerId, err := requiredExactTrimmedGroupConfigField("transportPeerId", device.TransportPeerId)
+			if err != nil {
+				return fmt.Errorf("member[%d] device[%d] %w", i, j, err)
+			}
+			if _, err := requiredExactTrimmedGroupConfigField("deviceSigningPublicKey", device.DeviceSigningPublicKey); err != nil {
+				return fmt.Errorf("member[%d] device[%d] %w", i, j, err)
+			}
+			pid, err := peer.Decode(transportPeerId)
+			if err != nil {
+				return fmt.Errorf("member[%d] device[%d] transportPeerId invalid libp2p peer id: %w", i, j, err)
+			}
+			if pid.String() != transportPeerId {
+				return fmt.Errorf("member[%d] device[%d] transportPeerId non-canonical libp2p peer id", i, j)
+			}
+		}
+	}
+	return nil
+}
+
+func requiredExactTrimmedGroupConfigField(fieldName, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", fmt.Errorf("%s required", fieldName)
+	}
+	if trimmed != value {
+		return "", fmt.Errorf("%s must be exact-trimmed", fieldName)
+	}
+	return trimmed, nil
 }
 
 func validateGroupConfigPeerIdentity(config *GroupConfig) error {
@@ -795,10 +1219,8 @@ func joinedGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
 	if keyInfo == nil {
 		return nil
 	}
-	return &GroupKeyInfo{
-		Key:      keyInfo.Key,
-		KeyEpoch: keyInfo.KeyEpoch,
-	}
+	cloned := *keyInfo
+	return &cloned
 }
 
 func hasKeyRotationGrace(keyInfo *GroupKeyInfo, now time.Time) bool {
@@ -1047,8 +1469,13 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			return pubsub.ValidationReject
 		}
 
+		originTransportPeerId := msg.GetFrom().String()
+		if originTransportPeerId == "" {
+			originTransportPeerId = pid.String()
+		}
+
 		// 4. Bind the claimed sender to the libp2p transport peer id.
-		if !groupEnvelopeMatchesTransportPeer(env, pid.String()) {
+		if !groupEnvelopeMatchesTransportPeer(env, originTransportPeerId) {
 			n.logPubSubValidationReject("peer_mismatch", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
@@ -1072,7 +1499,7 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			n.logPubSubValidationReject("non_member", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
-		sourceDevice := activeMemberDeviceForEnvelope(member, env, pid.String())
+		sourceDevice := activeMemberDeviceForEnvelope(member, env, originTransportPeerId)
 		if sourceDevice == nil {
 			n.logPubSubValidationReject("unbound_device", groupId, pid, env)
 			return pubsub.ValidationReject

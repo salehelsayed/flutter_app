@@ -820,7 +820,7 @@ func (s *GroupInboxStore) SetPush(push *PushService) {
 }
 
 func (s *GroupInboxStore) Store(groupId, from, message string) error {
-	return s.store(groupId, from, message, nil)
+	return s.store(groupId, from, message, []string{from})
 }
 
 func (s *GroupInboxStore) store(
@@ -829,17 +829,17 @@ func (s *GroupInboxStore) store(
 	message string,
 	recipientPeerIds []string,
 ) error {
-	var err error
-	if recipientBackend, ok := s.backend.(GroupInboxRecipientBackend); ok {
-		err = recipientBackend.StoreWithRecipients(
-			groupId,
-			from,
-			message,
-			recipientPeerIds,
-		)
-	} else {
-		err = s.backend.Store(groupId, from, message)
+	normalizedRecipients := normalizePeerIds(recipientPeerIds)
+	if len(normalizedRecipients) == 0 {
+		return fmt.Errorf("recipientPeerIds required")
 	}
+
+	err := s.backend.StoreWithRecipients(
+		groupId,
+		from,
+		message,
+		normalizedRecipients,
+	)
 	if err == nil {
 		groupInboxStoredCounter.Inc()
 		log.Printf("[GROUP_INBOX] Stored message for group %s from %s",
@@ -855,7 +855,8 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 	message string,
 	recipientPeerIds []string,
 ) error {
-	if err := s.store(groupId, from, message, recipientPeerIds); err != nil {
+	normalizedRecipients := normalizePeerIds(recipientPeerIds)
+	if err := s.store(groupId, from, message, normalizedRecipients); err != nil {
 		return err
 	}
 
@@ -863,7 +864,7 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 		return nil
 	}
 
-	s.fanOutPush(groupId, from, recipientPeerIds, message)
+	s.fanOutPush(groupId, from, normalizedRecipients, message)
 	return nil
 }
 

@@ -1,0 +1,68 @@
+package node
+
+import "time"
+
+// GroupType represents the type of a group, which determines write permissions.
+type GroupType string
+
+const (
+	GroupTypeChat         GroupType = "chat"
+	GroupTypeAnnouncement GroupType = "announcement"
+	GroupTypeQA           GroupType = "qa"
+)
+
+// GroupRole represents a member's role in a group.
+type GroupRole string
+
+const (
+	GroupRoleAdmin  GroupRole = "admin"
+	GroupRoleWriter GroupRole = "writer"
+	GroupRoleReader GroupRole = "reader"
+)
+
+// GroupMemberDevice represents one active or revoked device registered under a
+// member/account identity.
+type GroupMemberDevice struct {
+	DeviceId                 string `json:"deviceId"`
+	TransportPeerId          string `json:"transportPeerId"`
+	DeviceSigningPublicKey   string `json:"deviceSigningPublicKey"`
+	MlKemPublicKey           string `json:"mlKemPublicKey,omitempty"`
+	KeyPackageId             string `json:"keyPackageId,omitempty"`
+	KeyPackagePublicMaterial string `json:"keyPackagePublicMaterial,omitempty"`
+	Status                   string `json:"status,omitempty"`
+	RevokedAt                string `json:"revokedAt,omitempty"`
+}
+
+// GroupMember represents a member of a group with their identity and role.
+type GroupMember struct {
+	PeerId         string              `json:"peerId"`
+	Username       string              `json:"username,omitempty"`
+	Role           GroupRole           `json:"role"`
+	PublicKey      string              `json:"publicKey"`
+	MlKemPublicKey string              `json:"mlKemPublicKey,omitempty"`
+	Devices        []GroupMemberDevice `json:"devices,omitempty"`
+}
+
+// GroupConfig holds the configuration of a group.
+type GroupConfig struct {
+	Name              string        `json:"name"`
+	GroupType         GroupType     `json:"groupType"`
+	Description       string        `json:"description,omitempty"`
+	AvatarBlobId      string        `json:"avatarBlobId,omitempty"`
+	AvatarMime        string        `json:"avatarMime,omitempty"`
+	MetadataUpdatedAt string        `json:"metadataUpdatedAt,omitempty"`
+	ConfigVersion     string        `json:"configVersion,omitempty"`
+	StateHash         string        `json:"stateHash,omitempty"`
+	Members           []GroupMember `json:"members"`
+	CreatedBy         string        `json:"createdBy"`
+	CreatedAt         string        `json:"createdAt"`
+}
+
+// GroupKeyInfo holds the symmetric encryption key for a group.
+type GroupKeyInfo struct {
+	Key           string    `json:"key"`           // base64 AES-256 key
+	KeyEpoch      int       `json:"keyEpoch"`      // key rotation epoch
+	PrevKey       string    `json:"prevKey"`       // previous key during grace period
+	PrevKeyEpoch  int       `json:"prevKeyEpoch"`  // previous key rotation epoch
+	GraceDeadline time.Time `json:"graceDeadline"` // zero when no grace period is active
+}

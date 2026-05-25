@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 	libp2p "github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/network"
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
+	"github.com/mknoon/go-mknoon/internal"
 )
 
 func TestBuildGroupInboxStoreRequest_MarshalsRecipientPeerIds(t *testing.T) {
@@ -40,6 +42,457 @@ func TestBuildGroupInboxStoreRequest_MarshalsRecipientPeerIds(t *testing.T) {
 	}
 	if len(expect) != 2 || expect[0] != "peer-2" || expect[1] != "peer-3" {
 		t.Fatalf("recipientPeerIds = %#v, want [peer-2 peer-3]", expect)
+	}
+}
+
+func TestActiveGroupInboxRecipientsDerivesDeviceTransportsAndDedupe(t *testing.T) {
+	n := NewNode()
+	groupId := "group-active-recipients"
+	n.mu.Lock()
+	n.groupConfigs = make(map[string]*GroupConfig)
+	n.groupConfigs[groupId] = &GroupConfig{
+		Name:      "Active Recipients",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "alice-account-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: "alice-current-transport", DeviceSigningPublicKey: "alice-phone-pub", Status: "active"},
+					{DeviceId: "alice-tablet", TransportPeerId: "alice-tablet-transport", DeviceSigningPublicKey: "alice-tablet-pub", Status: "active"},
+				},
+			},
+			{
+				PeerId:    "bob-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "bob-account-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "bob-phone", TransportPeerId: "bob-active-transport", DeviceSigningPublicKey: "bob-phone-pub", Status: "active"},
+					{DeviceId: "bob-duplicate", TransportPeerId: "bob-active-transport", DeviceSigningPublicKey: "bob-duplicate-pub", Status: "active"},
+					{DeviceId: "bob-old", TransportPeerId: "bob-old-transport", DeviceSigningPublicKey: "bob-old-pub", Status: "revoked"},
+				},
+			},
+			{PeerId: "carol-legacy", Role: GroupRoleWriter, PublicKey: "carol-pub"},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	n.mu.Unlock()
+
+	got, err := n.ActiveGroupInboxRecipients(groupId, "alice-current-transport")
+	if err != nil {
+		t.Fatalf("ActiveGroupInboxRecipients: %v", err)
+	}
+	want := []string{"alice-tablet-transport", "bob-active-transport", "carol-legacy"}
+	if len(got) != len(want) {
+		t.Fatalf("recipients = %#v, want %#v", got, want)
+	}
+	for i, expected := range want {
+		if got[i] != expected {
+			t.Fatalf("recipients[%d] = %q, want %q; all=%#v", i, got[i], expected, got)
+		}
+	}
+}
+
+func TestGroupInboxStoreDerivesRecipientsForJoinedGroup(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan groupInboxRequest, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requestSeen <- req
+		_ = writeFrame(s, []byte(`{"status":"OK"}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "group-derived-inbox"
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	selfTransportPeerId := n.PeerId()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.groupConfigs[groupId] = &GroupConfig{
+		Name:      "Derived Inbox",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "alice-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: selfTransportPeerId, DeviceSigningPublicKey: "alice-phone-pub", Status: "active"},
+				},
+			},
+			{
+				PeerId:    "bob-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "bob-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "bob-phone", TransportPeerId: "bob-active-transport", DeviceSigningPublicKey: "bob-phone-pub", Status: "active"},
+					{DeviceId: "bob-duplicate", TransportPeerId: "bob-active-transport", DeviceSigningPublicKey: "bob-duplicate-pub", Status: "active"},
+					{DeviceId: "bob-old", TransportPeerId: "bob-old-transport", DeviceSigningPublicKey: "bob-old-pub", Status: "revoked"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	n.mu.Unlock()
+
+	if err := n.GroupInboxStore(
+		groupId,
+		`{"ciphertext":"opaque-derived"}`,
+		[]string{"wrong-peer", "bob-active-transport", "bob-active-transport"},
+		"ignored title",
+		"ignored body",
+	); err != nil {
+		t.Fatalf("GroupInboxStore: %v", err)
+	}
+
+	select {
+	case req := <-requestSeen:
+		wantRecipients := []string{"bob-active-transport"}
+		if len(req.RecipientPeerIds) != len(wantRecipients) {
+			t.Fatalf("recipientPeerIds = %#v, want %#v", req.RecipientPeerIds, wantRecipients)
+		}
+		for i, want := range wantRecipients {
+			if req.RecipientPeerIds[i] != want {
+				t.Fatalf("recipientPeerIds[%d] = %q, want %q", i, req.RecipientPeerIds[i], want)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for group inbox request")
+	}
+}
+
+func TestGroupInboxStorePreservesExplicitRecipientsWhenRequested(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan groupInboxRequest, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requestSeen <- req
+		_ = writeFrame(s, []byte(`{"status":"OK"}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "group-explicit-membership-replay"
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	selfTransportPeerId := n.PeerId()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.groupConfigs[groupId] = &GroupConfig{
+		Name:      "Explicit Membership Replay",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "alice-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: selfTransportPeerId, DeviceSigningPublicKey: "alice-phone-pub", Status: "active"},
+				},
+			},
+			{
+				PeerId:    "bob-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "bob-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "bob-phone", TransportPeerId: "bob-active-transport", DeviceSigningPublicKey: "bob-phone-pub", Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	n.mu.Unlock()
+
+	if err := n.GroupInboxStoreWithOptions(
+		groupId,
+		`{"kind":"group_offline_replay","ciphertext":"opaque-removal"}`,
+		[]string{"charlie-removed-transport"},
+		"ignored title",
+		"ignored body",
+		GroupInboxStoreOptions{PreserveRecipientPeerIds: true},
+	); err != nil {
+		t.Fatalf("GroupInboxStoreWithOptions: %v", err)
+	}
+
+	select {
+	case req := <-requestSeen:
+		wantRecipients := []string{"charlie-removed-transport"}
+		if len(req.RecipientPeerIds) != len(wantRecipients) {
+			t.Fatalf("recipientPeerIds = %#v, want %#v", req.RecipientPeerIds, wantRecipients)
+		}
+		for i, want := range wantRecipients {
+			if req.RecipientPeerIds[i] != want {
+				t.Fatalf("recipientPeerIds[%d] = %q, want %q", i, req.RecipientPeerIds[i], want)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for group inbox request")
+	}
+}
+
+func TestGroupInboxStoreFailsWhenJoinedGroupHasOnlyUndeliverableActiveRemotes(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	var streamAttempts atomic.Int32
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		streamAttempts.Add(1)
+		_ = s.Reset()
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "group-empty-derived-inbox"
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	selfTransportPeerId := n.PeerId()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.groupConfigs[groupId] = &GroupConfig{
+		Name:      "Empty Derived Inbox",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "alice-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: selfTransportPeerId, DeviceSigningPublicKey: "alice-phone-pub", Status: "active"},
+				},
+			},
+			{
+				PeerId:    "bob-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "bob-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "bob-phone", DeviceSigningPublicKey: "bob-phone-pub", Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	n.mu.Unlock()
+
+	err = n.GroupInboxStore(
+		groupId,
+		`{"ciphertext":"opaque-empty-derived"}`,
+		[]string{"wrong-peer"},
+		"ignored title",
+		"ignored body",
+	)
+	if err == nil {
+		t.Fatal("expected empty derived recipient error")
+	}
+	if !strings.Contains(err.Error(), "active group inbox recipients") {
+		t.Fatalf("GroupInboxStore error = %q, want active recipient derivation error", err.Error())
+	}
+	if got := streamAttempts.Load(); got != 0 {
+		t.Fatalf("relay stream attempts = %d, want 0 before invalid derived recipients", got)
+	}
+}
+
+func TestSendGroupMessageReliableStoresExactEnvelopeForActiveRecipients(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan groupInboxRequest, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requestSeen <- req
+		_ = writeFrame(s, []byte(`{"status":"OK"}`))
+	})
+
+	senderPriv, senderPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("GenerateGroupKey: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	groupId := "group-gsr-001"
+	config := &GroupConfig{
+		Name:      "GSR Reliable",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPub},
+			{
+				PeerId:    "bob-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "bob-legacy-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "bob-active-device", TransportPeerId: "bob-active-transport", DeviceSigningPublicKey: "bob-active-pub", Status: "active"},
+					{DeviceId: "bob-revoked-device", TransportPeerId: "bob-revoked-transport", DeviceSigningPublicKey: "bob-revoked-pub", Status: "revoked"},
+					{DeviceId: "bob-revoked-at-device", TransportPeerId: "bob-revoked-at-transport", DeviceSigningPublicKey: "bob-revoked-at-pub", RevokedAt: "2026-05-22T00:00:00Z"},
+				},
+			},
+			{PeerId: "carol-legacy", Role: GroupRoleWriter, PublicKey: "carol-pub"},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 7}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	result, err := n.SendGroupMessageReliable(
+		groupId,
+		senderPriv,
+		n.PeerId(),
+		senderPub,
+		"Alice",
+		"reliable hello",
+		"gsr-001-message",
+		map[string]interface{}{"timestamp": "2026-05-23T12:00:00Z"},
+	)
+	if err != nil {
+		t.Fatalf("SendGroupMessageReliable: %v", err)
+	}
+	if result.MessageId != "gsr-001-message" {
+		t.Fatalf("MessageId = %q, want gsr-001-message", result.MessageId)
+	}
+	if result.ExpectedRecipientCount != 2 {
+		t.Fatalf("ExpectedRecipientCount = %d, want 2", result.ExpectedRecipientCount)
+	}
+	if !result.InboxStored || !result.PublishSucceeded {
+		t.Fatalf("result stored/published = %v/%v, want true/true", result.InboxStored, result.PublishSucceeded)
+	}
+	if result.DeliveryMode != "live_and_inbox" {
+		t.Fatalf("DeliveryMode = %q, want live_and_inbox", result.DeliveryMode)
+	}
+
+	select {
+	case req := <-requestSeen:
+		if req.Message != result.Envelope {
+			t.Fatalf("inbox message does not match returned live envelope")
+		}
+		wantRecipients := []string{"bob-active-transport", "carol-legacy"}
+		if len(req.RecipientPeerIds) != len(wantRecipients) {
+			t.Fatalf("recipientPeerIds = %#v, want %#v", req.RecipientPeerIds, wantRecipients)
+		}
+		for i, want := range wantRecipients {
+			if req.RecipientPeerIds[i] != want {
+				t.Fatalf("recipientPeerIds[%d] = %q, want %q", i, req.RecipientPeerIds[i], want)
+			}
+		}
+		env, err := internal.ParseGroupEnvelope(req.Message)
+		if err != nil {
+			t.Fatalf("ParseGroupEnvelope: %v", err)
+		}
+		if env.MessageId != result.MessageId {
+			t.Fatalf("stored envelope messageId = %q, want %q", env.MessageId, result.MessageId)
+		}
+		plaintext, err := decryptGroupEnvelopePayload(env, &GroupKeyInfo{Key: groupKey, KeyEpoch: 7}, time.Now())
+		if err != nil {
+			t.Fatalf("decrypt stored envelope: %v", err)
+		}
+		payload, err := internal.ParseGroupPayload(plaintext)
+		if err != nil {
+			t.Fatalf("ParseGroupPayload: %v", err)
+		}
+		if payload.Text != "reliable hello" {
+			t.Fatalf("payload text = %q, want reliable hello", payload.Text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reliable group inbox store request")
+	}
+}
+
+func TestSendGroupMessageReliableReturnsLiveOnlyWhenInboxStoreFails(t *testing.T) {
+	senderPriv, senderPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("GenerateGroupKey: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	n.mu.Lock()
+	n.relayAddresses = []string{"not-a-multiaddr"}
+	n.mu.Unlock()
+	groupId := "group-gsr-002"
+	config := &GroupConfig{
+		Name:      "GSR Live Only",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPub},
+			{PeerId: "bob-legacy", Role: GroupRoleWriter, PublicKey: "bob-pub"},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	result, err := n.SendGroupMessageReliable(
+		groupId,
+		senderPriv,
+		n.PeerId(),
+		senderPub,
+		"Alice",
+		"relay unavailable",
+		"gsr-002-message",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("SendGroupMessageReliable: %v", err)
+	}
+	if result.ExpectedRecipientCount != 1 {
+		t.Fatalf("ExpectedRecipientCount = %d, want 1", result.ExpectedRecipientCount)
+	}
+	if result.InboxStored {
+		t.Fatal("InboxStored = true, want false without relays")
+	}
+	if !result.PublishSucceeded {
+		t.Fatal("PublishSucceeded = false, want true for local topic publish")
+	}
+	if result.DeliveryMode != "live_only" {
+		t.Fatalf("DeliveryMode = %q, want live_only", result.DeliveryMode)
 	}
 }
 
@@ -876,6 +1329,267 @@ func TestGI008GroupInboxStoreResetsFailedStreamAndClosesSuccessfulStream(t *test
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for successful relay stream close")
+	}
+}
+
+func TestGISTR001GroupInboxStoreRetriesAfterTransientRelayEOF(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	var requestCount atomic.Int32
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		if req.Action != "group_store" || req.GroupId != "group-store-retry" {
+			_ = writeFrame(s, []byte(`{"status":"ERROR","error":"unexpected request"}`))
+			return
+		}
+
+		if requestCount.Add(1) == 1 {
+			return
+		}
+
+		_ = writeFrame(s, []byte(`{"status":"OK"}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	var recoverCalls atomic.Int32
+	n.groupInboxRecoverHook = func(err error) error {
+		recoverCalls.Add(1)
+		if !isTransientGroupInboxRelayStreamError(err) {
+			t.Fatalf("recover hook received non-transient error: %v", err)
+		}
+		return nil
+	}
+
+	if err := n.GroupInboxStore(
+		"group-store-retry",
+		`{"ciphertext":"opaque-store-retry"}`,
+		[]string{"peer-recipient"},
+		"ignored title",
+		"ignored body",
+	); err != nil {
+		t.Fatalf("GroupInboxStore: %v", err)
+	}
+	if got := recoverCalls.Load(); got != 1 {
+		t.Fatalf("recoverCalls = %d, want 1", got)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("requestCount = %d, want 2", got)
+	}
+}
+
+func TestGISTR001GroupInboxStoreDoesNotRetryWhenRecoveryFails(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	var requestCount atomic.Int32
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		if _, err := readFrame(s); err != nil {
+			return
+		}
+		if requestCount.Add(1) > 1 {
+			_ = writeFrame(s, []byte(`{"status":"OK"}`))
+		}
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	var recoverCalls atomic.Int32
+	n.groupInboxRecoverHook = func(err error) error {
+		recoverCalls.Add(1)
+		return errors.New("relay recovery unavailable")
+	}
+
+	err = n.GroupInboxStore(
+		"group-store-recovery-fails",
+		`{"ciphertext":"opaque-store-recovery-fails"}`,
+		[]string{"peer-recipient"},
+		"ignored title",
+		"ignored body",
+	)
+	if err == nil {
+		t.Fatal("expected original transient store error")
+	}
+	if !strings.Contains(err.Error(), "read response") {
+		t.Fatalf("GroupInboxStore error = %q, want original read response error", err.Error())
+	}
+	if strings.Contains(err.Error(), "relay recovery unavailable") {
+		t.Fatalf("GroupInboxStore error = %q, should return original store error", err.Error())
+	}
+	if got := recoverCalls.Load(); got != 1 {
+		t.Fatalf("recoverCalls = %d, want 1", got)
+	}
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("requestCount = %d, want 1 without retry after recovery failure", got)
+	}
+}
+
+func TestGISTR001GroupInboxStoreDoesNotRecoverNonTransientRelayError(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	var requestCount atomic.Int32
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		if _, err := readFrame(s); err != nil {
+			return
+		}
+		requestCount.Add(1)
+		_ = writeFrame(s, []byte(`{"status":"ERROR","error":"quota exceeded"}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	var recoverCalls atomic.Int32
+	n.groupInboxRecoverHook = func(err error) error {
+		recoverCalls.Add(1)
+		return nil
+	}
+
+	err = n.GroupInboxStore(
+		"group-store-non-transient",
+		`{"ciphertext":"opaque-store-non-transient"}`,
+		[]string{"peer-recipient"},
+		"ignored title",
+		"ignored body",
+	)
+	if err == nil {
+		t.Fatal("expected relay application error")
+	}
+	if !strings.Contains(err.Error(), "group inbox store failed: quota exceeded") {
+		t.Fatalf("GroupInboxStore error = %q, want relay application error", err.Error())
+	}
+	if got := recoverCalls.Load(); got != 0 {
+		t.Fatalf("recoverCalls = %d, want 0 for non-transient relay error", got)
+	}
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("requestCount = %d, want 1 without recovery retry", got)
+	}
+}
+
+func TestGISTR001GroupInboxStoreUsesNextRelayBeforeRecovery(t *testing.T) {
+	firstRelay, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start first relay host: %v", err)
+	}
+	defer firstRelay.Close()
+
+	secondRelay, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start second relay host: %v", err)
+	}
+	defer secondRelay.Close()
+
+	attempts := make(chan string, 2)
+	firstRelay.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		attempts <- "first"
+		_, _ = readFrame(s)
+	})
+	secondRelay.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		attempts <- "second"
+		if _, err := readFrame(s); err != nil {
+			return
+		}
+		_ = writeFrame(s, []byte(`{"status":"OK"}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	firstAddr := firstRelay.Addrs()[0].String() + "/p2p/" + firstRelay.ID().String()
+	secondAddr := secondRelay.Addrs()[0].String() + "/p2p/" + secondRelay.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{firstAddr, secondAddr}
+	n.mu.Unlock()
+
+	var recoverCalls atomic.Int32
+	n.groupInboxRecoverHook = func(err error) error {
+		recoverCalls.Add(1)
+		return nil
+	}
+
+	if err := n.GroupInboxStore(
+		"group-store-relay-fallback-before-recovery",
+		`{"ciphertext":"opaque-store-relay-fallback"}`,
+		[]string{"peer-recipient"},
+		"ignored title",
+		"ignored body",
+	); err != nil {
+		t.Fatalf("GroupInboxStore: %v", err)
+	}
+
+	got := make([]string, 0, 2)
+	for len(got) < 2 {
+		select {
+		case attempt := <-attempts:
+			got = append(got, attempt)
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for relay attempts, got %v", got)
+		}
+	}
+	if got[0] != "first" || got[1] != "second" {
+		t.Fatalf("relay attempts = %v, want [first second]", got)
+	}
+	if got := recoverCalls.Load(); got != 0 {
+		t.Fatalf("recoverCalls = %d, want 0 when next configured relay succeeds", got)
+	}
+}
+
+func TestGISTR001TransientClassifierCoversRelaySetupAndIOFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "bare eof", err: io.EOF, want: true},
+		{name: "connect failed to dial no addresses", err: errors.New("connect to relay: failed to dial: no addresses"), want: true},
+		{name: "open stream reset", err: errors.New("open inbox stream: stream reset"), want: true},
+		{name: "write request eof", err: errors.New("write request: EOF"), want: true},
+		{name: "read response timeout", err: errors.New("read response: i/o timeout"), want: true},
+		{name: "deadline wrapper", err: errors.New("all 1 relays failed: write request: deadline exceeded"), want: true},
+		{name: "relay application error", err: errors.New("group inbox store failed: quota exceeded"), want: false},
+		{name: "relay application text with transient words", err: errors.New("all 1 relays failed: group inbox store failed: read response timeout quota exceeded"), want: false},
+		{name: "retrieve application text with transient words", err: errors.New("all 1 relays failed: group inbox retrieve failed: reset quota exceeded"), want: false},
+		{name: "decode error", err: errors.New("unmarshal response: invalid character 'x'"), want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientGroupInboxRelayStreamError(tc.err); got != tc.want {
+				t.Fatalf("isTransientGroupInboxRelayStreamError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

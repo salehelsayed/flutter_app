@@ -35,6 +35,7 @@ import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_pending_membership_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
@@ -409,6 +410,26 @@ class _ContendedGroupMessageRepository extends InMemoryGroupMessageRepository {
   }
 }
 
+class _GateableReactionRepository extends FakeReactionRepository {
+  final Completer<void> firstSaveStarted = Completer<void>();
+  final Completer<void> _releaseSave = Completer<void>();
+
+  void releaseSave() {
+    if (!_releaseSave.isCompleted) {
+      _releaseSave.complete();
+    }
+  }
+
+  @override
+  Future<void> saveReaction(MessageReaction reaction) async {
+    if (!firstSaveStarted.isCompleted) {
+      firstSaveStarted.complete();
+      await _releaseSave.future;
+    }
+    await super.saveReaction(reaction);
+  }
+}
+
 void main() {
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
@@ -443,6 +464,19 @@ void main() {
         username: username,
         role: MemberRole.admin,
         publicKey: publicKey,
+        joinedAt: initialMemberJoinedAt,
+      ),
+    );
+  }
+
+  Future<void> saveSelfMember() {
+    return groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-self',
+        username: 'Self',
+        role: MemberRole.writer,
+        publicKey: 'pk-self',
         joinedAt: initialMemberJoinedAt,
       ),
     );
@@ -556,6 +590,33 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
     expect(service.shown, hasLength(count));
+  }
+
+  Future<void> expectPendingMembershipMessageCount(
+    InMemoryGroupPendingMembershipMessageRepository repository,
+    int count,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (repository.messages.length != count &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(repository.messages, hasLength(count));
+  }
+
+  Future<void> saveGroupReactionTargetMessage(String messageId) async {
+    final timestamp = DateTime.utc(2026, 1, 1);
+    await msgRepo.saveMessage(
+      GroupMessage(
+        id: messageId,
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        senderUsername: 'Sender',
+        text: 'Reaction target',
+        timestamp: timestamp,
+        createdAt: timestamp,
+      ),
+    );
   }
 
   setUp(() async {
@@ -2402,6 +2463,7 @@ void main() {
 
   test('caches self peer id across multiple handled messages', () async {
     var selfPeerIdCalls = 0;
+    await saveSelfMember();
     listener = GroupMessageListener(
       groupRepo: groupRepo,
       msgRepo: msgRepo,
@@ -2537,6 +2599,160 @@ void main() {
           'GROUP_HANDLE_INCOMING_MSG_SENDER_BEFORE_JOINED_REJECTED',
         ]),
       );
+    },
+  );
+
+  test(
+    'PGC-009 durable pending membership message flushes after listener restart',
+    () async {
+      final pendingRepo = InMemoryGroupPendingMembershipMessageRepository();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        pendingMembershipMessageRepo: pendingRepo,
+      );
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-late',
+        'senderUsername': 'Late',
+        'keyEpoch': 1,
+        'messageId': 'pgc009-restart-delivered',
+        'text': 'PGC-009 survives listener restart',
+        'timestamp': '2026-04-05T12:00:02.000Z',
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(await msgRepo.getMessage('pgc009-restart-delivered'), isNull);
+      expect(pendingRepo.messages.map((message) => message.messageId), [
+        'pgc009-restart-delivered',
+      ]);
+
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        pendingMembershipMessageRepo: pendingRepo,
+      );
+      final deliveredFuture = listener.groupMessageStream
+          .where((message) => message.id == 'pgc009-restart-delivered')
+          .first
+          .timeout(const Duration(seconds: 1));
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'messageId': 'pgc009-member-added',
+        'text': jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-late',
+            'username': 'Late',
+            'role': 'writer',
+            'publicKey': 'pk-late',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'username': 'Admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'username': 'Sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-late',
+                'username': 'Late',
+                'role': 'writer',
+                'publicKey': 'pk-late',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+          },
+        }),
+        'timestamp': '2026-04-05T12:00:01.000Z',
+      });
+
+      final delivered = await deliveredFuture;
+      await expectPendingMembershipMessageCount(pendingRepo, 0);
+      expect(delivered.text, 'PGC-009 survives listener restart');
+      expect(await msgRepo.getMessage('pgc009-restart-delivered'), isNotNull);
+      expect(pendingRepo.messages, isEmpty);
+    },
+  );
+
+  test(
+    'PGC-009 startup sweep drains durable pending membership message for current member',
+    () async {
+      final pendingRepo = InMemoryGroupPendingMembershipMessageRepository();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        pendingMembershipMessageRepo: pendingRepo,
+      );
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-late',
+        'senderUsername': 'Late',
+        'keyEpoch': 1,
+        'messageId': 'pgc009-startup-delivered',
+        'text': 'PGC-009 startup sweep delivers me',
+        'timestamp': '2026-04-05T12:00:02.000Z',
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(await msgRepo.getMessage('pgc009-startup-delivered'), isNull);
+      expect(pendingRepo.messages, hasLength(1));
+
+      listener.dispose();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-late',
+          username: 'Late',
+          role: MemberRole.writer,
+          publicKey: 'pk-late',
+          joinedAt: DateTime.utc(2026, 4, 5, 12, 0, 1),
+        ),
+      );
+
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        pendingMembershipMessageRepo: pendingRepo,
+      );
+      final deliveredFuture = listener.groupMessageStream
+          .where((message) => message.id == 'pgc009-startup-delivered')
+          .first
+          .timeout(const Duration(seconds: 1));
+
+      listener.start(sourceController.stream);
+
+      final delivered = await deliveredFuture;
+      await expectPendingMembershipMessageCount(pendingRepo, 0);
+      expect(delivered.text, 'PGC-009 startup sweep delivers me');
+      expect(await msgRepo.getMessage('pgc009-startup-delivered'), isNotNull);
+      expect(pendingRepo.messages, isEmpty);
     },
   );
 
@@ -2765,6 +2981,174 @@ void main() {
   );
 
   test(
+    'generic group push-loss diagnostic triggers one replay recovery and coalesces duplicates',
+    () async {
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final recoveryStarted = Completer<void>();
+      final recoveryGate = Completer<void>();
+      final recoveries = <Map<String, dynamic>>[];
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      addTearDown(diagnostics.close);
+
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+        recoverFromDispatcherOverflow: (diagnostic) async {
+          recoveries.add(diagnostic);
+          if (!recoveryStarted.isCompleted) {
+            recoveryStarted.complete();
+          }
+          await recoveryGate.future;
+        },
+      );
+      listener.start(sourceController.stream);
+
+      diagnostics.add({
+        'event': 'group:push_loss_detected',
+        'reason': 'group_message_callback_error',
+        'groupId': 'group-1',
+        'messageId': 'gplr-generic-message',
+        'keyEpoch': 2,
+        'senderId': 'peer-sender',
+        'senderDeviceId': 'device-gplr',
+        'transportPeerId': 'transport-gplr',
+      });
+
+      await recoveryStarted.future.timeout(const Duration(seconds: 1));
+      expect(recoveries, hasLength(1));
+      expect(recoveries.single['reason'], 'group_message_callback_error');
+      expect(recoveries.single['messageId'], 'gplr-generic-message');
+
+      diagnostics.add({
+        'event': 'group:push_loss_detected',
+        'reason': 'event_stream_recovered',
+        'streamFailureReason': 'error',
+      });
+      diagnostics.add({
+        'event': 'group:dispatcher_overflow',
+        'state': 'overflow',
+        'lastEvent': 'group_message:received',
+        'droppedCount': 1,
+        'queueDepth': 2,
+        'maxQueueSize': 2,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(recoveries, hasLength(1));
+      recoveryGate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final eventNames = flowEvents
+          .map((event) => event['event'] as String)
+          .toList(growable: false);
+      expect(
+        eventNames,
+        containsAll([
+          'GROUP_PUSH_LOSS_RECOVERY_REQUESTED',
+          'GROUP_PUSH_LOSS_RECOVERY_COALESCED',
+          'GROUP_PUSH_LOSS_RECOVERY_DONE',
+        ]),
+      );
+    },
+  );
+
+  test(
+    'live group message processing error requests one recovery and later valid message persists',
+    () async {
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final recoveryStarted = Completer<void>();
+      final recoveryGate = Completer<void>();
+      final recoveries = <Map<String, dynamic>>[];
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      addTearDown(diagnostics.close);
+
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+        recoverFromDispatcherOverflow: (diagnostic) async {
+          recoveries.add(diagnostic);
+          if (!recoveryStarted.isCompleted) {
+            recoveryStarted.complete();
+          }
+          await recoveryGate.future;
+        },
+      );
+      final persisted = <GroupMessage>[];
+      final persistedSub = listener.groupMessageStream.listen(persisted.add);
+      addTearDown(persistedSub.cancel);
+      listener.start(sourceController.stream);
+
+      msgRepo.failSaveMessageIds.add('gplr-live-fail');
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'save failure should request replay',
+        'timestamp': DateTime.utc(2026, 5, 23, 18).toIso8601String(),
+        'messageId': 'gplr-live-fail',
+      });
+
+      await recoveryStarted.future.timeout(const Duration(seconds: 1));
+      expect(recoveries, hasLength(1));
+      expect(recoveries.single['event'], 'group:push_loss_detected');
+      expect(
+        recoveries.single['reason'],
+        'live_group_message_processing_error',
+      );
+      expect(recoveries.single['groupId'], 'group-1');
+      expect(recoveries.single['messageId'], 'gplr-live-fail');
+
+      diagnostics.add({
+        'event': 'group:push_loss_detected',
+        'reason': 'event_stream_recovered',
+        'streamFailureReason': 'done',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(recoveries, hasLength(1));
+
+      recoveryGate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'valid message after recovery',
+        'timestamp': DateTime.utc(2026, 5, 23, 18, 0, 1).toIso8601String(),
+        'messageId': 'gplr-live-valid',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await msgRepo.getMessage('gplr-live-fail'), isNull);
+      expect(await msgRepo.getMessage('gplr-live-valid'), isNotNull);
+      expect(
+        persisted.map((message) => message.id),
+        contains('gplr-live-valid'),
+      );
+
+      final eventNames = flowEvents
+          .map((event) => event['event'] as String)
+          .toList(growable: false);
+      expect(eventNames, contains('GROUP_MESSAGE_LISTENER_ERROR'));
+      expect(eventNames, contains('GROUP_PUSH_LOSS_RECOVERY_REQUESTED'));
+      expect(eventNames, contains('GROUP_PUSH_LOSS_RECOVERY_COALESCED'));
+      expect(eventNames, contains('GROUP_PUSH_LOSS_RECOVERY_DONE'));
+    },
+  );
+
+  test(
     'DE-013 malformed group message schema rejects before persistence and valid later event persists',
     () async {
       final flowEvents = <Map<String, dynamic>>[];
@@ -2909,6 +3293,98 @@ void main() {
 
     // Message was not processed because subscription was cancelled
     expect(msgRepo.count, 0);
+  });
+
+  test(
+    'PGC-008 stop awaits cancellation and late message handler does not emit',
+    () async {
+      final contendedRepo = _ContendedGroupMessageRepository(
+        heldMessageId: 'pgc008-held-message',
+      );
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: contendedRepo,
+        bridge: bridge,
+      );
+
+      final messages = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(messages.add);
+      addTearDown(subscription.cancel);
+
+      listener.start(sourceController.stream);
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'PGC-008 held message',
+        'timestamp': DateTime.utc(2026, 5, 23, 12).toIso8601String(),
+        'messageId': 'pgc008-held-message',
+      });
+
+      await contendedRepo.firstWriteStarted.future.timeout(
+        const Duration(seconds: 1),
+      );
+      var stopCompleted = false;
+      final stopFuture = listener.stop().then((_) {
+        stopCompleted = true;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(stopCompleted, isFalse);
+
+      contendedRepo.releaseWrite();
+      await stopFuture.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+
+      expect(await contendedRepo.getMessage('pgc008-held-message'), isNotNull);
+      expect(messages, isEmpty);
+    },
+  );
+
+  test('PGC-008 stop guards late removed-group stream emission', () async {
+    await saveSelfMember();
+    final removalBridge = _DelayedGroupLeaveBridge();
+    listener.dispose();
+    listener = GroupMessageListener(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      bridge: removalBridge,
+      getSelfPeerId: () async => 'peer-self',
+    );
+
+    final removedGroups = <String>[];
+    final subscription = listener.groupRemovedStream.listen(removedGroups.add);
+    addTearDown(subscription.cancel);
+
+    listener.start(sourceController.stream);
+    sourceController.add({
+      'groupId': 'group-1',
+      'senderId': 'peer-admin',
+      'senderUsername': 'Admin',
+      'keyEpoch': 0,
+      'messageId': 'pgc008-self-removal',
+      'text': jsonEncode({
+        '__sys': 'member_removed',
+        'member': {'peerId': 'peer-self', 'username': 'Self'},
+        'removedAt': '2026-05-23T12:00:00.000Z',
+      }),
+      'timestamp': '2026-05-23T12:00:00.000Z',
+    });
+
+    await removalBridge.leaveStarted.future.timeout(const Duration(seconds: 1));
+    var stopCompleted = false;
+    final stopFuture = listener.stop().then((_) {
+      stopCompleted = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+    expect(stopCompleted, isFalse);
+
+    removalBridge.completeLeave();
+    await stopFuture.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+
+    expect(removedGroups, isEmpty);
   });
 
   test('handles malformed data without crashing', () async {
@@ -4061,7 +4537,7 @@ void main() {
     );
 
     test(
-      'GM-028 ignores empty PeerId member_added and members_added before config install',
+      'GM-028 rejects empty PeerId member_added and members_added without config sync',
       () async {
         listener.start(sourceController.stream);
 
@@ -4163,35 +4639,7 @@ void main() {
             .map((message) => jsonDecode(message) as Map<String, dynamic>)
             .where((message) => message['cmd'] == 'group:updateConfig')
             .toList(growable: false);
-        expect(updateConfigMessages, hasLength(2));
-        for (final updateConfigMessage in updateConfigMessages) {
-          final groupConfig =
-              updateConfigMessage['payload']['groupConfig']
-                  as Map<String, dynamic>;
-          expect(
-            isGroupConfigStateHashValid(
-              groupId: 'group-1',
-              groupConfig: groupConfig,
-            ),
-            isTrue,
-          );
-          final configMembers = (groupConfig['members'] as List<dynamic>)
-              .cast<Map<String, dynamic>>();
-          expect(
-            configMembers.map((member) => member['peerId']),
-            isNot(contains('   ')),
-          );
-          expect(
-            configMembers.where(
-              (member) => (member['peerId'] as String?)?.trim().isEmpty ?? true,
-            ),
-            isEmpty,
-          );
-          expect(configMembers.map((member) => member['peerId']).toSet(), {
-            'peer-admin',
-            'peer-sender',
-          });
-        }
+        expect(updateConfigMessages, isEmpty);
 
         await subscription.cancel();
       },
@@ -5235,18 +5683,30 @@ void main() {
     );
 
     test(
-      'system message without bridge falls through as regular message',
+      'PGC-018 system message without bridge is rejected without visible chat persistence',
       () async {
-        // Create listener without bridge
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
         final noBridgeListener = GroupMessageListener(
           groupRepo: groupRepo,
           msgRepo: msgRepo,
+        );
+        final messages = <GroupMessage>[];
+        final subscription = noBridgeListener.groupMessageStream.listen(
+          messages.add,
         );
         noBridgeListener.start(sourceController.stream);
 
         final sysText = jsonEncode({
           '__sys': 'member_added',
-          'member': {'peerId': 'peer-charlie'},
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'writer',
+            'publicKey': 'pk-charlie',
+          },
           'groupConfig': {},
         });
 
@@ -5255,15 +5715,22 @@ void main() {
           'senderId': 'peer-sender',
           'senderUsername': 'Sender',
           'keyEpoch': 0,
+          'messageId': 'pgc018-no-bridge-system',
           'text': sysText,
           'timestamp': DateTime.now().toUtc().toIso8601String(),
         });
 
         await Future.delayed(const Duration(milliseconds: 50));
 
-        // Without bridge, treated as regular message and saved
-        expect(msgRepo.count, 1);
+        expect(msgRepo.count, 0);
+        expect(messages, isEmpty);
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+        expect(
+          flowEvents.map((event) => event['event']),
+          contains('GROUP_MESSAGE_LISTENER_SYSTEM_NO_BRIDGE_REJECTED'),
+        );
 
+        await subscription.cancel();
         noBridgeListener.dispose();
       },
     );
@@ -9316,6 +9783,7 @@ void main() {
   // ---------------------------------------------------------------------------
   group('group notifications', () {
     test('shows notification for incoming group message', () async {
+      await saveSelfMember();
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();
 
@@ -9494,6 +9962,7 @@ void main() {
     test(
       'replayed duplicate group message does not create a second local notification',
       () async {
+        await saveSelfMember();
         final notifService = FakeNotificationService();
         final tracker = ActiveConversationTracker();
 
@@ -9668,6 +10137,7 @@ void main() {
     test(
       'suppresses local notification when a recent remote push already announced the same group message',
       () async {
+        await saveSelfMember();
         final notifService = FakeNotificationService();
         final tracker = ActiveConversationTracker();
         final gate = RecentRemoteNotificationGate(
@@ -9712,6 +10182,7 @@ void main() {
     );
 
     test('suppresses notification when viewing group conversation', () async {
+      await saveSelfMember();
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();
       tracker.setActive('group:group-1');
@@ -9746,6 +10217,7 @@ void main() {
     test(
       'suppresses local notification for muted groups but still persists the message',
       () async {
+        await saveSelfMember();
         final notifService = FakeNotificationService();
         final tracker = ActiveConversationTracker();
 
@@ -9960,6 +10432,7 @@ void main() {
     });
 
     test('shows notification when viewing different group', () async {
+      await saveSelfMember();
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();
       tracker.setActive('group:other-group');
@@ -10011,6 +10484,8 @@ void main() {
     test(
       'emits ReactionChange on groupReactionChangeStream for incoming add reaction',
       () async {
+        await saveGroupReactionTargetMessage('msg-1');
+
         final rxnListener = GroupMessageListener(
           groupRepo: groupRepo,
           msgRepo: msgRepo,
@@ -10052,7 +10527,61 @@ void main() {
       },
     );
 
+    test('PGC-008 stop guards late reaction stream emission', () async {
+      await saveGroupReactionTargetMessage('pgc008-msg-1');
+
+      final gatedReactionRepo = _GateableReactionRepository();
+      final rxnListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: gatedReactionRepo,
+      );
+
+      rxnListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      final changes = <ReactionChange>[];
+      final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+      addTearDown(sub.cancel);
+      addTearDown(rxnListener.dispose);
+
+      reactionSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'reaction': jsonEncode({
+          'id': 'pgc008-rxn-1',
+          'messageId': 'pgc008-msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-05-23T12:00:00.000Z',
+        }),
+      });
+
+      await gatedReactionRepo.firstSaveStarted.future.timeout(
+        const Duration(seconds: 1),
+      );
+      var stopCompleted = false;
+      final stopFuture = rxnListener.stop().then((_) {
+        stopCompleted = true;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(stopCompleted, isFalse);
+
+      gatedReactionRepo.releaseSave();
+      await stopFuture.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+
+      expect(gatedReactionRepo.saveReactionCallCount, 1);
+      expect(changes, isEmpty);
+    });
+
     test('emits removal ReactionChange when action is remove', () async {
+      await saveGroupReactionTargetMessage('msg-1');
+
       final rxnListener = GroupMessageListener(
         groupRepo: groupRepo,
         msgRepo: msgRepo,

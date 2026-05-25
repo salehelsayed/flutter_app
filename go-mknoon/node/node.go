@@ -731,6 +731,8 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 	n.mu.RLock()
 	h := n.host
 	started := n.isStarted
+	relayReady := n.relayReady
+	relayReadyOnce := n.relayReadyOnce
 	relayAddrs := n.relayAddresses
 	relayPeerOrder := append([]peer.ID(nil), n.relayPeerOrder...)
 	mgr := n.relaySessionMgr
@@ -896,7 +898,28 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		}
 	}
 	result = n.finalizeRelayRecoveryResult(result, "relay refresh")
+	if result.Success && result.RecoveryMode == "in_place" {
+		n.closeRelayReadyIfCurrent(h, relayReady, relayReadyOnce)
+	}
 	return result
+}
+
+func (n *Node) closeRelayReadyIfCurrent(expectedHost host.Host, expectedReady chan struct{}, expectedOnce *sync.Once) {
+	if expectedHost == nil || expectedReady == nil || expectedOnce == nil {
+		return
+	}
+
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	if !n.isStarted ||
+		n.host != expectedHost ||
+		n.relayReady != expectedReady ||
+		n.relayReadyOnce != expectedOnce {
+		return
+	}
+
+	expectedOnce.Do(func() { close(expectedReady) })
 }
 
 // ReconnectRelays attempts in-place relay recovery first, then falls back

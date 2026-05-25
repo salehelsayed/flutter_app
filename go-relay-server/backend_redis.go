@@ -562,7 +562,7 @@ func (b *redisGroupInboxBackend) sequenceKey() string {
 }
 
 func (b *redisGroupInboxBackend) Store(groupId string, from string, message string) error {
-	return b.StoreWithRecipients(groupId, from, message, nil)
+	return b.StoreWithRecipients(groupId, from, message, []string{from})
 }
 
 func (b *redisGroupInboxBackend) StoreWithRecipients(
@@ -571,6 +571,11 @@ func (b *redisGroupInboxBackend) StoreWithRecipients(
 	message string,
 	recipientPeerIds []string,
 ) error {
+	normalizedRecipients := normalizePeerIds(recipientPeerIds)
+	if len(normalizedRecipients) == 0 {
+		return fmt.Errorf("recipientPeerIds required")
+	}
+
 	ctx := context.Background()
 	id, err := b.client.Incr(ctx, b.sequenceKey()).Result()
 	if err != nil {
@@ -582,7 +587,7 @@ func (b *redisGroupInboxBackend) StoreWithRecipients(
 		Message:          message,
 		Timestamp:        time.Now().UnixMilli(),
 		ID:               fmt.Sprintf("%d", id),
-		RecipientPeerIds: normalizePeerIds(recipientPeerIds),
+		RecipientPeerIds: normalizedRecipients,
 	}
 
 	payload, err := json.Marshal(record)

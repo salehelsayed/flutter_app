@@ -1211,6 +1211,178 @@ func TestGR002ConcurrentRefreshRelaySessionCallsCoalesce(t *testing.T) {
 	}
 }
 
+func TestGRRR001RefreshRelaySessionClosesRelayReadyAfterStartupWarmFailure(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	startupWarmDone := make(chan struct{})
+	var startupWarmCalls atomic.Int32
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		if startupWarmCalls.Add(1) == 1 {
+			close(startupWarmDone)
+		}
+		return errors.New("startup relay warm failed")
+	}
+	n.refreshRelaySessionHook = func() *RecoveryResult {
+		return &RecoveryResult{
+			RecoveryMode:      "in_place",
+			Success:           true,
+			RelayState:        string(AggregateRelayOnline),
+			HealthyRelayCount: 1,
+		}
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19036),
+		},
+		AutoRegister:                      false,
+		PersonalRendezvousRefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	select {
+	case <-startupWarmDone:
+	case <-time.After(time.Second):
+		t.Fatal("startup relay warm hook was not called")
+	}
+
+	n.mu.RLock()
+	relayReady := n.relayReady
+	n.mu.RUnlock()
+
+	select {
+	case <-relayReady:
+		t.Fatal("relayReady closed before successful recovery")
+	default:
+	}
+
+	result := n.RefreshRelaySession()
+	if result == nil || !result.Success {
+		t.Fatalf("RefreshRelaySession() = %+v, want success", result)
+	}
+
+	select {
+	case <-relayReady:
+	case <-time.After(time.Second):
+		t.Fatal("successful in-place recovery did not close relayReady")
+	}
+}
+
+func TestGRRR001RefreshRelaySessionFailureDoesNotCloseRelayReady(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	n.refreshRelaySessionHook = func() *RecoveryResult {
+		return &RecoveryResult{
+			RecoveryMode: "in_place",
+			Success:      false,
+			ErrorCode:    "REFRESH_FAILED",
+			Reason:       "forced refresh failure",
+			ReusedHost:   true,
+		}
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:                     hexKey,
+		RelayAddresses:                    []string{},
+		AutoRegister:                      false,
+		PersonalRendezvousRefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.mu.RLock()
+	relayReady := n.relayReady
+	n.mu.RUnlock()
+
+	result := n.RefreshRelaySession()
+	if result == nil || result.Success {
+		t.Fatalf("RefreshRelaySession() = %+v, want failure", result)
+	}
+
+	select {
+	case <-relayReady:
+		t.Fatal("failed in-place recovery closed relayReady")
+	default:
+	}
+}
+
+func TestGRRR001MarkRelayReadyIgnoresStaleHostAfterRestart(t *testing.T) {
+	firstKey := generateTestKey(t)
+	secondKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:                     firstKey,
+		RelayAddresses:                    []string{},
+		AutoRegister:                      false,
+		PersonalRendezvousRefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+
+	n.mu.RLock()
+	staleHost := n.host
+	staleRelayReady := n.relayReady
+	staleRelayReadyOnce := n.relayReadyOnce
+	n.mu.RUnlock()
+	if staleHost == nil {
+		t.Fatal("first Start did not initialize host")
+	}
+
+	if err := n.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	_, err = n.Start(NodeConfig{
+		PrivateKeyHex:                     secondKey,
+		RelayAddresses:                    []string{},
+		AutoRegister:                      false,
+		PersonalRendezvousRefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.mu.RLock()
+	currentHost := n.host
+	currentRelayReady := n.relayReady
+	currentRelayReadyOnce := n.relayReadyOnce
+	n.mu.RUnlock()
+	if currentHost == nil || currentHost == staleHost {
+		t.Fatalf("second Start host = %v, stale host = %v", currentHost, staleHost)
+	}
+
+	n.closeRelayReadyIfCurrent(staleHost, staleRelayReady, staleRelayReadyOnce)
+
+	select {
+	case <-staleRelayReady:
+		t.Fatal("stale relayReady channel was closed after restart")
+	default:
+	}
+	select {
+	case <-currentRelayReady:
+		t.Fatal("current relayReady channel was closed by stale host marker")
+	default:
+	}
+
+	n.closeRelayReadyIfCurrent(currentHost, currentRelayReady, currentRelayReadyOnce)
+	select {
+	case <-currentRelayReady:
+	case <-time.After(time.Second):
+		t.Fatal("current relayReady did not close for current host")
+	}
+}
+
 func TestGR007AcknowledgeGroupRecoveryStoppedNodeFailsWithoutMutatingState(t *testing.T) {
 	n := NewNode()
 	collector := &testEventCollector{}
@@ -2667,6 +2839,109 @@ func TestEventDispatcher_CoalescesAddressesUpdatedAndRelayState(t *testing.T) {
 	}
 }
 
+func TestEventDispatcher_ClonesCallerDataBeforeQueueWaitMutation(t *testing.T) {
+	collector := &testEventCollector{}
+	firstCallbackEntered := make(chan struct{})
+	releaseFirstCallback := make(chan struct{})
+	var firstCallbackOnce sync.Once
+
+	release := sync.OnceFunc(func() {
+		close(releaseFirstCallback)
+	})
+
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			firstCallbackOnce.Do(func() {
+				close(firstCallbackEntered)
+				<-releaseFirstCallback
+			})
+			collector.OnEvent(jsonStr)
+		},
+	}
+
+	d := NewEventDispatcher(cb, 8)
+	defer d.Stop()
+	defer release()
+
+	d.Emit("addresses:updated", map[string]interface{}{
+		"circuitAddresses": []string{"/p2p/clone-gate"},
+		"listenAddresses":  []string{},
+	})
+
+	select {
+	case <-firstCallbackEntered:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher callback did not enter the gated delivery path")
+	}
+
+	callerData := map[string]interface{}{
+		"groupId":   "group-clone",
+		"messageId": "clone-original",
+		"sequence":  1,
+	}
+	d.Emit("group_message:received", callerData)
+
+	callerData["messageId"] = "clone-mutated"
+	callerData["queueWaitMs"] = "caller-owned"
+
+	release()
+
+	delivered := waitForCollectedEvent(t, collector, "group_message:received", 3*time.Second)
+	if got := delivered["messageId"]; got != "clone-original" {
+		t.Fatalf("delivered messageId = %v, want clone-original; delivered = %#v", got, delivered)
+	}
+	if _, ok := delivered["queueWaitMs"].(float64); !ok {
+		t.Fatalf("delivered queueWaitMs = %v (%T), want JSON number", delivered["queueWaitMs"], delivered["queueWaitMs"])
+	}
+	if got := callerData["messageId"]; got != "clone-mutated" {
+		t.Fatalf("caller messageId = %v, want caller-owned mutation to remain local", got)
+	}
+	if got := callerData["queueWaitMs"]; got != "caller-owned" {
+		t.Fatalf("caller queueWaitMs = %v, dispatcher mutated caller map", got)
+	}
+}
+
+func TestEventDispatcher_StopIsIdempotentAndRejectsEmitAfterStop(t *testing.T) {
+	collector := &testEventCollector{}
+	cb := &recordingEventCallback{
+		onEvent: collector.OnEvent,
+	}
+
+	d := NewEventDispatcher(cb, 4)
+	defer d.Stop()
+
+	d.Emit("message:received", map[string]interface{}{
+		"from":    "peer-stop-before",
+		"to":      "peer-stop-target",
+		"content": "before stop",
+	})
+
+	d.Stop()
+	d.Stop()
+
+	beforeEvents := collector.collectEvents("message:received")
+	if len(beforeEvents) != 1 {
+		t.Fatalf("message:received deliveries after Stop = %d, want 1; events = %#v", len(beforeEvents), beforeEvents)
+	}
+
+	d.Emit("message:received", map[string]interface{}{
+		"from":    "peer-stop-after",
+		"to":      "peer-stop-target",
+		"content": "after stop",
+	})
+	if depth := d.QueueDepth(); depth != 0 {
+		t.Fatalf("queue depth after Emit on stopped dispatcher = %d, want 0", depth)
+	}
+
+	afterEvents := collector.collectEvents("message:received")
+	if len(afterEvents) != 1 {
+		t.Fatalf("message:received deliveries after Emit on stopped dispatcher = %d, want still 1; events = %#v", len(afterEvents), afterEvents)
+	}
+	if got := afterEvents[0]["from"]; got != "peer-stop-before" {
+		t.Fatalf("delivered from = %v, want peer-stop-before", got)
+	}
+}
+
 func TestPL008EventDispatcherCoalescesMediaProgressWithoutDroppingGroupMessages(t *testing.T) {
 	const (
 		queueCapacity = 8
@@ -3403,22 +3678,45 @@ func TestST005EventDispatcherHighThroughputStormPreservesGroupMessagesAndCoalesc
 
 func TestEventDispatcher_EmitsPressureAndOverflowDiagnostics(t *testing.T) {
 	collector := &testEventCollector{}
+	firstCallbackEntered := make(chan struct{})
+	releaseFirstCallback := make(chan struct{})
+	var firstCallbackOnce sync.Once
+
+	release := sync.OnceFunc(func() {
+		close(releaseFirstCallback)
+	})
+
 	cb := &recordingEventCallback{
 		onEvent: func(jsonStr string) {
-			time.Sleep(50 * time.Millisecond)
+			firstCallbackOnce.Do(func() {
+				close(firstCallbackEntered)
+				<-releaseFirstCallback
+			})
 			collector.OnEvent(jsonStr)
 		},
 	}
 
 	d := NewEventDispatcher(cb, 2)
 	defer d.Stop()
+	defer release()
+
+	d.Emit("test:event", map[string]interface{}{
+		"index": -1,
+	})
+
+	select {
+	case <-firstCallbackEntered:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher callback did not enter the gated delivery path")
+	}
 
 	for i := 0; i < 10; i++ {
-		d.Emit("group_message:received", map[string]interface{}{
-			"groupId": "group-overflow",
-			"text":    fmt.Sprintf("msg-%d", i),
+		d.Emit("test:event", map[string]interface{}{
+			"index": i,
 		})
 	}
+
+	release()
 
 	pressure := waitForCollectedEvent(t, collector, dispatcherPressureEvent, 3*time.Second)
 	if got := pressure["state"]; got != "near_overflow" {
@@ -3430,9 +3728,10 @@ func TestEventDispatcher_EmitsPressureAndOverflowDiagnostics(t *testing.T) {
 	if got := pressure["queueDepth"]; got == nil || got.(float64) < 1 {
 		t.Fatalf("pressure queueDepth = %v, want >= 1", got)
 	}
-	if got := pressure["lastEvent"]; got != "group_message:received" {
-		t.Fatalf("pressure lastEvent = %v, want group_message:received", got)
+	if got := pressure["lastEvent"]; got != "test:event" {
+		t.Fatalf("pressure lastEvent = %v, want test:event", got)
 	}
+	assertSaneQueueWaitMs(t, pressure)
 
 	overflow := waitForCollectedEvent(t, collector, dispatcherOverflowEvent, 3*time.Second)
 	if got := overflow["state"]; got != "overflow" {
@@ -3447,12 +3746,31 @@ func TestEventDispatcher_EmitsPressureAndOverflowDiagnostics(t *testing.T) {
 	if got := overflow["droppedCount"]; got == nil || got.(float64) < 1 {
 		t.Fatalf("overflow droppedCount = %v, want >= 1", got)
 	}
-	if got := overflow["lastEvent"]; got != "group_message:received" {
-		t.Fatalf("overflow lastEvent = %v, want group_message:received", got)
+	if got := overflow["lastEvent"]; got != "test:event" {
+		t.Fatalf("overflow lastEvent = %v, want test:event", got)
+	}
+	if got := overflow["criticalEvent"]; got != false {
+		t.Fatalf("overflow criticalEvent = %v, want false", got)
+	}
+	if got := overflow["overflowAction"]; got != "dropped" {
+		t.Fatalf("overflow overflowAction = %v, want dropped", got)
+	}
+	assertSaneQueueWaitMs(t, overflow)
+}
+
+func assertSaneQueueWaitMs(t *testing.T, data map[string]interface{}) {
+	t.Helper()
+
+	queueWaitMs, ok := data["queueWaitMs"].(float64)
+	if !ok {
+		t.Fatalf("queueWaitMs = %v (%T), want JSON number", data["queueWaitMs"], data["queueWaitMs"])
+	}
+	if queueWaitMs < 0 || queueWaitMs > float64((30*time.Second).Milliseconds()) {
+		t.Fatalf("queueWaitMs = %v, want sane recent diagnostic wait", queueWaitMs)
 	}
 }
 
-func TestDE012EventDispatcherOverflowDiagnosticIdentifiesDroppedGroupEventForReplayRecovery(t *testing.T) {
+func TestDE012EventDispatcherOverflowDiagnosticIdentifiesPreservedGroupEventForReplayRecovery(t *testing.T) {
 	const queueCapacity = 2
 
 	collector := &testEventCollector{}
@@ -3489,13 +3807,37 @@ func TestDE012EventDispatcherOverflowDiagnosticIdentifiesDroppedGroupEventForRep
 		t.Fatal("dispatcher callback did not enter the gated delivery path")
 	}
 
+	expectedPreservedIdentifiers := map[string]interface{}{
+		"groupId":         "group-de012",
+		"messageId":       "de012-message-2",
+		"keyEpoch":        float64(7),
+		"senderId":        "peer-de012-sender",
+		"senderDeviceId":  "device-de012-sender",
+		"transportPeerId": "transport-de012-peer",
+	}
 	for i := 0; i < queueCapacity+1; i++ {
-		d.Emit("group_message:received", map[string]interface{}{
+		payload := map[string]interface{}{
 			"groupId":   "group-de012",
 			"messageId": fmt.Sprintf("de012-message-%d", i),
 			"sequence":  i,
 			"text":      fmt.Sprintf("overflow candidate %d", i),
-		})
+		}
+		if i == queueCapacity {
+			payload = map[string]interface{}{
+				"groupId":         expectedPreservedIdentifiers["groupId"],
+				"messageId":       expectedPreservedIdentifiers["messageId"],
+				"keyEpoch":        7,
+				"senderId":        expectedPreservedIdentifiers["senderId"],
+				"senderDeviceId":  expectedPreservedIdentifiers["senderDeviceId"],
+				"transportPeerId": expectedPreservedIdentifiers["transportPeerId"],
+				"sequence":        i,
+				"text":            "DE-012 overflow body must not leak",
+				"payload": map[string]interface{}{
+					"ciphertext": "DE-012 ciphertext must not leak",
+				},
+			}
+		}
+		d.Emit("group_message:received", payload)
 	}
 
 	release()
@@ -3513,8 +3855,25 @@ func TestDE012EventDispatcherOverflowDiagnosticIdentifiesDroppedGroupEventForRep
 	if got := overflow["queueDepth"]; got != float64(queueCapacity) {
 		t.Fatalf("overflow queueDepth = %v, want %d", got, queueCapacity)
 	}
-	if got := overflow["droppedCount"]; got == nil || got.(float64) < 1 {
-		t.Fatalf("overflow droppedCount = %v, want >= 1", got)
+	if got := overflow["droppedCount"]; got != float64(0) {
+		t.Fatalf("overflow droppedCount = %v, want 0 for preserved critical event", got)
+	}
+	if got := overflow["criticalEvent"]; got != true {
+		t.Fatalf("overflow criticalEvent = %v, want true", got)
+	}
+	if got := overflow["overflowAction"]; got != "preserved_critical" {
+		t.Fatalf("overflow overflowAction = %v, want preserved_critical", got)
+	}
+	assertSaneQueueWaitMs(t, overflow)
+	for field, want := range expectedPreservedIdentifiers {
+		if got := overflow[field]; got != want {
+			t.Fatalf("overflow %s = %v (%T), want %v (%T); full overflow = %#v", field, got, got, want, want, overflow)
+		}
+	}
+	for _, field := range []string{"text", "payload"} {
+		if _, ok := overflow[field]; ok {
+			t.Fatalf("overflow leaked %s field: %#v", field, overflow)
+		}
 	}
 
 	rawEvents := collector.snapshot()
@@ -3532,18 +3891,15 @@ func TestDE012EventDispatcherOverflowDiagnosticIdentifiesDroppedGroupEventForRep
 		deliveredMessages[messageID]++
 	}
 
-	if deliveredMessages["de012-message-2"] != 0 {
-		t.Fatalf("overflowed message was delivered live: %#v", deliveredMessages)
-	}
-	for _, messageID := range []string{"de012-message-0", "de012-message-1"} {
+	for _, messageID := range []string{"de012-message-0", "de012-message-1", "de012-message-2"} {
 		if deliveredMessages[messageID] != 1 {
 			t.Fatalf("deliveredMessages[%s] = %d, want 1; all = %#v", messageID, deliveredMessages[messageID], deliveredMessages)
 		}
 	}
 
 	_, _, dropped := d.Diagnostics()
-	if dropped < 1 {
-		t.Fatalf("dispatcher dropped = %d, want >= 1", dropped)
+	if dropped != 0 {
+		t.Fatalf("dispatcher dropped = %d, want 0 for preserved critical overflow", dropped)
 	}
 }
 

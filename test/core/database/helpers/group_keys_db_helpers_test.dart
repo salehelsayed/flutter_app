@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 void main() {
   late Database db;
@@ -45,6 +46,52 @@ void main() {
       expect(rows[0]['key_generation'], 1);
       expect(rows[0]['encrypted_key'], 'base64-key-gen1');
     });
+
+    test('treats identical same-generation key insert as idempotent', () async {
+      await dbInsertGroupKey(db, makeKeyRow());
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(createdAt: '2026-01-15T12:05:00.000Z'),
+      );
+
+      final rows = await db.query('group_keys');
+      expect(rows, hasLength(1));
+      expect(rows.single['key_generation'], 1);
+      expect(rows.single['encrypted_key'], 'base64-key-gen1');
+      expect(rows.single['created_at'], '2026-01-15T12:00:00.000Z');
+    });
+
+    test(
+      'throws on conflicting same-generation key insert and preserves old key',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await dbInsertGroupKey(db, makeKeyRow());
+
+        await expectLater(
+          dbInsertGroupKey(db, makeKeyRow(encryptedKey: 'conflicting-key')),
+          throwsA(isA<StateError>()),
+        );
+
+        final rows = await db.query('group_keys');
+        expect(rows, hasLength(1));
+        expect(rows.single['encrypted_key'], 'base64-key-gen1');
+        expect(
+          flowEvents.where(
+            (event) => event['event'] == 'GROUP_KEYS_DB_INSERT_CONFLICT',
+          ),
+          hasLength(1),
+        );
+        expect(
+          flowEvents.where(
+            (event) => event['event'] == 'GROUP_KEYS_DB_INSERT_ERROR',
+          ),
+          hasLength(1),
+        );
+      },
+    );
   });
 
   group('dbLoadLatestGroupKey', () {

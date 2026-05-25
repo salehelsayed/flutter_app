@@ -419,7 +419,7 @@ print_command_for_path() {
       fi
       ;;
     integration_test/*.dart)
-      printf 'flutter test'
+      printf 'flutter test --no-pub'
       device_id="$(single_device_id)"
       if [ -n "$device_id" ]; then
         printf ' -d %s' "$(quote_for_display "$device_id")"
@@ -490,7 +490,7 @@ run_path() {
       MKNOON_RELAY_ADDRESSES="$(relay_addresses)" "${cmd[@]}"
       ;;
     integration_test/*.dart)
-      cmd=(flutter test)
+      cmd=(flutter test --no-pub)
       device_id="$(single_device_id)"
       if [ -n "$device_id" ]; then
         cmd+=(-d "$device_id")

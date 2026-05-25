@@ -69,6 +69,27 @@ void main() {
     expect(result, isNull);
   });
 
+  test('returns null for unknown action', () {
+    final result = GroupReactionPayload.fromDecryptedJson(
+      '{"id":"r-1","messageId":"msg-1","emoji":"👍","action":"toggle","senderPeerId":"peer-1","timestamp":"2026-03-08T00:00:00.000Z"}',
+    );
+    expect(result, isNull);
+  });
+
+  test('returns null for blank emoji', () {
+    final result = GroupReactionPayload.fromDecryptedJson(
+      '{"id":"r-1","messageId":"msg-1","emoji":"   ","action":"add","senderPeerId":"peer-1","timestamp":"2026-03-08T00:00:00.000Z"}',
+    );
+    expect(result, isNull);
+  });
+
+  test('returns null for invalid timestamp', () {
+    final result = GroupReactionPayload.fromDecryptedJson(
+      '{"id":"r-1","messageId":"msg-1","emoji":"👍","action":"add","senderPeerId":"peer-1","timestamp":"not-a-time"}',
+    );
+    expect(result, isNull);
+  });
+
   test('toMessageReaction creates valid model', () {
     final payload = GroupReactionPayload(
       id: 'r-4',

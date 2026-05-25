@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,143 @@ func opaqueGroupReplayEnvelope(messageID string) string {
 		messageID,
 		messageID,
 	)
+}
+
+type recordingGroupInboxBackend struct {
+	lastRecipientPeerIds []string
+	messages             []groupInboxMessage
+}
+
+func (b *recordingGroupInboxBackend) Store(groupId string, from string, message string) error {
+	return fmt.Errorf("legacy Store should not be called")
+}
+
+func (b *recordingGroupInboxBackend) StoreWithRecipients(
+	groupId string,
+	from string,
+	message string,
+	recipientPeerIds []string,
+) error {
+	b.lastRecipientPeerIds = append([]string(nil), recipientPeerIds...)
+	b.messages = append(b.messages, groupInboxMessage{
+		From:             from,
+		Message:          message,
+		Timestamp:        time.Now().UnixMilli(),
+		ID:               fmt.Sprintf("%d", len(b.messages)+1),
+		RecipientPeerIds: append([]string(nil), recipientPeerIds...),
+	})
+	return nil
+}
+
+func (b *recordingGroupInboxBackend) RetrieveSince(groupId string, sinceTimestamp int64) []groupInboxMessage {
+	result := make([]groupInboxMessage, 0, len(b.messages))
+	for _, message := range b.messages {
+		if sinceTimestamp > 0 && message.Timestamp <= sinceTimestamp {
+			continue
+		}
+		result = append(result, message)
+	}
+	return result
+}
+
+func (b *recordingGroupInboxBackend) RetrieveCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string, []groupInboxHistoryGap) {
+	if limit <= 0 {
+		return nil, "", nil
+	}
+	messages := b.RetrieveSince(groupId, 0)
+	if len(messages) > limit {
+		return messages[:limit], messages[limit-1].ID, nil
+	}
+	return messages, "", nil
+}
+
+func (b *recordingGroupInboxBackend) Prune() {}
+
+func (b *recordingGroupInboxBackend) Stats() (groups int, totalMessages int) {
+	if len(b.messages) == 0 {
+		return 0, 0
+	}
+	return 1, len(b.messages)
+}
+
+func TestGroupInboxBackendContractRequiresRecipientStore(t *testing.T) {
+	backendType := reflect.TypeOf((*GroupInboxBackend)(nil)).Elem()
+
+	storeWithRecipients, ok := backendType.MethodByName("StoreWithRecipients")
+	if !ok {
+		t.Fatal("GroupInboxBackend must require StoreWithRecipients")
+	}
+	wantType := reflect.TypeOf(func(string, string, string, []string) error { return nil })
+	if storeWithRecipients.Type != wantType {
+		t.Fatalf("StoreWithRecipients type = %v, want %v", storeWithRecipients.Type, wantType)
+	}
+
+	if _, ok := backendType.MethodByName("Store"); ok {
+		t.Fatal("GroupInboxBackend must not expose legacy Store without recipient ACLs")
+	}
+}
+
+func TestGroupInboxStorePassesRecipientACLToBackendContract(t *testing.T) {
+	backend := &recordingGroupInboxBackend{}
+	store := NewGroupInboxStoreWithBackend(backend)
+
+	if err := store.StoreWithPushRecipients(
+		"group-acl-contract",
+		"peer-a",
+		"msg-acl-contract",
+		[]string{"peer-b", "", "peer-b", "peer-c"},
+	); err != nil {
+		t.Fatalf("StoreWithPushRecipients: %v", err)
+	}
+
+	wantRecipients := []string{"peer-b", "peer-c"}
+	if !reflect.DeepEqual(backend.lastRecipientPeerIds, wantRecipients) {
+		t.Fatalf("backend recipients = %#v, want %#v", backend.lastRecipientPeerIds, wantRecipients)
+	}
+
+	for _, peerId := range wantRecipients {
+		messages := store.RetrieveAuthorized("group-acl-contract", 0, peerId)
+		if len(messages) != 1 {
+			t.Fatalf("RetrieveAuthorized(%q) returned %d message(s), want 1", peerId, len(messages))
+		}
+	}
+	if messages := store.RetrieveAuthorized("group-acl-contract", 0, "peer-d"); len(messages) != 0 {
+		t.Fatalf("unauthorized peer retrieved %#v, want none", messages)
+	}
+}
+
+func TestGroupInboxStoreStoreHelperUsesSenderACL(t *testing.T) {
+	store := NewGroupInboxStore(500, 7*24*time.Hour)
+
+	if err := store.Store("group-store-helper", "peer-a", "msg-helper"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	messages := store.Retrieve("group-store-helper", 0)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	wantRecipients := []string{"peer-a"}
+	if !reflect.DeepEqual(messages[0].RecipientPeerIds, wantRecipients) {
+		t.Fatalf("RecipientPeerIds = %#v, want %#v", messages[0].RecipientPeerIds, wantRecipients)
+	}
+}
+
+func TestMemoryGroupInboxBackendStoreHelperUsesSenderACL(t *testing.T) {
+	backend := newMemoryGroupInboxBackend(500, 7*24*time.Hour)
+
+	if err := backend.Store("group-memory-helper", "peer-a", "msg-helper"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	messages := backend.RetrieveSince("group-memory-helper", 0)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	wantRecipients := []string{"peer-a"}
+	if !reflect.DeepEqual(messages[0].RecipientPeerIds, wantRecipients) {
+		t.Fatalf("RecipientPeerIds = %#v, want %#v", messages[0].RecipientPeerIds, wantRecipients)
+	}
 }
 
 // =============================================================================

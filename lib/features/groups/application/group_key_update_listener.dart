@@ -10,6 +10,7 @@ import 'package:flutter_app/features/groups/application/group_key_update_signatu
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -429,11 +430,28 @@ class GroupKeyUpdateListener {
             'keyGeneration': keyGeneration,
           },
         );
+        await _requestRepairAfterSameEpochConflict(
+          groupId: groupId,
+          keyGeneration: keyGeneration,
+        );
         return;
       }
 
       final latestKey = await _groupRepo.getLatestKey(groupId);
       if (latestKey != null && keyGeneration < latestKey.keyGeneration) {
+        if (keyGeneration <
+            minRetainedGroupKeyGeneration(latestKey.keyGeneration)) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_KEY_UPDATE_LISTENER_STALE_HISTORICAL_KEY_IGNORED',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'keyGeneration': keyGeneration,
+              'latestGeneration': latestKey.keyGeneration,
+            },
+          );
+          return;
+        }
         await _groupRepo.saveKey(keyInfo);
         emitFlowEvent(
           layer: 'FL',
@@ -571,6 +589,44 @@ class GroupKeyUpdateListener {
           'keyGeneration': keyGeneration,
           'reason': groupKeyRepairReasonKeyUpdateApplyFailed,
           'updateKeyError': error,
+          'repairError': repairError.toString(),
+        },
+      );
+    }
+  }
+
+  Future<void> _requestRepairAfterSameEpochConflict({
+    required String groupId,
+    required int keyGeneration,
+  }) async {
+    final request = _requestGroupKeyRepair;
+    if (request == null) return;
+
+    try {
+      await request(
+        GroupKeyRepairRequest(
+          groupId: groupId,
+          keyEpoch: keyGeneration,
+          reason: groupKeyRepairReasonSameEpochKeyConflict,
+        ),
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_UPDATE_LISTENER_RECOVERY_REQUESTED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'keyGeneration': keyGeneration,
+          'reason': groupKeyRepairReasonSameEpochKeyConflict,
+        },
+      );
+    } catch (repairError) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_UPDATE_LISTENER_RECOVERY_REQUEST_FAILED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'keyGeneration': keyGeneration,
+          'reason': groupKeyRepairReasonSameEpochKeyConflict,
           'repairError': repairError.toString(),
         },
       );

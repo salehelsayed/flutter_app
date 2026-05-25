@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -13,8 +14,10 @@ import 'package:flutter_app/features/groups/application/handle_incoming_group_me
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
@@ -22,6 +25,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 const groupUndecryptablePlaceholderText = 'Message could not be decrypted.';
 const defaultGroupInboxDrainMaxPages = 100;
+const defaultMaxConcurrentGroupInboxDrains = 4;
 const groupInboxSyntheticSinceCursorPrefix = 'mknoon-since-ms:';
 
 class GroupOfflineInboxDrainResult {
@@ -71,7 +75,15 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   bool drainAllPages = true,
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
+  int maxConcurrentGroupDrains = defaultMaxConcurrentGroupInboxDrains,
 }) async {
+  if (maxConcurrentGroupDrains < 1) {
+    throw ArgumentError.value(
+      maxConcurrentGroupDrains,
+      'maxConcurrentGroupDrains',
+      'must be >= 1',
+    );
+  }
   final drainStopwatch = Stopwatch()..start();
   emitFlowEvent(
     layer: 'FL',
@@ -80,9 +92,18 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   );
 
   final groups = await groupRepo.getAllGroups();
+  final groupSucceeded = List<bool>.filled(groups.length, false);
+  var nextGroupIndex = 0;
+  final workerCount = min(maxConcurrentGroupDrains, groups.length);
 
-  final groupSucceeded = await Future.wait(
-    groups.map((group) async {
+  Future<void> drainNextGroup() async {
+    while (true) {
+      final groupIndex = nextGroupIndex;
+      nextGroupIndex++;
+      if (groupIndex >= groups.length) {
+        return;
+      }
+      final group = groups[groupIndex];
       final groupStopwatch = Stopwatch()..start();
       try {
         await _drainGroupInbox(
@@ -103,7 +124,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
           pageSize: pageSize,
           maxPages: maxPages,
         );
-        return true;
+        groupSucceeded[groupIndex] = true;
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
@@ -127,9 +148,12 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
                 : group.id,
           },
         );
-        return false;
       }
-    }),
+    }
+  }
+
+  await Future.wait(
+    List<Future<void>>.generate(workerCount, (_) => drainNextGroup()),
   );
   final errorCount = groupSucceeded.where((succeeded) => !succeeded).length;
 
@@ -440,6 +464,11 @@ Future<void> _drainGroupInbox({
       if (relayTimestamp == null) {
         return false;
       }
+      final group = await groupRepo.getGroup(groupId);
+      final groupCreatedAt = group?.createdAt.toUtc();
+      if (groupCreatedAt != null && relayTimestamp.isBefore(groupCreatedAt)) {
+        return false;
+      }
 
       final selfMember = await groupRepo.getMember(
         groupId,
@@ -501,13 +530,15 @@ Future<void> _drainGroupInbox({
         );
       }
 
-      // Route by type: group_reaction payloads are handled separately.
-      if (payload['type'] == 'group_reaction' && reactionRepo != null) {
+      // Route by type: group_reaction payloads are terminal even when this
+      // drain was not wired with reaction persistence.
+      if (payload['type'] == 'group_reaction') {
         final reactionJson = payload['reaction'] as String? ?? '';
-        if (reactionJson.isNotEmpty) {
+        if (reactionRepo != null && reactionJson.isNotEmpty) {
           await handleIncomingGroupReaction(
             groupRepo: groupRepo,
             reactionRepo: reactionRepo,
+            msgRepo: msgRepo,
             groupId: groupId,
             senderId:
                 payload['senderId'] as String? ??
@@ -515,6 +546,7 @@ Future<void> _drainGroupInbox({
             senderDeviceId: payload['senderDeviceId'] as String?,
             transportPeerId:
                 payload['transportPeerId'] as String? ?? msg['from'] as String?,
+            senderPublicKey: payload['senderPublicKey'] as String?,
             reactionJson: reactionJson,
           );
         }
@@ -558,9 +590,7 @@ Future<void> _drainGroupInbox({
         }
         await groupMessageListener.handleReplayEnvelope({
           'groupId': resolvedGroupId,
-          'senderId': transportSenderId.isNotEmpty
-              ? transportSenderId
-              : senderId,
+          'senderId': senderId,
           'senderUsername': senderUsername,
           'keyEpoch': keyEpoch,
           'text': text,
@@ -575,7 +605,16 @@ Future<void> _drainGroupInbox({
           'media': ?media,
         }, rethrowOnError: true);
 
-        if (await groupRepo.getGroup(resolvedGroupId) == null) {
+        final groupRemoved = await groupRepo.getGroup(resolvedGroupId) == null;
+        final localSelfRemoved =
+            !groupRemoved &&
+            await _didSystemReplayRemoveLocalSelf(
+              groupRepo: groupRepo,
+              groupId: resolvedGroupId,
+              text: text,
+              selfPeerId: selfPeerId,
+            );
+        if (groupRemoved || localSelfRemoved) {
           emitFlowEvent(
             layer: 'FL',
             event: 'GROUP_DRAIN_OFFLINE_INBOX_STOP_GROUP_REMOVED',
@@ -583,36 +622,39 @@ Future<void> _drainGroupInbox({
               'groupId': resolvedGroupId.length > 8
                   ? resolvedGroupId.substring(0, 8)
                   : resolvedGroupId,
+              if (localSelfRemoved) 'retainedHistory': true,
             },
           );
-          // Sys-removal arrived mid-page. Anything we wrote in Phase 1 of
-          // this same page now points at a deleted groupId — the pre-refactor
-          // shape rolled them back via the SQLCipher txn that wrapped the
-          // whole apply body, but the new three-phase shape has no implicit
-          // rollback for outer-repo writes. Sweep ONLY the IDs we ourselves
-          // persisted on this page; pre-existing rows (e.g. failed-send
-          // outbound messages from the now-removed user) are left alone.
-          var sweptCount = 0;
-          for (final id in phase1PersistedMessageIds) {
-            try {
-              await msgRepo.deleteMessage(id);
-              sweptCount++;
-            } catch (_) {
-              // Swallow per-id delete failures; the sweep is best-effort
-              // cleanup, not a correctness invariant.
+          if (groupRemoved) {
+            // Sys-removal arrived mid-page. Anything we wrote in Phase 1 of
+            // this same page now points at a deleted groupId — the pre-refactor
+            // shape rolled them back via the SQLCipher txn that wrapped the
+            // whole apply body, but the new three-phase shape has no implicit
+            // rollback for outer-repo writes. Sweep ONLY the IDs we ourselves
+            // persisted on this page; pre-existing rows (e.g. failed-send
+            // outbound messages from the now-removed user) are left alone.
+            var sweptCount = 0;
+            for (final id in phase1PersistedMessageIds) {
+              try {
+                await msgRepo.deleteMessage(id);
+                sweptCount++;
+              } catch (_) {
+                // Swallow per-id delete failures; the sweep is best-effort
+                // cleanup, not a correctness invariant.
+              }
             }
-          }
-          if (sweptCount > 0) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'GROUP_DRAIN_OFFLINE_INBOX_ORPHANS_SWEPT',
-              details: {
-                'groupId': resolvedGroupId.length > 8
-                    ? resolvedGroupId.substring(0, 8)
-                    : resolvedGroupId,
-                'count': sweptCount,
-              },
-            );
+            if (sweptCount > 0) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_DRAIN_OFFLINE_INBOX_ORPHANS_SWEPT',
+                details: {
+                  'groupId': resolvedGroupId.length > 8
+                      ? resolvedGroupId.substring(0, 8)
+                      : resolvedGroupId,
+                  'count': sweptCount,
+                },
+              );
+            }
           }
           stopGroupDrain = true;
           return;
@@ -657,6 +699,8 @@ Future<void> _drainGroupInbox({
         final payloadReceipts = _receiptsFromPayload(
           payload,
           groupId: resolvedGroupId,
+          trustedSenderId: senderId,
+          trustedSenderDeviceId: senderDeviceId,
         );
         pageReceipts.addAll(payloadReceipts);
         pageReadMessageIds.addAll(
@@ -711,6 +755,8 @@ Future<void> _drainGroupInbox({
       final payloadReceipts = _receiptsFromPayload(
         payload,
         groupId: resolvedGroupId,
+        trustedSenderId: senderId,
+        trustedSenderDeviceId: senderDeviceId,
       );
       pageReceipts.addAll(payloadReceipts);
       pageReadMessageIds.addAll(
@@ -1046,6 +1092,41 @@ int? _relayMessageTimestampMs(Object? value) {
   return null;
 }
 
+Future<bool> _didSystemReplayRemoveLocalSelf({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String text,
+  required String? selfPeerId,
+}) async {
+  final normalizedSelfPeerId = selfPeerId?.trim();
+  if (normalizedSelfPeerId == null || normalizedSelfPeerId.isEmpty) {
+    return false;
+  }
+
+  final parsed = _tryDecodeJsonMap(text);
+  if (parsed == null || parsed['__sys'] != 'member_removed') {
+    return false;
+  }
+  final member = parsed['member'];
+  if (member is! Map || member['peerId'] != normalizedSelfPeerId) {
+    return false;
+  }
+
+  return await groupRepo.getMember(groupId, normalizedSelfPeerId) == null;
+}
+
+Map<String, dynamic>? _tryDecodeJsonMap(String value) {
+  try {
+    final decoded = jsonDecode(value);
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
 Future<void> _repairHistoryGapsFromPage({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -1305,9 +1386,7 @@ Future<List<String>> _applyRepairedHistoryMessages({
     if (groupMessageListener != null) {
       await groupMessageListener.handleReplayEnvelope({
         'groupId': resolvedGroupId,
-        'senderId': text.startsWith('{"__sys":') && transportSenderId.isNotEmpty
-            ? transportSenderId
-            : senderId,
+        'senderId': senderId,
         'senderUsername': senderUsername,
         'keyEpoch': keyEpoch,
         'text': text,
@@ -1374,6 +1453,142 @@ Object? _canonicalizeJson(Object? value) {
 
 String _safeId(String id) => id.length > 8 ? id.substring(0, 8) : id;
 
+bool _isV3GroupMessageEnvelope(Map<String, dynamic> message) =>
+    message['version'] == '3' &&
+    message['type'] == 'group_message' &&
+    message['encrypted'] is Map;
+
+bool _isProtectedV3GroupMessagePayloadField(String key) {
+  switch (key) {
+    case 'groupId':
+    case 'senderId':
+    case 'senderDeviceId':
+    case 'transportPeerId':
+    case 'senderUsername':
+    case 'keyEpoch':
+    case 'text':
+    case 'timestamp':
+    case 'decryptMs':
+    case 'deliveryMs':
+      return true;
+  }
+  return false;
+}
+
+String? _v3EnvelopeSenderSigningKey({
+  required List<GroupMember> members,
+  required String senderId,
+  required String? senderDeviceId,
+  required String? senderTransportPeerId,
+  required String? senderDevicePublicKey,
+}) {
+  for (final member in members) {
+    if (member.peerId.trim() != senderId) continue;
+    if (member.devices.isEmpty) return member.publicKey?.trim();
+    for (final device in member.activeDevices) {
+      if (senderDeviceId != null && device.deviceId != senderDeviceId) {
+        continue;
+      }
+      if (senderTransportPeerId != null &&
+          device.transportPeerId != senderTransportPeerId) {
+        continue;
+      }
+      if (senderDevicePublicKey != null &&
+          device.deviceSigningPublicKey != senderDevicePublicKey) {
+        continue;
+      }
+      return device.deviceSigningPublicKey;
+    }
+  }
+  return null;
+}
+
+Future<Map<String, dynamic>> _decodeV3GroupMessageEnvelope({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required String fallbackGroupId,
+  required Map<String, dynamic> envelope,
+}) async {
+  final encrypted = envelope['encrypted'] as Map;
+  final ciphertext = encrypted['ciphertext'] as String?;
+  final nonce = encrypted['nonce'] as String?;
+  final groupId = envelope['groupId'] as String? ?? fallbackGroupId;
+  final senderId = envelope['senderId'] as String?;
+  final senderPublicKey = envelope['senderPublicKey'] as String?;
+  final signature = envelope['signature'] as String?;
+  final keyEpoch = envelope['keyEpoch'] as int?;
+  if (ciphertext == null ||
+      nonce == null ||
+      senderId == null ||
+      senderPublicKey == null ||
+      signature == null ||
+      keyEpoch == null) {
+    throw GroupOfflineReplaySignatureException('v3_envelope_malformed');
+  }
+
+  final senderDeviceId = envelope['senderDeviceId'] as String?;
+  final senderTransportPeerId = envelope['senderTransportPeerId'] as String?;
+  final senderDevicePublicKey = envelope['senderDevicePublicKey'] as String?;
+  final members = await groupRepo.getMembers(groupId);
+  final signingKey =
+      _v3EnvelopeSenderSigningKey(
+        members: members,
+        senderId: senderId,
+        senderDeviceId: senderDeviceId,
+        senderTransportPeerId: senderTransportPeerId,
+        senderDevicePublicKey: senderDevicePublicKey,
+      ) ??
+      senderPublicKey;
+  final valid = await callVerifyPayload(
+    bridge: bridge,
+    publicKey: signingKey,
+    data: '$groupId|$keyEpoch|$ciphertext',
+    signature: signature,
+  );
+  if (!valid) {
+    throw GroupOfflineReplaySignatureException('v3_signature_invalid');
+  }
+
+  final keyInfo = await groupRepo.getKeyByGeneration(groupId, keyEpoch);
+  if (keyInfo == null) {
+    throw StateError('missing group key for epoch $keyEpoch');
+  }
+  final plaintext = await callGroupDecrypt(
+    bridge,
+    keyInfo.encryptedKey,
+    ciphertext,
+    nonce,
+  );
+  final payload = jsonDecode(plaintext) as Map<String, dynamic>;
+  final transportPeerId = senderTransportPeerId?.trim().isNotEmpty == true
+      ? senderTransportPeerId
+      : senderId;
+  final decoded = <String, dynamic>{
+    'groupId': groupId,
+    'senderId': senderId,
+    'senderDeviceId': senderDeviceId,
+    'transportPeerId': transportPeerId,
+    'senderUsername': payload['username'] as String? ?? '',
+    'keyEpoch': keyEpoch,
+    'text': payload['text'] as String? ?? '',
+    'timestamp': payload['timestamp'] as String? ?? '',
+  };
+  final extra = payload['extra'];
+  if (extra is Map) {
+    for (final entry in extra.entries) {
+      final key = entry.key.toString();
+      if (!_isProtectedV3GroupMessagePayloadField(key)) {
+        decoded[key] = entry.value;
+      }
+    }
+  }
+  final messageId = envelope['messageId'];
+  if (messageId is String && messageId.isNotEmpty) {
+    decoded['messageId'] = messageId;
+  }
+  return decoded;
+}
+
 /// Decodes an inbox message from the relay's envelope format.
 ///
 /// The relay returns `{from, message, timestamp}` where `message` is a
@@ -1422,11 +1637,21 @@ Future<Map<String, dynamic>> decodeInboxMessage(
             'senderId': decodedMessage['senderPeerId'],
             'senderDeviceId': decodedMessage['senderDeviceId'],
             'transportPeerId': decodedMessage['senderTransportPeerId'],
+            'senderPublicKey': decodedMessage['senderPublicKey'],
           };
         }
 
         return Map<String, dynamic>.from(
           jsonDecode(plaintext) as Map<String, dynamic>,
+        );
+      }
+
+      if (_isV3GroupMessageEnvelope(decodedMessage)) {
+        return _decodeV3GroupMessageEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          fallbackGroupId: fallbackGroupId,
+          envelope: decodedMessage,
         );
       }
 
@@ -1535,7 +1760,9 @@ _resolveStaleReplayEpoch({
     return null;
   }
 
-  final minAcceptedKeyGeneration = latestKeyGeneration - 1;
+  final minAcceptedKeyGeneration = minRetainedGroupKeyGeneration(
+    latestKeyGeneration,
+  );
   if (keyEpoch >= minAcceptedKeyGeneration) {
     return null;
   }
@@ -1672,6 +1899,8 @@ List<GroupMessageReceipt> _receiptsForPersistedInboxMessage(
 List<GroupMessageReceipt> _receiptsFromPayload(
   Map<String, dynamic> payload, {
   required String groupId,
+  required String trustedSenderId,
+  String? trustedSenderDeviceId,
 }) {
   final rawReceipts = <Object?>[];
   if (payload['receipt'] != null) {
@@ -1685,6 +1914,8 @@ List<GroupMessageReceipt> _receiptsFromPayload(
 
   final now = DateTime.now().toUtc();
   final defaultMessageId = payload['messageId'] as String?;
+  final normalizedTrustedSenderId = trustedSenderId.trim();
+  final normalizedTrustedSenderDeviceId = trustedSenderDeviceId?.trim();
   final receipts = <GroupMessageReceipt>[];
   for (final raw in rawReceipts) {
     if (raw is! Map) continue;
@@ -1706,6 +1937,19 @@ List<GroupMessageReceipt> _receiptsFromPayload(
         !_isSupportedReceiptType(receiptType)) {
       continue;
     }
+    if (normalizedTrustedSenderId.isEmpty ||
+        memberPeerId != normalizedTrustedSenderId) {
+      continue;
+    }
+    final receiptSenderDeviceId = (receipt['senderDeviceId'] as String?)
+        ?.trim();
+    if (receiptSenderDeviceId != null &&
+        receiptSenderDeviceId.isNotEmpty &&
+        normalizedTrustedSenderDeviceId != null &&
+        normalizedTrustedSenderDeviceId.isNotEmpty &&
+        receiptSenderDeviceId != normalizedTrustedSenderDeviceId) {
+      continue;
+    }
 
     final receiptAt =
         DateTime.tryParse(receipt['receiptAt'] as String? ?? '')?.toUtc() ??
@@ -1717,7 +1961,7 @@ List<GroupMessageReceipt> _receiptsFromPayload(
         messageId: messageId,
         receiptType: receiptType,
         memberPeerId: memberPeerId,
-        senderDeviceId: (receipt['senderDeviceId'] as String?)?.trim(),
+        senderDeviceId: receiptSenderDeviceId,
         receiptAt: receiptAt,
         sourceEventId: (receipt['sourceEventId'] as String?)?.trim(),
         createdAt: now,

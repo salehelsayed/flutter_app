@@ -10,6 +10,7 @@ import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
@@ -364,6 +365,7 @@ void main() {
       );
 
       await groupRepository.saveGroup(_makeGroup('group-1', 'Writers'));
+      await _seedGroupMembers(groupRepository, 'group-1');
       await _saveLatestGroupKey(groupRepository, 'group-1');
 
       final coordinator = DefaultShareBatchDeliveryCoordinator(
@@ -407,7 +409,7 @@ void main() {
   );
 
   test(
-    'group share keeps live-peer pending rows queued until inbox custody closes',
+    'group share treats live publish as sent while retaining inbox retry custody',
     () async {
       final identityRepository = FakeIdentityRepository()
         ..seed(_makeIdentity());
@@ -420,6 +422,7 @@ void main() {
       );
 
       await groupRepository.saveGroup(_makeGroup('group-2', 'Pending Writers'));
+      await _seedGroupMembers(groupRepository, 'group-2');
       await _saveLatestGroupKey(groupRepository, 'group-2');
 
       final coordinator = DefaultShareBatchDeliveryCoordinator(
@@ -445,13 +448,10 @@ void main() {
         ],
       );
 
-      expect(result.sentCount, 0);
-      expect(result.queuedCount, 1);
-      expect(result.results.single.status, ShareBatchTargetStatus.queued);
-      expect(
-        result.results.single.detail,
-        'Stored while group delivery finishes.',
-      );
+      expect(result.sentCount, 1);
+      expect(result.queuedCount, 0);
+      expect(result.results.single.status, ShareBatchTargetStatus.sent);
+      expect(result.results.single.detail, 'Sent.');
       _expectCommandOrder(bridge.commandLog, 'bg:begin', 'group:publish');
       _expectCommandOrder(
         bridge.commandLog,
@@ -462,7 +462,7 @@ void main() {
 
       final saved = await groupMessageRepository.getMessagesPage('group-2');
       expect(saved, isNotEmpty);
-      expect(saved.first.status, 'pending');
+      expect(saved.first.status, 'sent');
       expect(saved.first.inboxStored, isFalse);
       expect(saved.first.inboxRetryPayload, isNotNull);
     },
@@ -532,6 +532,35 @@ Future<void> _saveLatestGroupKey(
       keyGeneration: 1,
       encryptedKey: 'test-group-key-1',
       createdAt: DateTime.now().toUtc(),
+    ),
+  );
+}
+
+Future<void> _seedGroupMembers(
+  InMemoryGroupRepository groupRepository,
+  String groupId,
+) async {
+  final joinedAt = DateTime.now().toUtc().subtract(const Duration(minutes: 5));
+  await groupRepository.saveMember(
+    GroupMember(
+      groupId: groupId,
+      peerId: 'my-peer-id-12345',
+      username: 'Me',
+      role: MemberRole.admin,
+      publicKey: 'my-public-key',
+      mlKemPublicKey: 'mlkem-public',
+      joinedAt: joinedAt,
+    ),
+  );
+  await groupRepository.saveMember(
+    GroupMember(
+      groupId: groupId,
+      peerId: 'peer-writer',
+      username: 'Writer',
+      role: MemberRole.writer,
+      publicKey: 'pk-peer-writer',
+      mlKemPublicKey: 'mlkem-peer-writer',
+      joinedAt: joinedAt.add(const Duration(seconds: 1)),
     ),
   );
 }

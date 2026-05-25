@@ -21,7 +21,7 @@ String _rotationOperationId(String groupId, String peerId) =>
 ///
 /// Steps:
 /// 1. Generates the next key without mutating Go validator state
-/// 2. Distributes the new key to remaining members concurrently
+/// 2. Distributes the new key to remaining members
 /// 3. Promotes the admin validator and saves the new key locally
 /// 4. Broadcasts a key_rotated system message on the group topic
 ///
@@ -36,6 +36,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
   required String senderUsername,
   String? sourceDeviceId,
   Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  Future<bool> Function(String peerId, String message)? storeP2PMessageInInbox,
   Duration perRecipientTimeout = const Duration(seconds: 5),
   Duration distributionTimeout = const Duration(seconds: 15),
   int distributionAttemptCount = 5,
@@ -70,6 +71,17 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           )
         : false;
     if (!canRotate) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return null;
+    }
+
+    if (group.createdBy != selfPeerId) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
@@ -131,6 +143,51 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         layer: 'FL',
         event: 'GROUP_ROTATE_KEY_RESYNC_ERROR',
         details: {'error': e.toString()},
+      );
+      return null;
+    }
+
+    final members = await groupRepo.getMembers(groupId);
+    final undeliverableMembers = _undeliverableActiveMembers(
+      members: members,
+      selfPeerId: selfPeerId,
+    );
+    if (undeliverableMembers.isNotEmpty) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_UNDELIVERABLE_MEMBERS',
+        details: {
+          'groupId': _diagnosticPrefix(groupId),
+          'undeliverableCount': undeliverableMembers.length,
+          'peerIds': undeliverableMembers
+              .map((member) => _diagnosticPrefix(member.peerId))
+              .toList(growable: false),
+        },
+      );
+      return null;
+    }
+
+    final distributionTargets = members
+        .expand(
+          (member) => _deliverableDevicesForRotation(member)
+              .where(
+                (device) =>
+                    member.peerId != selfPeerId ||
+                    sourceDevice == null ||
+                    device.deviceId != sourceDevice.deviceId,
+              )
+              .map((device) => (member: member, device: device)),
+        )
+        .toList(growable: false);
+
+    if (distributionTargets.isNotEmpty && sendP2PMessage == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_TRANSPORT_UNAVAILABLE',
+        details: {
+          'groupId': _diagnosticPrefix(groupId),
+          'targetCount': distributionTargets.length,
+        },
       );
       return null;
     }
@@ -211,70 +268,50 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         return null;
       }
     }
-    final directKeyUpdateEventAt = DateTime.now().toUtc();
+    // The current pending-draft schema only persists epoch, key, and createdAt.
+    // Reusing createdAt stabilizes direct eventAt and signed audit on retry;
+    // preTransitionStateHash is recomputed until the schema can persist it.
+    final directKeyUpdateEventAt = generatedAt.toUtc();
     final maxDistributionAttempts = distributionAttemptCount < 1
         ? 1
         : distributionAttemptCount;
 
-    // 2. Distribute to remaining members via concurrent 1:1 encrypted P2P.
-    final members = await groupRepo.getMembers(groupId);
-    final distributionTargets = members
-        .expand(
-          (member) => member
-              .activeDevicesWithLegacyFallback()
-              .where((device) => device.mlKemPublicKey?.isNotEmpty == true)
-              .where(
-                (device) =>
-                    member.peerId != selfPeerId ||
-                    sourceDevice == null ||
-                    device.deviceId != sourceDevice.deviceId,
-              )
-              .map((device) => (member: member, device: device)),
-        )
-        .toList(growable: false);
-    final distributionFutures = distributionTargets
-        .map(
-          (target) => _distributeRotatedKeyToDeviceWithRetry(
-            bridge: bridge,
-            groupRepo: groupRepo,
-            groupId: groupId,
-            sourcePeerId: selfPeerId,
-            sourceDevice: sourceDevice,
-            senderPublicKey: senderPublicKey,
-            senderPrivateKey: senderPrivateKey,
-            senderUsername: senderUsername,
-            member: target.member,
-            device: target.device,
-            newEpoch: newEpoch,
-            newKey: newKey,
-            eventAt: directKeyUpdateEventAt,
-            preTransitionStateHash: preTransitionStateHash,
-            sendP2PMessage: sendP2PMessage,
-            perRecipientTimeout: perRecipientTimeout,
-            attemptCount: maxDistributionAttempts,
-            retryDelay: distributionRetryDelay,
-          ),
-        )
-        .toList();
-
-    var distributionResults = <bool>[];
-    try {
-      distributionResults =
-          await Future.wait(distributionFutures, eagerError: false).timeout(
-            distributionTimeout,
-            onTimeout: () =>
-                List<bool>.filled(distributionTargets.length, false),
-          );
-    } on Exception catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_DISTRIBUTE_ERROR',
-        details: {'error': e.toString()},
-      );
-      distributionResults = List<bool>.filled(
-        distributionTargets.length,
-        false,
-      );
+    // 2. Distribute to remaining members via encrypted 1:1 delivery. Keep this
+    // sequential so the function does not return while a batch timeout has
+    // left recipient sends running in the background.
+    final distributionResults = <bool>[];
+    for (final target in distributionTargets) {
+      try {
+        final sent = await _distributeRotatedKeyToDeviceWithRetry(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          sourcePeerId: selfPeerId,
+          sourceDevice: sourceDevice,
+          senderPublicKey: senderPublicKey,
+          senderPrivateKey: senderPrivateKey,
+          senderUsername: senderUsername,
+          member: target.member,
+          device: target.device,
+          newEpoch: newEpoch,
+          newKey: newKey,
+          eventAt: directKeyUpdateEventAt,
+          preTransitionStateHash: preTransitionStateHash,
+          sendP2PMessage: sendP2PMessage,
+          storeP2PMessageInInbox: storeP2PMessageInInbox,
+          perRecipientTimeout: perRecipientTimeout,
+          attemptCount: maxDistributionAttempts,
+          retryDelay: distributionRetryDelay,
+        );
+        distributionResults.add(sent);
+      } on Exception catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_DISTRIBUTE_ERROR',
+          details: {'error': e.toString()},
+        );
+        distributionResults.add(false);
+      }
     }
 
     final failedDistributionCount = distributionResults
@@ -507,6 +544,8 @@ Future<bool> _distributeRotatedKeyToDeviceWithRetry({
   required DateTime eventAt,
   required String preTransitionStateHash,
   required Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  required Future<bool> Function(String peerId, String message)?
+  storeP2PMessageInInbox,
   required Duration perRecipientTimeout,
   required int attemptCount,
   required Duration retryDelay,
@@ -528,6 +567,7 @@ Future<bool> _distributeRotatedKeyToDeviceWithRetry({
       eventAt: eventAt,
       preTransitionStateHash: preTransitionStateHash,
       sendP2PMessage: sendP2PMessage,
+      storeP2PMessageInInbox: storeP2PMessageInInbox,
       perRecipientTimeout: perRecipientTimeout,
     );
     if (sent) {
@@ -556,6 +596,8 @@ Future<bool> _distributeRotatedKeyToDevice({
   required DateTime eventAt,
   required String preTransitionStateHash,
   required Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  required Future<bool> Function(String peerId, String message)?
+  storeP2PMessageInInbox,
   required Duration perRecipientTimeout,
 }) async {
   try {
@@ -658,12 +700,16 @@ Future<bool> _distributeRotatedKeyToDevice({
       },
     });
 
-    final sendFuture =
-        sendP2PMessage?.call(device.transportPeerId, envelope) ??
-        Future.value(true);
-    return await sendFuture.timeout(
-      perRecipientTimeout,
-      onTimeout: () => false,
+    if (sendP2PMessage == null) {
+      return false;
+    }
+
+    return await _sendDirectWithInboxFallback(
+      transportPeerId: device.transportPeerId,
+      envelope: envelope,
+      sendP2PMessage: sendP2PMessage,
+      storeP2PMessageInInbox: storeP2PMessageInInbox,
+      perRecipientTimeout: perRecipientTimeout,
     );
   } catch (e) {
     emitFlowEvent(
@@ -679,6 +725,108 @@ Future<bool> _distributeRotatedKeyToDevice({
         'error': e.toString(),
       },
     );
+    return false;
+  }
+}
+
+List<GroupMember> _undeliverableActiveMembers({
+  required List<GroupMember> members,
+  required String selfPeerId,
+}) {
+  return members
+      .where((member) => member.peerId != selfPeerId)
+      .where((member) => _deliverableDevicesForRotation(member).isEmpty)
+      .toList(growable: false);
+}
+
+List<GroupMemberDeviceIdentity> _deliverableDevicesForRotation(
+  GroupMember member,
+) {
+  final candidates = member.devices.isEmpty
+      ? member.activeDevicesWithLegacyFallback()
+      : member.activeDevices;
+  return candidates
+      .where((device) => _hasUsableMlKemPublicKey(device.mlKemPublicKey))
+      .toList(growable: false);
+}
+
+bool _hasUsableMlKemPublicKey(String? value) =>
+    value != null && value.trim().isNotEmpty;
+
+Future<bool> _sendDirectWithInboxFallback({
+  required String transportPeerId,
+  required String envelope,
+  required Future<bool> Function(String peerId, String message) sendP2PMessage,
+  required Future<bool> Function(String peerId, String message)?
+  storeP2PMessageInInbox,
+  required Duration perRecipientTimeout,
+}) async {
+  Future<bool>? directFuture;
+
+  try {
+    var directTimedOut = false;
+    directFuture = sendP2PMessage(transportPeerId, envelope);
+    var directSent = await directFuture.timeout(
+      perRecipientTimeout,
+      onTimeout: () {
+        directTimedOut = true;
+        return false;
+      },
+    );
+    if (directTimedOut) {
+      directSent = await _awaitLateDeliveryResult(directFuture);
+    }
+    if (directSent) {
+      return true;
+    }
+    return await _tryInboxFallback(
+      transportPeerId: transportPeerId,
+      envelope: envelope,
+      storeP2PMessageInInbox: storeP2PMessageInInbox,
+      perRecipientTimeout: perRecipientTimeout,
+    );
+  } catch (_) {
+    return await _tryInboxFallback(
+      transportPeerId: transportPeerId,
+      envelope: envelope,
+      storeP2PMessageInInbox: storeP2PMessageInInbox,
+      perRecipientTimeout: perRecipientTimeout,
+    );
+  }
+}
+
+Future<bool> _tryInboxFallback({
+  required String transportPeerId,
+  required String envelope,
+  required Future<bool> Function(String peerId, String message)?
+  storeP2PMessageInInbox,
+  required Duration perRecipientTimeout,
+}) async {
+  if (storeP2PMessageInInbox == null) {
+    return false;
+  }
+
+  Future<bool>? inboxFuture;
+  try {
+    var inboxTimedOut = false;
+    inboxFuture = storeP2PMessageInInbox(transportPeerId, envelope);
+    final stored = await inboxFuture.timeout(
+      perRecipientTimeout,
+      onTimeout: () {
+        inboxTimedOut = true;
+        return false;
+      },
+    );
+    return inboxTimedOut ? await _awaitLateDeliveryResult(inboxFuture) : stored;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _awaitLateDeliveryResult(Future<bool> future) async {
+  try {
+    return await future;
+  } catch (_) {
     return false;
   }
 }

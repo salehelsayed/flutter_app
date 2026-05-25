@@ -53,6 +53,8 @@ final StreamController<Map<String, dynamic>> _mediaUploadProgressController =
 final StreamController<Map<String, dynamic>> _groupDiagnosticEventController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
 
+const groupPushLossDetectedEvent = 'group:push_loss_detected';
+
 /// Broadcast stream for relay media-upload progress events emitted by the
 /// active bridge implementation.
 Stream<Map<String, dynamic>> get mediaUploadProgressStream =>

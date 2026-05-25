@@ -646,15 +646,13 @@ void main() {
     );
 
     test(
-      'saveKey prunes obsolete generations from DB and shared push storage',
+      'PGC-013 saveKey retains bounded offline replay key window and prunes only outside it',
       () async {
-        await repo.saveKey(makeKey(keyGeneration: 1));
-        await repo.saveKey(makeKey(keyGeneration: 2));
-        await repo.saveKey(makeKey(keyGeneration: 3));
+        for (var generation = 1; generation <= 9; generation++) {
+          await repo.saveKey(makeKey(keyGeneration: generation));
+        }
 
         expect(await repo.getKeyByGeneration('group-1', 1), isNull);
-        expect(await repo.getKeyByGeneration('group-1', 2), isNotNull);
-        expect(await repo.getKeyByGeneration('group-1', 3), isNotNull);
         expect(
           await sharedPushKeyStore.containsKey(
             sharedGroupPushKeyName('group-1', 1),
@@ -662,13 +660,31 @@ void main() {
           isFalse,
         );
         expect(
-          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 2)),
-          'base64-key-2',
+          await groupKeyStore.containsKey(
+            groupKeyMaterialStoreName('group-1', 1),
+          ),
+          isFalse,
         );
-        expect(
-          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 3)),
-          'base64-key-3',
-        );
+
+        for (var generation = 2; generation <= 9; generation++) {
+          final retained = await repo.getKeyByGeneration('group-1', generation);
+          expect(retained, isNotNull, reason: 'generation $generation');
+          expect(retained!.encryptedKey, 'base64-key-$generation');
+          expect(
+            await sharedPushKeyStore.read(
+              sharedGroupPushKeyName('group-1', generation),
+            ),
+            'base64-key-$generation',
+            reason: 'shared push mirror generation $generation',
+          );
+          expect(
+            await groupKeyStore.read(
+              groupKeyMaterialStoreName('group-1', generation),
+            ),
+            'base64-key-$generation',
+            reason: 'secure material generation $generation',
+          );
+        }
       },
     );
 

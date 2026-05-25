@@ -111,6 +111,7 @@ void main() {
         type: 'chat',
         creatorPeerId: 'peer-ob001-alice',
         creatorPublicKey: 'pk-ob001-alice',
+        creatorMlKemPublicKey: 'mlkem-ob001-alice',
       );
       await callGroupJoinWithConfig(
         bridge,
@@ -241,6 +242,7 @@ void main() {
         type: 'chat',
         creatorPeerId: 'peer-creator',
         creatorPublicKey: 'pk-creator',
+        creatorMlKemPublicKey: 'mlkem-creator',
       );
 
       expect(result['ok'], isFalse);
@@ -467,6 +469,7 @@ void main() {
         type: 'private',
         creatorPeerId: 'peer1',
         creatorPublicKey: 'pk1',
+        creatorMlKemPublicKey: 'mlkem1',
       );
 
       final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
@@ -494,6 +497,7 @@ void main() {
         type: 'public',
         creatorPeerId: 'peer2',
         creatorPublicKey: 'pk2',
+        creatorMlKemPublicKey: 'mlkem2',
         description: 'A group about testing',
       );
 
@@ -502,37 +506,37 @@ void main() {
       expect(payload['description'], equals('A group about testing'));
     });
 
-    test('excludes optional fields when null', () async {
-      bridge.responses['group:create'] = {
-        'ok': true,
-        'groupId': 'grp-minimal',
-        'topicName': '/mknoon/group/grp-minimal',
-      };
+    test(
+      'excludes description when null and includes required ML-KEM',
+      () async {
+        bridge.responses['group:create'] = {
+          'ok': true,
+          'groupId': 'grp-minimal',
+          'topicName': '/mknoon/group/grp-minimal',
+        };
 
-      await callGroupCreate(
-        bridge,
-        name: 'Minimal Group',
-        type: 'private',
-        creatorPeerId: 'peer3',
-        creatorPublicKey: 'pk3',
-        // creatorMlKemPublicKey: null (default)
-        // description: null (default)
-      );
+        await callGroupCreate(
+          bridge,
+          name: 'Minimal Group',
+          type: 'private',
+          creatorPeerId: 'peer3',
+          creatorPublicKey: 'pk3',
+          creatorMlKemPublicKey: 'mlkem3',
+          // description: null (default)
+        );
 
-      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
-      final payload = sent['payload'] as Map<String, dynamic>;
+        final sent =
+            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+        final payload = sent['payload'] as Map<String, dynamic>;
 
-      expect(
-        payload.containsKey('creatorMlKemPublicKey'),
-        isFalse,
-        reason: 'creatorMlKemPublicKey should be omitted when null',
-      );
-      expect(
-        payload.containsKey('description'),
-        isFalse,
-        reason: 'description should be omitted when null',
-      );
-    });
+        expect(payload['creatorMlKemPublicKey'], 'mlkem3');
+        expect(
+          payload.containsKey('description'),
+          isFalse,
+          reason: 'description should be omitted when null',
+        );
+      },
+    );
 
     test('returns parsed response on success', () async {
       bridge.responses['group:create'] = {
@@ -547,6 +551,7 @@ void main() {
         type: 'private',
         creatorPeerId: 'peer4',
         creatorPublicKey: 'pk4',
+        creatorMlKemPublicKey: 'mlkem4',
       );
 
       expect(result, isA<Map<String, dynamic>>());
@@ -568,6 +573,7 @@ void main() {
         type: 'private',
         creatorPeerId: 'peer5',
         creatorPublicKey: 'pk5',
+        creatorMlKemPublicKey: 'mlkem5',
       );
 
       expect(result['ok'], isFalse);
@@ -620,6 +626,7 @@ void main() {
         type: 'private',
         creatorPeerId: 'peer6',
         creatorPublicKey: 'pk6',
+        creatorMlKemPublicKey: 'mlkem6',
         timeout: const Duration(milliseconds: 1),
       );
 
@@ -648,6 +655,26 @@ void main() {
       final payload = sent['payload'] as Map<String, dynamic>;
       expect(payload['creatorMlKemPublicKey'], equals('mlkemPub7'));
     });
+
+    test(
+      'rejects blank creatorMlKemPublicKey before sending bridge request',
+      () async {
+        final result = await callGroupCreate(
+          bridge,
+          name: 'Missing ML-KEM Group',
+          type: 'chat',
+          creatorPeerId: 'peer-missing-mlkem',
+          creatorPublicKey: 'pk-missing-mlkem',
+          creatorMlKemPublicKey: '  ',
+        );
+
+        expect(result['ok'], isFalse);
+        expect(result['errorCode'], 'INVALID_INPUT');
+        expect(result['errorMessage'], contains('ML-KEM'));
+        expect(bridge.sendCallCount, 0);
+        expect(bridge.lastSentMessage, isNull);
+      },
+    );
 
     test(
       'BB-004 preserves coherent create state and publishes with created group id',
@@ -755,6 +782,7 @@ void main() {
             type: groupType,
             creatorPeerId: 'peer',
             creatorPublicKey: 'pk',
+            creatorMlKemPublicKey: 'mlkem-peer',
           );
 
           final sent =
@@ -1526,6 +1554,54 @@ void main() {
     );
   });
 
+  group('callGroupSendReliable', () {
+    test(
+      'sends one reliable native command and returns delivery evidence',
+      () async {
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'messageId': 'msg-gsr-001',
+          'topicPeerCount': 2,
+          'expectedRecipientCount': 2,
+          'inboxStored': false,
+          'publishSucceeded': true,
+          'deliveryMode': 'live_only',
+        };
+
+        final result = await callGroupSendReliable(
+          bridge,
+          groupId: 'grp-gsr',
+          text: 'Reliable hello',
+          senderPeerId: 'peer-alice',
+          senderPublicKey: 'pk-alice',
+          senderPrivateKey: 'sk-alice',
+          senderUsername: 'Alice',
+          senderDeviceId: 'alice-device',
+          senderTransportPeerId: 'alice-transport',
+          senderDevicePublicKey: 'alice-device-pk',
+          senderKeyPackageId: 'alice-key-package',
+          messageId: 'msg-gsr-001',
+        );
+
+        expect(result['ok'], isTrue);
+        expect(result['messageId'], 'msg-gsr-001');
+        expect(result['topicPeerCount'], 2);
+        expect(result['expectedRecipientCount'], 2);
+        expect(result['inboxStored'], isFalse);
+        expect(result['publishSucceeded'], isTrue);
+        expect(result['deliveryMode'], 'live_only');
+
+        final sent =
+            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+        expect(sent['cmd'], 'group:sendReliable');
+        final payload = sent['payload'] as Map<String, dynamic>;
+        expect(payload['groupId'], 'grp-gsr');
+        expect(payload['messageId'], 'msg-gsr-001');
+        expect(payload['senderTransportPeerId'], 'alice-transport');
+      },
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // callGroupInboxStore
   // ---------------------------------------------------------------------------
@@ -1561,6 +1637,27 @@ void main() {
         expect(payload['recipientPeerIds'], equals(['peer-b', 'peer-c']));
         expect(payload.containsKey('pushTitle'), isFalse);
         expect(payload.containsKey('pushBody'), isFalse);
+      },
+    );
+
+    test(
+      'can preserve explicit recipientPeerIds for membership replay',
+      () async {
+        bridge.responses['group:inboxStore'] = {'ok': true};
+
+        await callGroupInboxStore(
+          bridge,
+          'grp-inbox-membership',
+          'encrypted-membership-replay',
+          recipientPeerIds: const ['removed-peer'],
+          preserveRecipientPeerIds: true,
+        );
+
+        final sent =
+            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+        final payload = sent['payload'] as Map<String, dynamic>;
+        expect(payload['recipientPeerIds'], equals(['removed-peer']));
+        expect(payload['preserveRecipientPeerIds'], isTrue);
       },
     );
 

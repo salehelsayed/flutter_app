@@ -8,6 +8,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
@@ -70,6 +71,23 @@ void main() {
           joinedAt: DateTime.utc(2026, 4, 4, 12),
         ),
       );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Me',
+          role: MemberRole.admin,
+          joinedAt: DateTime.utc(2026, 4, 4, 12),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'group-key-1',
+          createdAt: DateTime.utc(2026, 4, 4, 12),
+        ),
+      );
 
       final notificationService = FakeNotificationService();
       final listener = GroupMessageListener(
@@ -91,7 +109,7 @@ void main() {
         'groupId': 'group-1',
         'senderId': 'peer-sender',
         'senderUsername': 'Alice',
-        'keyEpoch': 0,
+        'keyEpoch': 1,
         'text': 'hello',
         'timestamp': '2026-04-04T12:00:01.000Z',
         'messageId': 'group-msg-1',

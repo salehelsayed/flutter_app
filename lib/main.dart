@@ -93,11 +93,13 @@ import 'package:flutter_app/core/database/migrations/068_removed_group_member_sn
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
+import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
@@ -148,6 +150,7 @@ import 'package:flutter_app/features/groups/application/recover_stuck_sending_gr
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
@@ -220,6 +223,7 @@ import 'package:flutter_app/features/contact_request/presentation/widgets/contac
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
+import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
@@ -308,7 +312,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 71,
+    version: 72,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -381,6 +385,7 @@ void main() async {
       await runGroupMessageLocalDeletionsMigration(db);
       await runGroupKeyRotationDraftsMigration(db);
       await runPendingIntroductionResponseTransportSenderMigration(db);
+      await runGroupPendingMembershipMessagesMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -590,6 +595,9 @@ void main() async {
       }
       if (oldVersion < 71) {
         await runPendingIntroductionResponseTransportSenderMigration(db);
+      }
+      if (oldVersion < 72) {
+        await runGroupPendingMembershipMessagesMigration(db);
       }
     },
   );
@@ -1166,6 +1174,37 @@ void main() async {
             ),
   );
 
+  final groupPendingMembershipMessageRepository =
+      GroupPendingMembershipMessageRepositoryImpl(
+        dbUpsertGroupPendingMembershipMessage: (row) =>
+            dbUpsertGroupPendingMembershipMessage(db, row),
+        dbLoadGroupPendingMembershipMessages: ({int limit = 200}) =>
+            dbLoadGroupPendingMembershipMessages(db, limit: limit),
+        dbLoadGroupPendingMembershipMessagesForSenders:
+            ({required groupId, required senderPeerIds, int limit = 50}) =>
+                dbLoadGroupPendingMembershipMessagesForSenders(
+                  db,
+                  groupId: groupId,
+                  senderPeerIds: senderPeerIds,
+                  limit: limit,
+                ),
+        dbDeleteGroupPendingMembershipMessage: (id) =>
+            dbDeleteGroupPendingMembershipMessage(db, id),
+        dbDeleteGroupPendingMembershipMessageByGroupAndMessageId:
+            ({required groupId, required messageId}) =>
+                dbDeleteGroupPendingMembershipMessageByGroupAndMessageId(
+                  db,
+                  groupId: groupId,
+                  messageId: messageId,
+                ),
+        dbPruneGroupPendingMembershipMessages: (groupId, {required maxRows}) =>
+            dbPruneGroupPendingMembershipMessages(
+              db,
+              groupId,
+              maxRows: maxRows,
+            ),
+      );
+
   final groupHistoryGapRepairRepository = GroupHistoryGapRepairRepositoryImpl(
     dbUpsertGroupHistoryGapRepair: (row) =>
         dbUpsertGroupHistoryGapRepair(db, row),
@@ -1682,6 +1721,7 @@ void main() async {
     inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
     groupDiagnosticEvents: groupDiagnosticEventStream,
     pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+    pendingMembershipMessageRepo: groupPendingMembershipMessageRepository,
     requestGroupKeyRepair: emitGroupKeyRepairRequest,
     recoverFromDispatcherOverflow: (_) async {
       final identity = await repository.loadIdentity();
@@ -2505,7 +2545,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {
-    if (!_remoteNotificationOpenDedupeGate.shouldRoute(data)) {
+    if (!_remoteNotificationOpenDedupeGate.tryBegin(data)) {
       emitFlowEvent(
         layer: 'FL',
         event: 'REMOTE_NOTIFICATION_OPEN_DEDUPED',
@@ -2517,23 +2557,29 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       return;
     }
 
-    _notificationTappedAt = DateTime.now();
-    final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
-    await _withContactRequestPresentationSuppressed(
-      routeTarget: routeTarget,
-      action: () => routeAppRootRemoteNotificationOpen(
-        data: data,
-        onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
-        onBeforeRouteTarget: _prepareNotificationRouteTarget,
-        onRouteTarget: _handleNotificationRouteTarget,
-        onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
-      ),
-    );
+    var routeSucceeded = false;
+    try {
+      _notificationTappedAt = DateTime.now();
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+      routeSucceeded = await _withContactRequestPresentationSuppressed(
+        routeTarget: routeTarget,
+        action: () => routeAppRootRemoteNotificationOpenWithResult(
+          data: data,
+          onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
+          onBeforeRouteTarget: _prepareNotificationRouteTarget,
+          onRouteTarget: _handleNotificationRouteTarget,
+          onMissingGroupRouteId: _emitMissingGroupRouteId,
+          onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+        ),
+      );
+    } finally {
+      _remoteNotificationOpenDedupeGate.finish(data, success: routeSucceeded);
+    }
   }
 
-  Future<void> _withContactRequestPresentationSuppressed({
+  Future<T> _withContactRequestPresentationSuppressed<T>({
     required NotificationRouteTarget? routeTarget,
-    required Future<void> Function() action,
+    required Future<T> Function() action,
   }) async {
     final peerId =
         routeTarget?.kind == NotificationRouteTargetKind.contactRequest
@@ -2543,12 +2589,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       widget.contactRequestPresentationGate.suppress(peerId);
     }
     try {
-      await action();
+      return await action();
     } finally {
       if (peerId != null) {
         widget.contactRequestPresentationGate.release(peerId);
       }
     }
+  }
+
+  Future<void> _emitMissingGroupRouteId(Map<String, dynamic> data) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_GROUP_ROUTE_MISSING_GROUP_ID',
+      details: NotificationRouteTarget.missingGroupIdTelemetryDetails(data),
+    );
   }
 
   Future<void> _handleInitialLocalNotificationLaunchWhenReady() async {
@@ -3034,29 +3088,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             'dataKeys': message.data.keys.toList(),
           },
         );
-        unawaited(
-          handleForegroundRemoteMessage(
-            data: message.data,
-            messageId: message.messageId,
-            drainOfflineInbox: widget.p2pService.drainOfflineInbox,
-            drainGroupOfflineInboxForGroup: (groupId) async {
-              final identity = await widget.repository.loadIdentity();
-              return drainGroupOfflineInboxForGroup(
-                bridge: widget.bridge,
-                groupRepo: widget.groupRepository,
-                msgRepo: widget.groupMessageRepository,
-                groupId: groupId,
-                mediaAttachmentRepo: widget.mediaAttachmentRepository,
-                reactionRepo: widget.reactionRepository,
-                groupMessageListener: widget.groupMessageListener,
-                pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
-                historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
-                requestGroupKeyRepair: emitGroupKeyRepairRequest,
-                selfPeerId: identity?.peerId,
-              );
-            },
-          ),
-        );
+        unawaited(_handleForegroundRemotePush(message));
       });
 
       FirebaseMessaging.onMessageOpenedApp.listen((message) {
@@ -3074,6 +3106,44 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       emitFlowEvent(
         layer: 'FL',
         event: 'PUSH_LISTENER_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _handleForegroundRemotePush(RemoteMessage message) async {
+    final result = await handleForegroundRemoteMessage(
+      data: message.data,
+      messageId: message.messageId,
+      drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+      drainGroupOfflineInboxForGroup: (groupId) async {
+        final identity = await widget.repository.loadIdentity();
+        return drainGroupOfflineInboxForGroup(
+          bridge: widget.bridge,
+          groupRepo: widget.groupRepository,
+          msgRepo: widget.groupMessageRepository,
+          groupId: groupId,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          reactionRepo: widget.reactionRepository,
+          groupMessageListener: widget.groupMessageListener,
+          pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+          historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
+          requestGroupKeyRepair: emitGroupKeyRepairRequest,
+          selfPeerId: identity?.peerId,
+        );
+      },
+    );
+
+    try {
+      await showForegroundPushFallbackNotificationIfNeeded(
+        result: result,
+        notificationService: widget.notificationService,
+        message: message,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_ERROR',
         details: {'error': e.toString()},
       );
     }

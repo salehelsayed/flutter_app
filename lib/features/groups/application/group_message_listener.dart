@@ -31,8 +31,10 @@ import 'package:flutter_app/features/groups/application/trusted_private_group_sy
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_membership_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
@@ -48,12 +50,14 @@ class _PendingMembershipDependentMessage {
     required this.senderPeerId,
     required this.messageId,
     required this.receivedAt,
+    this.durableId,
   });
 
   final Map<String, dynamic> data;
   final String senderPeerId;
   final String? messageId;
   final DateTime receivedAt;
+  final String? durableId;
 }
 
 String _membershipFlowId(String value) =>
@@ -89,6 +93,7 @@ class GroupMessageListener {
   final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
   final Stream<Map<String, dynamic>>? _groupDiagnosticEvents;
   final GroupPendingKeyRepairRepository? _pendingKeyRepairRepo;
+  final GroupPendingMembershipMessageRepository? _pendingMembershipMessageRepo;
   final RequestGroupKeyRepair _requestGroupKeyRepair;
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
 
@@ -103,10 +108,14 @@ class GroupMessageListener {
   final Map<String, String> _acceptedSignedTransitionAuditHashesBySourceId = {};
   final Map<String, List<_PendingMembershipDependentMessage>>
   _pendingMembershipDependentMessagesByGroup = {};
+  final Set<Future<void>> _inFlightHandlers = {};
   Future<void>? _dispatcherOverflowRecovery;
+  Future<void>? _stopFuture;
   String? _cachedSelfPeerId;
   var _hasResolvedSelfPeerId = false;
   Future<String?>? _selfPeerIdLoadFuture;
+  var _isStopping = false;
+  var _isDisposed = false;
 
   GroupMessageListener({
     required GroupRepository groupRepo,
@@ -125,6 +134,7 @@ class GroupMessageListener {
     AppendGroupEventLogEntry? appendGroupEventLogEntry,
     Stream<Map<String, dynamic>>? groupDiagnosticEvents,
     GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+    GroupPendingMembershipMessageRepository? pendingMembershipMessageRepo,
     RequestGroupKeyRepair? requestGroupKeyRepair,
     RecoverGroupDispatcherOverflow? recoverFromDispatcherOverflow,
   }) : _groupRepo = groupRepo,
@@ -144,6 +154,7 @@ class GroupMessageListener {
        _appendGroupEventLogEntry = appendGroupEventLogEntry,
        _groupDiagnosticEvents = groupDiagnosticEvents,
        _pendingKeyRepairRepo = pendingKeyRepairRepo,
+       _pendingMembershipMessageRepo = pendingMembershipMessageRepo,
        _requestGroupKeyRepair =
            requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
        _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow;
@@ -211,7 +222,8 @@ class GroupMessageListener {
     Stream<Map<String, dynamic>> incomingGroupMessages, {
     Stream<Map<String, dynamic>>? incomingGroupReactions,
   }) {
-    if (_subscription != null) return;
+    if (_isDisposed || _subscription != null) return;
+    _isStopping = false;
 
     emitFlowEvent(
       layer: 'FL',
@@ -220,7 +232,7 @@ class GroupMessageListener {
     );
 
     _subscription = incomingGroupMessages
-        .asyncMap(_handleMessage)
+        .asyncMap(_handleLiveMessage)
         .listen(
           (_) {},
           onError: (error) {
@@ -241,7 +253,7 @@ class GroupMessageListener {
 
     if (incomingGroupReactions != null) {
       _reactionSubscription = incomingGroupReactions.listen(
-        _handleReaction,
+        _handleLiveReaction,
         onError: (error) {
           emitFlowEvent(
             layer: 'FL',
@@ -255,7 +267,7 @@ class GroupMessageListener {
     final diagnostics = _groupDiagnosticEvents;
     if (diagnostics != null && _diagnosticSubscription == null) {
       _diagnosticSubscription = diagnostics.listen(
-        _handleGroupDiagnosticEvent,
+        _handleLiveDiagnosticEvent,
         onError: (error) {
           emitFlowEvent(
             layer: 'FL',
@@ -265,6 +277,61 @@ class GroupMessageListener {
         },
       );
     }
+
+    if (_pendingMembershipMessageRepo != null) {
+      unawaited(_flushStartupDurableMembershipDependentMessages());
+    }
+  }
+
+  bool get _canEmitToStreams {
+    return !_isStopping &&
+        !_isDisposed &&
+        !_messageController.isClosed &&
+        !_removedController.isClosed &&
+        !_reactionChangeController.isClosed;
+  }
+
+  void _emitGroupMessage(GroupMessage message) {
+    if (!_canEmitToStreams || _messageController.isClosed) return;
+    _messageController.add(message);
+  }
+
+  void _emitGroupRemoved(String groupId) {
+    if (!_canEmitToStreams || _removedController.isClosed) return;
+    _removedController.add(groupId);
+  }
+
+  void _emitReactionChange(ReactionChange change) {
+    if (!_canEmitToStreams || _reactionChangeController.isClosed) return;
+    _reactionChangeController.add(change);
+  }
+
+  Future<void> _handleLiveMessage(Map<String, dynamic> data) {
+    return _trackInFlight(_handleMessage(data, requestRecoveryOnError: true));
+  }
+
+  void _handleLiveReaction(Map<String, dynamic> data) {
+    _trackInFlight(_handleReaction(data));
+  }
+
+  void _handleLiveDiagnosticEvent(Map<String, dynamic> event) {
+    _trackInFlight(_handleGroupDiagnosticEvent(event));
+  }
+
+  Future<void> _trackInFlight(Future<void> work) {
+    late final Future<void> tracked;
+    tracked = work.whenComplete(() {
+      _inFlightHandlers.remove(tracked);
+    });
+    _inFlightHandlers.add(tracked);
+    return tracked;
+  }
+
+  Future<void> _awaitInFlightHandlers() async {
+    while (_inFlightHandlers.isNotEmpty) {
+      final current = _inFlightHandlers.toList(growable: false);
+      await Future.wait<void>(current.map((work) => work.catchError((_) {})));
+    }
   }
 
   Future<void> _handleGroupDiagnosticEvent(Map<String, dynamic> event) async {
@@ -273,12 +340,20 @@ class GroupMessageListener {
       diagnostic: event,
     );
     if (rejectedOutbound != null) {
-      _messageController.add(rejectedOutbound);
+      _emitGroupMessage(rejectedOutbound);
       return;
     }
 
     if (event['event'] == 'group:dispatcher_overflow') {
       await _handleGroupDispatcherOverflow(event);
+      return;
+    }
+
+    if (event['event'] == groupPushLossDetectedEvent) {
+      await _requestGroupPushLossRecovery(
+        event,
+        flowEventPrefix: 'GROUP_PUSH_LOSS_RECOVERY',
+      );
       return;
     }
 
@@ -292,7 +367,7 @@ class GroupMessageListener {
       requestGroupKeyRepair: _requestGroupKeyRepair,
     );
     if (placeholder != null) {
-      _messageController.add(placeholder);
+      _emitGroupMessage(placeholder);
     }
   }
 
@@ -303,17 +378,27 @@ class GroupMessageListener {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_IGNORED',
-        details: _dispatcherOverflowDiagnosticDetails(event),
+        details: _groupPushLossRecoveryDiagnosticDetails(event),
       );
       return;
     }
 
+    await _requestGroupPushLossRecovery(
+      event,
+      flowEventPrefix: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY',
+    );
+  }
+
+  Future<void> _requestGroupPushLossRecovery(
+    Map<String, dynamic> event, {
+    required String flowEventPrefix,
+  }) async {
     final recover = _recoverFromDispatcherOverflow;
     if (recover == null) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_UNAVAILABLE',
-        details: _dispatcherOverflowDiagnosticDetails(event),
+        event: '${flowEventPrefix}_UNAVAILABLE',
+        details: _groupPushLossRecoveryDiagnosticDetails(event),
       );
       return;
     }
@@ -322,8 +407,8 @@ class GroupMessageListener {
     if (currentRecovery != null) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_COALESCED',
-        details: _dispatcherOverflowDiagnosticDetails(event),
+        event: '${flowEventPrefix}_COALESCED',
+        details: _groupPushLossRecoveryDiagnosticDetails(event),
       );
       return;
     }
@@ -332,22 +417,22 @@ class GroupMessageListener {
     final recovery = Future<void>.microtask(() async {
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_REQUESTED',
-        details: _dispatcherOverflowDiagnosticDetails(diagnostic),
+        event: '${flowEventPrefix}_REQUESTED',
+        details: _groupPushLossRecoveryDiagnosticDetails(diagnostic),
       );
       try {
         await recover(diagnostic);
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_DONE',
-          details: _dispatcherOverflowDiagnosticDetails(diagnostic),
+          event: '${flowEventPrefix}_DONE',
+          details: _groupPushLossRecoveryDiagnosticDetails(diagnostic),
         );
       } catch (error) {
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_DISPATCHER_OVERFLOW_RECOVERY_ERROR',
+          event: '${flowEventPrefix}_ERROR',
           details: {
-            ..._dispatcherOverflowDiagnosticDetails(diagnostic),
+            ..._groupPushLossRecoveryDiagnosticDetails(diagnostic),
             'error': error.toString(),
           },
         );
@@ -361,10 +446,14 @@ class GroupMessageListener {
     }
   }
 
-  Map<String, dynamic> _dispatcherOverflowDiagnosticDetails(
+  Map<String, dynamic> _groupPushLossRecoveryDiagnosticDetails(
     Map<String, dynamic> event,
   ) {
     return {
+      if (event.containsKey('event')) 'event': event['event'],
+      if (event.containsKey('reason')) 'reason': event['reason'],
+      if (event.containsKey('streamFailureReason'))
+        'streamFailureReason': event['streamFailureReason'],
       'lastEvent': event['lastEvent']?.toString(),
       if (event.containsKey('state')) 'state': event['state'],
       if (event.containsKey('droppedCount'))
@@ -372,7 +461,39 @@ class GroupMessageListener {
       if (event.containsKey('queueDepth')) 'queueDepth': event['queueDepth'],
       if (event.containsKey('maxQueueSize'))
         'maxQueueSize': event['maxQueueSize'],
+      if (event.containsKey('groupId')) 'groupId': event['groupId'],
+      if (event.containsKey('messageId')) 'messageId': event['messageId'],
+      if (event.containsKey('keyEpoch')) 'keyEpoch': event['keyEpoch'],
+      if (event.containsKey('senderId')) 'senderId': event['senderId'],
+      if (event.containsKey('senderDeviceId'))
+        'senderDeviceId': event['senderDeviceId'],
+      if (event.containsKey('transportPeerId'))
+        'transportPeerId': event['transportPeerId'],
     };
+  }
+
+  Map<String, dynamic> _liveGroupPushLossDiagnostic(
+    Map<String, dynamic> data,
+    Object error,
+  ) {
+    final diagnostic = <String, dynamic>{
+      'event': groupPushLossDetectedEvent,
+      'reason': 'live_group_message_processing_error',
+      'error': error.toString(),
+    };
+    for (final field in const [
+      'groupId',
+      'messageId',
+      'keyEpoch',
+      'senderId',
+      'senderDeviceId',
+      'transportPeerId',
+    ]) {
+      if (data.containsKey(field)) {
+        diagnostic[field] = data[field];
+      }
+    }
+    return diagnostic;
   }
 
   String? _groupMessageEventSchemaRejectReason(Map<String, dynamic> data) {
@@ -455,6 +576,7 @@ class GroupMessageListener {
     GroupMessageRepository? msgRepoOverride,
     bool rethrowOnError = false,
     bool allowMembershipBuffer = true,
+    bool requestRecoveryOnError = false,
   }) async {
     try {
       final schemaRejectReason = _groupMessageEventSchemaRejectReason(data);
@@ -502,6 +624,38 @@ class GroupMessageListener {
         return;
       }
 
+      final wireMessageId = data['messageId'] as String?;
+      final isSystemPayload = text.startsWith('{"__sys":');
+      if (isSystemPayload) {
+        final bridge = _bridge;
+        if (bridge == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_SYSTEM_NO_BRIDGE_REJECTED',
+            details: {
+              'groupId': _membershipFlowId(groupId),
+              'senderId': _membershipFlowId(senderId),
+              if (wireMessageId != null && wireMessageId.isNotEmpty)
+                'messageId': _membershipFlowId(wireMessageId),
+            },
+          );
+          return;
+        }
+        await _handleSystemMessage(
+          groupId,
+          text,
+          timestamp,
+          senderId: senderId,
+          senderUsername: senderUsername,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: transportPeerId,
+          sourceEventId: wireMessageId,
+          msgRepo: msgRepo,
+          rethrowOnError: rethrowOnError,
+        );
+        return;
+      }
+
       // Drop events that have neither text nor media. These are not valid
       // user messages — most likely a malformed envelope from upstream
       // (e.g. a partial-decrypt failure on the Go side that emits a
@@ -525,25 +679,6 @@ class GroupMessageListener {
         return;
       }
 
-      final wireMessageId = data['messageId'] as String?;
-
-      // Check for system message (config updates from admin)
-      if (text.startsWith('{"__sys":') && _bridge != null) {
-        await _handleSystemMessage(
-          groupId,
-          text,
-          timestamp,
-          senderId: senderId,
-          senderUsername: senderUsername,
-          senderDeviceId: senderDeviceId,
-          transportPeerId: transportPeerId,
-          sourceEventId: wireMessageId,
-          msgRepo: msgRepo,
-          rethrowOnError: rethrowOnError,
-        );
-        return;
-      }
-
       final mediaRaw = data['media'] as List<dynamic>?;
       final media = mediaRaw?.cast<Map<String, dynamic>>();
       final wireQuotedMessageId = data['quotedMessageId'] as String?;
@@ -556,7 +691,7 @@ class GroupMessageListener {
             msgRepo: msgRepo,
             data: data,
           )) {
-        _bufferMembershipDependentMessage(
+        await _bufferMembershipDependentMessage(
           groupId: groupId,
           senderId: senderId,
           messageId: wireMessageId,
@@ -585,7 +720,7 @@ class GroupMessageListener {
       );
 
       if (result != null) {
-        _messageController.add(result);
+        _emitGroupMessage(result);
         await _requestReceivedMessageKeyRepairIfLocalEpochIsBehind(result);
         final persistedAttachments = _mediaAttachmentRepo == null
             ? <MediaAttachment>[]
@@ -638,6 +773,12 @@ class GroupMessageListener {
         event: 'GROUP_MESSAGE_LISTENER_ERROR',
         details: {'error': e.toString()},
       );
+      if (requestRecoveryOnError) {
+        await _requestGroupPushLossRecovery(
+          _liveGroupPushLossDiagnostic(data, e),
+          flowEventPrefix: 'GROUP_PUSH_LOSS_RECOVERY',
+        );
+      }
       if (rethrowOnError) rethrow;
     }
   }
@@ -745,12 +886,21 @@ class GroupMessageListener {
     return !isSystemPayload;
   }
 
-  void _bufferMembershipDependentMessage({
+  Future<void> _bufferMembershipDependentMessage({
     required String groupId,
     required String senderId,
     required String? messageId,
     required Map<String, dynamic> data,
-  }) {
+  }) async {
+    final pendingData = Map<String, dynamic>.from(data);
+    final receivedAt = DateTime.now().toUtc();
+    final durable = await _saveDurableMembershipDependentMessage(
+      groupId: groupId,
+      senderId: senderId,
+      messageId: messageId,
+      data: pendingData,
+      receivedAt: receivedAt,
+    );
     final queue = _pendingMembershipDependentMessagesByGroup.putIfAbsent(
       groupId,
       () => <_PendingMembershipDependentMessage>[],
@@ -760,10 +910,11 @@ class GroupMessageListener {
     }
     queue.add(
       _PendingMembershipDependentMessage(
-        data: Map<String, dynamic>.from(data),
+        data: pendingData,
         senderPeerId: senderId,
         messageId: messageId,
-        receivedAt: DateTime.now().toUtc(),
+        receivedAt: receivedAt,
+        durableId: durable?.id,
       ),
     );
     while (queue.length > _maxPendingMembershipDependentMessagesPerGroup) {
@@ -782,11 +933,48 @@ class GroupMessageListener {
     );
   }
 
-  void _bufferPersistedMembershipDependentMessage(GroupMessage message) {
+  Future<GroupPendingMembershipMessage?>
+  _saveDurableMembershipDependentMessage({
+    required String groupId,
+    required String senderId,
+    required String? messageId,
+    required Map<String, dynamic> data,
+    required DateTime receivedAt,
+  }) async {
+    final pendingRepo = _pendingMembershipMessageRepo;
+    if (pendingRepo == null) return null;
+    final payloadJson = jsonEncode(data);
+    final pending = GroupPendingMembershipMessage(
+      id: groupPendingMembershipMessageId(
+        groupId: groupId,
+        senderPeerId: senderId,
+        messageId: messageId,
+        receivedAt: receivedAt,
+        payloadJson: payloadJson,
+      ),
+      groupId: groupId,
+      senderPeerId: senderId,
+      messageId: messageId,
+      payloadJson: payloadJson,
+      receivedAt: receivedAt,
+      createdAt: receivedAt,
+      updatedAt: receivedAt,
+    );
+    final saved = await pendingRepo.savePendingMessage(pending);
+    await pendingRepo.pruneGroup(
+      groupId,
+      maxRows: _maxPendingMembershipDependentMessagesPerGroup,
+    );
+    return saved;
+  }
+
+  Future<void> _bufferPersistedMembershipDependentMessage(
+    GroupMessage message,
+  ) async {
     if (message.id.startsWith('sys-')) return;
     if (message.text.isEmpty && message.media.isEmpty) return;
 
-    _bufferMembershipDependentMessage(
+    await _bufferMembershipDependentMessage(
       groupId: message.groupId,
       senderId: message.senderPeerId,
       messageId: message.id,
@@ -818,24 +1006,50 @@ class GroupMessageListener {
     required Iterable<String> memberPeerIds,
     required GroupMessageRepository msgRepo,
   }) async {
-    final queue = _pendingMembershipDependentMessagesByGroup[groupId];
-    if (queue == null || queue.isEmpty) return;
     final allowedSenders = memberPeerIds
         .where((peerId) => peerId.isNotEmpty)
         .toSet();
     if (allowedSenders.isEmpty) return;
 
     final ready = <_PendingMembershipDependentMessage>[];
-    queue.removeWhere((pending) {
-      final shouldFlush = allowedSenders.contains(pending.senderPeerId);
-      if (shouldFlush) ready.add(pending);
-      return shouldFlush;
-    });
-    if (queue.isEmpty) {
-      _pendingMembershipDependentMessagesByGroup.remove(groupId);
+    final queue = _pendingMembershipDependentMessagesByGroup[groupId];
+    if (queue != null && queue.isNotEmpty) {
+      queue.removeWhere((pending) {
+        final shouldFlush = allowedSenders.contains(pending.senderPeerId);
+        if (shouldFlush) ready.add(pending);
+        return shouldFlush;
+      });
+      if (queue.isEmpty) {
+        _pendingMembershipDependentMessagesByGroup.remove(groupId);
+      }
     }
+
+    final pendingRepo = _pendingMembershipMessageRepo;
+    if (pendingRepo != null) {
+      final durable = await pendingRepo.getPendingMessagesForGroupAndSenders(
+        groupId: groupId,
+        senderPeerIds: allowedSenders,
+        limit: _maxPendingMembershipDependentMessagesPerGroup,
+      );
+      for (final pending in durable) {
+        ready.add(_pendingMembershipDependentMessageFromDurable(pending));
+      }
+    }
+
     if (ready.isEmpty) return;
 
+    final deduped = <String, _PendingMembershipDependentMessage>{};
+    for (final pending in ready) {
+      final key = _pendingMembershipDependentMessageKey(pending);
+      final existing = deduped[key];
+      if (existing == null ||
+          (existing.durableId == null && pending.durableId != null)) {
+        deduped[key] = pending;
+      }
+    }
+    ready
+      ..clear()
+      ..addAll(deduped.values);
     ready.sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
     emitFlowEvent(
       layer: 'FL',
@@ -859,12 +1073,116 @@ class GroupMessageListener {
             'joinedAt': member.joinedAt.toUtc().toIso8601String(),
           },
         );
+        await _deleteDurableMembershipDependentMessage(pending);
         continue;
       }
-      await _handleMessage(
-        pending.data,
-        msgRepoOverride: msgRepo,
-        allowMembershipBuffer: false,
+      try {
+        await _handleMessage(
+          pending.data,
+          msgRepoOverride: msgRepo,
+          allowMembershipBuffer: false,
+          rethrowOnError: true,
+        );
+        await _deleteDurableMembershipDependentMessage(pending);
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event:
+              'GROUP_MESSAGE_LISTENER_MEMBERSHIP_DEPENDENT_CONTENT_FLUSH_ERROR',
+          details: {
+            'groupId': _membershipFlowId(groupId),
+            'senderId': _membershipFlowId(pending.senderPeerId),
+            if (pending.messageId != null && pending.messageId!.isNotEmpty)
+              'messageId': _membershipFlowId(pending.messageId!),
+            'error': e.toString(),
+          },
+        );
+      }
+    }
+  }
+
+  _PendingMembershipDependentMessage
+  _pendingMembershipDependentMessageFromDurable(
+    GroupPendingMembershipMessage pending,
+  ) {
+    return _PendingMembershipDependentMessage(
+      data: jsonDecode(pending.payloadJson) as Map<String, dynamic>,
+      senderPeerId: pending.senderPeerId,
+      messageId: pending.messageId,
+      receivedAt: pending.receivedAt,
+      durableId: pending.id,
+    );
+  }
+
+  String _pendingMembershipDependentMessageKey(
+    _PendingMembershipDependentMessage pending,
+  ) {
+    final messageId = pending.messageId;
+    if (messageId != null && messageId.isNotEmpty) {
+      return 'message:$messageId';
+    }
+    final durableId = pending.durableId;
+    if (durableId != null && durableId.isNotEmpty) {
+      return 'durable:$durableId';
+    }
+    return 'payload:${jsonEncode(pending.data)}';
+  }
+
+  Future<void> _deleteDurableMembershipDependentMessage(
+    _PendingMembershipDependentMessage pending,
+  ) async {
+    final pendingRepo = _pendingMembershipMessageRepo;
+    if (pendingRepo == null) return;
+    final durableId = pending.durableId;
+    if (durableId != null && durableId.isNotEmpty) {
+      await pendingRepo.deletePendingMessage(durableId);
+      return;
+    }
+    final messageId = pending.messageId;
+    if (messageId != null && messageId.isNotEmpty) {
+      final groupId = pending.data['groupId'] as String?;
+      if (groupId != null && groupId.isNotEmpty) {
+        await pendingRepo.deletePendingMessageByGroupAndMessageId(
+          groupId: groupId,
+          messageId: messageId,
+        );
+      }
+    }
+  }
+
+  Future<void> _flushStartupDurableMembershipDependentMessages() async {
+    final pendingRepo = _pendingMembershipMessageRepo;
+    if (pendingRepo == null || _isStopping || _isDisposed) return;
+    try {
+      final pending = await pendingRepo.getPendingMessages(
+        limit: _maxPendingMembershipDependentMessagesPerGroup * 4,
+      );
+      final readyByGroup = <String, Set<String>>{};
+      for (final row in pending) {
+        if (_isStopping || _isDisposed) return;
+        final member = await _groupRepo.getMember(
+          row.groupId,
+          row.senderPeerId,
+        );
+        if (member == null) continue;
+        readyByGroup
+            .putIfAbsent(row.groupId, () => <String>{})
+            .add(row.senderPeerId);
+      }
+      for (final entry in readyByGroup.entries) {
+        if (_isStopping || _isDisposed) return;
+        await _flushMembershipDependentMessages(
+          groupId: entry.key,
+          memberPeerIds: entry.value,
+          msgRepo: _msgRepo,
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event:
+            'GROUP_MESSAGE_LISTENER_MEMBERSHIP_DEPENDENT_STARTUP_FLUSH_ERROR',
+        details: {'error': e.toString()},
       );
     }
   }
@@ -909,7 +1227,7 @@ class GroupMessageListener {
           !messageTimestamp.isBefore(normalizedBeforeRejoinAt)) {
         continue;
       }
-      _bufferPersistedMembershipDependentMessage(message);
+      await _bufferPersistedMembershipDependentMessage(message);
       if (repairDeletionRepo != null) {
         await repairDeletionRepo.deleteMessageForMembershipRepair(message.id);
       } else {
@@ -978,7 +1296,7 @@ class GroupMessageListener {
       }
 
       // Re-emit so the UI refreshes with downloaded media
-      _messageController.add(message);
+      _emitGroupMessage(message);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1838,7 +2156,7 @@ class GroupMessageListener {
             timelineMessage,
             msgRepo,
           );
-      _messageController.add(savedTimelineMessage);
+      _emitGroupMessage(savedTimelineMessage);
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt);
@@ -1976,7 +2294,7 @@ class GroupMessageListener {
             timelineMessage,
             msgRepo,
           );
-      _messageController.add(savedTimelineMessage);
+      _emitGroupMessage(savedTimelineMessage);
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt);
@@ -2023,7 +2341,7 @@ class GroupMessageListener {
       username: memberData?['username'] as String?,
       joinedAt: eventAt,
     );
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
 
     emitFlowEvent(
       layer: 'FL',
@@ -2100,7 +2418,7 @@ class GroupMessageListener {
             appendSystemEventLog: appendSystemEventLog,
           );
           if (selfRemovalCompleted) {
-            _removedController.add(groupId);
+            _emitGroupRemoved(groupId);
           }
           return;
         }
@@ -2140,7 +2458,7 @@ class GroupMessageListener {
         }
 
         // Notify UI that we were removed from this group
-        _removedController.add(groupId);
+        _emitGroupRemoved(groupId);
         return;
       }
     }
@@ -2213,7 +2531,7 @@ class GroupMessageListener {
       timelineMessage,
       msgRepo,
     );
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
 
     await _recordMembershipEventWatermark(groupId, resolvedEventAt);
     await _deleteContentMessagesAtOrAfterRemoval(
@@ -2331,7 +2649,7 @@ class GroupMessageListener {
       timelineMessage,
       msgRepo,
     );
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
     await _recordMembershipEventWatermark(groupId, resolvedEventAt);
     await _deleteContentMessagesAtOrAfterRemoval(
       groupId: groupId,
@@ -2379,12 +2697,7 @@ class GroupMessageListener {
     );
     final membershipAdvancedAfterRemoval =
         group.lastMembershipEventAt?.toUtc().isAfter(removedAtUtc) ?? false;
-    final keyAdvancedAfterRemoval = latestKey.createdAt.toUtc().isAfter(
-      removedAtUtc,
-    );
-    if (!selfRejoinedAfterRemoval &&
-        !membershipAdvancedAfterRemoval &&
-        !keyAdvancedAfterRemoval) {
+    if (!selfRejoinedAfterRemoval && !membershipAdvancedAfterRemoval) {
       return false;
     }
 
@@ -2549,7 +2862,7 @@ class GroupMessageListener {
       timelineMessage,
       msgRepo,
     );
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
 
     final getSelfPeerId = _getSelfPeerId;
     final bridge = _bridge;
@@ -2561,7 +2874,7 @@ class GroupMessageListener {
           groupRepo: _groupRepo,
           groupId: groupId,
         );
-        _removedController.add(groupId);
+        _emitGroupRemoved(groupId);
         return;
       }
     }
@@ -2664,7 +2977,7 @@ class GroupMessageListener {
       timelineMessage,
       msgRepo,
     );
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
     await _recordMembershipEventWatermark(groupId, event.eventAt);
 
     emitFlowEvent(
@@ -2739,7 +3052,7 @@ class GroupMessageListener {
       msgRepo,
     );
     await msgRepo.deleteMessage(event.targetMessageId);
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
 
     emitFlowEvent(
       layer: 'FL',
@@ -2844,7 +3157,7 @@ class GroupMessageListener {
             timelineMessage,
             msgRepo,
           );
-      _messageController.add(savedTimelineMessage);
+      _emitGroupMessage(savedTimelineMessage);
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt);
@@ -2919,7 +3232,7 @@ class GroupMessageListener {
       timelineMessage,
       msgRepo,
     );
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
 
     emitFlowEvent(
       layer: 'FL',
@@ -3041,7 +3354,7 @@ class GroupMessageListener {
       timelineMessage,
       msgRepo,
     );
-    _messageController.add(savedTimelineMessage);
+    _emitGroupMessage(savedTimelineMessage);
 
     await _recordMembershipEventWatermark(groupId, resolvedEventAt);
 
@@ -3095,6 +3408,7 @@ class GroupMessageListener {
       final (result, change) = await handleIncomingGroupReaction(
         groupRepo: _groupRepo,
         reactionRepo: reactionRepo,
+        msgRepo: _msgRepo,
         groupId: groupId,
         senderId: senderId,
         senderDeviceId: senderDeviceId,
@@ -3103,7 +3417,7 @@ class GroupMessageListener {
       );
 
       if (result == HandleGroupReactionResult.success && change != null) {
-        _reactionChangeController.add(change);
+        _emitReactionChange(change);
       }
     } catch (e) {
       emitFlowEvent(
@@ -3556,6 +3870,19 @@ class GroupMessageListener {
           );
           return true;
         }
+        if (hasExplicitConfigVersion) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'type': sysType ?? 'null',
+              'eventAt': eventAt.toIso8601String(),
+              'watermark': watermark.toIso8601String(),
+            },
+          );
+          return true;
+        }
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_CONFLICT_APPLIED',
@@ -3987,26 +4314,53 @@ class GroupMessageListener {
   }
 
   /// Stops listening for messages.
-  void stop() {
+  Future<void> stop() {
+    final existingStop = _stopFuture;
+    if (existingStop != null) return existingStop;
+
+    _isStopping = true;
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_MESSAGE_LISTENER_STOP',
       details: {},
     );
 
-    _subscription?.cancel();
+    final messageSubscription = _subscription;
     _subscription = null;
-    _reactionSubscription?.cancel();
+    final reactionSubscription = _reactionSubscription;
     _reactionSubscription = null;
-    _diagnosticSubscription?.cancel();
+    final diagnosticSubscription = _diagnosticSubscription;
     _diagnosticSubscription = null;
+
+    late final Future<void> stopFuture;
+    stopFuture =
+        Future.wait<void>([
+          if (messageSubscription != null) messageSubscription.cancel(),
+          if (reactionSubscription != null) reactionSubscription.cancel(),
+          if (diagnosticSubscription != null) diagnosticSubscription.cancel(),
+        ]).then((_) => _awaitInFlightHandlers()).whenComplete(() {
+          if (identical(_stopFuture, stopFuture)) {
+            _stopFuture = null;
+          }
+        });
+    _stopFuture = stopFuture;
+    return stopFuture;
   }
 
   /// Disposes of the listener and closes streams.
   void dispose() {
-    stop();
-    _messageController.close();
-    _removedController.close();
-    _reactionChangeController.close();
+    if (_isDisposed) return;
+    _isDisposed = true;
+    _isStopping = true;
+    unawaited(stop());
+    if (!_messageController.isClosed) {
+      unawaited(_messageController.close());
+    }
+    if (!_removedController.isClosed) {
+      unawaited(_removedController.close());
+    }
+    if (!_reactionChangeController.isClosed) {
+      unawaited(_reactionChangeController.close());
+    }
   }
 }

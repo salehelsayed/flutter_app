@@ -27,6 +27,7 @@ class _PageBridge extends FakeBridge {
   final Map<String, List<Map<String, dynamic>>> _pages = {};
   final Map<String, String> _nextCursor = {};
   final Map<String, List<Map<String, dynamic>>> _historyGaps = {};
+  int inboxRetrieveCount = 0;
 
   void addPage(
     String groupId,
@@ -47,6 +48,7 @@ class _PageBridge extends FakeBridge {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
     final cmd = parsed['cmd'] as String? ?? '';
     if (cmd == 'group:inboxRetrieveCursor') {
+      inboxRetrieveCount++;
       final payload = parsed['payload'] as Map<String, dynamic>;
       final groupId = payload['groupId'] as String;
       final cursor = (payload['cursor'] as String?) ?? '';
@@ -366,8 +368,7 @@ void main() {
       );
     });
 
-    test('mid-page sys-removal cleans up earlier-persisted messages so no rows '
-        'orphan against the deleted groupId', () async {
+    test('mid-page self-removal retains history and stops active drain', () async {
       final listener = GroupMessageListener(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -426,8 +427,9 @@ void main() {
 
       // Page order: [normal-msg-FIRST, sys-removal-SECOND]. Phase 1 commits
       // the normal message via the outer msgRepo before reaching the sys
-      // payload that deletes the group — so without explicit cleanup the
-      // normal message orphans against a now-deleted groupId.
+      // payload. The listener now preserves pre-removal history as read-only
+      // local state, but the active inbox drain must still stop before later
+      // cursor pages.
       bridge.addPage('group-1', '', [pre, sysMsg], 'cursor-after-removal');
 
       await drainGroupOfflineInbox(
@@ -435,26 +437,45 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         groupMessageListener: listener,
+        selfPeerId: 'peer-self',
         retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
 
+      final retainedGroup = await groupRepo.getGroup('group-1');
       expect(
-        await groupRepo.getGroup('group-1'),
-        isNull,
-        reason: 'sys-removal handler must run leaveGroup → deleteGroup',
+        retainedGroup,
+        isNotNull,
+        reason:
+            'Self-removal with existing local history keeps the group shell as '
+            'read-only history instead of deleting it.',
       );
       expect(
-        msgRepo.count,
-        0,
+        await groupRepo.getMember('group-1', 'peer-self'),
+        isNull,
+        reason: 'self membership must be removed after replayed self-removal',
+      );
+      expect(
+        await groupRepo.getLatestKey('group-1'),
+        isNull,
+        reason: 'retained history must not retain active send/decrypt keys',
+      );
+
+      final retainedTexts = (await msgRepo.getMessagesPage(
+        'group-1',
+      )).map((message) => message.text).toSet();
+      expect(
+        retainedTexts,
+        containsAll(['pre-removal chatter', 'Admin removed Self']),
         reason:
-            'When a sys "member_removed" payload appears mid-page, the drain '
-            'must clean up any group-1 rows already written in Phase 1 of '
-            'the same page so they do not orphan against the now-deleted '
-            'groupId. Rows committed via the outer msgRepo are durable '
-            'until explicitly deleted; the prior runInboxPageTransaction '
-            'shape rolled them back via the SQLCipher txn, but the new '
-            'three-phase shape has no implicit rollback for outer-repo '
-            'writes — fix must call deleteMessagesForGroup before exit.',
+            'Pre-removal content and the removal timeline row should remain '
+            'attached to the retained read-only group history.',
+      );
+      expect(
+        bridge.inboxRetrieveCount,
+        1,
+        reason:
+            'The self-removal replay is terminal for active inbox draining even '
+            'when old local history is retained.',
       );
     });
 

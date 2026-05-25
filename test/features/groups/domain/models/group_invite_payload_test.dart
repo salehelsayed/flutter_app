@@ -746,6 +746,47 @@ void main() {
     );
 
     test(
+      'G3-003 current-time validation is opt-in for parse-only inspection',
+      () {
+        final staleFreshnessPayload = makePayload();
+
+        expect(
+          GroupInvitePayload.fromInnerJson(staleFreshnessPayload.toInnerJson()),
+          isNotNull,
+        );
+
+        final staleFreshnessResult = GroupInvitePayload.parseInnerJsonDetailed(
+          staleFreshnessPayload.toInnerJson(),
+          validationTime: DateTime.utc(2026, 3, 3, 13),
+        );
+        expect(staleFreshnessResult.payload, isNull);
+        expect(
+          staleFreshnessResult.failure,
+          GroupInvitePayloadParseFailure.staleMembershipFreshness,
+        );
+
+        final expiredPolicyPayload = makePayload(
+          invitePolicy: makePolicy(expiresAt: DateTime.utc(2026, 3, 2, 13)),
+        );
+
+        expect(
+          GroupInvitePayload.fromJson(expiredPolicyPayload.toJson()),
+          isNotNull,
+        );
+
+        final expiredPolicyResult = GroupInvitePayload.parseJsonDetailed(
+          expiredPolicyPayload.toJson(),
+          validationTime: DateTime.utc(2026, 3, 2, 13, 1),
+        );
+        expect(expiredPolicyResult.payload, isNull);
+        expect(
+          expiredPolicyResult.failure,
+          GroupInvitePayloadParseFailure.expired,
+        );
+      },
+    );
+
+    test(
       'PREREQ-INVITER-FRESHNESS requires signed membership freshness proof and rejects proof tampering',
       () {
         final payload = makePayload();

@@ -22,15 +22,17 @@ type eventItem struct {
 	emittedAt time.Time
 }
 
-// EventDispatcher provides bounded async delivery of events from Go to Flutter.
+// EventDispatcher provides async delivery of events from Go to Flutter.
 // Status-like events (addresses:updated, relay:state) are coalesced to keep
-// only the latest state. Message-bearing events (message:received,
-// group_message:received, group_reaction:received) are preserved losslessly.
+// only the latest state. Critical message-bearing events are preserved even
+// when the queue is already at maxMessageQueueSize; non-critical events may be
+// dropped at capacity after an overflow diagnostic is recorded.
 type EventDispatcher struct {
 	mu       sync.Mutex
 	callback EventCallback
 
-	// Message queue for lossless events (messages).
+	// FIFO queue for events that cannot be coalesced. Critical message-bearing
+	// events may exceed maxMessageQueueSize; non-critical events are capped.
 	messageQueue []eventItem
 
 	// Coalesced status events — only the latest of each type is kept.
@@ -40,8 +42,10 @@ type EventDispatcher struct {
 	notify chan struct{}
 
 	// Lifecycle.
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	stopped  bool
+	wg       sync.WaitGroup
 
 	// Configuration.
 	maxMessageQueueSize int
@@ -62,9 +66,18 @@ var coalescedEventTypes = map[string]bool{
 	dispatcherOverflowEvent: true,
 }
 
+// criticalEventTypes must never be dropped by the dispatcher. If the queue is
+// full, these events are appended past the configured cap and an overflow
+// diagnostic is coalesced for observability and replay recovery.
+var criticalEventTypes = map[string]bool{
+	"message:received":        true,
+	"group_message:received":  true,
+	"group_reaction:received": true,
+}
+
 // NewEventDispatcher creates a dispatcher that delivers events to the callback
-// asynchronously. Status-like events are coalesced; message events are queued
-// losslessly up to maxQueueSize.
+// asynchronously. Status-like events are coalesced; critical message-bearing
+// events are queued losslessly, even if that temporarily exceeds maxQueueSize.
 func NewEventDispatcher(callback EventCallback, maxQueueSize int) *EventDispatcher {
 	if maxQueueSize <= 0 {
 		maxQueueSize = 1024
@@ -95,26 +108,32 @@ func (d *EventDispatcher) Emit(eventName string, data map[string]interface{}) {
 	now := time.Now()
 	item := eventItem{
 		eventName: eventName,
-		data:      data,
+		data:      cloneEventData(data),
 		timestamp: now,
 		emittedAt: now,
 	}
 
 	d.mu.Lock()
+	if d.stopped {
+		d.mu.Unlock()
+		return
+	}
 
 	if coalescedEventTypes[eventName] {
 		d.setStatusLatestLocked(item)
 	} else {
-		// Lossless: enqueue the event.
 		if len(d.messageQueue) >= d.maxMessageQueueSize {
-			d.dropped++
-			d.setStatusLatestLocked(eventItem{
-				eventName: dispatcherOverflowEvent,
-				data:      d.dispatcherDiagnosticDataLocked("overflow", eventName),
-				timestamp: time.Now(),
-			})
-			log.Printf("[EVENT_DISPATCHER] Queue full (%d), dropping event: %s",
-				d.maxMessageQueueSize, eventName)
+			if criticalEventTypes[eventName] {
+				d.recordOverflowDiagnosticLocked(item, "preserved_critical")
+				d.messageQueue = append(d.messageQueue, item)
+				log.Printf("[EVENT_DISPATCHER] Queue full (%d), preserving critical event over capacity: %s",
+					d.maxMessageQueueSize, eventName)
+			} else {
+				d.dropped++
+				d.recordOverflowDiagnosticLocked(item, "dropped")
+				log.Printf("[EVENT_DISPATCHER] Queue full (%d), dropping non-critical event: %s",
+					d.maxMessageQueueSize, eventName)
+			}
 		} else {
 			d.messageQueue = append(d.messageQueue, item)
 			d.maybeRecordPressureLocked(eventName)
@@ -128,6 +147,18 @@ func (d *EventDispatcher) Emit(eventName string, data map[string]interface{}) {
 	case d.notify <- struct{}{}:
 	default:
 	}
+}
+
+func cloneEventData(data map[string]interface{}) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+
+	cloned := make(map[string]interface{}, len(data))
+	for key, value := range data {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (d *EventDispatcher) setStatusLatestLocked(item eventItem) {
@@ -150,10 +181,27 @@ func (d *EventDispatcher) maybeRecordPressureLocked(eventName string) {
 		return
 	}
 
+	now := time.Now()
 	d.setStatusLatestLocked(eventItem{
 		eventName: dispatcherPressureEvent,
 		data:      d.dispatcherDiagnosticDataLocked("near_overflow", eventName),
-		timestamp: time.Now(),
+		timestamp: now,
+		emittedAt: now,
+	})
+}
+
+func (d *EventDispatcher) recordOverflowDiagnosticLocked(item eventItem, action string) {
+	diagnosticData := d.dispatcherDiagnosticDataLocked("overflow", item.eventName)
+	diagnosticData["criticalEvent"] = criticalEventTypes[item.eventName]
+	diagnosticData["overflowAction"] = action
+	addCriticalEventIdentifiers(diagnosticData, item)
+
+	now := time.Now()
+	d.setStatusLatestLocked(eventItem{
+		eventName: dispatcherOverflowEvent,
+		data:      diagnosticData,
+		timestamp: now,
+		emittedAt: now,
 	})
 }
 
@@ -173,9 +221,49 @@ func (d *EventDispatcher) dispatcherDiagnosticDataLocked(
 	}
 }
 
+func addCriticalEventIdentifiers(
+	diagnosticData map[string]interface{},
+	item eventItem,
+) {
+	var fields []string
+	switch item.eventName {
+	case "message:received":
+		fields = []string{"from", "to", "timestamp", "transport"}
+	case "group_message:received":
+		fields = []string{
+			"groupId",
+			"messageId",
+			"keyEpoch",
+			"senderId",
+			"senderDeviceId",
+			"transportPeerId",
+		}
+	case "group_reaction:received":
+		fields = []string{
+			"groupId",
+			"senderId",
+			"senderDeviceId",
+			"transportPeerId",
+		}
+	default:
+		return
+	}
+
+	for _, field := range fields {
+		if value, ok := item.data[field]; ok {
+			diagnosticData[field] = value
+		}
+	}
+}
+
 // Stop shuts down the dispatcher, draining any remaining events.
 func (d *EventDispatcher) Stop() {
-	close(d.stopCh)
+	d.stopOnce.Do(func() {
+		d.mu.Lock()
+		d.stopped = true
+		d.mu.Unlock()
+		close(d.stopCh)
+	})
 	d.wg.Wait()
 }
 
@@ -221,12 +309,12 @@ func (d *EventDispatcher) drainAll() {
 }
 
 // dequeue removes and returns the next event to deliver.
-// Priority: lossless message events first, then coalesced status events.
+// Priority: queued non-coalesced events first, then coalesced status events.
 func (d *EventDispatcher) dequeue() (eventItem, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Message events first (FIFO).
+	// Non-coalesced events first (FIFO).
 	if len(d.messageQueue) > 0 {
 		item := d.messageQueue[0]
 		d.messageQueue = d.messageQueue[1:]
@@ -251,7 +339,16 @@ func (d *EventDispatcher) deliver(item eventItem) {
 		}
 	}()
 
+	if item.emittedAt.IsZero() {
+		item.emittedAt = item.timestamp
+	}
+	if item.emittedAt.IsZero() {
+		item.emittedAt = time.Now()
+	}
 	queueWaitMs := time.Since(item.emittedAt).Milliseconds()
+	if queueWaitMs < 0 {
+		queueWaitMs = 0
+	}
 	if item.data == nil {
 		item.data = map[string]interface{}{}
 	}

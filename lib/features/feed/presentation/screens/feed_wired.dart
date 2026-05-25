@@ -2492,7 +2492,7 @@ class _FeedWiredState extends State<FeedWired>
       senderPrivateKey: identity.privateKey,
     );
 
-    // Update with real reaction on success
+    // Replace the optimistic reaction once local/replay state is queued.
     if (result == SendGroupReactionResult.success &&
         reaction != null &&
         mounted) {

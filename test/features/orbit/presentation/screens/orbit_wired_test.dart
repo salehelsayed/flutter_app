@@ -23,6 +23,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.da
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -38,6 +39,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
@@ -3007,6 +3009,23 @@ void main() {
           myRole: GroupRole.admin,
         );
         await groupRepo.saveGroup(orbitGroup);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: orbitGroup.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 3, 1, 10),
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: orbitGroup.id,
+            keyGeneration: 1,
+            encryptedKey: 'orbit-actions-key',
+            createdAt: DateTime.utc(2026, 3, 1, 10, 2),
+          ),
+        );
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'orbit-msg-1',
@@ -3606,6 +3625,26 @@ class _BlockingIntroductionRepository extends InMemoryIntroductionRepository {
   Completer<void>? passGate;
   int acceptedUpdates = 0;
   int passedUpdates = 0;
+
+  @override
+  Future<bool> saveIntroductionResponseWithOutboxDeliveries({
+    required String introductionId,
+    required bool isRecipient,
+    required IntroductionStatus responseStatus,
+    required IntroductionOverallStatus overallStatus,
+    required String respondedAt,
+    required List<IntroductionOutboxDelivery> deliveries,
+  }) async {
+    await _maybeBlock(responseStatus);
+    return super.saveIntroductionResponseWithOutboxDeliveries(
+      introductionId: introductionId,
+      isRecipient: isRecipient,
+      responseStatus: responseStatus,
+      overallStatus: overallStatus,
+      respondedAt: respondedAt,
+      deliveries: deliveries,
+    );
+  }
 
   @override
   Future<bool> updateRecipientStatus(

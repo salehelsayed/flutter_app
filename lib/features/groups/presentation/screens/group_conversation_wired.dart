@@ -154,6 +154,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     with WidgetsBindingObserver {
   static const _maxAttachments = 10;
   static const _liveEdgeTolerance = 32.0;
+  static const _messageLoadErrorCopy = "Couldn't load messages";
   static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
 
   late GroupModel _group;
@@ -170,10 +171,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _isSending = false;
   String? _activeQuoteMessageId;
   String _draftText = '';
+  String? _messageLoadErrorText;
   GroupSecurityStatusViewState? _securityStatus;
   GroupHistoryGapRepair? _historyGapRepair;
   bool _isCurrentUserActiveMember = true;
   bool _hasCurrentSendKey = true;
+  bool _isLifecycleResumed = true;
 
   // Media state
   List<PendingComposerMedia> _pendingAttachments = [];
@@ -208,16 +211,78 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     return peerId == null || peerId.isEmpty ? null : peerId;
   }
 
+  bool _currentLifecycleAllowsVisibleRead() {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
+  }
+
+  bool get _canMarkVisibleRead {
+    if (!_isLifecycleResumed) return false;
+    final tracker = widget.groupConversationTracker;
+    return tracker == null || tracker.isViewing(_activeGroupConversationKey);
+  }
+
+  Future<void> _markVisibleReadIfAllowed() async {
+    if (!_canMarkVisibleRead) return;
+    await widget.msgRepo.markAsRead(widget.group.id);
+  }
+
+  Future<String> _beginBackgroundTaskGuarded() async {
+    try {
+      return await callBgBegin(widget.bridge) ?? '';
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_BG_BEGIN_ERROR',
+        details: {'error': e.toString()},
+      );
+      return '';
+    }
+  }
+
+  Future<void> _endBackgroundTaskGuarded(String bgTaskId) async {
+    if (bgTaskId.isEmpty) return;
+    try {
+      await callBgEnd(widget.bridge, bgTaskId);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_BG_END_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   bool get _isRecording => _composerViewState.recordingState.isActive;
 
   UploadProgressViewState? get _uploadProgressViewState {
     if (!_isTrackingRelayUpload || _trackedUploadTotalBytes <= 0) return null;
     return UploadProgressViewState(
       sentBytes: (_trackedUploadCompletedBytes + _trackedCurrentUploadBytes)
-          .clamp(0, _trackedUploadTotalBytes),
+          .clamp(0, _trackedUploadTotalBytes)
+          .toInt(),
       totalBytes: _trackedUploadTotalBytes,
     );
   }
+
+  bool _hasCompleteSenderIdentityFields({
+    required String? peerId,
+    required String username,
+    required String publicKey,
+    required String privateKey,
+  }) {
+    return peerId?.trim().isNotEmpty == true &&
+        username.trim().isNotEmpty &&
+        publicKey.trim().isNotEmpty &&
+        privateKey.trim().isNotEmpty;
+  }
+
+  bool get _hasCompleteSenderIdentity => _hasCompleteSenderIdentityFields(
+    peerId: _ownPeerId,
+    username: _senderUsername,
+    publicKey: _senderPublicKey,
+    privateKey: _senderPrivateKey,
+  );
 
   bool _tryBeginSendFlow() {
     if (_isSending) return false;
@@ -243,8 +308,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _group = widget.group;
+    _isLifecycleResumed = _currentLifecycleAllowsVisibleRead();
     _draftText = widget.initialText ?? '';
-    widget.groupConversationTracker?.setActive('group:${widget.group.id}');
+    widget.groupConversationTracker?.setActive(_activeGroupConversationKey);
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     final initialPendingMedia = widget.initialPendingMedia;
     final initialAttachments = widget.initialAttachments;
@@ -308,7 +374,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (_trackedCurrentUploadId != null && _trackedCurrentUploadId != id) {
       return;
     }
-    final nextBytes = sentBytes.toInt().clamp(0, _trackedUploadTotalBytes);
+    final nextBytes = sentBytes
+        .toInt()
+        .clamp(0, _trackedUploadTotalBytes)
+        .toInt();
     if (mounted) {
       setState(() {
         _trackedCurrentUploadId = id;
@@ -355,10 +424,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   void _markRelayUploadCompleted(int sizeBytes) {
     if (!_isTrackingRelayUpload) return;
-    final nextCompleted = (_trackedUploadCompletedBytes + sizeBytes).clamp(
-      0,
-      _trackedUploadTotalBytes,
-    );
+    final nextCompleted = (_trackedUploadCompletedBytes + sizeBytes)
+        .clamp(0, _trackedUploadTotalBytes)
+        .toInt();
     if (mounted) {
       setState(() {
         _trackedUploadCompletedBytes = nextCompleted;
@@ -476,6 +544,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   @override
   void didUpdateWidget(covariant GroupConversationWired oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.group.id != oldWidget.group.id) {
+      _resetForGroupChange(oldWidget);
+      return;
+    }
     final oldCanWrite = _canWrite;
     final newCanWrite = _canWriteForGroup(widget.group);
     final shouldSyncGroupFromWidget =
@@ -489,16 +561,50 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (oldCanWrite && !_canWrite && _activeQuoteMessageId != null) {
       _activeQuoteMessageId = null;
     }
-    if (widget.group.id != oldWidget.group.id) {
-      unawaited(_loadSecurityStatus());
-    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isLifecycleResumed = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshVisibleGroup());
+      unawaited(_markVisibleReadIfAllowed());
     }
+  }
+
+  void _resetForGroupChange(GroupConversationWired oldWidget) {
+    widget.groupConversationTracker?.clearIfActive(
+      'group:${oldWidget.group.id}',
+    );
+    widget.groupConversationTracker?.setActive(_activeGroupConversationKey);
+    unawaited(_messageSubscription?.cancel());
+    unawaited(_removedSubscription?.cancel());
+    unawaited(_reactionSubscription?.cancel());
+    _messageSubscription = null;
+    _removedSubscription = null;
+    _reactionSubscription = null;
+
+    _group = widget.group;
+    _messages = [];
+    _mediaMap = {};
+    _reactions = {};
+    _membersByPeerId = const {};
+    _historyGapRepair = null;
+    _securityStatus = null;
+    _messageLoadErrorText = null;
+    _initialLoadDone = false;
+    _activeQuoteMessageId = null;
+    _draftText = widget.initialText ?? '';
+    _pendingAttachments = [];
+    _updateComposerState(pendingAttachments: const [], isUploading: false);
+    if (mounted) {
+      setState(() {});
+    }
+
+    _loadMessages();
+    unawaited(_loadSecurityStatus());
+    _startListening();
+    _startListeningForReactions();
   }
 
   Future<void> _hydrateInitialPendingMedia(
@@ -739,7 +845,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _loadSecurityStatus() async {
     try {
-      final identity = _ownPeerId == null
+      final identity = !_hasCompleteSenderIdentity
           ? await widget.identityRepo.loadIdentity()
           : null;
       final ownPeerId = _ownPeerId ?? identity?.peerId;
@@ -788,8 +894,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       );
       if (!mounted) return;
       setState(() {
-        if (_ownPeerId == null && ownPeerId != null) {
-          _ownPeerId = ownPeerId;
+        if (identity != null) {
+          _ownPeerId = identity.peerId;
+          _senderUsername = identity.username;
+          _senderPublicKey = identity.publicKey;
+          _senderPrivateKey = identity.privateKey;
         }
         _membersByPeerId = {
           for (final member in members) member.peerId: member,
@@ -808,6 +917,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _loadMessages() async {
+    var appliedMessages = false;
     try {
       final messages = await widget.msgRepo.getMessagesPage(widget.group.id);
       final historyGapRepair = await widget.historyGapRepairRepo
@@ -821,18 +931,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _messages = messages;
         _mediaMap = mediaMap;
         _initialLoadDone = true;
+        _messageLoadErrorText = null;
         _historyGapRepair = historyGapRepair;
       });
+      appliedMessages = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _emitNotificationTapTimingIfNeeded();
       });
 
       unawaited(_loadReactions(messages));
       unawaited(_downloadPendingMedia(mediaMap));
-      await widget.msgRepo.markAsRead(widget.group.id);
+      await _markVisibleReadIfAllowed();
     } catch (e) {
       if (mounted) {
-        setState(() => _initialLoadDone = true);
+        setState(() {
+          _initialLoadDone = true;
+          if (!appliedMessages && _messages.isEmpty) {
+            _messageLoadErrorText = _messageLoadErrorCopy;
+          }
+        });
       }
       emitFlowEvent(
         layer: 'FL',
@@ -840,6 +957,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<void> _retryMessageLoad() async {
+    if (mounted) {
+      setState(() {
+        _messageLoadErrorText = null;
+        if (_messages.isEmpty) {
+          _initialLoadDone = false;
+        }
+      });
+    }
+    await _loadMessages();
   }
 
   Future<void> _downloadPendingMedia(
@@ -920,7 +1049,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<void> _handleCurrentGroupRemoved() async {
     if (!mounted) return;
 
-    widget.groupConversationTracker?.clear();
+    widget.groupConversationTracker?.clearIfActive(_activeGroupConversationKey);
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
     messenger?.showSnackBar(
@@ -963,14 +1092,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     for (final pending in mediaToUpload) {
       final mime = _mimeFromPath(pending.file.path);
-      final validation = GroupMediaMimePolicy.validateDescriptor(
+      final validation = await GroupMediaMimePolicy.validateFile(
+        path: pending.file.path,
         mime: mime,
         mediaType: GroupMediaMimePolicy.mediaTypeForMime(mime),
       );
       if (!validation.isValid) {
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_CONV_FL_MEDIA_DURABLE_PREP_REJECTED_INVALID_MIME',
+          event: 'GROUP_CONV_FL_MEDIA_DURABLE_PREP_REJECTED_INVALID_FILE',
           details: {'mime': mime, 'reason': validation.reason},
         );
         throw const _RejectedPendingGroupMediaException();
@@ -1140,6 +1270,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         plan: plan,
         uploaded: uploaded,
       );
+      await mediaAttachmentRepo.saveAttachment(completed);
       completedAttachments.add(completed);
     }
 
@@ -1157,10 +1288,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         );
       }
       return null;
-    }
-
-    for (final completed in completedAttachments) {
-      await mediaAttachmentRepo.saveAttachment(completed);
     }
 
     return completedAttachments;
@@ -1251,7 +1378,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<void> _onSend(String text) async {
     if (!_canWrite) return;
     if (!await _refreshSendCapabilityAndCanWrite()) return;
-    if (_ownPeerId == null) return;
+    if (!_hasCompleteSenderIdentity) return;
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) return;
@@ -1334,7 +1461,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
 
     // 4. sendGroupMessage() still owns the final message row save.
-    final bgTaskId = await callBgBegin(widget.bridge);
+    final bgTaskId = await _beginBackgroundTaskGuarded();
     var prePersistedOrdinaryMediaRow = false;
     try {
       // 5. Upload attachments (if any)
@@ -1551,6 +1678,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           if (mounted) {
             _showFloatingSnackBar('This group has been dissolved');
           }
+        } else if (mounted && result == SendGroupMessageResult.unauthorized) {
+          _showFloatingSnackBar(
+            'You no longer have permission to send messages in this group.',
+          );
+        } else if (mounted && result == SendGroupMessageResult.groupNotFound) {
+          _showFloatingSnackBar('This group is no longer available.');
         }
       } else if (message == null) {
         await _restoreComposerSnapshotWithoutFailure(
@@ -1568,8 +1701,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       );
       await _restoreComposerSnapshot(composerSnapshot, messageId);
     } finally {
-      await callBgEnd(widget.bridge, bgTaskId);
-      _endSendFlow();
+      try {
+        await _endBackgroundTaskGuarded(bgTaskId);
+      } finally {
+        _endSendFlow();
+      }
     }
   }
 
@@ -1767,6 +1903,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _removeLocalMessage(messageId);
   }
 
+  Future<void> _cleanupRestoredComposerRetryState(String messageId) async {
+    try {
+      await widget.mediaAttachmentRepo
+          ?.markUploadPendingAttachmentsFailedForMessage(messageId);
+    } catch (_) {}
+    try {
+      await widget.mediaFileManager?.deletePendingUploadDir(messageId);
+    } catch (_) {}
+  }
+
   Future<void> _restoreComposerSnapshot(
     _GroupComposerSnapshot snapshot,
     String messageId, {
@@ -1792,6 +1938,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _activeQuoteMessageId = snapshot.quotedMessageId;
     }
     await _persistMessageStatus(messageId, 'failed');
+    if (snapshot.pendingAttachments.isNotEmpty) {
+      await _cleanupRestoredComposerRetryState(messageId);
+    }
     if (showSnackBar && snackText != null) {
       _showFloatingSnackBar(snackText);
     }
@@ -1816,6 +1965,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         pendingAttachments: _pendingAttachmentFiles(),
         isUploading: false,
       );
+    }
+    if (snapshot.pendingAttachments.isNotEmpty) {
+      await _cleanupRestoredComposerRetryState(messageId);
     }
     try {
       await widget.msgRepo.deleteMessage(messageId);
@@ -1844,6 +1996,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (refreshedMessage == null || !mounted) return;
     final hydratedMedia = await _resolveHydratedMediaForMessage(
       messageId,
+      ownerMessage: refreshedMessage,
       fallbackMedia: fallbackMedia,
     );
     if (!mounted) return;
@@ -1855,6 +2008,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<List<MediaAttachment>> _resolveHydratedMediaForMessage(
     String messageId, {
+    GroupMessage? ownerMessage,
     List<MediaAttachment>? fallbackMedia,
   }) async {
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
@@ -1869,7 +2023,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return fallbackMedia ?? const <MediaAttachment>[];
     }
 
-    return _resolveAttachmentsForDisplay(attachments);
+    final message = ownerMessage ?? await widget.msgRepo.getMessage(messageId);
+    return _resolveAttachmentsForDisplay(
+      attachments,
+      allowMissingEncryptionForLocalOutgoing: message?.isIncoming == false,
+    );
   }
 
   Future<Map<String, List<MediaAttachment>>> _loadResolvedMediaMap(
@@ -1883,9 +2041,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final rawMap = await mediaRepo.getAttachmentsForMessages(
       messages.map((m) => m.id).toList(),
     );
+    final messagesById = {for (final message in messages) message.id: message};
     final mediaMap = <String, List<MediaAttachment>>{};
     for (final entry in rawMap.entries) {
-      mediaMap[entry.key] = await _resolveAttachmentsForDisplay(entry.value);
+      mediaMap[entry.key] = await _resolveAttachmentsForDisplay(
+        entry.value,
+        allowMissingEncryptionForLocalOutgoing:
+            messagesById[entry.key]?.isIncoming == false,
+      );
     }
     return mediaMap;
   }
@@ -1896,18 +2059,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final mediaRepo = widget.mediaAttachmentRepo;
     if (mediaRepo == null) return const [];
     final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
-    return _resolveAttachmentsForDisplay(attachments);
+    final message = await widget.msgRepo.getMessage(messageId);
+    return _resolveAttachmentsForDisplay(
+      attachments,
+      allowMissingEncryptionForLocalOutgoing: message?.isIncoming == false,
+    );
   }
 
   Future<List<MediaAttachment>> _resolveAttachmentsForDisplay(
-    List<MediaAttachment> attachments,
-  ) async {
+    List<MediaAttachment> attachments, {
+    required bool allowMissingEncryptionForLocalOutgoing,
+  }) async {
     final mediaFileManager = widget.mediaFileManager;
     if (mediaFileManager == null) {
       return Future.wait(
         attachments.map((attachment) async {
           if (attachment.downloadStatus == kMediaDownloadStatusDone &&
-              !GroupMediaIntegrityPolicy.hasValidContentHash(attachment)) {
+              !GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
+                attachment,
+              )) {
             return _markDisplayIntegrityFailed(attachment);
           }
           return attachment;
@@ -1923,15 +2093,45 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         continue;
       }
       if (attachment.localPath == null) {
+        if (attachment.downloadStatus == kMediaDownloadStatusDone) {
+          resolved.add(await _markDisplayIntegrityFailed(attachment));
+          continue;
+        }
         resolved.add(attachment);
         continue;
       }
       final absolutePath = await mediaFileManager.resolveStoredPath(
         attachment.localPath!,
       );
-      if (_isPendingUploadPath(attachment.localPath!) ||
-          _isPendingUploadPath(absolutePath)) {
+      final isPendingUploadPath =
+          _isPendingUploadPath(attachment.localPath!) ||
+          _isPendingUploadPath(absolutePath);
+      if (isPendingUploadPath) {
+        if (attachment.downloadStatus == kMediaDownloadStatusDone &&
+            !allowMissingEncryptionForLocalOutgoing &&
+            !GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
+              attachment.copyWith(localPath: absolutePath),
+            )) {
+          resolved.add(await _markDisplayIntegrityFailed(attachment));
+          continue;
+        }
         resolved.add(attachment.copyWith(localPath: absolutePath));
+        continue;
+      }
+      if (attachment.downloadStatus == kMediaDownloadStatusDone &&
+          !GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
+            attachment.copyWith(localPath: absolutePath),
+          )) {
+        final allowsLocalOutgoingMissingEncryption =
+            allowMissingEncryptionForLocalOutgoing &&
+            !attachment.hasEncryptionMetadata &&
+            GroupMediaIntegrityPolicy.hasValidContentHash(attachment) &&
+            _isOwnedGroupMediaPath(attachment.localPath!, absolutePath);
+        if (allowsLocalOutgoingMissingEncryption) {
+          resolved.add(attachment.copyWith(localPath: absolutePath));
+          continue;
+        }
+        resolved.add(await _markDisplayIntegrityFailed(attachment));
         continue;
       }
       final exists = await File(absolutePath).exists();
@@ -1944,27 +2144,23 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         );
         continue;
       }
-      if (attachment.downloadStatus == kMediaDownloadStatusDone &&
-          !attachment.hasEncryptionMetadata) {
-        final integrityValidation =
-            await GroupMediaIntegrityPolicy.validateFileContentHash(
-              path: absolutePath,
-              expectedHash: attachment.contentHash,
-            );
-        if (!integrityValidation.isValid) {
-          resolved.add(
-            await _markDisplayIntegrityFailed(
-              attachment,
-              absolutePath: absolutePath,
-              deleteLocalFile: true,
-            ),
-          );
-          continue;
-        }
-      }
       resolved.add(attachment.copyWith(localPath: absolutePath));
     }
     return resolved;
+  }
+
+  bool _isOwnedGroupMediaPath(String storedPath, String absolutePath) {
+    bool matches(String path) {
+      final normalized = path.replaceAll('\\', '/');
+      final mediaPrefix = 'media/${widget.group.id}/';
+      final pendingPrefix = 'pending_uploads/';
+      return normalized.startsWith(mediaPrefix) ||
+          normalized.contains('/$mediaPrefix') ||
+          normalized.startsWith(pendingPrefix) ||
+          normalized.contains('/$pendingPrefix');
+    }
+
+    return matches(storedPath) || matches(absolutePath);
   }
 
   Future<MediaAttachment> _markDisplayIntegrityFailed(
@@ -2032,7 +2228,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
 
     if (markAsRead) {
-      await widget.msgRepo.markAsRead(widget.group.id);
+      await _markVisibleReadIfAllowed();
     }
   }
 
@@ -2348,7 +2544,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
 
       final maxExtent = _scrollController.position.maxScrollExtent;
-      final targetOffset = previousOffset.clamp(0.0, maxExtent);
+      final targetOffset = previousOffset.clamp(0.0, maxExtent).toDouble();
       _scrollController.jumpTo(targetOffset);
     });
   }
@@ -2545,7 +2741,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       MediaAttachment? pendingAttachment;
 
       try {
-        final validation = GroupMediaMimePolicy.validateDescriptor(
+        final validation = await GroupMediaMimePolicy.validateFile(
+          path: recording.filePath,
           mime: recording.mime,
           mediaType: 'audio',
         );
@@ -2633,7 +2830,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         });
       }
 
-      final bgTaskId = await callBgBegin(widget.bridge);
+      final bgTaskId = await _beginBackgroundTaskGuarded();
       try {
         final members = await widget.groupRepo.getMembers(widget.group.id);
         final allowedPeers = groupMediaAllowedPeersForMembers(members);
@@ -2665,14 +2862,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           return;
         }
 
-        final stableVoiceAttachment = voiceAttachment.copyWith(
-          id: attachmentId,
-          messageId: messageId,
-          downloadStatus: 'done',
-          uploadRetryCount: durablePendingAttachment.uploadRetryCount,
-          contentHash:
-              voiceAttachment.contentHash ??
-              durablePendingAttachment.contentHash,
+        final stableVoiceAttachment = await _buildStableVoiceAttachment(
+          pendingAttachment: durablePendingAttachment,
+          uploaded: voiceAttachment,
+          absoluteDurablePath: durableAbsolutePath,
+          waveform: waveform,
         );
         _markRelayUploadCompleted(recording.sizeBytes);
         await _stopRelayUploadTracking();
@@ -2749,6 +2943,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               if (mounted) {
                 _showFloatingSnackBar('This group has been dissolved');
               }
+            } else if (mounted &&
+                result == SendGroupMessageResult.unauthorized) {
+              _showFloatingSnackBar(
+                'You no longer have permission to send messages in this group.',
+              );
+            } else if (mounted &&
+                result == SendGroupMessageResult.groupNotFound) {
+              _showFloatingSnackBar('This group is no longer available.');
             }
           } else {
             _updateLocalMessageStatus(messageId, 'failed');
@@ -2758,11 +2960,77 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         } catch (_) {}
       } finally {
         await _stopRelayUploadTracking();
-        await callBgEnd(widget.bridge, bgTaskId);
+        await _endBackgroundTaskGuarded(bgTaskId);
       }
     } finally {
       _endSendFlow();
     }
+  }
+
+  Future<MediaAttachment> _buildStableVoiceAttachment({
+    required MediaAttachment pendingAttachment,
+    required MediaAttachment uploaded,
+    required String absoluteDurablePath,
+    required List<double> waveform,
+  }) async {
+    final mediaFileManager = widget.mediaFileManager;
+    final sourceFile = File(absoluteDurablePath);
+    final contentHash =
+        uploaded.contentHash ??
+        pendingAttachment.contentHash ??
+        (await sourceFile.exists()
+            ? await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                absoluteDurablePath,
+              )
+            : null);
+
+    if (mediaFileManager == null) {
+      return uploaded.copyWith(
+        id: pendingAttachment.id,
+        messageId: pendingAttachment.messageId,
+        mime: pendingAttachment.mime,
+        size: uploaded.size > 0 ? uploaded.size : pendingAttachment.size,
+        mediaType: pendingAttachment.mediaType,
+        durationMs: uploaded.durationMs ?? pendingAttachment.durationMs,
+        localPath: uploaded.localPath ?? absoluteDurablePath,
+        waveform: uploaded.waveform ?? waveform,
+        downloadStatus: 'done',
+        uploadRetryCount: pendingAttachment.uploadRetryCount,
+        contentHash: contentHash,
+      );
+    }
+
+    final absoluteOwnedPath = await mediaFileManager.localPathForAttachment(
+      contactPeerId: widget.group.id,
+      blobId: pendingAttachment.id,
+      mime: pendingAttachment.mime,
+    );
+    if (await sourceFile.exists() && absoluteOwnedPath != absoluteDurablePath) {
+      final targetFile = File(absoluteOwnedPath);
+      final parent = targetFile.parent;
+      if (!await parent.exists()) {
+        await parent.create(recursive: true);
+      }
+      await sourceFile.copy(absoluteOwnedPath);
+    }
+
+    return uploaded.copyWith(
+      id: pendingAttachment.id,
+      messageId: pendingAttachment.messageId,
+      mime: pendingAttachment.mime,
+      size: uploaded.size > 0 ? uploaded.size : pendingAttachment.size,
+      mediaType: pendingAttachment.mediaType,
+      durationMs: uploaded.durationMs ?? pendingAttachment.durationMs,
+      localPath: mediaFileManager.relativePathForAttachment(
+        contactPeerId: widget.group.id,
+        blobId: pendingAttachment.id,
+        mime: pendingAttachment.mime,
+      ),
+      waveform: uploaded.waveform ?? waveform,
+      downloadStatus: 'done',
+      uploadRetryCount: pendingAttachment.uploadRetryCount,
+      contentHash: contentHash,
+    );
   }
 
   void _restoreActiveQuoteIfNeeded(String? quotedMessageId) {
@@ -2864,7 +3132,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       final tappedPath = visual[index].localPath!;
       final startIndex = allPaths
           .indexOf(tappedPath)
-          .clamp(0, allPaths.length - 1);
+          .clamp(0, allPaths.length - 1)
+          .toInt();
 
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -2924,6 +3193,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_hasCurrentSendKey) {
       return false;
     }
+    if (!_hasCompleteSenderIdentity) {
+      return false;
+    }
     if (group.type == GroupType.announcement &&
         group.myRole != GroupRole.admin) {
       return false;
@@ -2941,6 +3213,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_hasCurrentSendKey) {
       return 'Waiting for the current group key before you can send.';
     }
+    if (!_hasCompleteSenderIdentity) {
+      return 'Waiting for your identity before you can send.';
+    }
     return 'Only admins can send messages in this group';
   }
 
@@ -2948,11 +3223,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     required GroupModel group,
     required bool isCurrentUserActiveMember,
     required bool hasCurrentSendKey,
+    required bool hasCompleteSenderIdentity,
   }) {
     if (group.isDissolved) {
       return false;
     }
     if (!isCurrentUserActiveMember || !hasCurrentSendKey) {
+      return false;
+    }
+    if (!hasCompleteSenderIdentity) {
       return false;
     }
     if (group.type == GroupType.announcement &&
@@ -2963,10 +3242,19 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<bool> _refreshSendCapabilityAndCanWrite() async {
-    final identity = _ownPeerId == null
+    final identity = !_hasCompleteSenderIdentity
         ? await widget.identityRepo.loadIdentity()
         : null;
     final ownPeerId = _ownPeerId ?? identity?.peerId;
+    final senderUsername = identity?.username ?? _senderUsername;
+    final senderPublicKey = identity?.publicKey ?? _senderPublicKey;
+    final senderPrivateKey = identity?.privateKey ?? _senderPrivateKey;
+    final hasCompleteSenderIdentity = _hasCompleteSenderIdentityFields(
+      peerId: ownPeerId,
+      username: senderUsername,
+      publicKey: senderPublicKey,
+      privateKey: senderPrivateKey,
+    );
     final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
     final members = await widget.groupRepo.getMembers(widget.group.id);
     final isCurrentUserActiveMember =
@@ -2978,12 +3266,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!mounted) {
       return false;
     }
-    if ((_ownPeerId == null && ownPeerId != null) ||
+    if (identity != null ||
         _isCurrentUserActiveMember != isCurrentUserActiveMember ||
         _hasCurrentSendKey != hasCurrentSendKey) {
       setState(() {
-        if (_ownPeerId == null && ownPeerId != null) {
-          _ownPeerId = ownPeerId;
+        if (identity != null) {
+          _ownPeerId = identity.peerId;
+          _senderUsername = identity.username;
+          _senderPublicKey = identity.publicKey;
+          _senderPrivateKey = identity.privateKey;
         }
         _isCurrentUserActiveMember = isCurrentUserActiveMember;
         _hasCurrentSendKey = hasCurrentSendKey;
@@ -2993,6 +3284,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       group: _group,
       isCurrentUserActiveMember: isCurrentUserActiveMember,
       hasCurrentSendKey: hasCurrentSendKey,
+      hasCompleteSenderIdentity: hasCompleteSenderIdentity,
     );
   }
 
@@ -3197,20 +3489,31 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _reactions = {..._reactions, messageId: list};
       });
 
-      final result = await removeGroupReaction(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        reactionRepo: widget.reactionRepo!,
-        reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository!,
-        groupId: widget.group.id,
-        messageId: messageId,
-        emoji: emoji,
-        senderPeerId: _ownPeerId!,
-        senderPublicKey: _senderPublicKey,
-        senderPrivateKey: _senderPrivateKey,
-      );
+      late final RemoveGroupReactionResult result;
+      try {
+        result = await removeGroupReaction(
+          bridge: widget.bridge,
+          groupRepo: widget.groupRepo,
+          reactionRepo: widget.reactionRepo!,
+          reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository!,
+          groupId: widget.group.id,
+          messageId: messageId,
+          emoji: emoji,
+          senderPeerId: _ownPeerId!,
+          senderPublicKey: _senderPublicKey,
+          senderPrivateKey: _senderPrivateKey,
+        );
+      } catch (_) {
+        _restoreReactionState(messageId, previousReactions);
+        return;
+      }
+      if (result == RemoveGroupReactionResult.success) {
+        return;
+      }
       if (result == RemoveGroupReactionResult.groupDissolved) {
         await _restoreReactionStateAfterDissolve(messageId, previousReactions);
+      } else {
+        _restoreReactionState(messageId, previousReactions);
       }
       return;
     }
@@ -3231,31 +3534,54 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _reactions = {..._reactions, messageId: list};
     });
 
-    final (result, reaction) = await sendGroupReaction(
-      bridge: widget.bridge,
-      groupRepo: widget.groupRepo,
-      msgRepo: widget.msgRepo,
-      reactionRepo: widget.reactionRepo!,
-      reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository!,
-      groupId: widget.group.id,
-      messageId: messageId,
-      emoji: emoji,
-      senderPeerId: _ownPeerId!,
-      senderPublicKey: _senderPublicKey,
-      senderPrivateKey: _senderPrivateKey,
-    );
+    late final SendGroupReactionResult result;
+    late final MessageReaction? reaction;
+    try {
+      final sendResult = await sendGroupReaction(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        msgRepo: widget.msgRepo,
+        reactionRepo: widget.reactionRepo!,
+        reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository!,
+        groupId: widget.group.id,
+        messageId: messageId,
+        emoji: emoji,
+        senderPeerId: _ownPeerId!,
+        senderPublicKey: _senderPublicKey,
+        senderPrivateKey: _senderPrivateKey,
+      );
+      result = sendResult.$1;
+      reaction = sendResult.$2;
+    } catch (_) {
+      _restoreReactionState(messageId, previousReactions);
+      return;
+    }
 
-    if (result == SendGroupReactionResult.success && reaction != null) {
+    final confirmedReaction = reaction;
+    if (result == SendGroupReactionResult.success &&
+        confirmedReaction != null) {
       if (!mounted) return;
       setState(() {
         final list = List<MessageReaction>.from(_reactions[messageId] ?? []);
         list.removeWhere((r) => r.id == '' && r.senderPeerId == _ownPeerId);
-        list.add(reaction);
+        list.add(confirmedReaction);
         _reactions = {..._reactions, messageId: list};
       });
     } else if (result == SendGroupReactionResult.groupDissolved) {
       await _restoreReactionStateAfterDissolve(messageId, previousReactions);
+    } else {
+      _restoreReactionState(messageId, previousReactions);
     }
+  }
+
+  void _restoreReactionState(
+    String messageId,
+    List<MessageReaction> previousReactions,
+  ) {
+    if (!mounted) return;
+    setState(() {
+      _reactions = {..._reactions, messageId: previousReactions};
+    });
   }
 
   Future<void> _restoreReactionStateAfterDissolve(
@@ -3305,7 +3631,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    widget.groupConversationTracker?.clear();
+    widget.groupConversationTracker?.clearIfActive(_activeGroupConversationKey);
     _messageSubscription?.cancel();
     _removedSubscription?.cancel();
     _reactionSubscription?.cancel();
@@ -3319,6 +3645,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _composerState.dispose();
     super.dispose();
   }
+
+  String get _activeGroupConversationKey => 'group:${widget.group.id}';
 
   @override
   Widget build(BuildContext context) {
@@ -3364,6 +3692,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 : _requestCancelActiveAttachmentUpload,
             initialLoadDone: _initialLoadDone,
             isRecovering: recoveryDepth > 0,
+            messageLoadErrorText: _messageLoadErrorText,
+            onRetryMessageLoad: _retryMessageLoad,
             scrollController: _scrollController,
             highlightedMessageId: widget.initialHighlightedMessageId,
             mediaMap: _mediaMap,

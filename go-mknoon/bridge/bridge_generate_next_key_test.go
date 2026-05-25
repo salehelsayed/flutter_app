@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestGroupGenerateNextKey_NodeNotInitialized(t *testing.T) {
@@ -171,20 +172,20 @@ func TestGroupGenerateNextKey_KE002UsesLatestCommittedEpochWithoutMutating(t *te
 	}
 	committedKey := storedAfterUpdate.Key
 	committedEpoch := storedAfterUpdate.KeyEpoch
+	committedPrevKey := storedAfterUpdate.PrevKey
+	committedPrevEpoch := storedAfterUpdate.PrevKeyEpoch
+	committedGraceDeadline := storedAfterUpdate.GraceDeadline
+	if committedPrevKey == "" || committedGraceDeadline.IsZero() || !time.Now().Before(committedGraceDeadline) {
+		t.Fatalf("expected committed rotation to leave active previous-key grace, got prevKey=%q deadline=%v", committedPrevKey, committedGraceDeadline)
+	}
 
 	secondNextMap := parseJSON(t, GroupGenerateNextKey(string(nextInput)))
-	assertOk(t, secondNextMap)
-
-	secondNextEpoch, ok := secondNextMap["keyEpoch"].(float64)
-	if !ok {
-		t.Fatal("second response missing keyEpoch")
+	assertNotOk(t, secondNextMap, "GROUP_KEY_GRACE_ACTIVE")
+	if _, ok := secondNextMap["groupKey"]; ok {
+		t.Fatal("active grace rejection must not include groupKey")
 	}
-	if int(secondNextEpoch) != committedEpoch+1 {
-		t.Fatalf("expected second next keyEpoch=%d, got %d", committedEpoch+1, int(secondNextEpoch))
-	}
-	secondNextKey, ok := secondNextMap["groupKey"].(string)
-	if !ok || secondNextKey == "" {
-		t.Fatal("second response missing non-empty groupKey")
+	if _, ok := secondNextMap["keyEpoch"]; ok {
+		t.Fatal("active grace rejection must not include keyEpoch")
 	}
 
 	nodeMu.Lock()
@@ -198,6 +199,106 @@ func TestGroupGenerateNextKey_KE002UsesLatestCommittedEpochWithoutMutating(t *te
 	}
 	if storedAfterSecondGenerate.KeyEpoch != committedEpoch {
 		t.Fatalf("second generateNextKey should not mutate current epoch: got %d want %d", storedAfterSecondGenerate.KeyEpoch, committedEpoch)
+	}
+	if storedAfterSecondGenerate.PrevKey != committedPrevKey || storedAfterSecondGenerate.PrevKeyEpoch != committedPrevEpoch {
+		t.Fatalf("second generateNextKey should not mutate previous key state: got epoch=%d key=%q want epoch=%d key=%q", storedAfterSecondGenerate.PrevKeyEpoch, storedAfterSecondGenerate.PrevKey, committedPrevEpoch, committedPrevKey)
+	}
+	if !storedAfterSecondGenerate.GraceDeadline.Equal(committedGraceDeadline) {
+		t.Fatalf("second generateNextKey should not mutate grace deadline: got %v want %v", storedAfterSecondGenerate.GraceDeadline, committedGraceDeadline)
+	}
+}
+
+func TestGroupGenerateNextKey_GroupKeyGraceActiveRejectsSecondNativeRotation(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	startResult := StartNode(startNodeJSON(t, keyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	genIdentity := parseJSON(t, GenerateIdentity())
+	assertOk(t, genIdentity)
+	identity := genIdentity["identity"].(map[string]interface{})
+
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":                  "GKGC Active Grace Generate Next Key Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity["peerId"].(string),
+		"creatorPublicKey":      identity["publicKey"].(string),
+		"creatorMlKemPublicKey": "mlkem-pk-creator",
+	})
+	createMap := parseJSON(t, GroupCreate(string(createInput)))
+	assertOk(t, createMap)
+
+	groupId := createMap["groupId"].(string)
+
+	nodeMu.Lock()
+	initialKeyInfo := singletonNode.GetGroupKeyInfo(groupId)
+	nodeMu.Unlock()
+	if initialKeyInfo == nil {
+		t.Fatal("expected stored key info after group create")
+	}
+	initialKey := initialKeyInfo.Key
+	initialEpoch := initialKeyInfo.KeyEpoch
+
+	nextInput, _ := json.Marshal(map[string]string{"groupId": groupId})
+	firstNextMap := parseJSON(t, GroupGenerateNextKey(string(nextInput)))
+	assertOk(t, firstNextMap)
+	firstNextKey, ok := firstNextMap["groupKey"].(string)
+	if !ok || firstNextKey == "" {
+		t.Fatal("first response missing non-empty groupKey")
+	}
+	firstNextEpoch, ok := firstNextMap["keyEpoch"].(float64)
+	if !ok || int(firstNextEpoch) != initialEpoch+1 {
+		t.Fatalf("first keyEpoch = %v, want %d", firstNextMap["keyEpoch"], initialEpoch+1)
+	}
+
+	updateInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":  groupId,
+		"groupKey": firstNextKey,
+		"keyEpoch": int(firstNextEpoch),
+	})
+	updateMap := parseJSON(t, GroupUpdateKey(string(updateInput)))
+	assertOk(t, updateMap)
+
+	nodeMu.Lock()
+	storedBeforeReject := singletonNode.GetGroupKeyInfo(groupId)
+	nodeMu.Unlock()
+	if storedBeforeReject == nil {
+		t.Fatal("expected stored key info after updateKey")
+	}
+	if storedBeforeReject.Key != firstNextKey || storedBeforeReject.KeyEpoch != int(firstNextEpoch) {
+		t.Fatalf("committed key state = epoch %d key %q, want epoch %d key %q", storedBeforeReject.KeyEpoch, storedBeforeReject.Key, int(firstNextEpoch), firstNextKey)
+	}
+	if storedBeforeReject.PrevKey != initialKey || storedBeforeReject.PrevKeyEpoch != initialEpoch {
+		t.Fatalf("previous key state = epoch %d key %q, want epoch %d key %q", storedBeforeReject.PrevKeyEpoch, storedBeforeReject.PrevKey, initialEpoch, initialKey)
+	}
+	if storedBeforeReject.GraceDeadline.IsZero() || !time.Now().Before(storedBeforeReject.GraceDeadline) {
+		t.Fatalf("expected active previous-key grace before second generate, got deadline %v", storedBeforeReject.GraceDeadline)
+	}
+
+	secondNextMap := parseJSON(t, GroupGenerateNextKey(string(nextInput)))
+	assertNotOk(t, secondNextMap, "GROUP_KEY_GRACE_ACTIVE")
+	if _, ok := secondNextMap["groupKey"]; ok {
+		t.Fatal("active grace rejection must not include groupKey")
+	}
+	if _, ok := secondNextMap["keyEpoch"]; ok {
+		t.Fatal("active grace rejection must not include keyEpoch")
+	}
+
+	nodeMu.Lock()
+	storedAfterReject := singletonNode.GetGroupKeyInfo(groupId)
+	nodeMu.Unlock()
+	if storedAfterReject == nil {
+		t.Fatal("expected stored key info after rejected generateNextKey")
+	}
+	if storedAfterReject.Key != storedBeforeReject.Key || storedAfterReject.KeyEpoch != storedBeforeReject.KeyEpoch {
+		t.Fatalf("rejected generateNextKey mutated current key state: got epoch %d key %q want epoch %d key %q", storedAfterReject.KeyEpoch, storedAfterReject.Key, storedBeforeReject.KeyEpoch, storedBeforeReject.Key)
+	}
+	if storedAfterReject.PrevKey != storedBeforeReject.PrevKey || storedAfterReject.PrevKeyEpoch != storedBeforeReject.PrevKeyEpoch {
+		t.Fatalf("rejected generateNextKey mutated previous key state: got epoch %d key %q want epoch %d key %q", storedAfterReject.PrevKeyEpoch, storedAfterReject.PrevKey, storedBeforeReject.PrevKeyEpoch, storedBeforeReject.PrevKey)
+	}
+	if !storedAfterReject.GraceDeadline.Equal(storedBeforeReject.GraceDeadline) {
+		t.Fatalf("rejected generateNextKey mutated grace deadline: got %v want %v", storedAfterReject.GraceDeadline, storedBeforeReject.GraceDeadline)
 	}
 }
 
@@ -224,8 +325,10 @@ func TestGroupGenerateNextKey_KE013UsesRestoredEpochAfterRestartMemoryLoss(t *te
 	assertOk(t, parseJSON(t, startResult))
 
 	const groupId = "ke013-restored-group"
-	const restoredKey = "epoch7Key=="
 	const restoredEpoch = 7
+	restoredKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, restoredKeyMap)
+	restoredKey := restoredKeyMap["groupKey"].(string)
 
 	updateInput, _ := json.Marshal(map[string]interface{}{
 		"groupId":  groupId,

@@ -645,7 +645,7 @@ void main() {
       text: 'OB-008 pending inbox owner',
       expectedResult: SendGroupMessageResult.success,
     );
-    expect(pendingInbox.status, 'pending');
+    expect(pendingInbox.status, 'sent');
     expect(pendingInbox.wireEnvelope, isNull);
     expect(pendingInbox.inboxStored, isFalse);
     expect(pendingInbox.inboxRetryPayload, isNotNull);
@@ -1030,6 +1030,16 @@ void main() {
         myRole: GroupRole.member,
       );
       await groupRepo.saveGroup(memberGroup);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-bootstrap-pending',
+          peerId: 'peer-member',
+          username: 'Member',
+          role: MemberRole.writer,
+          publicKey: 'pk-member',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
 
       final (result, message) = await sendGroupMessage(
         bridge: bridge,
@@ -1868,7 +1878,7 @@ void main() {
           joinedAt: joinedAt,
         ),
       );
-      await groupRepo.saveMember(
+      await groupRepo.saveMemberBypassingValidationForTest(
         GroupMember(
           groupId: 'group-1',
           peerId: '   ',
@@ -3655,7 +3665,7 @@ void main() {
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
         expect(message!.id, explicitId);
-        expect(message.status, 'pending');
+        expect(message.status, 'sent');
 
         final saved = await msgRepo.getMessage(explicitId);
         expect(saved, isNotNull);
@@ -4032,20 +4042,6 @@ void main() {
             contentHash: _validContentHash,
             encryptionKeyBase64: 'key-pl012-gif',
             encryptionNonce: 'nonce-pl012-gif',
-            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-          ),
-          MediaAttachment(
-            id: 'att-pl012-file',
-            messageId: '',
-            mime: 'application/octet-stream',
-            size: 1024,
-            mediaType: 'file',
-            downloadStatus: 'done',
-            createdAt: sentAt.toIso8601String(),
-            localPath: '/tmp/pl012-file.bin',
-            contentHash: _validContentHash,
-            encryptionKeyBase64: 'key-pl012-file',
-            encryptionNonce: 'nonce-pl012-file',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
           MediaAttachment(
@@ -5285,7 +5281,7 @@ void main() {
 
         expect(pendingResult, SendGroupMessageResult.success);
         expect(pendingMessage, isNotNull);
-        expect(pendingMessage!.status, 'pending');
+        expect(pendingMessage!.status, 'sent');
         expect(pendingMessage.inboxRetryPayload, isNotNull);
         final pendingRows = await retryRepo.getMessagesWithFailedInboxStore();
         expect(pendingRows.map((row) => row.id), ['nw011-pending-inbox-retry']);
@@ -5481,7 +5477,7 @@ void main() {
     );
 
     test(
-      'DE-006 partial topicPeers with inbox failure stays publish-only and retryable',
+      'PGC-010 live publish with topic peers marks sent while inbox retry remains staged',
       () async {
         await groupRepo.saveMember(
           GroupMember(
@@ -5529,19 +5525,30 @@ void main() {
 
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'pending');
-        expect(message!.status, isNot('sent'));
+        expect(message!.status, 'sent');
         expect(message!.status, isNot('delivered'));
         expect(message!.wireEnvelope, isNull);
         expect(message!.inboxStored, isFalse);
         expect(message!.inboxRetryPayload, isNotNull);
+        expect(
+          _recipientPeerIdsFromRetryPayload(message!.inboxRetryPayload!),
+          unorderedEquals(<String>['peer-2', 'peer-3']),
+        );
 
         final saved = await msgRepo.getMessage('de006-partial-inbox-fail');
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxStored, isFalse);
         expect(saved.inboxRetryPayload, isNotNull);
+        expect(
+          _recipientPeerIdsFromRetryPayload(saved.inboxRetryPayload!),
+          unorderedEquals(<String>['peer-2', 'peer-3']),
+        );
+        final inboxRetryRows = await msgRepo.getMessagesWithFailedInboxStore();
+        expect(inboxRetryRows.map((row) => row.id), [
+          'de006-partial-inbox-fail',
+        ]);
 
         expect(
           await msgRepo.getReceiptsForMessage(
@@ -5565,7 +5572,168 @@ void main() {
         );
         final details = timing['details'] as Map<String, dynamic>;
         expect(details['outcome'], 'success');
-        expect(details['status'], 'pending');
+        expect(details['status'], 'sent');
+        expect(details['topicPeers'], 1);
+        expect(details['expectedRecipientCount'], 2);
+        expect(details['liveFanoutState'], 'partial_peers');
+        expect(details['recipientReceiptClaimed'], isFalse);
+        expect(details['inboxStored'], isFalse);
+        expect(details['inboxPending'], isFalse);
+      },
+    );
+
+    test(
+      'GSR-001 reliable send uses single native command and treats full live fanout as sent',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 11, 8),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Carol',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: DateTime.utc(2026, 5, 11, 8, 1),
+          ),
+        );
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'messageId': 'gsr-001-full-live',
+          'topicPeerCount': 2,
+          'expectedRecipientCount': 2,
+          'inboxStored': false,
+          'publishSucceeded': true,
+          'deliveryMode': 'live_only',
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? message;
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'GSR-001 full live fanout',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'gsr-001-full-live',
+          );
+        });
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message!.inboxStored, isFalse);
+        expect(message!.inboxRetryPayload, isNotNull);
+        expect(bridge.commandLog, contains('group:sendReliable'));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final details = timing['details'] as Map<String, dynamic>;
+        expect(details['status'], 'sent');
+        expect(details['topicPeers'], 2);
+        expect(details['expectedRecipientCount'], 2);
+        expect(details['liveFanoutState'], 'full_peers');
+        expect(details['inboxStored'], isFalse);
+      },
+    );
+
+    test(
+      'PGC-010 reliable partial live fanout marks sent while custody retry remains staged',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 11, 8),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Carol',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: DateTime.utc(2026, 5, 11, 8, 1),
+          ),
+        );
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'messageId': 'pgc010-reliable-partial-live',
+          'topicPeerCount': 1,
+          'expectedRecipientCount': 2,
+          'recipientPeerIds': ['peer-2', 'peer-3'],
+          'inboxStored': false,
+          'publishSucceeded': true,
+          'deliveryMode': 'live_only',
+        };
+
+        late SendGroupMessageResult result;
+        late GroupMessage? message;
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: 'PGC-010 reliable partial live fanout',
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: 'sk-1',
+            senderUsername: 'Alice',
+            messageId: 'pgc010-reliable-partial-live',
+          );
+        });
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message!.inboxStored, isFalse);
+        expect(message!.inboxRetryPayload, isNotNull);
+        expect(message!.wireEnvelope, isNull);
+        expect(
+          _recipientPeerIdsFromRetryPayload(message!.inboxRetryPayload!),
+          unorderedEquals(<String>['peer-2', 'peer-3']),
+        );
+        expect(bridge.commandLog, contains('group:sendReliable'));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+
+        final saved = await msgRepo.getMessage('pgc010-reliable-partial-live');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'sent');
+        expect(saved.inboxStored, isFalse);
+        expect(saved.inboxRetryPayload, isNotNull);
+        expect(saved.wireEnvelope, isNull);
+        final inboxRetryRows = await msgRepo.getMessagesWithFailedInboxStore();
+        expect(inboxRetryRows.map((row) => row.id), [
+          'pgc010-reliable-partial-live',
+        ]);
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+        );
+        final details = timing['details'] as Map<String, dynamic>;
+        expect(details['status'], 'sent');
         expect(details['topicPeers'], 1);
         expect(details['expectedRecipientCount'], 2);
         expect(details['liveFanoutState'], 'partial_peers');
@@ -6912,7 +7080,7 @@ void main() {
     });
 
     test(
-      'peers > 0 + inbox fail → success with pending status, wireEnvelope cleared, inboxRetryPayload kept',
+      'peers > 0 + inbox fail -> success with sent status, wireEnvelope cleared, inboxRetryPayload kept',
       () async {
         final failBridge = _InboxStoreFailBridge();
         failBridge.responses['group:publish'] = {
@@ -6936,20 +7104,20 @@ void main() {
 
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'pending');
+        expect(message!.status, 'sent');
         expect(message.inboxStored, isFalse);
         expect(message.inboxRetryPayload, isNotNull);
 
         final saved = await msgRepo.getMessage('msg-peers-inbox-fail');
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNotNull);
       },
     );
 
     test(
-      'IR-007 publish success plus inbox failure is pending and inbox retry closes same id',
+      'IR-007 publish success plus inbox failure is sent and inbox retry closes same id',
       () async {
         await groupRepo.saveMember(
           GroupMember(
@@ -6983,14 +7151,14 @@ void main() {
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
         expect(message!.id, 'ir007-pending-inbox-retry');
-        expect(message.status, 'pending');
+        expect(message.status, 'sent');
         expect(message.wireEnvelope, isNull);
         expect(message.inboxStored, isFalse);
         expect(message.inboxRetryPayload, isNotNull);
 
         final saved = await msgRepo.getMessage('ir007-pending-inbox-retry');
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxStored, isFalse);
         expect(saved.inboxRetryPayload, isNotNull);
@@ -7116,7 +7284,7 @@ void main() {
     );
 
     test(
-      'GI-006 inbox failure leaves message pending with retry payload and no durable mark',
+      'GI-006 inbox failure leaves message sent with retry payload and no durable mark',
       () async {
         final failBridge = _InboxStoreFailBridge();
         failBridge.responses['group:publish'] = {
@@ -7155,7 +7323,7 @@ void main() {
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
         final returnedMessage = message!;
-        expect(returnedMessage.status, 'pending');
+        expect(returnedMessage.status, 'sent');
         expect(returnedMessage.inboxStored, isFalse);
         expect(returnedMessage.inboxRetryPayload, isNotNull);
         expect(
@@ -7165,7 +7333,7 @@ void main() {
 
         final saved = await msgRepo.getMessage('gi006-inbox-fail');
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxStored, isFalse);
         expect(saved.inboxRetryPayload, isNotNull);
@@ -7185,7 +7353,7 @@ void main() {
     );
 
     test(
-      'GO-002 publish success with inbox failure stays pending and retryable',
+      'GO-002 publish success with inbox failure stays sent and retryable',
       () async {
         final failBridge = _InboxStoreFailBridge();
         failBridge.responses['group:publish'] = {
@@ -7224,7 +7392,7 @@ void main() {
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
         final returnedMessage = message!;
-        expect(returnedMessage.status, 'pending');
+        expect(returnedMessage.status, 'sent');
         expect(returnedMessage.inboxStored, isFalse);
         expect(returnedMessage.inboxRetryPayload, isNotNull);
         expect(
@@ -7234,7 +7402,7 @@ void main() {
 
         final saved = await msgRepo.getMessage('go002-inbox-fail');
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
         expect(saved.inboxStored, isFalse);
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNotNull);
@@ -7250,14 +7418,14 @@ void main() {
           (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
         );
         expect(timingEvent['details']['outcome'], 'success');
-        expect(timingEvent['details']['status'], 'pending');
+        expect(timingEvent['details']['status'], 'sent');
         expect(timingEvent['details']['inboxStored'], isFalse);
         expect(timingEvent['details']['inboxPending'], isFalse);
       },
     );
 
     test(
-      'GO-008 EK-002 GI-035 pending inbox retry and flow logs omit protected plaintext',
+      'GO-008 EK-002 GI-035 sent inbox retry and flow logs omit protected plaintext',
       () async {
         final privacyBridge = _OpaqueReplayInboxStoreFailBridge();
         privacyBridge.responses['group:publish'] = {
@@ -7321,7 +7489,7 @@ void main() {
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
         final returnedMessage = message!;
-        expect(returnedMessage.status, 'pending');
+        expect(returnedMessage.status, 'sent');
         expect(returnedMessage.inboxRetryPayload, isNotNull);
 
         final saved = await msgRepo.getMessage('msg-ek002-privacy');
@@ -7445,7 +7613,7 @@ void main() {
     );
 
     test(
-      'peers > 0 returns pending before inbox store finishes and promotes to sent in background',
+      'PGC-010 live publish with pending inbox custody returns sent and closes custody in background',
       () async {
         final gatedBridge = _GatedInboxStoreBridge();
         gatedBridge.responses['group:publish'] = {
@@ -7472,7 +7640,7 @@ void main() {
 
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'pending');
+        expect(message!.status, 'sent');
         expect(message.inboxStored, isFalse);
         expect(message.inboxRetryPayload, isNotNull);
         expect(stopwatch.elapsedMilliseconds, lessThan(150));
@@ -7481,7 +7649,7 @@ void main() {
           'msg-peers-bg-inbox',
         );
         expect(savedBeforeRelease, isNotNull);
-        expect(savedBeforeRelease!.status, 'pending');
+        expect(savedBeforeRelease!.status, 'sent');
         expect(savedBeforeRelease.inboxStored, isFalse);
         expect(savedBeforeRelease.inboxRetryPayload, isNotNull);
 
@@ -7871,7 +8039,7 @@ void main() {
     );
 
     test(
-      'GI-007 relay non-OK status leaves message pending with retry payload',
+      'GI-007 relay non-OK status leaves message sent with retry payload',
       () async {
         final okFalseBridge = _InboxStoreOkFalseBridge();
         okFalseBridge.responses['group:publish'] = {
@@ -7906,7 +8074,7 @@ void main() {
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
         final returnedMessage = message!;
-        expect(returnedMessage.status, 'pending');
+        expect(returnedMessage.status, 'sent');
         expect(returnedMessage.inboxStored, isFalse);
         expect(returnedMessage.inboxRetryPayload, isNotNull);
         expect(
@@ -7916,7 +8084,7 @@ void main() {
 
         final saved = await msgRepo.getMessage('gi007-non-ok');
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'sent');
         expect(saved.inboxStored, isFalse);
         expect(saved.inboxRetryPayload, isNotNull);
         expect(
@@ -7949,13 +8117,13 @@ void main() {
 
       expect(result, SendGroupMessageResult.success);
       expect(message, isNotNull);
-      expect(message!.status, 'pending');
+      expect(message!.status, 'sent');
       expect(message.inboxStored, isFalse);
       expect(message.inboxRetryPayload, isNotNull);
 
       final saved = await msgRepo.getMessage('msg-inbox-ok-false');
       expect(saved, isNotNull);
-      expect(saved!.status, 'pending');
+      expect(saved!.status, 'sent');
       expect(saved.inboxStored, isFalse);
       expect(saved.inboxRetryPayload, isNotNull);
     });

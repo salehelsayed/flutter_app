@@ -2043,7 +2043,7 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['bob', 'charlie'],
         ),
         _ExpectedProofMessage(
-          key: 'aliceIr015File',
+          key: 'aliceIr015Png',
           senderRole: 'alice',
           receiverRoles: <String>['bob', 'charlie'],
         ),
@@ -4472,14 +4472,14 @@ void _validateIr015VariantReplayProof({
     'aliceIr015Quote',
     'aliceIr015Image',
     'aliceIr015Video',
-    'aliceIr015File',
+    'aliceIr015Png',
     'aliceIr015Gif',
     'aliceIr015Voice',
   ];
   const mediaKeys = <String>[
     'aliceIr015Image',
     'aliceIr015Video',
-    'aliceIr015File',
+    'aliceIr015Png',
     'aliceIr015Gif',
     'aliceIr015Voice',
   ];
@@ -4516,9 +4516,9 @@ void _validateIr015VariantReplayProof({
         return _stringValue(attachment['mime']) == 'video/mp4' &&
             _stringValue(attachment['mediaType']) == 'video' &&
             _intValue(attachment['durationMs']) == 4200;
-      case 'aliceIr015File':
-        return _stringValue(attachment['mime']) == 'application/octet-stream' &&
-            _stringValue(attachment['mediaType']) == 'file';
+      case 'aliceIr015Png':
+        return _stringValue(attachment['mime']) == 'image/png' &&
+            _stringValue(attachment['mediaType']) == 'image';
       case 'aliceIr015Gif':
         return _stringValue(attachment['mime']) == 'image/gif' &&
             _stringValue(attachment['mediaType']) == 'image';
@@ -4946,7 +4946,12 @@ void _validatePl012MediaSchemaProof({
           width: 320,
           height: 240,
         ) &&
-        hasVariant(mime: 'application/octet-stream', mediaType: 'file') &&
+        hasVariant(
+          mime: 'image/png',
+          mediaType: 'image',
+          width: 1024,
+          height: 768,
+        ) &&
         hasVariant(
           mime: 'video/mp4',
           mediaType: 'video',
@@ -14190,7 +14195,7 @@ void _validateGo002InboxStoreFailureSenderStatusProof({
       'actualTopicPeerProof',
       'topicPeersPositive',
       'forcedInboxStoreFailure',
-      'senderStatusPendingBeforeRetry',
+      'senderRetryableBeforeRetry',
       'inboxStoredFalseBeforeRetry',
       'retryPayloadPresentBeforeRetry',
       'notSilentlyReliableBeforeRetry',
@@ -14329,10 +14334,11 @@ void _validateGo002InboxStoreFailureSenderStatusProof({
         'alice: sent $_go002InboxFailureKey outcome must be success',
       );
     }
-    if (_stringValue(sent['senderStatusBeforeRetry']) != 'pending') {
+    final statusBeforeRetry = _stringValue(sent['senderStatusBeforeRetry']);
+    if (statusBeforeRetry != 'pending' && statusBeforeRetry != 'sent') {
       failures.add(
         'alice: sent $_go002InboxFailureKey senderStatusBeforeRetry '
-        'must be pending',
+        'must be pending or sent',
       );
     }
     if (sent['inboxStoredBeforeRetry'] != false) {

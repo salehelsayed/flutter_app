@@ -203,6 +203,7 @@ void main() {
         senderPublicKey: 'pk-admin',
         senderPrivateKey: 'sk-admin',
         senderUsername: 'Admin',
+        sendP2PMessage: (_, _) async => true,
       );
 
       // Verify the sequence: updateConfig first, then generate the next key,
@@ -647,7 +648,7 @@ void main() {
           type: GroupType.chat,
           topicName: '/mknoon/group/$groupId',
           createdAt: createdAt,
-          createdBy: adminPeerId,
+          createdBy: leaverPeerId,
           myRole: GroupRole.member,
         ),
       );
@@ -967,7 +968,7 @@ void main() {
             type: GroupType.chat,
             topicName: '/mknoon/group/$groupId',
             createdAt: createdAt,
-            createdBy: adminPeerId,
+            createdBy: leaverPeerId,
             myRole: myRole,
           ),
         );
@@ -1014,7 +1015,7 @@ void main() {
           type: GroupType.chat,
           topicName: '/mknoon/group/$groupId',
           createdAt: createdAt,
-          createdBy: adminPeerId,
+          createdBy: leaverPeerId,
           myRole: GroupRole.member,
         ),
       );
@@ -1239,11 +1240,7 @@ void main() {
       final leaverFutureMessage = await leaverMsgRepo.getMessage(
         'msg-post-voluntary-leave',
       );
-      expect(leaverFutureMessage, isNotNull);
-      expect(leaverFutureMessage!.text, groupUndecryptablePlaceholderText);
-      expect(leaverFutureMessage.text, isNot('After voluntary leave'));
-      expect(leaverFutureMessage.keyGeneration, 2);
-      expect(leaverFutureMessage.status, 'undecryptable');
+      expect(leaverFutureMessage, isNull);
     },
   );
 
@@ -1294,7 +1291,7 @@ void main() {
   test(
     'GM-028 removal config excludes pre-existing empty PeerId member',
     () async {
-      await groupRepo.saveMember(
+      await groupRepo.saveMemberBypassingValidationForTest(
         GroupMember(
           groupId: groupId,
           peerId: '   ',

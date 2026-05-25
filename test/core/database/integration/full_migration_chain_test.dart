@@ -68,6 +68,7 @@ import 'package:flutter_app/core/database/migrations/068_removed_group_member_sn
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
+import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -159,6 +160,7 @@ void main() {
     await runGroupMessageLocalDeletionsMigration(db);
     await runGroupKeyRotationDraftsMigration(db);
     await runPendingIntroductionResponseTransportSenderMigration(db);
+    await runGroupPendingMembershipMessagesMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -188,6 +190,10 @@ void main() {
     expect(await getTableNames(db), contains('removed_group_member_snapshots'));
     expect(await getTableNames(db), contains('group_message_local_deletions'));
     expect(await getTableNames(db), contains('group_key_rotation_drafts'));
+    expect(
+      await getTableNames(db),
+      contains('group_pending_membership_messages'),
+    );
     final groupMessageCols61 = await getColumnNames(db, 'group_messages');
     expect(groupMessageCols61, contains('transport_peer_id'));
     final pendingIntroResponseCols71 = await getColumnNames(
@@ -264,6 +270,7 @@ void main() {
     await runGroupMessageLocalDeletionsMigration(db);
     await runGroupKeyRotationDraftsMigration(db);
     await runPendingIntroductionResponseTransportSenderMigration(db);
+    await runGroupPendingMembershipMessagesMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -1134,6 +1141,7 @@ void main() {
       await runGroupMessageLocalDeletionsMigration(db);
       await runGroupKeyRotationDraftsMigration(db);
       await runPendingIntroductionResponseTransportSenderMigration(db);
+      await runGroupPendingMembershipMessagesMigration(db);
 
       // Seed data
       await db.insert('identity', {
@@ -1174,6 +1182,7 @@ void main() {
       await runGroupMessageLocalDeletionsMigration(db);
       await runGroupKeyRotationDraftsMigration(db);
       await runPendingIntroductionResponseTransportSenderMigration(db);
+      await runGroupPendingMembershipMessagesMigration(db);
 
       // Re-run secrets migration (should be no-op)
       await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);

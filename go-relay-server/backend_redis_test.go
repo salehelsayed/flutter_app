@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -357,6 +358,50 @@ func TestRedisGroupInboxBackend_CursorStableAcrossClients(t *testing.T) {
 	}
 	if page3[0].Message != "msg-04" {
 		t.Fatalf("unexpected final page message: %q", page3[0].Message)
+	}
+}
+
+func TestRedisGroupInboxBackend_PreservesRecipientPeerIdsAcrossClients(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "phase2:", 500, 7*24*time.Hour)
+	backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "phase2:", 500, 7*24*time.Hour)
+
+	if err := backendA.StoreWithRecipients(
+		"group-acl",
+		"peer-a",
+		"msg-acl",
+		[]string{"peer-b", "", "peer-b", "peer-c"},
+	); err != nil {
+		t.Fatalf("StoreWithRecipients: %v", err)
+	}
+
+	messages := backendB.RetrieveSince("group-acl", 0)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	wantRecipients := []string{"peer-b", "peer-c"}
+	if !reflect.DeepEqual(messages[0].RecipientPeerIds, wantRecipients) {
+		t.Fatalf("RecipientPeerIds = %#v, want %#v", messages[0].RecipientPeerIds, wantRecipients)
+	}
+}
+
+func TestRedisGroupInboxBackendStoreHelperUsesSenderACL(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	backend := newRedisGroupInboxBackend(newTestRedisClient(t, server), "phase2:", 500, 7*24*time.Hour)
+
+	if err := backend.Store("group-helper", "peer-a", "msg-helper"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	messages := backend.RetrieveSince("group-helper", 0)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	wantRecipients := []string{"peer-a"}
+	if !reflect.DeepEqual(messages[0].RecipientPeerIds, wantRecipients) {
+		t.Fatalf("RecipientPeerIds = %#v, want %#v", messages[0].RecipientPeerIds, wantRecipients)
 	}
 }
 

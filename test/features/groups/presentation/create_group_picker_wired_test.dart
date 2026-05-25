@@ -163,7 +163,10 @@ void main() {
       messageStreamController.close();
     });
 
-    Widget buildWidget({GroupType groupType = GroupType.chat}) {
+    Widget buildWidget({
+      GroupType groupType = GroupType.chat,
+      InMemoryContactRepository? contactRepoOverride,
+    }) {
       return MaterialApp(
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -175,13 +178,69 @@ void main() {
           groupMessageListener: FakeGroupMessageListener(
             messageStreamController.stream,
           ),
-          contactRepo: contactRepo,
+          contactRepo: contactRepoOverride ?? contactRepo,
           bridge: bridge,
           identityRepo: identityRepo,
           p2pService: p2pService,
         ),
       );
     }
+
+    testWidgets(
+      'shows contact-loading state instead of empty state while contacts are loading',
+      (tester) async {
+        final slowContactRepo = _SlowContactRepository();
+        slowContactRepo.addTestContact(contactAlice);
+
+        await tester.pumpWidget(
+          buildWidget(contactRepoOverride: slowContactRepo),
+        );
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('create-group-contact-loading')),
+          findsOneWidget,
+        );
+        expect(find.text('No contacts available'), findsNothing);
+
+        slowContactRepo.release();
+        await pumpFrames(tester);
+
+        expect(find.text('Alice'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'contact load failure shows retryable error instead of empty state',
+      (tester) async {
+        final errorContactRepo = _ThrowingContactRepository();
+
+        await tester.pumpWidget(
+          buildWidget(contactRepoOverride: errorContactRepo),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text("Couldn't load contacts"), findsOneWidget);
+        expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
+        expect(find.text('No contacts available'), findsNothing);
+        expect(errorContactRepo.getActiveContactsCalls, 1);
+
+        errorContactRepo.holdNextFailure();
+        await tester.tap(find.widgetWithText(TextButton, 'Retry'));
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('create-group-contact-loading')),
+          findsOneWidget,
+        );
+        expect(errorContactRepo.getActiveContactsCalls, 2);
+
+        errorContactRepo.releaseNextFailure();
+        await pumpFrames(tester);
+
+        expect(find.text("Couldn't load contacts"), findsOneWidget);
+      },
+    );
 
     testWidgets('loads and displays active contacts', (tester) async {
       contactRepo.addTestContact(contactAlice);
@@ -503,4 +562,49 @@ void main() {
       expect(find.byType(CreateGroupPickerScreen), findsNothing);
     });
   });
+}
+
+class _SlowContactRepository extends InMemoryContactRepository {
+  final Completer<void> _gate = Completer<void>();
+
+  void release() {
+    if (!_gate.isCompleted) {
+      _gate.complete();
+    }
+  }
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    await _gate.future;
+    return super.getActiveContacts();
+  }
+}
+
+class _ThrowingContactRepository extends InMemoryContactRepository {
+  int getActiveContactsCalls = 0;
+  Completer<void>? _nextFailureGate;
+
+  void holdNextFailure() {
+    _nextFailureGate = Completer<void>();
+  }
+
+  void releaseNextFailure() {
+    final failureGate = _nextFailureGate;
+    if (failureGate != null && !failureGate.isCompleted) {
+      failureGate.complete();
+    }
+  }
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    getActiveContactsCalls += 1;
+    final failureGate = _nextFailureGate;
+    if (failureGate != null) {
+      await failureGate.future;
+      if (identical(_nextFailureGate, failureGate)) {
+        _nextFailureGate = null;
+      }
+    }
+    throw Exception('Simulated contact loading error');
+  }
 }

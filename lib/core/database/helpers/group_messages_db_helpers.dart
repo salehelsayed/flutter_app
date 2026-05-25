@@ -28,11 +28,14 @@ Future<void> dbInsertGroupMessage(
       return;
     }
 
-    await db.insert(
-      'group_messages',
-      row,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    try {
+      await db.insert('group_messages', row);
+    } on DatabaseException catch (e) {
+      if (!_isGroupMessageIdUniqueConflict(e)) {
+        rethrow;
+      }
+      await _handleDuplicateGroupMessageInsert(db, row);
+    }
 
     emitFlowEvent(
       layer: 'DB',
@@ -47,6 +50,98 @@ Future<void> dbInsertGroupMessage(
     );
     rethrow;
   }
+}
+
+bool _isGroupMessageIdUniqueConflict(DatabaseException error) {
+  final message = error.toString().toLowerCase();
+  return message.contains('unique constraint failed') &&
+      message.contains('group_messages.id');
+}
+
+Future<void> _handleDuplicateGroupMessageInsert(
+  DatabaseExecutor db,
+  Map<String, Object?> row,
+) async {
+  final id = row['id'] as String? ?? '';
+  final existingRows = await db.query(
+    'group_messages',
+    where: 'id = ?',
+    whereArgs: [id],
+    limit: 1,
+  );
+  if (existingRows.isEmpty) {
+    throw StateError('group_messages id conflict without existing row: $id');
+  }
+
+  final existing = existingRows.first;
+  if (!_sameGroupMessageIdentity(existing, row)) {
+    return;
+  }
+
+  final existingIncoming = _isIncomingGroupMessageRow(existing);
+  final incoming = _isIncomingGroupMessageRow(row);
+  if (!existingIncoming && !incoming) {
+    await _updateGroupMessageRow(db, row);
+    return;
+  }
+
+  if (existingIncoming && incoming) {
+    if (_isRepairPlaceholderRow(existing) && !_isRepairPlaceholderRow(row)) {
+      await _updateGroupMessageRow(db, row);
+      return;
+    }
+    final existingQuote = existing['quoted_message_id'] as String?;
+    final incomingQuote = row['quoted_message_id'] as String?;
+    if ((existingQuote == null || existingQuote.isEmpty) &&
+        incomingQuote != null &&
+        incomingQuote.isNotEmpty) {
+      await db.update(
+        'group_messages',
+        {'quoted_message_id': incomingQuote},
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
+  }
+}
+
+bool _sameGroupMessageIdentity(
+  Map<String, Object?> existing,
+  Map<String, Object?> incoming,
+) {
+  return existing['group_id'] == incoming['group_id'] &&
+      existing['sender_peer_id'] == incoming['sender_peer_id'];
+}
+
+bool _isIncomingGroupMessageRow(Map<String, Object?> row) {
+  final value = row['is_incoming'];
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    final normalized = value.toLowerCase();
+    return normalized == '1' || normalized == 'true';
+  }
+  return true;
+}
+
+bool _isRepairPlaceholderRow(Map<String, Object?> row) {
+  if (!_isIncomingGroupMessageRow(row)) return false;
+  final status = row['status'];
+  return status == 'pending_key' || status == 'undecryptable';
+}
+
+Future<void> _updateGroupMessageRow(
+  DatabaseExecutor db,
+  Map<String, Object?> row,
+) async {
+  final updates = Map<String, Object?>.from(row)..remove('id');
+  if (updates.isEmpty) return;
+  await db.update(
+    'group_messages',
+    updates,
+    where: 'id = ?',
+    whereArgs: [row['id']],
+  );
 }
 
 /// Loads a page of group messages, ordered by timestamp ASC, id ASC.
@@ -274,7 +369,12 @@ Future<Map<String, Object?>?> dbLoadGroupMessage(
     );
     return results.isNotEmpty ? results.first : null;
   } catch (e) {
-    return null;
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MESSAGES_DB_LOAD_ONE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
   }
 }
 

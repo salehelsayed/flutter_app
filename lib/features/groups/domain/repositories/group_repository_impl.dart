@@ -3,6 +3,7 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_key_info.dart';
+import '../models/group_key_retention_policy.dart';
 import '../models/group_member.dart';
 import '../models/group_model.dart';
 import 'group_repository.dart';
@@ -387,7 +388,7 @@ class GroupRepositoryImpl
     }
 
     final rows = await loadAllKeys(groupId);
-    if (rows.length <= 2) {
+    if (rows.isEmpty) {
       return;
     }
 
@@ -395,7 +396,9 @@ class GroupRepositoryImpl
     final latestGeneration = keys
         .map((key) => key.keyGeneration)
         .reduce((a, b) => a > b ? a : b);
-    final minKeyGenerationToKeep = latestGeneration - 1;
+    final minKeyGenerationToKeep = minRetainedGroupKeyGeneration(
+      latestGeneration,
+    );
     final obsoleteKeys = keys
         .where((key) => key.keyGeneration < minKeyGenerationToKeep)
         .toList(growable: false);

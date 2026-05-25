@@ -3,6 +3,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 
+/// Group sends younger than this may still be owned by an active background
+/// upload/send task, so pause recovery leaves them alone.
+const Duration kPausedGroupSendingRecoveryThreshold = Duration(minutes: 2);
+
 /// Result of the pause handler.
 class AppPausedResult {
   final int transitionedCount;
@@ -85,21 +89,26 @@ Future<AppPausedResult> handleAppPaused({
     var groupTransitionedCount = 0;
     if (groupMsgRepo != null) {
       try {
-        groupTransitionedCount = await groupMsgRepo.transitionSendingToFailed();
+        groupTransitionedCount = await groupMsgRepo.recoverStuckSendingMessages(
+          olderThan: kPausedGroupSendingRecoveryThreshold,
+        );
         if (kDebugMode) {
           debugPrint(
-            '[PAUSE] Group pause transition complete '
-            'transitioned=$groupTransitionedCount',
+            '[PAUSE] Group stale sending recovery complete '
+            'recovered=$groupTransitionedCount',
           );
         }
         emitFlowEvent(
           layer: 'FL',
           event: 'APP_LIFECYCLE_PAUSE_GROUP_TRANSITION',
-          details: {'transitionedCount': groupTransitionedCount},
+          details: {
+            'transitionedCount': groupTransitionedCount,
+            'olderThanSeconds': kPausedGroupSendingRecoveryThreshold.inSeconds,
+          },
         );
       } catch (e) {
         if (kDebugMode) {
-          debugPrint('[PAUSE] Group pause transition ERROR: $e');
+          debugPrint('[PAUSE] Group stale sending recovery ERROR: $e');
         }
         emitFlowEvent(
           layer: 'FL',

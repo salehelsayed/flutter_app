@@ -18,6 +18,14 @@ String _addMemberOperationId(String groupId, String peerId) =>
 String? _bridgeErrorCode(Object error) =>
     error is BridgeCommandException ? error.errorCode : null;
 
+const addGroupMemberGroupMismatchMessage =
+    'Group member belongs to a different group';
+const addGroupMemberElevatedTargetBlockedMessage =
+    'Only admins can add admins or assign member permission overrides';
+const groupMembershipMutationDissolvedMessage =
+    'Cannot mutate membership of a dissolved group';
+const staleGroupMembershipEventMessage = 'Stale group membership event';
+
 bool _sameOptionalString(String? left, String? right) {
   String? normalize(String? value) {
     final trimmed = value?.trim();
@@ -100,6 +108,16 @@ bool _isIdenticalDuplicateMemberAdd({
       );
 }
 
+bool _memberAllows(
+  GroupMember? member,
+  GroupRole fallbackRole,
+  GroupMemberPermission permission,
+) {
+  return member != null
+      ? member.permissions.allows(permission, member.role)
+      : fallbackRole == GroupRole.admin;
+}
+
 /// Adds a new member to a group.
 ///
 /// The caller must be an admin of the group. Saves the member to the
@@ -135,171 +153,230 @@ Future<void> addGroupMember({
     throw StateError(groupRecoveryPendingError);
   }
 
-  // 1. Load group, verify caller is admin
-  final group = await groupRepo.getGroup(groupId);
-  if (group == null) {
-    throw StateError('Group not found: $groupId');
-  }
+  await runGroupMembershipMutationLocked<void>(
+    groupId: groupId,
+    action: () async {
+      // 1. Load group, verify caller is admin
+      final group = await groupRepo.getGroup(groupId);
+      if (group == null) {
+        throw StateError('Group not found: $groupId');
+      }
+      if (group.isDissolved) {
+        throw StateError(groupMembershipMutationDissolvedMessage);
+      }
 
-  final selfMember = await groupRepo.getMember(groupId, selfPeerId);
-  final canInvite = selfMember != null
-      ? selfMember.permissions.allows(
-          GroupMemberPermission.inviteMembers,
-          selfMember.role,
-        )
-      : group.myRole == GroupRole.admin;
-  if (!canInvite) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_NOT_ADMIN',
-      details: {'role': group.myRole.toValue()},
-    );
-    throw StateError(
-      'Only admins can add members unless invite permission is granted',
-    );
-  }
-
-  final memberToAdd = newMember.copyWith(peerId: newMember.peerId.trim());
-  if (!hasDeliverableGroupMemberIdentity(memberToAdd)) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_INVALID_INVITE_TARGET',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'peerId': memberToAdd.peerId.length > 8
-            ? memberToAdd.peerId.substring(0, 8)
-            : memberToAdd.peerId,
-      },
-    );
-    throw StateError('Cannot add group member without a delivery identity');
-  }
-
-  final existingMember = await groupRepo.getMember(groupId, memberToAdd.peerId);
-  if (existingMember != null) {
-    if (_isIdenticalDuplicateMemberAdd(
-      existingMember: existingMember,
-      newMember: memberToAdd,
-    )) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ADD_MEMBER_USE_CASE_DUPLICATE_IDEMPOTENT',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'peerId': memberToAdd.peerId.length > 8
-              ? memberToAdd.peerId.substring(0, 8)
-              : memberToAdd.peerId,
-        },
+      final selfMember = await groupRepo.getMember(groupId, selfPeerId);
+      final canInvite = _memberAllows(
+        selfMember,
+        group.myRole,
+        GroupMemberPermission.inviteMembers,
       );
-      return;
-    }
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_ALREADY_MEMBER',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'peerId': memberToAdd.peerId.length > 8
-            ? memberToAdd.peerId.substring(0, 8)
-            : memberToAdd.peerId,
-      },
-    );
-    throw StateError('Member already exists');
-  }
+      final canManageRoles = _memberAllows(
+        selfMember,
+        group.myRole,
+        GroupMemberPermission.manageRoles,
+      );
+      if (!canInvite) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_NOT_ADMIN',
+          details: {'role': group.myRole.toValue()},
+        );
+        throw StateError(
+          'Only admins can add members unless invite permission is granted',
+        );
+      }
 
-  final currentMembers = await groupRepo.getMembers(groupId);
-  ensureWithinGroupMembershipLimit(
-    currentMemberCount: currentMembers.length,
-    requestedAdditionalMembers: 1,
+      final memberToAdd = newMember.copyWith(peerId: newMember.peerId.trim());
+      if (memberToAdd.groupId != groupId) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_GROUP_MISMATCH',
+          details: {
+            'groupId': _diagnosticPrefix(groupId),
+            'memberGroupId': _diagnosticPrefix(memberToAdd.groupId),
+          },
+        );
+        throw ArgumentError.value(
+          memberToAdd.groupId,
+          'newMember.groupId',
+          addGroupMemberGroupMismatchMessage,
+        );
+      }
+      if ((memberToAdd.role == MemberRole.admin ||
+              memberToAdd.permissions.hasOverrides) &&
+          !canManageRoles) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_ROLE_BOUNDARY_BLOCKED',
+          details: {
+            'groupId': _diagnosticPrefix(groupId),
+            'peerId': _diagnosticPrefix(memberToAdd.peerId),
+          },
+        );
+        throw StateError(addGroupMemberElevatedTargetBlockedMessage);
+      }
+      if (!hasDeliverableGroupMemberIdentity(memberToAdd)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_INVALID_INVITE_TARGET',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'peerId': memberToAdd.peerId.length > 8
+                ? memberToAdd.peerId.substring(0, 8)
+                : memberToAdd.peerId,
+          },
+        );
+        throw StateError('Cannot add group member without a delivery identity');
+      }
+
+      final existingMember = await groupRepo.getMember(
+        groupId,
+        memberToAdd.peerId,
+      );
+      if (existingMember != null) {
+        if (_isIdenticalDuplicateMemberAdd(
+          existingMember: existingMember,
+          newMember: memberToAdd,
+        )) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ADD_MEMBER_USE_CASE_DUPLICATE_IDEMPOTENT',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'peerId': memberToAdd.peerId.length > 8
+                  ? memberToAdd.peerId.substring(0, 8)
+                  : memberToAdd.peerId,
+            },
+          );
+          return;
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_ALREADY_MEMBER',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'peerId': memberToAdd.peerId.length > 8
+                ? memberToAdd.peerId.substring(0, 8)
+                : memberToAdd.peerId,
+          },
+        );
+        throw StateError('Member already exists');
+      }
+
+      final membershipEventAt = memberToAdd.joinedAt.toUtc();
+      if (isStaleGroupMembershipEvent(
+        eventAt: membershipEventAt,
+        lastMembershipEventAt: group.lastMembershipEventAt,
+      )) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_STALE_EVENT',
+          details: {
+            'groupId': _diagnosticPrefix(groupId),
+            'peerId': _diagnosticPrefix(memberToAdd.peerId),
+            'eventAt': membershipEventAt.toIso8601String(),
+          },
+        );
+        throw StateError(staleGroupMembershipEventMessage);
+      }
+
+      final currentMembers = await groupRepo.getMembers(groupId);
+      ensureWithinGroupMembershipLimit(
+        currentMemberCount: currentMembers.length,
+        requestedAdditionalMembers: 1,
+      );
+
+      final keyMaterialRejectReason = groupMemberKeyMaterialRejectReason(
+        memberToAdd,
+      );
+      if (keyMaterialRejectReason != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_INVALID_KEY_MATERIAL',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'peerId': memberToAdd.peerId.length > 8
+                ? memberToAdd.peerId.substring(0, 8)
+                : memberToAdd.peerId,
+            'reason': keyMaterialRejectReason,
+          },
+        );
+        throw ArgumentError(
+          'Invalid group member key material: $keyMaterialRejectReason',
+        );
+      }
+
+      // 2. Save member to repo
+      await groupRepo.saveMember(memberToAdd);
+
+      if (!syncBridgeConfig) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_SKIPPED_SYNC',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_SUCCESS',
+          details: {
+            'peerId': memberToAdd.peerId.length > 8
+                ? memberToAdd.peerId.substring(0, 8)
+                : memberToAdd.peerId,
+          },
+        );
+        return;
+      }
+
+      final allMembers = await groupRepo.getMembers(groupId);
+      final groupConfig = buildGroupConfigPayload(
+        group.copyWith(lastMembershipEventAt: membershipEventAt),
+        allMembers,
+        configVersionOverride: membershipEventAt,
+      );
+
+      try {
+        await callGroupUpdateConfig(
+          bridge,
+          groupId: groupId,
+          groupConfig: groupConfig,
+        );
+        await recordGroupMembershipEventWatermark(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          eventAt: membershipEventAt,
+        );
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_SUCCESS',
+          details: {
+            'peerId': memberToAdd.peerId.length > 8
+                ? memberToAdd.peerId.substring(0, 8)
+                : memberToAdd.peerId,
+          },
+        );
+      } catch (e) {
+        await groupRepo.removeMember(groupId, memberToAdd.peerId);
+        final errorCode = _bridgeErrorCode(e);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ADD_MEMBER_USE_CASE_REVERTED',
+          details: {
+            'groupId': _diagnosticPrefix(groupId),
+            'peerId': _diagnosticPrefix(memberToAdd.peerId),
+            'membershipOperationId': _addMemberOperationId(
+              groupId,
+              memberToAdd.peerId,
+            ),
+            'errorCode': ?errorCode,
+            'error': e.toString(),
+          },
+        );
+        rethrow;
+      }
+    },
   );
-
-  final keyMaterialRejectReason = groupMemberKeyMaterialRejectReason(
-    memberToAdd,
-  );
-  if (keyMaterialRejectReason != null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_INVALID_KEY_MATERIAL',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'peerId': memberToAdd.peerId.length > 8
-            ? memberToAdd.peerId.substring(0, 8)
-            : memberToAdd.peerId,
-        'reason': keyMaterialRejectReason,
-      },
-    );
-    throw ArgumentError(
-      'Invalid group member key material: $keyMaterialRejectReason',
-    );
-  }
-
-  // 2. Save member to repo
-  await groupRepo.saveMember(memberToAdd);
-
-  if (!syncBridgeConfig) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_SKIPPED_SYNC',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      },
-    );
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_SUCCESS',
-      details: {
-        'peerId': memberToAdd.peerId.length > 8
-            ? memberToAdd.peerId.substring(0, 8)
-            : memberToAdd.peerId,
-      },
-    );
-    return;
-  }
-
-  final allMembers = await groupRepo.getMembers(groupId);
-  final membershipEventAt = memberToAdd.joinedAt.toUtc();
-  final groupConfig = buildGroupConfigPayload(
-    group.copyWith(lastMembershipEventAt: membershipEventAt),
-    allMembers,
-    configVersionOverride: membershipEventAt,
-  );
-
-  try {
-    await callGroupUpdateConfig(
-      bridge,
-      groupId: groupId,
-      groupConfig: groupConfig,
-    );
-    await recordGroupMembershipEventWatermark(
-      groupRepo: groupRepo,
-      groupId: groupId,
-      eventAt: membershipEventAt,
-    );
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_SUCCESS',
-      details: {
-        'peerId': memberToAdd.peerId.length > 8
-            ? memberToAdd.peerId.substring(0, 8)
-            : memberToAdd.peerId,
-      },
-    );
-  } catch (e) {
-    await groupRepo.removeMember(groupId, memberToAdd.peerId);
-    final errorCode = _bridgeErrorCode(e);
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ADD_MEMBER_USE_CASE_REVERTED',
-      details: {
-        'groupId': _diagnosticPrefix(groupId),
-        'peerId': _diagnosticPrefix(memberToAdd.peerId),
-        'membershipOperationId': _addMemberOperationId(
-          groupId,
-          memberToAdd.peerId,
-        ),
-        'errorCode': ?errorCode,
-        'error': e.toString(),
-      },
-    );
-    rethrow;
-  }
 }

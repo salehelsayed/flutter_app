@@ -24,7 +24,6 @@ class GroupMediaMimePolicy {
     'audio/aac': 'audio',
     'audio/mpeg': 'audio',
     'audio/ogg': 'audio',
-    'application/octet-stream': 'file',
   };
 
   static String? normalizeMime(String? mime) {
@@ -103,13 +102,24 @@ class GroupMediaMimePolicy {
     if (!descriptor.isValid) return descriptor;
 
     final file = File(path);
-    if (!await file.exists()) {
+    if (!file.existsSync()) {
       return const GroupMediaValidationResult.invalid('missing_file');
     }
 
-    final bytes = await file
-        .openRead(0, 64)
-        .fold<List<int>>(<int>[], (buffer, chunk) => buffer..addAll(chunk));
+    late final RandomAccessFile reader;
+    try {
+      reader = file.openSync();
+    } on FileSystemException {
+      return const GroupMediaValidationResult.invalid('unreadable_file');
+    }
+
+    late final List<int> bytes;
+    try {
+      final length = file.lengthSync();
+      bytes = reader.readSync(length < 64 ? length : 64);
+    } finally {
+      reader.closeSync();
+    }
     if (bytes.isEmpty) {
       return const GroupMediaValidationResult.invalid('empty_file');
     }

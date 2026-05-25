@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -350,6 +351,59 @@ void main() {
       final stored = await groupRepo.getGroup('group-1');
       expect(stored, isNotNull);
       expect(stored!.isDissolved, isTrue);
+    },
+  );
+
+  test(
+    'GSPR-001 dissolve inbox store failure leaves timeline row retryable',
+    () async {
+      bridge.responses['group:inboxStore'] = {
+        'ok': false,
+        'errorCode': 'INBOX_STORE_FAILED',
+      };
+
+      final (result, group) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        dissolvedAt: now.add(const Duration(minutes: 15)),
+      );
+
+      expect(result, DissolveGroupResult.bridgeError);
+      expect(group, isNotNull);
+      expect(group!.isDissolved, isTrue);
+      expect(bridge.commandLog, contains('group:publish'));
+      expect(bridge.commandLog, contains('group:inboxStore'));
+      expect(bridge.commandLog, contains('group:leave'));
+
+      final latest = await msgRepo.getLatestMessage('group-1');
+      expect(latest, isNotNull);
+      expect(latest!.id.startsWith('sys-group_dissolved:group-1:'), isTrue);
+      expect(latest.inboxStored, isFalse);
+      expect(latest.inboxRetryPayload, isNotNull);
+      expect(latest.isIncoming, isFalse);
+      expect(latest.status, 'sent');
+
+      final eligible = await msgRepo.getMessagesWithFailedInboxStore();
+      expect(eligible.map((message) => message.id), contains(latest.id));
+
+      bridge.responses['group:inboxStore'] = {'ok': true};
+      final retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+      );
+
+      expect(retried, 1);
+      final retriedRow = await msgRepo.getMessage(latest.id);
+      expect(retriedRow, isNotNull);
+      expect(retriedRow!.inboxStored, isTrue);
+      expect(retriedRow.inboxRetryPayload, isNull);
+      expect(retriedRow.status, 'sent');
     },
   );
 }

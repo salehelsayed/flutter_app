@@ -575,6 +575,7 @@ class _StartupRouterState extends State<StartupRouter> {
               groupRepo: groupRepo,
             );
             if (groupMsgRepo != null) {
+              final identity = await widget.repository.loadIdentity();
               await drainGroupOfflineInbox(
                 bridge: widget.bridge,
                 groupRepo: groupRepo,
@@ -585,6 +586,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
                 historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
                 requestGroupKeyRepair: emitGroupKeyRepairRequest,
+                selfPeerId: identity?.peerId,
               );
             }
           }),

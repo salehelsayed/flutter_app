@@ -34,14 +34,34 @@ Future<void> routeAppRootRemoteNotificationOpen({
   required Map<String, dynamic> data,
   required PrepareNotificationRouteTargetHandler onBeforeRouteTarget,
   required NotificationRouteTargetHandler onRouteTarget,
+  MissingGroupNotificationRouteIdHandler? onMissingGroupRouteId,
+  required MissingNotificationRouteTargetHandler onMissingRouteTarget,
+  NotificationOpenSideEffect? onBeforeOpen,
+}) async {
+  await routeAppRootRemoteNotificationOpenWithResult(
+    data: data,
+    onBeforeRouteTarget: onBeforeRouteTarget,
+    onRouteTarget: onRouteTarget,
+    onMissingGroupRouteId: onMissingGroupRouteId,
+    onMissingRouteTarget: onMissingRouteTarget,
+    onBeforeOpen: onBeforeOpen,
+  );
+}
+
+Future<bool> routeAppRootRemoteNotificationOpenWithResult({
+  required Map<String, dynamic> data,
+  required PrepareNotificationRouteTargetHandler onBeforeRouteTarget,
+  required NotificationRouteTargetHandler onRouteTarget,
+  MissingGroupNotificationRouteIdHandler? onMissingGroupRouteId,
   required MissingNotificationRouteTargetHandler onMissingRouteTarget,
   NotificationOpenSideEffect? onBeforeOpen,
 }) async {
   await onBeforeOpen?.call();
-  await routeRemoteNotificationOpen(
+  return routeRemoteNotificationOpenWithResult(
     data: data,
     onBeforeRouteTarget: onBeforeRouteTarget,
     onRouteTarget: onRouteTarget,
+    onMissingGroupRouteId: onMissingGroupRouteId,
     onMissingRouteTarget: onMissingRouteTarget,
   );
 }

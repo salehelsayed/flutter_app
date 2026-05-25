@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -105,6 +106,20 @@ void main() {
     fail('Expected $expectedCount completed media downloads');
   }
 
+  Future<void> saveLatestKey({
+    required GroupTestUser user,
+    required String groupId,
+  }) async {
+    await user.groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'announcement-onboarding-key',
+        createdAt: DateTime.utc(2026, 4, 29),
+      ),
+    );
+  }
+
   group('Announcement new-reader onboarding', () {
     test(
       'new reader receives only post-join admin media with descriptors',
@@ -139,6 +154,10 @@ void main() {
         await pump();
 
         await admin.addMember(groupId: groupId, invitee: reader);
+        await Future.wait([
+          saveLatestKey(user: admin, groupId: groupId),
+          saveLatestKey(user: reader, groupId: groupId),
+        ]);
 
         final image = attachment(
           id: 'blob-announcement-image',

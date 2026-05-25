@@ -212,6 +212,30 @@ void main() {
       );
     });
 
+    Future<void> saveRetryGroupWithMembers() async {
+      await groupRepo.saveGroup(_makeGroup());
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.writer,
+          publicKey: 'pk-peer-1',
+          joinedAt: DateTime.utc(2026, 1, 15, 12),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-peer-2',
+          joinedAt: DateTime.utc(2026, 1, 15, 12, 1),
+        ),
+      );
+    }
+
     test('returns 0 when identity is null', () async {
       final count = await retryFailedGroupMessages(
         groupMsgRepo: msgRepo,
@@ -229,7 +253,7 @@ void main() {
       'emits RETRY_FAILED_GROUP_MESSAGES_TIMING with total and skipped counts',
       () async {
         identityRepo.seed(_makeIdentity());
-        await groupRepo.saveGroup(_makeGroup());
+        await saveRetryGroupWithMembers();
         await msgRepo.saveMessage(
           _makeFailedGroupMessage(
             id: 'msg-retry-1',
@@ -287,7 +311,7 @@ void main() {
       'retries a text-only failed row in place using the original ids',
       () async {
         identityRepo.seed(_makeIdentity());
-        await groupRepo.saveGroup(_makeGroup());
+        await saveRetryGroupWithMembers();
         await msgRepo.saveMessage(
           _makeFailedGroupMessage(
             id: 'msg-retry-1',
@@ -574,7 +598,7 @@ void main() {
       'retries a failed media row from persisted done attachments when inboxRetryPayload was cleared after inbox success',
       () async {
         identityRepo.seed(_makeIdentity());
-        await groupRepo.saveGroup(_makeGroup());
+        await saveRetryGroupWithMembers();
         await msgRepo.saveMessage(
           GroupMessage(
             id: 'msg-media-done',
@@ -640,7 +664,7 @@ void main() {
       'retries a failed GIF row from persisted done attachments with image/gif preserved',
       () async {
         identityRepo.seed(_makeIdentity());
-        await groupRepo.saveGroup(_makeGroup());
+        await saveRetryGroupWithMembers();
         await msgRepo.saveMessage(
           GroupMessage(
             id: 'msg-gif-done',
@@ -701,7 +725,7 @@ void main() {
       'deterministic restart retry publishes text quote and media rows in persisted order',
       () async {
         identityRepo.seed(_makeIdentity());
-        await groupRepo.saveGroup(_makeGroup());
+        await saveRetryGroupWithMembers();
 
         await msgRepo.saveMessage(
           _makeFailedGroupMessage(
@@ -900,7 +924,7 @@ void main() {
 
     test('continues after a per-message publish error', () async {
       identityRepo.seed(_makeIdentity());
-      await groupRepo.saveGroup(_makeGroup());
+      await saveRetryGroupWithMembers();
       await msgRepo.saveMessage(
         _makeFailedGroupMessage(
           id: 'msg-fail-1',
@@ -935,7 +959,7 @@ void main() {
       'retryFailedGroupMessage only retries the requested failed media row',
       () async {
         identityRepo.seed(_makeIdentity());
-        await groupRepo.saveGroup(_makeGroup());
+        await saveRetryGroupWithMembers();
         await msgRepo.saveMessage(
           _makeFailedGroupMessage(
             id: 'msg-targeted',

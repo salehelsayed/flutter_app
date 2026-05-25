@@ -1202,6 +1202,76 @@ func TestHandleInboxStream_GroupStoreRejectsSpoofedFromPeer(t *testing.T) {
 	}
 }
 
+func TestHandleInboxStream_GroupStoreRejectsMissingRecipientPeerIds(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderPeer := env.sender.ID().String()
+
+	tests := []struct {
+		name string
+		send func(t *testing.T, stream network.Stream, groupId string)
+	}{
+		{
+			name: "omitted",
+			send: func(t *testing.T, stream network.Stream, groupId string) {
+				t.Helper()
+				sendInboxReq(t, stream, inboxRequest{
+					Action:  "group_store",
+					GroupId: groupId,
+					From:    senderPeer,
+					Message: `{"kind":"group_offline_replay","messageId":"missing-recipients"}`,
+				})
+			},
+		},
+		{
+			name: "empty",
+			send: func(t *testing.T, stream network.Stream, groupId string) {
+				t.Helper()
+				req := map[string]interface{}{
+					"action":           "group_store",
+					"groupId":          groupId,
+					"from":             senderPeer,
+					"message":          `{"kind":"group_offline_replay","messageId":"empty-recipients"}`,
+					"recipientPeerIds": []string{},
+				}
+				data, err := json.Marshal(req)
+				if err != nil {
+					t.Fatalf("marshal group_store request: %v", err)
+				}
+				if err := writeFrame(stream, data); err != nil {
+					t.Fatalf("write group_store frame: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			groupId := "group-missing-recipients-" + tc.name
+			stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+			if err != nil {
+				t.Fatalf("open group_store stream: %v", err)
+			}
+			defer stream.Close()
+
+			tc.send(t, stream, groupId)
+			resp := recvInboxResp(t, stream)
+			if resp.Status != "ERROR" {
+				t.Fatalf("status = %q, want ERROR", resp.Status)
+			}
+			if !strings.Contains(resp.Error, "recipientPeerIds") {
+				t.Fatalf("error = %q, want recipientPeerIds", resp.Error)
+			}
+			if stored := groupInbox.Retrieve(groupId, 0); len(stored) != 0 {
+				t.Fatalf("missing-recipient group_store persisted %d message(s)", len(stored))
+			}
+		})
+	}
+}
+
 func TestHandleInboxStream_GroupRetrieveFiltersByRecipientAuthorization(t *testing.T) {
 	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
 	inbox := NewInboxStore(push)

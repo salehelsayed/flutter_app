@@ -68,7 +68,9 @@ Future<void> maybeShowNotification({
   }
 
   final lifecycleState = getAppLifecycleState();
-  final isViewingConversation = conversationTracker.isViewing(contactPeerId);
+  final isViewingConversation =
+      conversationTracker.isViewing(contactPeerId) ||
+      (routePayload != null && conversationTracker.isViewing(routePayload));
 
   if (lifecycleState == AppLifecycleState.resumed && isViewingConversation) {
     emitFlowEvent(

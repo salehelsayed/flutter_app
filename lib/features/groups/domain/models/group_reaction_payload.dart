@@ -13,6 +13,9 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 /// ```
 /// Action is either `"add"` or `"remove"`.
 class GroupReactionPayload {
+  static const actionAdd = 'add';
+  static const actionRemove = 'remove';
+
   final String id;
   final String messageId;
   final String emoji;
@@ -48,13 +51,17 @@ class GroupReactionPayload {
   /// Used on the receive side after Go decrypts the envelope.
   static GroupReactionPayload? fromDecryptedJson(String innerJson) {
     try {
-      final payload = jsonDecode(innerJson) as Map<String, dynamic>;
-      final id = payload['id'] as String?;
-      final messageId = payload['messageId'] as String?;
-      final emoji = payload['emoji'] as String?;
-      final action = payload['action'] as String?;
-      final senderPeerId = payload['senderPeerId'] as String?;
-      final timestamp = payload['timestamp'] as String?;
+      final decoded = jsonDecode(innerJson);
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+      final payload = decoded;
+      final id = _requiredString(payload['id']);
+      final messageId = _requiredString(payload['messageId']);
+      final emoji = _requiredString(payload['emoji']);
+      final action = _requiredString(payload['action']);
+      final senderPeerId = _requiredString(payload['senderPeerId']);
+      final timestamp = _requiredString(payload['timestamp']);
 
       if (id == null ||
           messageId == null ||
@@ -62,6 +69,12 @@ class GroupReactionPayload {
           action == null ||
           senderPeerId == null ||
           timestamp == null) {
+        return null;
+      }
+      if (action != actionAdd && action != actionRemove) {
+        return null;
+      }
+      if (DateTime.tryParse(timestamp) == null) {
         return null;
       }
 
@@ -89,4 +102,12 @@ class GroupReactionPayload {
       createdAt: DateTime.now().toUtc().toIso8601String(),
     );
   }
+}
+
+String? _requiredString(Object? value) {
+  if (value is! String) {
+    return null;
+  }
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
 }

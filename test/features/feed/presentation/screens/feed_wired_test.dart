@@ -273,6 +273,41 @@ void main() {
     }
   }
 
+  Future<void> saveSelfGroupMember(
+    InMemoryGroupRepository groupRepo,
+    String groupId, {
+    MemberRole role = MemberRole.writer,
+  }) async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: testIdentity.peerId,
+        username: testIdentity.username,
+        role: role,
+        publicKey: testIdentity.publicKey,
+        joinedAt: DateTime.utc(2026, 2, 1, 0, 1),
+      ),
+    );
+  }
+
+  Future<void> saveOtherGroupMember(
+    InMemoryGroupRepository groupRepo,
+    String groupId, {
+    required String peerId,
+    required String username,
+    MemberRole role = MemberRole.writer,
+  }) async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: peerId,
+        username: username,
+        role: role,
+        joinedAt: DateTime.utc(2026, 2, 1, 0, 2),
+      ),
+    );
+  }
+
   NavBarButton navButton(WidgetTester tester, String label, {Finder? scope}) {
     final finder = scope == null
         ? find.byType(NavBarButton)
@@ -4490,6 +4525,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await saveSelfGroupMember(groupRepo, 'g1');
         await _saveLatestGroupKey(groupRepo, 'g1');
         await groupMsgRepo.saveMessage(
           GroupMessage(
@@ -4971,6 +5007,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await saveSelfGroupMember(groupRepo, 'g-quote');
         await _saveLatestGroupKey(groupRepo, 'g-quote');
         await groupMsgRepo.saveMessage(
           GroupMessage(
@@ -5069,6 +5106,7 @@ void main() {
           myRole: GroupRole.member,
         ),
       );
+      await saveSelfGroupMember(groupRepo, 'g-bg-inline');
       await _saveLatestGroupKey(groupRepo, 'g-bg-inline');
       await groupMsgRepo.saveMessage(
         GroupMessage(
@@ -5145,6 +5183,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await saveSelfGroupMember(groupRepo, 'g-retryable');
         await _saveLatestGroupKey(groupRepo, 'g-retryable');
         await groupMsgRepo.saveMessage(
           GroupMessage(
@@ -5233,6 +5272,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await saveSelfGroupMember(groupRepo, 'g1');
         await _saveLatestGroupKey(groupRepo, 'g1');
 
         // Seed a read message so the card starts in collapsed mode
@@ -5331,6 +5371,7 @@ void main() {
           myRole: GroupRole.member,
         ),
       );
+      await saveSelfGroupMember(groupRepo, 'g1');
       await _saveLatestGroupKey(groupRepo, 'g1');
 
       // Seed a read message so the card starts in collapsed mode
@@ -5436,6 +5477,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await saveSelfGroupMember(groupRepo, 'g1');
         await _saveLatestGroupKey(groupRepo, 'g1');
 
         // Seed a read message so the card starts in collapsed mode
@@ -5522,6 +5564,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await saveSelfGroupMember(groupRepo, 'g-zero-peers');
         await _saveLatestGroupKey(groupRepo, 'g-zero-peers');
         await groupMsgRepo.saveMessage(
           GroupMessage(
@@ -5874,6 +5917,12 @@ void main() {
           myRole: GroupRole.admin,
         );
         await groupRepo.saveGroup(adminGroup);
+        await saveSelfGroupMember(
+          groupRepo,
+          adminGroup.id,
+          role: MemberRole.admin,
+        );
+        await _saveLatestGroupKey(groupRepo, adminGroup.id);
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'gm-admin-announce-1',
@@ -5936,6 +5985,18 @@ void main() {
           myRole: GroupRole.admin,
         );
         await groupRepo.saveGroup(feedGroup);
+        await saveSelfGroupMember(
+          groupRepo,
+          feedGroup.id,
+          role: MemberRole.admin,
+        );
+        await saveOtherGroupMember(
+          groupRepo,
+          feedGroup.id,
+          peerId: 'other-peer',
+          username: 'OtherUser',
+        );
+        await _saveLatestGroupKey(groupRepo, feedGroup.id);
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'gm-feed-actions-1',

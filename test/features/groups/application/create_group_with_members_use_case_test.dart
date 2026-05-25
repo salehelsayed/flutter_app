@@ -439,6 +439,14 @@ void main() {
         expect(result.group.id, 'test-group-id');
         expect(result.membersAdded, 2);
         expect(result.invitesSent, 2);
+        expect(result.addMemberFailures, hasLength(1));
+        expect(result.addMemberFailures.single.peerId, 'peer-bob');
+        expect(result.addMemberFailures.single.displayName, 'Bob');
+        expect(result.hasWarnings, isTrue);
+        expect(
+          result.buildCreateWarningMessage(),
+          allOf(contains('Bob'), contains('not added')),
+        );
 
         final members = await groupRepo.getMembers('test-group-id');
         expect(members.length, 3);

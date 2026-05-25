@@ -83,16 +83,22 @@ class GroupListWired extends StatefulWidget {
 
 class _GroupListWiredState extends State<GroupListWired>
     with WidgetsBindingObserver {
+  static const _loadErrorMessage = "Couldn't load groups";
+
   List<GroupModel> _groups = [];
   Map<String, GroupMessage?> _latestMessages = {};
   Map<String, int> _unreadCounts = {};
   List<PendingGroupInvite> _pendingInvites = [];
   bool _isLoading = true;
+  String? _currentLoadErrorMessage;
   StreamSubscription<GroupMessage>? _messageSubscription;
   StreamSubscription<GroupModel>? _joinedInviteSubscription;
   StreamSubscription<PendingGroupInvite>? _pendingInviteSubscription;
   final Set<String> _changedGroupIds = <String>{};
   final Set<String> _processingInviteIds = <String>{};
+
+  bool get _hasDisplayableContent =>
+      _groups.isNotEmpty || _pendingInvites.isNotEmpty;
 
   FeedRouteChanges? _buildRouteChanges() {
     final changes = FeedRouteChanges(
@@ -117,7 +123,11 @@ class _GroupListWiredState extends State<GroupListWired>
     }
   }
 
-  Future<void> _loadGroups() async {
+  Future<void> _loadGroups({bool showLoadingWhenEmpty = false}) async {
+    if (showLoadingWhenEmpty) {
+      _beginLoadGroups();
+    }
+
     try {
       final groups = await widget.groupRepo.getActiveGroups();
       final latestMessages = <String, GroupMessage?>{};
@@ -138,10 +148,16 @@ class _GroupListWiredState extends State<GroupListWired>
         _unreadCounts = unreadCounts;
         _pendingInvites = pendingInvites;
         _isLoading = false;
+        _currentLoadErrorMessage = null;
       });
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          if (!_hasDisplayableContent) {
+            _currentLoadErrorMessage = _loadErrorMessage;
+          }
+        });
       }
       emitFlowEvent(
         layer: 'FL',
@@ -149,6 +165,26 @@ class _GroupListWiredState extends State<GroupListWired>
         details: {'error': e.toString()},
       );
     }
+  }
+
+  void _beginLoadGroups() {
+    if (!mounted) return;
+
+    final shouldShowLoading = !_hasDisplayableContent;
+    final shouldUpdateState =
+        _currentLoadErrorMessage != null || (shouldShowLoading && !_isLoading);
+    if (!shouldUpdateState) return;
+
+    setState(() {
+      _currentLoadErrorMessage = null;
+      if (shouldShowLoading) {
+        _isLoading = true;
+      }
+    });
+  }
+
+  void _retryLoadGroups() {
+    unawaited(_loadGroups(showLoadingWhenEmpty: true));
   }
 
   Future<List<PendingGroupInvite>> _loadPendingInvites() async {
@@ -409,6 +445,8 @@ class _GroupListWiredState extends State<GroupListWired>
       pendingInvites: _pendingInvites,
       processingInviteIds: _processingInviteIds,
       isLoading: _isLoading,
+      loadErrorMessage: _currentLoadErrorMessage,
+      onRetryLoad: _retryLoadGroups,
       onGroupTap: _onGroupTap,
       onAcceptPendingInvite: _onAcceptPendingInvite,
       onDeclinePendingInvite: _onDeclinePendingInvite,

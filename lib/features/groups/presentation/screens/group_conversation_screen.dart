@@ -85,6 +85,8 @@ class GroupConversationScreen extends StatelessWidget {
   final GroupSecurityStatusViewState? securityStatus;
   final bool isRecovering;
   final String? readOnlyBannerText;
+  final String? messageLoadErrorText;
+  final VoidCallback? onRetryMessageLoad;
 
   const GroupConversationScreen({
     super.key,
@@ -138,6 +140,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.securityStatus,
     this.isRecovering = false,
     this.readOnlyBannerText,
+    this.messageLoadErrorText,
+    this.onRetryMessageLoad,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -322,7 +326,56 @@ class GroupConversationScreen extends StatelessWidget {
     if (!initialLoadDone || isRecovering) {
       return const _GroupConversationLoadingShell();
     }
+    if (messageLoadErrorText != null) {
+      return _buildMessageLoadErrorState(context, messageLoadErrorText!);
+    }
     return _buildEmptyState(context);
+  }
+
+  Widget _buildMessageLoadErrorState(BuildContext context, String errorText) {
+    final readableColors = context.backgroundReadableColors;
+    final accent = readableColors.isLightSurface
+        ? const Color(0xFFB91C1C)
+        : const Color(0xFFFCA5A5);
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline_rounded, size: 48, color: accent),
+            const SizedBox(height: 12),
+            Text(
+              errorText,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: readableColors.disabledForeground,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton.icon(
+              key: const ValueKey('group-conversation-load-retry'),
+              onPressed: onRetryMessageLoad,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
+              style: TextButton.styleFrom(foregroundColor: accent),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildRecoveryBanner(BuildContext context) {

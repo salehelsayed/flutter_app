@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -82,9 +84,13 @@ class CreateGroupPickerWired extends StatefulWidget {
 }
 
 class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
+  static const _loadErrorMessage = "Couldn't load contacts";
+
   List<ContactModel> _contacts = [];
   final Set<String> _selectedPeerIds = {};
   bool _isCreating = false;
+  bool _isLoadingContacts = true;
+  String? _currentLoadErrorMessage;
 
   @override
   void initState() {
@@ -94,10 +100,14 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       event: 'CREATE_GROUP_PICKER_FL_INIT',
       details: {'groupType': widget.groupType.toValue()},
     );
-    _loadContacts();
+    unawaited(_loadContacts());
   }
 
-  Future<void> _loadContacts() async {
+  Future<void> _loadContacts({bool showLoadingWhenEmpty = false}) async {
+    if (showLoadingWhenEmpty) {
+      _beginLoadContacts();
+    }
+
     try {
       final allContacts = await widget.contactRepo.getActiveContacts();
 
@@ -109,14 +119,46 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       setState(() {
         _contacts = allContacts.where((c) => c.peerId != selfPeerId).toList()
           ..sort((a, b) => a.username.compareTo(b.username));
+        _isLoadingContacts = false;
+        _currentLoadErrorMessage = null;
       });
     } catch (e) {
+      if (mounted) {
+        final hasDisplayableContacts = _contacts.isNotEmpty;
+        setState(() {
+          _isLoadingContacts = false;
+          _currentLoadErrorMessage = hasDisplayableContacts
+              ? null
+              : _loadErrorMessage;
+        });
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'CREATE_GROUP_PICKER_FL_LOAD_CONTACTS_ERROR',
         details: {'error': e.toString()},
       );
     }
+  }
+
+  void _beginLoadContacts() {
+    if (!mounted) return;
+
+    final shouldShowLoading = _contacts.isEmpty;
+    final shouldUpdateState =
+        _currentLoadErrorMessage != null ||
+        (shouldShowLoading && !_isLoadingContacts);
+    if (!shouldUpdateState) return;
+
+    setState(() {
+      _currentLoadErrorMessage = null;
+      if (shouldShowLoading) {
+        _isLoadingContacts = true;
+      }
+    });
+  }
+
+  void _retryLoadContacts() {
+    unawaited(_loadContacts(showLoadingWhenEmpty: true));
   }
 
   void _onToggle(ContactModel contact) {
@@ -230,6 +272,9 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       onStartGroup: _onStartGroup,
       onBack: _onBack,
       isCreating: _isCreating,
+      isLoadingContacts: _isLoadingContacts,
+      loadErrorMessage: _currentLoadErrorMessage,
+      onRetryLoadContacts: _retryLoadContacts,
       backgroundPreference: widget.backgroundPreference,
     );
   }
