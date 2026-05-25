@@ -39,6 +39,7 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
   String? recipientKeyPackagePublicMaterial,
   required DateTime issuedAt,
   DateTime? expiresAt,
+  String? membershipWatermark,
 }) {
   final stateHash = buildGroupConfigStateHash(
     groupId: groupId,
@@ -57,7 +58,7 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
     inviterPublicKey: 'alicePubKey64',
     keyEpoch: keyEpoch,
     groupConfigStateHash: stateHash,
-    membershipWatermark: stateHash,
+    membershipWatermark: membershipWatermark ?? stateHash,
     issuedAt: issuedAt.toUtc(),
     expiresAt:
         expiresAt ?? issuedAt.toUtc().add(groupInviteMembershipFreshnessTtl),
@@ -90,6 +91,7 @@ void main() {
     String? recipientMlKemPublicKey,
     String? recipientKeyPackageId,
     String? recipientKeyPackagePublicMaterial,
+    String? membershipWatermark,
   }) {
     final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
     final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
@@ -181,6 +183,7 @@ void main() {
         groupConfig: resolvedGroupConfig,
         keyEpoch: keyEpoch,
         issuedAt: inviteTimestamp,
+        membershipWatermark: membershipWatermark,
       ),
     ).withInviteSignature(signature: 'signed-invite-by-alice');
     return PendingGroupInvite.fromPayload(
@@ -389,11 +392,12 @@ void main() {
     );
 
     test(
-      'ML-003 accept preserves invite config version as membership watermark for hash convergence',
+      'ML-003 accept uses freshness membership watermark for hash convergence',
       () async {
         final membershipAt = DateTime.now().toUtc().subtract(
           const Duration(minutes: 10),
         );
+        final configVersionAt = membershipAt.add(const Duration(minutes: 5));
         final groupConfig = <String, dynamic>{
           'name': 'Book Club',
           'groupType': 'chat',
@@ -418,7 +422,8 @@ void main() {
           'createdAt': membershipAt
               .subtract(const Duration(hours: 6))
               .toIso8601String(),
-          groupConfigVersionField: membershipAt.toIso8601String(),
+          'metadataUpdatedAt': configVersionAt.toIso8601String(),
+          groupConfigVersionField: configVersionAt.toIso8601String(),
         };
         groupConfig[groupConfigStateHashField] = buildGroupConfigStateHash(
           groupId: 'grp-abc123',
@@ -428,6 +433,7 @@ void main() {
           makeInvite(
             groupConfig: groupConfig,
             receivedAt: membershipAt.add(const Duration(minutes: 1)),
+            membershipWatermark: membershipAt.toIso8601String(),
           ),
         );
         bridge.responses['group:inboxRetrieveCursor'] = {
@@ -449,6 +455,9 @@ void main() {
         expect(group, isNotNull);
         expect(group!.lastMembershipEventAt, membershipAt);
         final members = await groupRepo.getMembers('grp-abc123');
+        for (final member in members) {
+          expect(member.joinedAt, membershipAt);
+        }
         expect(
           buildGroupConfigPayload(group, members)[groupConfigStateHashField],
           groupConfig[groupConfigStateHashField],

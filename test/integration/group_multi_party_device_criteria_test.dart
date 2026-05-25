@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/scripts/group_multi_party_device_criteria.dart';
@@ -57,6 +59,7 @@ void main() {
           'private_invite_terminal_states',
           'private_stale_invite_readd',
           'private_admin_role_transfer_delivery',
+          'private_admin_metadata_intro_photo_convergence',
           'gm002',
           'gm035',
         ]),
@@ -65,6 +68,49 @@ void main() {
       for (final scenario in allGroupMultiPartyDeviceScenarioIds) {
         expect(scenarioRequirement(scenario).scenario, scenario);
       }
+    });
+
+    test(
+      'prompt simulator invite listener provides device-bound key package identity',
+      () {
+        final harness = File(
+          'integration_test/group_multi_party_device_real_harness.dart',
+        ).readAsStringSync();
+        final helper = RegExp(
+          r'GroupInviteListener _buildGroupInviteListener[\s\S]*?return GroupInviteListener\([\s\S]*?\n  \);\n}',
+        ).firstMatch(harness)?.group(0);
+
+        expect(helper, isNotNull);
+        expect(helper, contains('getOwnKeyPackageId'));
+        expect(helper, contains('defaultGroupWelcomeKeyPackageIdForDevice'));
+        expect(helper, contains('getOwnKeyPackagePublicMaterial'));
+      },
+    );
+
+    test('prompt simulator and group info use plain group avatar upload', () {
+      final harness = File(
+        'integration_test/group_multi_party_device_real_harness.dart',
+      ).readAsStringSync();
+      final promptStart = harness.indexOf(
+        'Future<Map<String, dynamic>> _uploadPromptGroupAvatar',
+      );
+      final promptEnd = harness.indexOf(
+        'Future<Map<String, dynamic>> _prepareMemberRemovedSystemPayload',
+        promptStart,
+      );
+      expect(promptStart, isNonNegative);
+      expect(promptEnd, isNonNegative);
+      final promptUploadHelper = harness.substring(promptStart, promptEnd);
+      expect(promptUploadHelper, contains('uploadGroupAvatar'));
+      expect(promptUploadHelper, isNot(contains('uploadMedia(')));
+
+      final wired = File(
+        'lib/features/groups/presentation/screens/group_info_wired.dart',
+      ).readAsStringSync();
+      expect(wired, contains('UploadGroupAvatarFn uploadGroupAvatarFn'));
+      expect(wired, contains('this.uploadGroupAvatarFn = uploadGroupAvatar'));
+      expect(wired, contains('widget.uploadGroupAvatarFn'));
+      expect(wired, isNot(contains('uploadMediaFn')));
     });
 
     test('scenario requirements map GM roles to device counts', () {
@@ -452,6 +498,18 @@ void main() {
         ).requiredDeviceCount,
         3,
       );
+      expect(
+        scenarioRequirement(
+          'private_admin_metadata_intro_photo_convergence',
+        ).roles,
+        ['alice', 'bob', 'charlie'],
+      );
+      expect(
+        scenarioRequirement(
+          'private_admin_metadata_intro_photo_convergence',
+        ).requiredDeviceCount,
+        3,
+      );
       expect(scenarioRequirement('gm005').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('gm005').requiredDeviceCount, 3);
       expect(scenarioRequirement('gm006').roles, ['alice', 'bob', 'charlie']);
@@ -707,6 +765,74 @@ void main() {
         expect(rejected.detail, contains('removedWindowPlaintextCount'));
       },
     );
+
+    test(
+      'prompt group scenario accepts metadata intro invite photo and fanout proof',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_admin_metadata_intro_photo_convergence',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPromptGroupMessagingVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains(
+            'private_admin_metadata_intro_photo_convergence verdicts valid',
+          ),
+        );
+      },
+    );
+
+    test('prompt group scenario rejects missing avatar convergence', () {
+      final verdicts = _validPromptGroupMessagingVerdicts();
+      verdicts[1] = _withPromptProofOverrides(
+        verdicts[1],
+        const <String, Object?>{
+          'avatarUpdateConverged': false,
+          'avatarPath': '',
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_admin_metadata_intro_photo_convergence',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('avatarUpdateConverged'));
+      expect(rejected.detail, contains('avatarPath'));
+    });
+
+    test('prompt group scenario rejects Charlie-to-Bob delivery gap', () {
+      final verdicts = _validPromptGroupMessagingVerdicts();
+      final bob = verdicts[1];
+      bob['receivedMessages'] = <Map<String, Object?>>[
+        for (final entry in List<Map<String, Object?>>.from(
+          bob['receivedMessages'] as List,
+        ))
+          if (entry['key'] != 'charlieAfterCharlieAccept') entry,
+      ];
+      bob['persistedMessageCounts'] = const <String, int>{
+        'aliceInitialAfterBobAccept': 1,
+        'aliceAfterCharlieAccept': 1,
+      };
+      verdicts[1] = _withPromptProofOverrides(bob, const <String, Object?>{
+        'charlieToBobDelivered': false,
+      });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_admin_metadata_intro_photo_convergence',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('charlieToBobDelivered'));
+      expect(rejected.detail, contains('charlieAfterCharlieAccept'));
+    });
 
     test('PL-009 accepts private reaction roundtrip verdicts', () {
       expect(scenarioRequirement('private_reaction_roundtrip').roles, [
@@ -25088,6 +25214,245 @@ Map<String, dynamic> _withMl016ProofOverrides(
       ...Map<String, Object?>.from(
         verdict['ml016NonFriendDeliveryProof'] as Map,
       ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPromptGroupMessagingVerdicts() {
+  const scenario = 'private_admin_metadata_intro_photo_convergence';
+  const groupId = 'group-prompt-exact';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const activeMembers = <String>[alicePeerId, bobPeerId, charliePeerId];
+  const aliceInitial = <String, Object?>{
+    'key': 'aliceInitialAfterBobAccept',
+    'messageId': 'prompt-a-initial',
+    'groupId': groupId,
+    'text': 'Prompt Alice initial after Bob accept',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-25T10:00:00.000Z',
+    'accepted': true,
+  };
+  const bobInitial = <String, Object?>{
+    'key': 'bobInitialAfterBobAccept',
+    'messageId': 'prompt-b-initial',
+    'groupId': groupId,
+    'text': 'Prompt Bob initial after invite accept',
+    'outcome': 'success',
+    'senderPeerId': bobPeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-25T10:01:00.000Z',
+    'accepted': true,
+  };
+  const aliceAfter = <String, Object?>{
+    'key': 'aliceAfterCharlieAccept',
+    'messageId': 'prompt-a-after',
+    'groupId': groupId,
+    'text': 'Prompt Alice after Charlie accept',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-25T10:02:00.000Z',
+    'accepted': true,
+  };
+  const bobAfter = <String, Object?>{
+    'key': 'bobAfterCharlieAccept',
+    'messageId': 'prompt-b-after',
+    'groupId': groupId,
+    'text': 'Prompt Bob after Charlie accept',
+    'outcome': 'success',
+    'senderPeerId': bobPeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-25T10:03:00.000Z',
+    'accepted': true,
+  };
+  const charlieAfter = <String, Object?>{
+    'key': 'charlieAfterCharlieAccept',
+    'messageId': 'prompt-c-after',
+    'groupId': groupId,
+    'text': 'Prompt Charlie after Charlie accept',
+    'outcome': 'success',
+    'senderPeerId': charliePeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-25T10:04:00.000Z',
+    'accepted': true,
+  };
+
+  Map<String, Object?> proofFor(String role) {
+    return <String, Object?>{
+      'rowId': 'PROMPT-GROUP-2026-05-25',
+      'scenario': scenario,
+      'proofRole': role,
+      'appPeerPlatform': 'ios_26_2_core_simulator',
+      'proofSource': 'app_peer_core_simulator',
+      'initialAliceBobFriendship': true,
+      'initialBobCharlieFriendship': true,
+      'initialAliceCharlieAbsent': true,
+      'bobIntroducedCharlieToAlice': true,
+      'aliceCharlieFriendshipAccepted': true,
+      'bobAcceptedInitialInvite': true,
+      'bobSawNameDescriptionUpdate': true,
+      'bobPromotedToAdmin': true,
+      'charlieAcceptedInvite': true,
+      'charlieSawNameDescriptionOnJoin': true,
+      'fullFanoutAfterCharlieJoin': true,
+      'charlieToBobDelivered': true,
+      'avatarUpdateConverged': true,
+      'finalMemberStateConverged': true,
+      'finalKeyConverged': true,
+      'groupName': 'test me',
+      'groupDescription': 'do you see me?',
+      'avatarBlobId': 'prompt-avatar-blob',
+      'avatarMime': 'image/png',
+      'avatarPath': 'media/group_avatars/$groupId.jpg',
+      'finalEpoch': 1,
+      'finalMemberRoles': const <String, String>{
+        'alice': 'admin',
+        'bob': 'admin',
+        'charlie': 'writer',
+      },
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      keyEpoch: 1,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[aliceInitial, aliceAfter],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobInitialAfterBobAccept',
+          'prompt-b-initial',
+          'Prompt Bob initial after invite accept',
+          bobPeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:01:00.000Z',
+        ),
+        _received(
+          'bobAfterCharlieAccept',
+          'prompt-b-after',
+          'Prompt Bob after Charlie accept',
+          bobPeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:03:00.000Z',
+        ),
+        _received(
+          'charlieAfterCharlieAccept',
+          'prompt-c-after',
+          'Prompt Charlie after Charlie accept',
+          charliePeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:04:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'bobInitialAfterBobAccept': 1,
+        'bobAfterCharlieAccept': 1,
+        'charlieAfterCharlieAccept': 1,
+      },
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'promptGroupMessagingProof': proofFor('alice'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      keyEpoch: 1,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[bobInitial, bobAfter],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceInitialAfterBobAccept',
+          'prompt-a-initial',
+          'Prompt Alice initial after Bob accept',
+          alicePeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:00:00.000Z',
+        ),
+        _received(
+          'aliceAfterCharlieAccept',
+          'prompt-a-after',
+          'Prompt Alice after Charlie accept',
+          alicePeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:02:00.000Z',
+        ),
+        _received(
+          'charlieAfterCharlieAccept',
+          'prompt-c-after',
+          'Prompt Charlie after Charlie accept',
+          charliePeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:04:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceInitialAfterBobAccept': 1,
+        'aliceAfterCharlieAccept': 1,
+        'charlieAfterCharlieAccept': 1,
+      },
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'promptGroupMessagingProof': proofFor('bob'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      keyEpoch: 1,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[charlieAfter],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterCharlieAccept',
+          'prompt-a-after',
+          'Prompt Alice after Charlie accept',
+          alicePeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:02:00.000Z',
+        ),
+        _received(
+          'bobAfterCharlieAccept',
+          'prompt-b-after',
+          'Prompt Bob after Charlie accept',
+          bobPeerId,
+          keyEpoch: 1,
+          timestamp: '2026-05-25T10:03:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterCharlieAccept': 1,
+        'bobAfterCharlieAccept': 1,
+      },
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'promptGroupMessagingProof': proofFor('charlie'),
+      },
+    ),
+  ];
+}
+
+Map<String, dynamic> _withPromptProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'promptGroupMessagingProof': <String, Object?>{
+      ...Map<String, Object?>.from(verdict['promptGroupMessagingProof'] as Map),
       ...overrides,
     },
   };

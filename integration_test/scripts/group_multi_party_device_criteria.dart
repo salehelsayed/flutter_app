@@ -239,6 +239,11 @@ const _privateAdminRoleTransferDeliveryRequirement =
       scenario: 'private_admin_role_transfer_delivery',
       roles: <String>['alice', 'bob', 'charlie'],
     );
+const _privateAdminMetadataIntroPhotoConvergenceRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_admin_metadata_intro_photo_convergence',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _ge001Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'ge001',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -528,6 +533,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
       _privateNonFriendMemberDeliveryRequirement,
   'private_admin_role_transfer_delivery':
       _privateAdminRoleTransferDeliveryRequirement,
+  'private_admin_metadata_intro_photo_convergence':
+      _privateAdminMetadataIntroPhotoConvergenceRequirement,
   'gm002': _gm002Requirement,
   'gm003': _gm003Requirement,
   'gm004': _gm004Requirement,
@@ -2221,6 +2228,34 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['alice', 'bob'],
         ),
       ];
+    case 'private_admin_metadata_intro_photo_convergence':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceInitialAfterBobAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobInitialAfterBobAccept',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceAfterCharlieAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobAfterCharlieAccept',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieAfterCharlieAccept',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
     case 'private_history_retention':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
@@ -3220,6 +3255,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_admin_role_transfer_delivery') {
     _validateMl020AdminRoleDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_admin_metadata_intro_photo_convergence') {
+    _validatePromptGroupMessagingProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -7865,6 +7908,122 @@ void _validateMl020AdminRoleDeliveryProof({
   ]) {
     if (charlieReceived.contains(removedWindowKey)) {
       failures.add('charlie: ML-020 must not receive $removedWindowKey');
+    }
+  }
+}
+
+void _validatePromptGroupMessagingProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'promptGroupMessagingProof';
+  const expectedRoleNames = <String, String>{
+    'alice': 'admin',
+    'bob': 'admin',
+    'charlie': 'writer',
+  };
+  final expectedMembers = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['bob'],
+    ?peerIdByRole['charlie'],
+  };
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'PROMPT-GROUP-2026-05-25') {
+      failures.add('$role: $proofName.rowId mismatch');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_admin_metadata_intro_photo_convergence') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+    if (_stringValue(proof['proofSource']) != 'app_peer_core_simulator') {
+      failures.add('$role: $proofName.proofSource mismatch');
+    }
+
+    for (final field in const <String>[
+      'initialAliceBobFriendship',
+      'initialBobCharlieFriendship',
+      'initialAliceCharlieAbsent',
+      'bobIntroducedCharlieToAlice',
+      'aliceCharlieFriendshipAccepted',
+      'bobAcceptedInitialInvite',
+      'bobSawNameDescriptionUpdate',
+      'bobPromotedToAdmin',
+      'charlieAcceptedInvite',
+      'charlieSawNameDescriptionOnJoin',
+      'fullFanoutAfterCharlieJoin',
+      'charlieToBobDelivered',
+      'avatarUpdateConverged',
+      'finalMemberStateConverged',
+      'finalKeyConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    if (_stringValue(proof['groupName']) != 'test me') {
+      failures.add('$role: $proofName.groupName must be test me');
+    }
+    if (_stringValue(proof['groupDescription']) != 'do you see me?') {
+      failures.add('$role: $proofName.groupDescription must be do you see me?');
+    }
+    final avatarBlobId = _stringValue(proof['avatarBlobId']);
+    if (avatarBlobId == null || avatarBlobId.isEmpty) {
+      failures.add('$role: $proofName.avatarBlobId is required');
+    }
+    if (_stringValue(proof['avatarMime']) != 'image/png') {
+      failures.add('$role: $proofName.avatarMime must be image/png');
+    }
+    final avatarPath = _stringValue(proof['avatarPath']);
+    if (avatarPath == null || avatarPath.isEmpty) {
+      failures.add('$role: $proofName.avatarPath is required');
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 1) {
+      failures.add('$role: $proofName.finalEpoch must be positive');
+    }
+
+    final activeMembers = _stringList(byRole[role]?['activeMemberPeerIds']);
+    final members =
+        (activeMembers.isEmpty
+                ? _stringList(byRole[role]?['memberPeerIds'])
+                : activeMembers)
+            .toSet();
+    final missingMembers = expectedMembers.difference(members);
+    if (missingMembers.isNotEmpty) {
+      failures.add(
+        '$role: $proofName active members missing ${missingMembers.join(', ')}',
+      );
+    }
+
+    final finalRoles = _mapValue(proof['finalMemberRoles']);
+    if (finalRoles == null) {
+      failures.add('$role: $proofName.finalMemberRoles is required');
+    } else {
+      for (final expected in expectedRoleNames.entries) {
+        if (_stringValue(finalRoles[expected.key]) != expected.value) {
+          failures.add(
+            '$role: $proofName.finalMemberRoles.${expected.key} must be ${expected.value}',
+          );
+        }
+      }
     }
   }
 }

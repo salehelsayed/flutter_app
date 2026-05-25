@@ -244,6 +244,7 @@ classify_path() {
       ;;
     integration_test/group_recovery_e2e_test.dart|\
     integration_test/group_recovery_cli_e2e_test.dart|\
+    integration_test/group_admin_metadata_convergence_simulator_test.dart|\
     integration_test/group_delete_preserves_friends_simulator_test.dart|\
     integration_test/group_invite_accept_spinner_simulator_test.dart|\
     integration_test/group_new_member_media_simulator_proof_test.dart|\
@@ -629,7 +630,7 @@ expand_group_multi_party_device_real() {
     count=$((count + 1))
   done < <(
     dart "$path" --scenario all --list-scenarios 2>/dev/null |
-      awk '/^(ge|gm|go)[0-9]+$/ { print }'
+      awk '/^[[:alnum:]_]+$/ { print }'
   )
 
   if [ "$count" -eq 0 ]; then

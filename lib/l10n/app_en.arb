@@ -67,7 +67,7 @@
   "compose_voice": "Voice",
   "compose_voice_stop": "Stop",
   "compose_voice_attached": "Voice attached",
-  "compose_attachments": "{count} attachments",
+  "compose_attachments": "{count, plural, =0{No attachments} =1{1 attachment} other{{count} attachments}}",
   "@compose_attachments": {
     "placeholders": {
       "count": {
@@ -358,5 +358,859 @@
         "type": "String"
       }
     }
-  }
+  },
+  "load_retry_hint": "Check your connection and try again.",
+  "upload_leave_title": "Leave conversation?",
+  "upload_leave_body": "An upload is in progress. Leaving may interrupt it. Are you sure?",
+  "upload_leave_stay": "Stay",
+  "upload_leave_confirm": "Leave",
+  "upload_cancelled": "Upload cancelled.",
+  "media_too_large_title": "Media Too Large",
+  "media_too_large_prompt": "The attached media is {totalSize} and exceeds the {limitSize} limit. Would you like to compress and send, or cancel?",
+  "@media_too_large_prompt": {
+    "placeholders": {
+      "totalSize": {
+        "type": "String"
+      },
+      "limitSize": {
+        "type": "String"
+      }
+    }
+  },
+  "media_compress": "Compress",
+  "media_too_large_after_compress": "The media is too large even after compression.",
+  "media_gif_too_large": "GIF files larger than 25 MB cannot be added.",
+  "media_unavailable": "Media unavailable",
+  "media_retry_unavailable": "Retry unavailable media",
+  "edit_save_failed": "Failed to save edit.",
+  "intro_pass": "Pass",
+  "intro_accept": "Accept",
+  "intro_accepting": "Accepting...",
+  "failed_message_retry_semantics": "Retry failed message",
+  "failed_media_retry_semantics": "Retry failed media message",
+  "failed_media_delete_semantics": "Delete failed media message",
+  "message_status_semantics": "Message status: {status}",
+  "@message_status_semantics": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "message_status_delivered": "delivered",
+  "message_status_failed": "failed",
+  "message_status_sending": "sending",
+  "message_status_sent": "sent",
+  "message_status_pending_inbox": "pending delivery via inbox",
+  "share_send_failed": "Could not share to the selected targets.",
+  "group_info_title": "Group Info",
+  "group_edit_details": "Edit Details",
+  "group_member_count": "{count, plural, =1{1 member} other{{count} members}}",
+  "@group_member_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_title": "Security",
+  "group_security_key_change_visible": "Key change visible",
+  "group_security_verification_warning": "Verification warning",
+  "group_security_identity_warning_detail": "{count, plural, =1{1 identity has changed. Review safety numbers below.} other{{count} identities have changed. Review safety numbers below.}}",
+  "@group_security_identity_warning_detail": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_dissolved": "Group dissolved",
+  "group_dissolved_read_only_desc": "This conversation is now read-only. Previous messages stay available for reference.",
+  "group_mute_notifications": "Mute Notifications",
+  "group_mute_on_desc": "New messages still arrive, but this group stays quiet.",
+  "group_mute_off_desc": "Get notified when new messages arrive in this group.",
+  "group_members_title": "Members",
+  "group_add_member": "Add Member",
+  "group_leave": "Leave Group",
+  "group_dissolve": "Dissolve Group",
+  "group_delete_from_device": "Delete from this device",
+  "group_delete_local_desc": "Keep this dissolved history as long as you want, or remove it from this device only. This will not affect anyone else.",
+  "group_delete_locally": "Delete Group Locally",
+  "group_no_messages": "No messages yet",
+  "group_empty_dissolved_desc": "This group has been dissolved. New messages are disabled.",
+  "group_empty_start": "Send a message to start the conversation",
+  "group_empty_waiting": "Waiting for messages",
+  "group_recovery_banner": "Catching up missed messages. New messages will still appear here.",
+  "group_read_only_dissolved": "This group has been dissolved. History stays available, but new messages are disabled.",
+  "group_read_only_admin_only": "Only admins can send messages in this group",
+  "group_removed_snackbar": "You were removed from this group.",
+  "group_dissolved_snackbar": "This group has been dissolved",
+  "group_info_mute_update_failed": "Failed to update mute",
+  "group_info_dissolve_title": "Dissolve this group for everyone?",
+  "group_info_dissolve_body": "This ends the group for all members. History stays visible, but no one can send new messages after it is dissolved.",
+  "group_info_dissolve_action": "Dissolve",
+  "group_info_dissolved_recovery": "Group dissolved. Some members may need recovery to see it.",
+  "group_info_already_dissolved": "Group already dissolved",
+  "group_info_admins_only_dissolve": "Only admins can dissolve groups",
+  "group_info_not_found": "Group no longer exists",
+  "group_info_dissolve_failed": "Failed to dissolve group",
+  "group_info_delete_local_title": "Delete this dissolved group from this device?",
+  "group_info_delete_local_body": "This removes the dissolved history from this device only. It will not affect anyone else or send a new leave event.",
+  "group_info_delete_local_action": "Delete Locally",
+  "group_info_remove_member_title": "Remove {username} from the group?",
+  "@group_info_remove_member_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_remove_member_body": "They will stop receiving new messages from this group.",
+  "group_info_remove_action": "Remove",
+  "group_info_member_fallback": "member",
+  "group_info_make_admin_title": "Make {username} an admin?",
+  "@group_info_make_admin_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_remove_admin_title": "Remove admin access from {username}?",
+  "@group_info_remove_admin_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_make_admin_body": "They will be able to add, remove, and manage members.",
+  "group_info_remove_admin_body": "They will lose admin-only actions after the change syncs.",
+  "group_info_make_admin_action": "Make Admin",
+  "group_info_remove_admin_action": "Remove Admin",
+  "group_info_admin_added": "{username} is now an admin",
+  "@group_info_admin_added": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_admin_removed": "{username} is no longer an admin",
+  "@group_info_admin_removed": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_member_role_update_failed": "Failed to update member role",
+  "group_info_details_updated": "Group details updated",
+  "group_info_details_update_failed": "Failed to update group details",
+  "group_info_invite_resend_failed": "Failed to resend invite",
+  "group_info_invite_sent": "Invite sent to {username}",
+  "@group_info_invite_sent": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_queued": "Invite is in {username}'s inbox",
+  "@group_info_invite_queued": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_needs_resend": "Invite still needs to be resent",
+  "group_info_invite_joined": "{username} already joined",
+  "@group_info_invite_joined": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_unknown": "Invite status unknown",
+  "group_edit_photo_pick_failed": "Failed to pick group photo",
+  "group_edit_details_title": "Edit Group Details",
+  "group_edit_change_photo": "Change Photo",
+  "group_edit_add_photo": "Add Photo",
+  "group_edit_remove_photo": "Remove Photo",
+  "group_edit_name": "Group Name",
+  "group_edit_description": "Description",
+  "btn_save": "Save",
+  "group_member_sending": "Sending...",
+  "group_member_resend": "Resend",
+  "group_member_manage_role": "Manage role",
+  "group_role_admin": "admin",
+  "group_role_writer": "writer",
+  "group_role_reader": "reader",
+  "group_identity_changed": "Identity changed",
+  "group_current_safety": "Current safety",
+  "group_saved_safety": "Saved safety",
+  "group_card_no_messages": "No messages yet",
+  "group_security_encrypted": "End-to-end encrypted",
+  "group_security_pending": "Encryption pending",
+  "group_security_no_key": "No group key on this device",
+  "group_security_key_changed": "Group key changed to epoch {keyEpoch}",
+  "@group_security_key_changed": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_current_key_epoch": "Current key epoch {keyEpoch}",
+  "@group_security_current_key_epoch": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_no_members": "No members to verify",
+  "group_security_all_members_verified": "{count, plural, =1{All 1 member verified} other{All {count} members verified}}",
+  "@group_security_all_members_verified": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_verified": "{verifiedCount} of {memberCount} members verified",
+  "@group_security_members_verified": {
+    "placeholders": {
+      "verifiedCount": {
+        "type": "int"
+      },
+      "memberCount": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_need_review": "{count, plural, =1{1 member needs verification review} other{{count} members need verification review}}",
+  "@group_security_members_need_review": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_unverified": "{count, plural, =1{1 member not verified from saved contacts} other{{count} members not verified from saved contacts}}",
+  "@group_security_members_unverified": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_no_warnings": "No verification warnings",
+  "group_security_compact_encrypted_epoch": "Encrypted - key epoch {keyEpoch}",
+  "@group_security_compact_encrypted_epoch": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "invite_status_sent": "Invite sent",
+  "invite_status_queued": "In their inbox",
+  "invite_status_needs_resend": "Resend needed",
+  "invite_status_cannot_send": "Cannot send",
+  "invite_status_joined": "Joined",
+  "invite_status_unknown": "Invite unknown",
+  "invite_cannot_send_missing_secure_key_detail": "We don't have the secure info needed to invite this friend. Ask them to open or reinstall the app, then try again.",
+  "invite_cannot_send_group_key_missing_detail": "This group is missing the secure invite key. Reopen the app and try again.",
+  "invite_cannot_send_invalid_payload_detail": "This invite could not be prepared. Reopen the app and try again.",
+  "invite_cannot_send_generic_detail": "We could not prepare a secure invite for this friend. They may need to open or reinstall the app before you can invite them.",
+  "invite_cannot_send_missing_secure_key_snackbar": "Cannot send: we don't have the secure info needed to invite this friend.",
+  "invite_cannot_send_group_key_missing_snackbar": "Cannot send: this group is missing the secure invite key.",
+  "invite_cannot_send_invalid_payload_snackbar": "Cannot send: this invite could not be prepared.",
+  "invite_cannot_send_generic_snackbar": "Cannot send: we could not prepare a secure invite for this friend.",
+  "group_backlog_mixed_list_summary": "Older backlog expired after {days} days",
+  "@group_backlog_mixed_list_summary": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_mixed_banner": "Older missed messages expired after {days} days. Recent messages were recovered.",
+  "@group_backlog_mixed_banner": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_mixed_empty_title": "Recent messages recovered",
+  "group_backlog_mixed_empty_subtitle": "Older missed messages expired after {days} days while you were away.",
+  "@group_backlog_mixed_empty_subtitle": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_list_summary": "Missed backlog expired after {days} days",
+  "@group_backlog_expired_list_summary": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_banner": "Missed messages older than {days} days expired while you were away.",
+  "@group_backlog_expired_banner": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_empty_title": "Older backlog expired",
+  "group_backlog_expired_empty_subtitle": "Missed messages older than {days} days expired while you were away.",
+  "@group_backlog_expired_empty_subtitle": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_history_repair_active_banner": "Some missed messages are being repaired from trusted group members.",
+  "group_history_repair_active_empty_title": "Repairing missed messages",
+  "group_history_repair_active_empty_subtitle": "Some missed messages are being verified before they appear here.",
+  "group_history_repair_failed_banner": "Some missed messages could not be repaired from trusted group members.",
+  "group_history_repair_failed_empty_title": "History repair needed",
+  "group_history_repair_failed_empty_subtitle": "Some missed messages could not be verified from trusted members.",
+  "group_history_repair_done_banner": "Missed messages were repaired and verified.",
+  "group_history_repair_done_empty_title": "Messages repaired",
+  "group_history_repair_done_empty_subtitle": "Missed messages were verified and restored.",
+  "group_info_leave_failed": "Failed to leave group",
+  "group_info_notifications_muted": "Notifications muted for this group",
+  "group_info_notifications_restored": "Notifications restored for this group",
+  "group_info_delete_local_failed": "Failed to delete group locally",
+  "group_info_publish_member_removal_failed": "Failed to publish member removal",
+  "group_info_rotate_key_failed": "Failed to rotate group key after removal",
+  "group_info_remove_member_failed": "Failed to remove member",
+  "group_info_no_identity": "No identity found",
+  "group_info_member_not_found": "Member not found",
+  "group_info_upload_photo_failed": "Failed to upload group photo",
+  "group_info_sign_metadata_failed": "Failed to sign group metadata update",
+  "groups_title": "Groups",
+  "groups_empty_title": "No groups yet",
+  "groups_empty_desc": "Create a group to get started",
+  "groups_pending_invites": "Pending Invites",
+  "groups_joined": "Joined Groups",
+  "groups_unknown_sender": "Unknown",
+  "groups_no_joined": "No joined groups yet. Accept an invite to add it here.",
+  "group_type_discussion": "Discussion",
+  "group_type_announce": "Announce",
+  "group_type_qa": "Q&A",
+  "group_dissolved_badge": "Dissolved",
+  "pending_invite_expired": "Expired",
+  "pending_invite_accept": "Accept",
+  "pending_invite_decline": "Decline",
+  "pending_invite_dismiss": "Dismiss",
+  "pending_invite_invited_by": "Invited by {username}",
+  "@pending_invite_invited_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "pending_invite_expires": "Expires {date}",
+  "@pending_invite_expires": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "group_no_contacts_available": "No contacts available",
+  "settings_intro_debug_delete_row": "Delete Row",
+  "settings_intro_debug_delete_pair": "Delete Pair",
+  "settings_intro_debug_deleted_row": "Deleted local introduction row",
+  "settings_intro_debug_deleted_pair": "Deleted local pair {pairLabel}",
+  "@settings_intro_debug_deleted_pair": {
+    "placeholders": {
+      "pairLabel": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_intro_debug_heading": "DEBUG INTRODUCTIONS",
+  "settings_intro_debug_description": "Local sent intro rows on this device. Deleting a pair makes it selectable again in the picker.",
+  "settings_intro_debug_empty": "No local introduction rows for the current user.",
+  "settings_intro_debug_status_line": "status={status}  recipient={recipientStatus}  introduced={introducedStatus}",
+  "@settings_intro_debug_status_line": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      },
+      "recipientStatus": {
+        "type": "String"
+      },
+      "introducedStatus": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_intro_debug_meta_line": "id={id}  created={createdAt}",
+  "@settings_intro_debug_meta_line": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "String"
+      }
+    }
+  },
+  "group_start_chat": "Start group chat",
+  "group_reactions_title": "Reactions",
+  "group_add_members_count": "Add Members ({count})",
+  "@group_add_members_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_loading_contacts": "Loading contacts...",
+  "group_send_invites": "Send Invites",
+  "group_send_permission_lost": "You no longer have permission to send messages in this group.",
+  "group_unavailable_snackbar": "This group is no longer available.",
+  "media_retry_unavailable_now": "Retry unavailable right now.",
+  "media_unavailable_now": "Media unavailable right now.",
+  "media_still_unavailable": "Media is still unavailable.",
+  "failed_media_retry_failed": "Could not retry media message.",
+  "failed_media_delete_unavailable": "Delete unavailable right now.",
+  "picker_media_library": "Media Library",
+  "picker_record_video": "Record Video",
+  "perm_microphone_record": "Microphone permission is required to record voice messages.",
+  "group_read_only_not_active": "You can read this group's history, but you are not an active member.",
+  "group_read_only_waiting_key": "Waiting for the current group key before you can send.",
+  "group_read_only_waiting_identity": "Waiting for your identity before you can send.",
+  "group_media_unsupported": "This media type is not supported in groups.",
+  "upload_progress_title": "Uploading media",
+  "upload_progress_keep_open": "Keep the app open until the upload completes",
+  "conversation_blocked_contact": "You blocked this contact.",
+  "conversation_unblock": "Unblock",
+  "conversation_empty_first_letter": "Write the first letter\nto start your conversation",
+  "media_video_load_failed": "Could not load video",
+  "conversation_introduce_to_circle": "Introduce to your circle",
+  "conversation_block_contact": "Block {username}",
+  "@conversation_block_contact": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "conversation_unblock_contact": "Unblock {username}",
+  "@conversation_unblock_contact": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "conversation_delete_chat_action": "Delete chat",
+  "post_pass_along_title": "Pass along",
+  "post_pass_along_desc": "Choose who should receive this one-hop pass.",
+  "post_pass_along_no_eligible": "No eligible friends available right now.",
+  "comments_count": "{count, plural, =0{No comments} =1{1 comment} other{{count} comments}}",
+  "@comments_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "comments_empty": "No comments yet",
+  "edit_pinned_post_title": "Edit pinned post",
+  "post_passed_along_by": "{username} passed this along",
+  "@post_passed_along_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "home_empty_circle_title": "Your circle is waiting to be filled",
+  "home_empty_circle_desc": "Scan a friend's code or share yours to connect",
+  "home_scan_friend_title": "Scan a friend's code",
+  "home_scan_friend_desc": "Add someone to your circle",
+  "contact_request_message": "wants to connect with you",
+  "contact_request_decline": "Decline",
+  "share_caption": "Caption",
+  "share_title_count": "Share with ({count})",
+  "@share_title_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "share_title_empty": "Share with...",
+  "share_no_targets": "No contacts or groups yet",
+  "share_no_matches": "No matches found",
+  "share_contacts_section": "Contacts",
+  "share_groups_section": "Groups",
+  "share_group_type_announcement": "Announcement",
+  "share_group_type_chat": "Chat",
+  "share_sending": "Sending...",
+  "share_send": "Send",
+  "share_target_count": "{count, plural, =1{1 target} other{{count} targets}}",
+  "@share_target_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "share_summary_sent": "Sent to {targetCount}",
+  "@share_summary_sent": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_queued": "saved {targetCount} for retry",
+  "@share_summary_queued": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_failed": "failed for {targetCount}",
+  "@share_summary_failed": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_nothing": "Nothing was shared.",
+  "share_summary_skipped_gifs": "{count, plural, =1{Skipped 1 oversized GIF.} other{Skipped {count} oversized GIFs.}}",
+  "@share_summary_skipped_gifs": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_just_now": "just now",
+  "time_min_ago": "{count, plural, =1{1 min ago} other{{count} min ago}}",
+  "@time_min_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_hour_ago": "{count}h ago",
+  "@time_hour_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_day_ago": "{count}d ago",
+  "@time_day_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_week_ago": "{count}w ago",
+  "@time_week_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expired": "Expired",
+  "post_expires_days_hours": "Expires in {days}d {hours}h",
+  "@post_expires_days_hours": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      },
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_days": "Expires in {days}d",
+  "@post_expires_days": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_hours": "Expires in {hours}h",
+  "@post_expires_hours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_minutes": "Expires in {minutes}m",
+  "@post_expires_minutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_soon": "Expires soon",
+  "post_photo_upload_failed": "Photo upload failed",
+  "post_photo_pending_upload": "Photo pending upload",
+  "post_photos_pending_upload": "Photos pending upload",
+  "post_video_upload_failed": "Video upload failed",
+  "post_video_pending_upload": "Video pending upload",
+  "post_voice_upload_failed": "Voice upload failed",
+  "post_voice_pending_upload": "Voice note pending upload",
+  "post_media_upload_failed": "Media upload failed",
+  "post_media_pending_upload": "Media pending upload",
+  "post_media_upload_failed_desc": "This post stayed local because the media upload did not finish.",
+  "post_media_pending_upload_desc": "Recipients will receive this after the upload finishes.",
+  "post_send_pass": "Send pass",
+  "btn_saving": "Saving...",
+  "intro_from": "From",
+  "intro_empty": "No introductions yet",
+  "intro_tab_desc": "These are people your friends know well. Once you both accept, you can start chatting.",
+  "intro_banner_title": "Help {username} meet your circle",
+  "@intro_banner_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "intro_banner_desc": "Introduce them to friends who might click",
+  "intro_make_introductions": "Make introductions",
+  "intro_maybe_later": "Maybe later",
+  "introduced_by_label": "Introduced by",
+  "intro_unavailable": "Unavailable",
+  "intro_waiting_for": "Waiting for {username}",
+  "@intro_waiting_for": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "intro_waiting_for_them": "Waiting for them",
+  "intro_sent_count": "{count, plural, =1{1 introduction sent} other{{count} introductions sent}}",
+  "@intro_sent_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "intro_back_to_conversation": "Back to conversation",
+  "identity_tagline": "Your identity, your control",
+  "startup_failed_title": "Failed to initialize",
+  "identity_restore_action": "Restore identity",
+  "settings_peer_id_title": "PEER ID",
+  "settings_peer_id_desc": "Your unique identifier on the network",
+  "intro_and_more": "{names} and {count} more",
+  "@intro_and_more": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_block_action": "Block",
+  "orbit_unblock_action": "Unblock",
+  "orbit_delete_action": "Delete",
+  "orbit_archive_action": "Archive",
+  "orbit_unarchive_action": "Unarchive",
+  "orbit_archived_empty_title": "No archived friends yet",
+  "orbit_archived_empty_desc": "Swipe left on a friend to archive them.",
+  "orbit_inner_circle_badge": "Inner Circle",
+  "orbit_inner_circle_title": "YOUR INNER CIRCLE",
+  "orbit_pending_items": "{count, plural, =1{1 item pending} other{{count} items pending}}",
+  "@orbit_pending_items": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_pending_group_invites": "Pending Group Invites",
+  "orbit_pending_group_intro_desc": "Review pending group invites here, then check introductions below. Once you accept, the group appears in Orbit and catches up from offline inbox.",
+  "orbit_no_friends_matching": "No friends matching \"{query}\"",
+  "@orbit_no_friends_matching": {
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_blocked": "Blocked",
+  "feed_introduced_by": "Introduced by {username}",
+  "@feed_introduced_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_previously_seen": "PREVIOUSLY SEEN",
+  "feed_replying_to": "Replying to",
+  "feed_view_earlier_messages": "View earlier messages",
+  "feed_ready_for_user": "Your feed is ready, @{username}. New connections will appear here.",
+  "@feed_ready_for_user": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_loading": "Loading Feed...",
+  "feed_syncing_threads": "Your recent threads are still syncing.",
+  "qr_added_to_circle": "Added to your circle!",
+  "btn_ok": "OK",
+  "qr_already_in_circle": "Already in your circle!",
+  "qr_contact_added_previously": "This contact was added previously",
+  "btn_got_it": "Got it",
+  "orbit_intro_banner_mixed": "{inviteCount, plural, =1{1 group invite} other{{inviteCount} group invites}} and {introCount, plural, =1{1 introduction} other{{introCount} introductions}} waiting",
+  "@orbit_intro_banner_mixed": {
+    "placeholders": {
+      "inviteCount": {
+        "type": "int"
+      },
+      "introCount": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_banner_invites": "{count, plural, =1{Review group invite and join from Intros} other{Review group invites and join from Intros}}",
+  "@orbit_intro_banner_invites": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_banner_intros": "Review and accept introductions to start chatting",
+  "group_member_invited_count": "{count, plural, =1{Member invited} other{{count} members invited}}",
+  "@group_member_invited_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_member_added_count": "{count, plural, =1{1 member added} other{{count} members added}}",
+  "@group_member_added_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_invite_missing_key_issue": "invites were not sent because the group is missing its latest key",
+  "group_invite_issues": "invite issues: {details}",
+  "@group_invite_issues": {
+    "placeholders": {
+      "details": {
+        "type": "String"
+      }
+    }
+  },
+  "group_members_publish_failed_issue": "the add-members event could not be published",
+  "group_member_added_with_warnings": "{prefix}, but {issues}.",
+  "@group_member_added_with_warnings": {
+    "placeholders": {
+      "prefix": {
+        "type": "String"
+      },
+      "issues": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_joined": "Joined {name}",
+  "@group_invite_joined": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_no_longer_available": "Invite no longer available",
+  "group_invite_expired": "Invite expired",
+  "group_invite_revoked": "Invite was revoked",
+  "group_invite_already_used": "Invite already used",
+  "group_invite_wrong_identity": "Invite is for another identity",
+  "group_invite_needs_key": "Invite needs fresh key material",
+  "group_invite_invalid": "Invite is no longer valid",
+  "group_invite_duplicate_group": "Group already added",
+  "group_invite_joined_recovery": "Joined {name}, but recovery is still catching up",
+  "@group_invite_joined_recovery": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_accepted_recovery": "Invite accepted, but recovery is still catching up",
+  "group_invite_accept_failed": "Failed to accept invite",
+  "group_invite_declined": "Invite declined",
+  "group_invite_decline_failed": "Failed to decline invite",
+  "post_pin_retrying": "Pin update will continue retrying",
+  "post_pin_queued": "Pin update queued for retry",
+  "post_pin_failed": "Pin update failed",
+  "post_pin_could_not": "Could not pin post",
+  "post_pinned_update_retrying": "Pinned post update will continue retrying",
+  "post_pinned_update_queued": "Pinned post update queued for retry",
+  "post_pinned_update_failed": "Pinned post update failed",
+  "post_pinned_update_could_not": "Could not update pinned post",
+  "post_pin_removal_retrying": "Pin removal will continue retrying",
+  "post_pin_removal_queued": "Pin removal queued for retry",
+  "post_pin_removal_failed": "Pin removal failed",
+  "post_pin_remove_could_not": "Could not remove pin",
+  "post_repost_retrying": "Repost will continue retrying",
+  "post_repost_queued": "Repost queued for retry",
+  "post_repost_media_failed": "Could not prepare repost media",
+  "post_repost_could_not": "Could not prepare repost",
+  "post_no_longer_available": "Post is no longer available",
+  "post_repost_not_allowed": "This post cannot be reposted",
+  "identity_generate_failed": "Failed to generate identity",
+  "identity_save_failed": "Failed to save identity",
+  "qr_no_identity_detail": "No identity found. Please create one first.",
+  "qr_sign_failed": "Failed to sign QR code. Please try again.",
+  "qr_unexpected_error": "An unexpected error occurred. Please try again.",
+  "qr_invalid_title": "Invalid QR Code",
+  "qr_invalid_body": "This doesn't look like a valid contact QR code.",
+  "qr_incomplete_title": "Incomplete QR Code",
+  "qr_incomplete_body": "This QR code is missing required information.",
+  "qr_invalid_signature_title": "Invalid Signature",
+  "qr_invalid_signature_body": "This QR code could not be verified.",
+  "qr_expired_title": "Expired QR Code",
+  "qr_expired_body": "This QR code has expired. Ask your friend for a new one.",
+  "qr_self_title": "That's You!",
+  "qr_self_body": "You can't add yourself as a contact.",
+  "qr_add_failed": "Failed to add contact. Please try again."
 }

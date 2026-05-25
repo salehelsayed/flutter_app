@@ -1340,10 +1340,14 @@ class GroupMessageListener {
         'member_added' || 'members_added' => _parseMembershipEventAt(
           parsed['eventAt'] as String?,
         ),
+        'member_role_updated' => _parseMembershipEventAt(
+          parsed['eventAt'] as String?,
+        ),
         _ => null,
       };
       final eventAt = switch (sysType) {
         'member_removed' => explicitMembershipEventAt ?? envelopeEventAt,
+        'member_role_updated' => explicitMembershipEventAt ?? envelopeEventAt,
         'group_dissolved' =>
           _parseMembershipEventAt(parsed['dissolvedAt'] as String?) ??
               envelopeEventAt,

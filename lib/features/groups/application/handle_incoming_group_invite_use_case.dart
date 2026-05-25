@@ -5,7 +5,6 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
-import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
@@ -853,6 +852,7 @@ materializeAcceptedGroupInvitePayload({
   final metadataUpdatedAt = metadataUpdatedAtStr != null
       ? DateTime.tryParse(metadataUpdatedAtStr)?.toUtc()
       : null;
+  final membershipWatermarkAt = _parseInviteMembershipWatermark(payload);
 
   // 6. Persist GroupModel with myRole = member
   final groupModel = GroupModel(
@@ -867,14 +867,13 @@ materializeAcceptedGroupInvitePayload({
     createdBy: createdBy,
     myRole: GroupRole.member,
     lastMetadataEventAt: metadataUpdatedAt,
-    lastMembershipEventAt: _parseGroupConfigVersion(config),
+    lastMembershipEventAt: membershipWatermarkAt,
   );
   await groupRepo.saveGroup(groupModel);
 
   // 7. Persist members from config
   final membersList = config['members'] as List<dynamic>? ?? [];
   final materializedAt = DateTime.now().toUtc();
-  final configVersionAt = _parseGroupConfigVersion(config);
   for (final memberMap in membersList) {
     final m = Map<String, dynamic>.from(memberMap as Map);
     final member = GroupMember.fromConfigMap(
@@ -882,7 +881,7 @@ materializeAcceptedGroupInvitePayload({
       map: m,
       joinedAt: _acceptedMemberJoinedAt(
         m,
-        configVersionAt: configVersionAt,
+        membershipWatermarkAt: membershipWatermarkAt,
         materializedAt: materializedAt,
       ),
     );
@@ -975,9 +974,9 @@ materializeAcceptedGroupInvitePayload({
   return (HandleGroupInviteResult.success, payload.groupId);
 }
 
-DateTime? _parseGroupConfigVersion(Map<String, dynamic> config) {
-  final raw = config[groupConfigVersionField];
-  if (raw is! String || raw.trim().isEmpty) {
+DateTime? _parseInviteMembershipWatermark(GroupInvitePayload payload) {
+  final raw = payload.membershipFreshnessProof?.membershipWatermark;
+  if (raw == null || raw.trim().isEmpty) {
     return null;
   }
   return DateTime.tryParse(raw)?.toUtc();
@@ -985,7 +984,7 @@ DateTime? _parseGroupConfigVersion(Map<String, dynamic> config) {
 
 DateTime _acceptedMemberJoinedAt(
   Map<String, dynamic> member, {
-  required DateTime? configVersionAt,
+  required DateTime? membershipWatermarkAt,
   required DateTime materializedAt,
 }) {
   final rawJoinedAt = member['joinedAt'] ?? member['joined_at'];
@@ -995,7 +994,7 @@ DateTime _acceptedMemberJoinedAt(
       return parsed;
     }
   }
-  return configVersionAt ?? materializedAt;
+  return membershipWatermarkAt ?? materializedAt;
 }
 
 bool _isRepairableJoinMaterialError(BridgeCommandException error) {

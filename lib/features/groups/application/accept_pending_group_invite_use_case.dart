@@ -727,6 +727,9 @@ Future<void> _publishAcceptedJoinTimelineIfPossible({
       senderPublicKey: senderPublicKey,
       senderPrivateKey: senderPrivateKey,
       senderUsername: senderUsername ?? '',
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+      senderKeyPackageId: senderKeyPackageId,
     );
   } catch (e) {
     emitFlowEvent(
@@ -748,6 +751,10 @@ Future<void> _publishAcceptedJoinTimelineIfPossible({
     'groupId': groupId,
     'senderId': senderPeerId,
     'senderUsername': senderUsername ?? '',
+    if (senderDeviceId != null && senderDeviceId.isNotEmpty)
+      'senderDeviceId': senderDeviceId,
+    if (senderTransportPeerId != null && senderTransportPeerId.isNotEmpty)
+      'transportPeerId': senderTransportPeerId,
     'text': sysText,
     'timestamp': joinedAt.toIso8601String(),
     'messageId': timelineMessage.id,

@@ -8712,6 +8712,71 @@ void main() {
       },
     );
 
+    test(
+      'signed member_role_updated uses payload eventAt instead of envelope timestamp',
+      () async {
+        listener.start(sourceController.stream);
+
+        final roleEventAt = DateTime.utc(2026, 5, 25, 10, 15);
+        final envelopeEventAt = roleEventAt.add(const Duration(seconds: 42));
+        final rolePayload = {
+          '__sys': 'member_role_updated',
+          'eventAt': roleEventAt.toIso8601String(),
+          'member': {
+            'peerId': 'peer-sender',
+            'username': 'Sender',
+            'role': 'admin',
+            'publicKey': 'pk-sender',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'admin',
+                'publicKey': 'pk-sender',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.utc(2026, 4, 30).toIso8601String(),
+          },
+        };
+        final signedRolePayload = await signedAuditSystemPayload(
+          transitionType: 'member_role_updated',
+          sourceEventId: 'role-event-payload-time',
+          eventAt: roleEventAt,
+          systemPayload: rolePayload,
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'role-event-payload-time',
+          'text': jsonEncode(signedRolePayload),
+          'timestamp': envelopeEventAt.toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          (await groupRepo.getMember('group-1', 'peer-sender'))!.role,
+          MemberRole.admin,
+        );
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          roleEventAt,
+        );
+      },
+    );
+
     test('unauthorized member_role_updated is ignored', () async {
       listener.start(sourceController.stream);
 

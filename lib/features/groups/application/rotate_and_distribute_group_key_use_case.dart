@@ -395,6 +395,10 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         senderPublicKey: senderPublicKey,
         senderPrivateKey: senderPrivateKey,
         senderUsername: senderUsername,
+        senderDeviceId: sourceDevice?.deviceId,
+        senderTransportPeerId: sourceDevice?.transportPeerId,
+        senderDevicePublicKey: sourceDevice?.deviceSigningPublicKey,
+        senderKeyPackageId: sourceDevice?.keyPackageId,
         messageId: sourceEventId,
       );
     } catch (e) {
