@@ -1,13 +1,13 @@
 {
   "@@locale": "ar",
-  "nav_feed": "المحادثات",
+  "nav_feed": "الخلاصة",
   "nav_remember": "الذكريات",
   "nav_posts": "المنشورات",
   "nav_orbit": "الدائرة",
   "onboarding_new_here": "أنا جديد هنا",
   "onboarding_new_desc": "أنشئ هوية جديدة",
   "onboarding_load_key": "استرجاع مفتاحي",
-  "onboarding_load_desc": "استعدها باستخدام عبارة الاسترداد",
+  "onboarding_load_desc": "استعد هويتك باستخدام عبارة الاسترداد",
   "onboarding_privacy_1": "أنت وحدك من يمكنه قراءة رسائلك",
   "onboarding_privacy_2": "كل شيء يبقى على هاتفك. لا أحد يراقبك.",
   "progress_securing": "جارٍ تأمين هويتك",
@@ -58,7 +58,7 @@
   "compose_audience_all": "كل الأصدقاء",
   "compose_audience_nearby": "القريبون منك",
   "compose_audience_pick": "اختر أشخاصًا",
-  "compose_radius": "المسافة",
+  "compose_radius": "النطاق",
   "compose_radius_500": "500م",
   "compose_radius_1k": "1كم",
   "compose_radius_2k": "2كم",
@@ -67,7 +67,7 @@
   "compose_voice": "رسالة صوتية",
   "compose_voice_stop": "إيقاف",
   "compose_voice_attached": "تم إرفاق رسالة صوتية",
-  "compose_attachments": "{count} مرفقات",
+  "compose_attachments": "{count, plural, =0{لا مرفقات} =1{مرفق واحد} =2{مرفقان} few{{count} مرفقات} many{{count} مرفقًا} other{{count} مرفق}}",
   "@compose_attachments": {
     "placeholders": {
       "count": {
@@ -181,8 +181,8 @@
   "conversation_cancel_edit": "إلغاء",
   "conversation_edited_indicator": "(تم التعديل)",
   "conversation_delete_message_prompt": "لمن تريد حذف هذه الرسالة؟",
-  "conversation_delete_for_me": "حذف لدي",
-  "conversation_delete_for_everyone": "حذف لدى الجميع",
+  "conversation_delete_for_me": "الحذف لديّ",
+  "conversation_delete_for_everyone": "الحذف للجميع",
   "conversation_delete_cancel": "إلغاء",
   "conversation_message_deleted": "تم حذف هذه الرسالة",
   "conversation_delete_failed": "تعذر إكمال حذف هذه الرسالة.",
@@ -214,7 +214,7 @@
       }
     }
   },
-  "picker_introduce_to": "تعريفهم إلى {username}",
+  "picker_introduce_to": "تقديم إلى {username}",
   "@picker_introduce_to": {
     "placeholders": {
       "username": {
@@ -271,15 +271,15 @@
   "settings_background_semantics": "إعداد خلفية التطبيق",
   "settings_background_default_selected": "تم اختيار الافتراضية",
   "settings_video_quality": "جودة الفيديو",
-  "settings_compressed": "مضغوط",
-  "settings_original": "أصلي",
+  "settings_compressed": "المضغوطة",
+  "settings_original": "الأصلية",
   "settings_original_desc": "جودة كاملة وحجم ملف أكبر. تتم إزالة البيانات الوصفية دائمًا.",
   "settings_compressed_desc": "حجم ملف أصغر وإرسال أسرع. تتم إزالة البيانات الوصفية دائمًا.",
   "settings_photo_fail": "فشل رفع الصورة الشخصية",
   "picker_take_photo": "التقاط صورة",
   "picker_gallery": "اختر من المعرض",
   "notif_new_intro": "تعارف جديد",
-  "notif_new_connection": "اتصال جديد",
+  "notif_new_connection": "صلة جديدة",
   "startup_checking": "جارٍ تجهيز مساحتك...",
   "startup_checking_desc": "جارٍ التحقق من الهوية وحالة البدء",
   "startup_feed": "جارٍ فتح الخلاصة...",
@@ -317,7 +317,7 @@
   "perm_location": "يحتاج هذا التطبيق إلى الوصول إلى الموقع لمشاركة المنشورات القريبة مع أصدقائك المباشرين",
   "perm_local_network": "يبحث mknoon عن أصدقائك على نفس شبكة Wi‑Fi لإرسال الرسائل مباشرة إلى هواتفهم. هذا أسرع وأكثر خصوصية، ونحن لا نجمع بياناتك أبدًا.",
   "perm_notifications": "يحتاج هذا التطبيق إلى الوصول إلى الإشعارات لتنبيهك عند وصول رسائل جديدة",
-  "connected_date": "تم الاتصال {date}",
+  "connected_date": "تمت الإضافة في {date}",
   "@connected_date": {
     "placeholders": {
       "date": {
@@ -344,12 +344,12 @@
   "settings_share_nearby_off": "معطّل",
   "settings_share_nearby_desc": "يشارك موقعًا تقريبيًا فقط مع الأصدقاء المباشرين. لا خرائط مباشرة، ولا غرباء أبدًا.",
   "settings_recovery_title": "عبارة الاسترداد",
-  "settings_recovery_warning": "لا تشارك هذه العبارة مع أي شخص. تمنح الوصول الكامل إلى حسابك.",
+  "settings_recovery_warning": "لا تشارك هذه العبارة أبدًا مع أي شخص. فهي تمنح وصولًا كاملًا إلى حسابك.",
   "settings_recovery_tap": "اضغط للكشف",
   "settings_recovery_copied": "تم النسخ!",
   "settings_recovery_copy": "نسخ إلى الحافظة",
   "settings_recovery_hide": "إخفاء",
-  "connected_title": "!تم الاتصال",
+  "connected_title": "تمت الإضافة!",
   "send_message": "إرسال رسالة",
   "introduced_by": "تم التعريف بواسطة {username}",
   "@introduced_by": {
@@ -358,5 +358,859 @@
         "type": "String"
       }
     }
-  }
+  },
+  "load_retry_hint": "تحقق من اتصالك وحاول مرة أخرى.",
+  "upload_leave_title": "مغادرة المحادثة؟",
+  "upload_leave_body": "هناك رفع جارٍ. قد تؤدي المغادرة إلى مقاطعته. هل أنت متأكد؟",
+  "upload_leave_stay": "البقاء",
+  "upload_leave_confirm": "مغادرة",
+  "upload_cancelled": "تم إلغاء الرفع.",
+  "media_too_large_title": "الوسائط كبيرة جدًا",
+  "media_too_large_prompt": "حجم الوسائط المرفقة {totalSize} ويتجاوز حد {limitSize}. هل تريد ضغطها وإرسالها أم الإلغاء؟",
+  "@media_too_large_prompt": {
+    "placeholders": {
+      "totalSize": {
+        "type": "String"
+      },
+      "limitSize": {
+        "type": "String"
+      }
+    }
+  },
+  "media_compress": "ضغط",
+  "media_too_large_after_compress": "ما زالت الوسائط كبيرة جدًا حتى بعد الضغط.",
+  "media_gif_too_large": "لا يمكن إضافة ملفات GIF أكبر من 25 م.ب.",
+  "media_unavailable": "الوسائط غير متاحة",
+  "media_retry_unavailable": "إعادة تحميل الوسائط غير المتاحة",
+  "edit_save_failed": "فشل حفظ التعديل.",
+  "intro_pass": "تمرير",
+  "intro_accept": "قبول",
+  "intro_accepting": "جارٍ القبول...",
+  "failed_message_retry_semantics": "إعادة محاولة إرسال الرسالة الفاشلة",
+  "failed_media_retry_semantics": "إعادة محاولة رسالة الوسائط الفاشلة",
+  "failed_media_delete_semantics": "حذف رسالة الوسائط الفاشلة",
+  "message_status_semantics": "حالة الرسالة: {status}",
+  "@message_status_semantics": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "message_status_delivered": "تم التسليم",
+  "message_status_failed": "فشل",
+  "message_status_sending": "جارٍ الإرسال",
+  "message_status_sent": "تم الإرسال",
+  "message_status_pending_inbox": "تسليم معلّق عبر صندوق الوارد",
+  "share_send_failed": "تعذرت المشاركة مع الأهداف المحددة.",
+  "group_info_title": "معلومات المجموعة",
+  "group_edit_details": "تعديل التفاصيل",
+  "group_member_count": "{count, plural, =1{عضو واحد} =2{عضوان} few{{count} أعضاء} many{{count} عضوًا} other{{count} عضو}}",
+  "@group_member_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_title": "الأمان",
+  "group_security_key_change_visible": "تغيير المفتاح ظاهر",
+  "group_security_verification_warning": "تحذير التحقق",
+  "group_security_identity_warning_detail": "{count, plural, =1{تغيّرت هوية واحدة. راجع أرقام الأمان أدناه.} =2{تغيّرت هويتان. راجع أرقام الأمان أدناه.} few{تغيّرت {count} هويات. راجع أرقام الأمان أدناه.} many{تغيّرت {count} هوية. راجع أرقام الأمان أدناه.} other{تغيّرت {count} هوية. راجع أرقام الأمان أدناه.}}",
+  "@group_security_identity_warning_detail": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_dissolved": "تم حل المجموعة",
+  "group_dissolved_read_only_desc": "أصبحت هذه المحادثة للقراءة فقط. تبقى الرسائل السابقة متاحة للرجوع إليها.",
+  "group_mute_notifications": "كتم الإشعارات",
+  "group_mute_on_desc": "ستظل الرسائل الجديدة تصل، لكن هذه المجموعة ستبقى صامتة.",
+  "group_mute_off_desc": "ستتلقى إشعارًا عند وصول رسائل جديدة في هذه المجموعة.",
+  "group_members_title": "الأعضاء",
+  "group_add_member": "إضافة عضو",
+  "group_leave": "مغادرة المجموعة",
+  "group_dissolve": "حل المجموعة",
+  "group_delete_from_device": "الحذف من هذا الجهاز",
+  "group_delete_local_desc": "احتفظ بسجل هذه المجموعة المحلولة كما تريد، أو أزله من هذا الجهاز فقط. لن يؤثر ذلك في أي شخص آخر.",
+  "group_delete_locally": "حذف المجموعة محليًا",
+  "group_no_messages": "لا توجد رسائل بعد",
+  "group_empty_dissolved_desc": "تم حل هذه المجموعة. تم تعطيل الرسائل الجديدة.",
+  "group_empty_start": "أرسل رسالة لبدء المحادثة",
+  "group_empty_waiting": "في انتظار الرسائل",
+  "group_recovery_banner": "جارٍ استدراك الرسائل الفائتة. ستظل الرسائل الجديدة تظهر هنا.",
+  "group_read_only_dissolved": "تم حل هذه المجموعة. يبقى السجل متاحًا، لكن الرسائل الجديدة معطّلة.",
+  "group_read_only_admin_only": "يمكن للمشرفين فقط إرسال الرسائل في هذه المجموعة",
+  "group_removed_snackbar": "تمت إزالتك من هذه المجموعة.",
+  "group_dissolved_snackbar": "تم حل هذه المجموعة",
+  "group_info_mute_update_failed": "فشل تحديث الكتم",
+  "group_info_dissolve_title": "حل هذه المجموعة للجميع؟",
+  "group_info_dissolve_body": "ينهي هذا المجموعة لكل الأعضاء. يبقى السجل مرئيًا، لكن لن يستطيع أحد إرسال رسائل جديدة بعد حلها.",
+  "group_info_dissolve_action": "حل",
+  "group_info_dissolved_recovery": "تم حل المجموعة. قد يحتاج بعض الأعضاء إلى الاسترداد لرؤية ذلك.",
+  "group_info_already_dissolved": "المجموعة محلولة بالفعل",
+  "group_info_admins_only_dissolve": "يمكن للمشرفين فقط حل المجموعات",
+  "group_info_not_found": "لم تعد المجموعة موجودة",
+  "group_info_dissolve_failed": "فشل حل المجموعة",
+  "group_info_delete_local_title": "حذف هذه المجموعة المحلولة من هذا الجهاز؟",
+  "group_info_delete_local_body": "يزيل هذا السجل المحلول من هذا الجهاز فقط. لن يؤثر في أي شخص آخر ولن يرسل حدث مغادرة جديدًا.",
+  "group_info_delete_local_action": "حذف محليًا",
+  "group_info_remove_member_title": "إزالة {username} من المجموعة؟",
+  "@group_info_remove_member_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_remove_member_body": "سيتوقف هذا الشخص عن تلقي رسائل جديدة من هذه المجموعة.",
+  "group_info_remove_action": "إزالة",
+  "group_info_member_fallback": "عضو",
+  "group_info_make_admin_title": "جعل {username} مشرفًا؟",
+  "@group_info_make_admin_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_remove_admin_title": "إزالة صلاحية المشرف من {username}؟",
+  "@group_info_remove_admin_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_make_admin_body": "سيتمكن هذا الشخص من إضافة الأعضاء وإزالتهم وإدارتهم.",
+  "group_info_remove_admin_body": "سيفقد هذا الشخص إجراءات المشرف فقط بعد مزامنة التغيير.",
+  "group_info_make_admin_action": "جعله مشرفًا",
+  "group_info_remove_admin_action": "إزالة المشرف",
+  "group_info_admin_added": "أصبح {username} مشرفًا الآن",
+  "@group_info_admin_added": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_admin_removed": "لم يعد {username} مشرفًا",
+  "@group_info_admin_removed": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_member_role_update_failed": "فشل تحديث دور العضو",
+  "group_info_details_updated": "تم تحديث تفاصيل المجموعة",
+  "group_info_details_update_failed": "فشل تحديث تفاصيل المجموعة",
+  "group_info_invite_resend_failed": "فشل إعادة إرسال الدعوة",
+  "group_info_invite_sent": "تم إرسال الدعوة إلى {username}",
+  "@group_info_invite_sent": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_queued": "الدعوة في صندوق وارد {username}",
+  "@group_info_invite_queued": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_needs_resend": "ما زالت الدعوة تحتاج إلى إعادة إرسال",
+  "group_info_invite_joined": "انضم {username} بالفعل",
+  "@group_info_invite_joined": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_unknown": "حالة الدعوة غير معروفة",
+  "group_edit_photo_pick_failed": "فشل اختيار صورة المجموعة",
+  "group_edit_details_title": "تعديل تفاصيل المجموعة",
+  "group_edit_change_photo": "تغيير الصورة",
+  "group_edit_add_photo": "إضافة صورة",
+  "group_edit_remove_photo": "إزالة الصورة",
+  "group_edit_name": "اسم المجموعة",
+  "group_edit_description": "الوصف",
+  "btn_save": "حفظ",
+  "group_member_sending": "جارٍ الإرسال...",
+  "group_member_resend": "إعادة الإرسال",
+  "group_member_manage_role": "إدارة الدور",
+  "group_role_admin": "مشرف",
+  "group_role_writer": "كاتب",
+  "group_role_reader": "قارئ",
+  "group_identity_changed": "تغيّرت الهوية",
+  "group_current_safety": "الأمان الحالي",
+  "group_saved_safety": "الأمان المحفوظ",
+  "group_card_no_messages": "لا توجد رسائل بعد",
+  "group_security_encrypted": "مشفّر من الطرف إلى الطرف",
+  "group_security_pending": "التشفير معلّق",
+  "group_security_no_key": "لا يوجد مفتاح مجموعة على هذا الجهاز",
+  "group_security_key_changed": "تغيّر مفتاح المجموعة إلى الحقبة {keyEpoch}",
+  "@group_security_key_changed": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_current_key_epoch": "حقبة المفتاح الحالية {keyEpoch}",
+  "@group_security_current_key_epoch": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_no_members": "لا يوجد أعضاء للتحقق منهم",
+  "group_security_all_members_verified": "{count, plural, =1{تم التحقق من عضو واحد} =2{تم التحقق من عضوين} few{تم التحقق من {count} أعضاء} many{تم التحقق من {count} عضوًا} other{تم التحقق من {count} عضو}}",
+  "@group_security_all_members_verified": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_verified": "تم التحقق من {verifiedCount} من أصل {memberCount} عضو",
+  "@group_security_members_verified": {
+    "placeholders": {
+      "verifiedCount": {
+        "type": "int"
+      },
+      "memberCount": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_need_review": "{count, plural, =1{عضو واحد يحتاج إلى مراجعة التحقق} =2{عضوان يحتاجان إلى مراجعة التحقق} few{{count} أعضاء يحتاجون إلى مراجعة التحقق} many{{count} عضوًا يحتاجون إلى مراجعة التحقق} other{{count} عضو يحتاج إلى مراجعة التحقق}}",
+  "@group_security_members_need_review": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_unverified": "{count, plural, =1{عضو واحد غير متحقق منه من جهات الاتصال المحفوظة} =2{عضوان غير متحقق منهما من جهات الاتصال المحفوظة} few{{count} أعضاء غير متحقق منهم من جهات الاتصال المحفوظة} many{{count} عضوًا غير متحقق منهم من جهات الاتصال المحفوظة} other{{count} عضو غير متحقق منه من جهات الاتصال المحفوظة}}",
+  "@group_security_members_unverified": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_no_warnings": "لا توجد تحذيرات تحقق",
+  "group_security_compact_encrypted_epoch": "مشفّر - حقبة المفتاح {keyEpoch}",
+  "@group_security_compact_encrypted_epoch": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "invite_status_sent": "تم إرسال الدعوة",
+  "invite_status_queued": "في صندوق الوارد لديهم",
+  "invite_status_needs_resend": "تحتاج إلى إعادة إرسال",
+  "invite_status_cannot_send": "تعذر الإرسال",
+  "invite_status_joined": "انضم",
+  "invite_status_unknown": "الدعوة غير معروفة",
+  "invite_cannot_send_missing_secure_key_detail": "لا نملك المعلومات الآمنة المطلوبة لدعوة هذا الصديق. اطلب منه فتح التطبيق أو إعادة تثبيته، ثم حاول مرة أخرى.",
+  "invite_cannot_send_group_key_missing_detail": "تفتقد هذه المجموعة مفتاح الدعوة الآمن. أعد فتح التطبيق وحاول مرة أخرى.",
+  "invite_cannot_send_invalid_payload_detail": "تعذر تجهيز هذه الدعوة. أعد فتح التطبيق وحاول مرة أخرى.",
+  "invite_cannot_send_generic_detail": "تعذر تجهيز دعوة آمنة لهذا الصديق. قد يحتاج إلى فتح التطبيق أو إعادة تثبيته قبل أن تتمكن من دعوته.",
+  "invite_cannot_send_missing_secure_key_snackbar": "تعذر الإرسال: لا نملك المعلومات الآمنة المطلوبة لدعوة هذا الصديق.",
+  "invite_cannot_send_group_key_missing_snackbar": "تعذر الإرسال: تفتقد هذه المجموعة مفتاح الدعوة الآمن.",
+  "invite_cannot_send_invalid_payload_snackbar": "تعذر الإرسال: تعذر تجهيز هذه الدعوة.",
+  "invite_cannot_send_generic_snackbar": "تعذر الإرسال: تعذر تجهيز دعوة آمنة لهذا الصديق.",
+  "group_backlog_mixed_list_summary": "انتهت صلاحية السجل الأقدم بعد {days} يومًا",
+  "@group_backlog_mixed_list_summary": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_mixed_banner": "انتهت صلاحية الرسائل الفائتة الأقدم بعد {days} يومًا. تمت استعادة الرسائل الحديثة.",
+  "@group_backlog_mixed_banner": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_mixed_empty_title": "تمت استعادة الرسائل الحديثة",
+  "group_backlog_mixed_empty_subtitle": "انتهت صلاحية الرسائل الفائتة الأقدم بعد {days} يومًا أثناء غيابك.",
+  "@group_backlog_mixed_empty_subtitle": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_list_summary": "انتهت صلاحية السجل الفائت بعد {days} يومًا",
+  "@group_backlog_expired_list_summary": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_banner": "انتهت صلاحية الرسائل الفائتة الأقدم من {days} يومًا أثناء غيابك.",
+  "@group_backlog_expired_banner": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_empty_title": "انتهت صلاحية السجل الأقدم",
+  "group_backlog_expired_empty_subtitle": "انتهت صلاحية الرسائل الفائتة الأقدم من {days} يومًا أثناء غيابك.",
+  "@group_backlog_expired_empty_subtitle": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_history_repair_active_banner": "يجري إصلاح بعض الرسائل الفائتة من أعضاء موثوقين في المجموعة.",
+  "group_history_repair_active_empty_title": "جارٍ إصلاح الرسائل الفائتة",
+  "group_history_repair_active_empty_subtitle": "يجري التحقق من بعض الرسائل الفائتة قبل أن تظهر هنا.",
+  "group_history_repair_failed_banner": "تعذر إصلاح بعض الرسائل الفائتة من أعضاء موثوقين في المجموعة.",
+  "group_history_repair_failed_empty_title": "يلزم إصلاح السجل",
+  "group_history_repair_failed_empty_subtitle": "تعذر التحقق من بعض الرسائل الفائتة من أعضاء موثوقين.",
+  "group_history_repair_done_banner": "تم إصلاح الرسائل الفائتة والتحقق منها.",
+  "group_history_repair_done_empty_title": "تم إصلاح الرسائل",
+  "group_history_repair_done_empty_subtitle": "تم التحقق من الرسائل الفائتة واستعادتها.",
+  "group_info_leave_failed": "فشل مغادرة المجموعة",
+  "group_info_notifications_muted": "تم كتم إشعارات هذه المجموعة",
+  "group_info_notifications_restored": "تمت إعادة إشعارات هذه المجموعة",
+  "group_info_delete_local_failed": "فشل حذف المجموعة محليًا",
+  "group_info_publish_member_removal_failed": "فشل نشر إزالة العضو",
+  "group_info_rotate_key_failed": "فشل تدوير مفتاح المجموعة بعد الإزالة",
+  "group_info_remove_member_failed": "فشل إزالة العضو",
+  "group_info_no_identity": "لم يتم العثور على هوية",
+  "group_info_member_not_found": "لم يتم العثور على العضو",
+  "group_info_upload_photo_failed": "فشل رفع صورة المجموعة",
+  "group_info_sign_metadata_failed": "فشل توقيع تحديث بيانات المجموعة",
+  "groups_title": "المجموعات",
+  "groups_empty_title": "لا توجد مجموعات بعد",
+  "groups_empty_desc": "أنشئ مجموعة للبدء",
+  "groups_pending_invites": "الدعوات المعلقة",
+  "groups_joined": "المجموعات المنضم إليها",
+  "groups_unknown_sender": "غير معروف",
+  "groups_no_joined": "لا توجد مجموعات منضم إليها بعد. اقبل دعوة لإضافتها هنا.",
+  "group_type_discussion": "نقاش",
+  "group_type_announce": "إعلان",
+  "group_type_qa": "أسئلة",
+  "group_dissolved_badge": "محلولة",
+  "pending_invite_expired": "منتهية",
+  "pending_invite_accept": "قبول",
+  "pending_invite_decline": "رفض",
+  "pending_invite_dismiss": "إخفاء",
+  "pending_invite_invited_by": "دعوة من {username}",
+  "@pending_invite_invited_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "pending_invite_expires": "تنتهي في {date}",
+  "@pending_invite_expires": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "group_no_contacts_available": "لا توجد جهات اتصال متاحة",
+  "settings_intro_debug_delete_row": "حذف الصف",
+  "settings_intro_debug_delete_pair": "حذف الزوج",
+  "settings_intro_debug_deleted_row": "تم حذف صف التعارف المحلي",
+  "settings_intro_debug_deleted_pair": "تم حذف الزوج المحلي {pairLabel}",
+  "@settings_intro_debug_deleted_pair": {
+    "placeholders": {
+      "pairLabel": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_intro_debug_heading": "تعريفات التصحيح",
+  "settings_intro_debug_description": "صفوف التعارف المرسلة محليًا على هذا الجهاز. يؤدي حذف زوج إلى إتاحته مرة أخرى في أداة الاختيار.",
+  "settings_intro_debug_empty": "لا توجد صفوف تعارف محلية للمستخدم الحالي.",
+  "settings_intro_debug_status_line": "الحالة={status}  المستلم={recipientStatus}  المُعرَّف={introducedStatus}",
+  "@settings_intro_debug_status_line": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      },
+      "recipientStatus": {
+        "type": "String"
+      },
+      "introducedStatus": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_intro_debug_meta_line": "المعرّف={id}  تم الإنشاء={createdAt}",
+  "@settings_intro_debug_meta_line": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "String"
+      }
+    }
+  },
+  "group_start_chat": "بدء دردشة جماعية",
+  "group_reactions_title": "التفاعلات",
+  "group_add_members_count": "إضافة أعضاء ({count})",
+  "@group_add_members_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_loading_contacts": "جارٍ تحميل جهات الاتصال...",
+  "group_send_invites": "إرسال الدعوات",
+  "group_send_permission_lost": "لم تعد تملك صلاحية إرسال الرسائل في هذه المجموعة.",
+  "group_unavailable_snackbar": "لم تعد هذه المجموعة متاحة.",
+  "media_retry_unavailable_now": "إعادة المحاولة غير متاحة الآن.",
+  "media_unavailable_now": "الوسائط غير متاحة الآن.",
+  "media_still_unavailable": "لا تزال الوسائط غير متاحة.",
+  "failed_media_retry_failed": "تعذرت إعادة محاولة رسالة الوسائط.",
+  "failed_media_delete_unavailable": "الحذف غير متاح الآن.",
+  "picker_media_library": "مكتبة الوسائط",
+  "picker_record_video": "تسجيل فيديو",
+  "perm_microphone_record": "يلزم إذن الميكروفون لتسجيل الرسائل الصوتية.",
+  "group_read_only_not_active": "يمكنك قراءة سجل هذه المجموعة، لكنك لست عضوًا نشطًا.",
+  "group_read_only_waiting_key": "بانتظار مفتاح المجموعة الحالي قبل أن تتمكن من الإرسال.",
+  "group_read_only_waiting_identity": "بانتظار هويتك قبل أن تتمكن من الإرسال.",
+  "group_media_unsupported": "هذا النوع من الوسائط غير مدعوم في المجموعات.",
+  "upload_progress_title": "جارٍ رفع الوسائط",
+  "upload_progress_keep_open": "أبقِ التطبيق مفتوحًا حتى يكتمل الرفع",
+  "conversation_blocked_contact": "لقد حظرت جهة الاتصال هذه.",
+  "conversation_unblock": "إلغاء الحظر",
+  "conversation_empty_first_letter": "اكتب الرسالة الأولى\nلبدء محادثتكما",
+  "media_video_load_failed": "تعذر تحميل الفيديو",
+  "conversation_introduce_to_circle": "عرّفه إلى دائرتك",
+  "conversation_block_contact": "حظر {username}",
+  "@conversation_block_contact": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "conversation_unblock_contact": "إلغاء حظر {username}",
+  "@conversation_unblock_contact": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "conversation_delete_chat_action": "حذف المحادثة",
+  "post_pass_along_title": "تمرير المنشور",
+  "post_pass_along_desc": "اختر من يجب أن يستلم هذا التمرير بخطوة واحدة.",
+  "post_pass_along_no_eligible": "لا يوجد أصدقاء مؤهلون الآن.",
+  "comments_count": "{count, plural, =0{لا تعليقات} =1{تعليق واحد} =2{تعليقان} few{{count} تعليقات} many{{count} تعليقًا} other{{count} تعليق}}",
+  "@comments_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "comments_empty": "لا توجد تعليقات بعد",
+  "edit_pinned_post_title": "تعديل المنشور المثبّت",
+  "post_passed_along_by": "مرّر {username} هذا المنشور",
+  "@post_passed_along_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "home_empty_circle_title": "دائرتك تنتظر أن تمتلئ",
+  "home_empty_circle_desc": "امسح رمز صديق أو شارك رمزك للتواصل",
+  "home_scan_friend_title": "مسح رمز صديق",
+  "home_scan_friend_desc": "أضف شخصًا إلى دائرتك",
+  "contact_request_message": "يريد التواصل معك",
+  "contact_request_decline": "رفض",
+  "share_caption": "تعليق",
+  "share_title_count": "المشاركة مع ({count})",
+  "@share_title_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "share_title_empty": "المشاركة مع...",
+  "share_no_targets": "لا توجد جهات اتصال أو مجموعات بعد",
+  "share_no_matches": "لم يتم العثور على نتائج",
+  "share_contacts_section": "جهات الاتصال",
+  "share_groups_section": "المجموعات",
+  "share_group_type_announcement": "إعلان",
+  "share_group_type_chat": "دردشة",
+  "share_sending": "جارٍ الإرسال...",
+  "share_send": "إرسال",
+  "share_target_count": "{count, plural, =1{هدف واحد} =2{هدفان} few{{count} أهداف} many{{count} هدفًا} other{{count} هدف}}",
+  "@share_target_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "share_summary_sent": "تم الإرسال إلى {targetCount}",
+  "@share_summary_sent": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_queued": "تم حفظ {targetCount} لإعادة المحاولة",
+  "@share_summary_queued": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_failed": "فشل الإرسال إلى {targetCount}",
+  "@share_summary_failed": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_nothing": "لم تتم مشاركة أي شيء.",
+  "share_summary_skipped_gifs": "{count, plural, =1{تم تخطي ملف GIF كبير واحد.} =2{تم تخطي ملفي GIF كبيرين.} few{تم تخطي {count} ملفات GIF كبيرة.} many{تم تخطي {count} ملف GIF كبيرًا.} other{تم تخطي {count} ملف GIF كبير.}}",
+  "@share_summary_skipped_gifs": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_just_now": "الآن",
+  "time_min_ago": "{count, plural, =1{قبل دقيقة} =2{قبل دقيقتين} few{قبل {count} دقائق} many{قبل {count} دقيقة} other{قبل {count} دقيقة}}",
+  "@time_min_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_hour_ago": "قبل {count} س",
+  "@time_hour_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_day_ago": "قبل {count} ي",
+  "@time_day_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_week_ago": "قبل {count} أ",
+  "@time_week_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expired": "انتهت الصلاحية",
+  "post_expires_days_hours": "ينتهي خلال {days} ي {hours} س",
+  "@post_expires_days_hours": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      },
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_days": "ينتهي خلال {days} ي",
+  "@post_expires_days": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_hours": "ينتهي خلال {hours} س",
+  "@post_expires_hours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_minutes": "ينتهي خلال {minutes} د",
+  "@post_expires_minutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_soon": "ينتهي قريبًا",
+  "post_photo_upload_failed": "فشل رفع الصورة",
+  "post_photo_pending_upload": "الصورة بانتظار الرفع",
+  "post_photos_pending_upload": "الصور بانتظار الرفع",
+  "post_video_upload_failed": "فشل رفع الفيديو",
+  "post_video_pending_upload": "الفيديو بانتظار الرفع",
+  "post_voice_upload_failed": "فشل رفع الصوت",
+  "post_voice_pending_upload": "الملاحظة الصوتية بانتظار الرفع",
+  "post_media_upload_failed": "فشل رفع الوسائط",
+  "post_media_pending_upload": "الوسائط بانتظار الرفع",
+  "post_media_upload_failed_desc": "بقي هذا المنشور محليًا لأن رفع الوسائط لم يكتمل.",
+  "post_media_pending_upload_desc": "سيستلمه المستلمون بعد اكتمال الرفع.",
+  "post_send_pass": "إرسال التمرير",
+  "btn_saving": "جارٍ الحفظ...",
+  "intro_from": "من",
+  "intro_empty": "لا توجد تعارفات بعد",
+  "intro_tab_desc": "هؤلاء أشخاص يعرفهم أصدقاؤك جيدًا. عندما تقبلان كلاكما، يمكنكما بدء الدردشة.",
+  "intro_banner_title": "ساعد {username} على التعرف إلى دائرتك",
+  "@intro_banner_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "intro_banner_desc": "عرّفه إلى أصدقاء قد ينسجم معهم",
+  "intro_make_introductions": "إنشاء تعارفات",
+  "intro_maybe_later": "ربما لاحقًا",
+  "introduced_by_label": "تم التعارف بواسطة",
+  "intro_unavailable": "غير متاح",
+  "intro_waiting_for": "بانتظار {username}",
+  "@intro_waiting_for": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "intro_waiting_for_them": "بانتظار الطرف الآخر",
+  "intro_sent_count": "{count, plural, =1{تم إرسال تعارف واحد} =2{تم إرسال تعارفين} few{تم إرسال {count} تعارفات} many{تم إرسال {count} تعارفًا} other{تم إرسال {count} تعارف}}",
+  "@intro_sent_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "intro_back_to_conversation": "العودة إلى المحادثة",
+  "identity_tagline": "هويتك تحت سيطرتك",
+  "startup_failed_title": "فشل التهيئة",
+  "identity_restore_action": "استعادة الهوية",
+  "settings_peer_id_title": "معرّف النظير",
+  "settings_peer_id_desc": "معرّفك الفريد على الشبكة",
+  "intro_and_more": "{names} و{count} آخرون",
+  "@intro_and_more": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_block_action": "حظر",
+  "orbit_unblock_action": "إلغاء الحظر",
+  "orbit_delete_action": "حذف",
+  "orbit_archive_action": "أرشفة",
+  "orbit_unarchive_action": "إلغاء الأرشفة",
+  "orbit_archived_empty_title": "لا يوجد أصدقاء مؤرشفون بعد",
+  "orbit_archived_empty_desc": "اسحب لليسار على صديق لأرشفته.",
+  "orbit_inner_circle_badge": "الدائرة الداخلية",
+  "orbit_inner_circle_title": "دائرتك الداخلية",
+  "orbit_pending_items": "{count, plural, =1{عنصر واحد قيد الانتظار} =2{عنصران قيد الانتظار} few{{count} عناصر قيد الانتظار} many{{count} عنصرًا قيد الانتظار} other{{count} عنصر قيد الانتظار}}",
+  "@orbit_pending_items": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_pending_group_invites": "دعوات المجموعات المعلقة",
+  "orbit_pending_group_intro_desc": "راجع دعوات المجموعات المعلقة هنا، ثم التعارفات أدناه. بعد القبول، تظهر المجموعة في Orbit وتلحق برسائل صندوق الوارد غير المتصل.",
+  "orbit_no_friends_matching": "لا يوجد أصدقاء يطابقون \"{query}\"",
+  "@orbit_no_friends_matching": {
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_blocked": "محظور",
+  "feed_introduced_by": "تم التعارف بواسطة {username}",
+  "@feed_introduced_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_previously_seen": "شوهد سابقًا",
+  "feed_replying_to": "ردًا على",
+  "feed_view_earlier_messages": "عرض الرسائل السابقة",
+  "feed_ready_for_user": "موجزك جاهز، @{username}. ستظهر الاتصالات الجديدة هنا.",
+  "@feed_ready_for_user": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_loading": "جارٍ تحميل الموجز...",
+  "feed_syncing_threads": "لا تزال محادثاتك الأخيرة قيد المزامنة.",
+  "qr_added_to_circle": "تمت الإضافة إلى دائرتك!",
+  "btn_ok": "حسنًا",
+  "qr_already_in_circle": "موجود بالفعل في دائرتك!",
+  "qr_contact_added_previously": "تمت إضافة جهة الاتصال هذه سابقًا",
+  "btn_got_it": "فهمت",
+  "orbit_intro_banner_mixed": "{inviteCount, plural, =1{دعوة مجموعة واحدة} =2{دعوتا مجموعة} few{{inviteCount} دعوات مجموعة} many{{inviteCount} دعوة مجموعة} other{{inviteCount} دعوة مجموعة}} و{introCount, plural, =1{تعارف واحد} =2{تعارفان} few{{introCount} تعارفات} many{{introCount} تعارفًا} other{{introCount} تعارف}} بانتظارك",
+  "@orbit_intro_banner_mixed": {
+    "placeholders": {
+      "inviteCount": {
+        "type": "int"
+      },
+      "introCount": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_banner_invites": "{count, plural, =1{راجع دعوة المجموعة وانضم من التعارفات} =2{راجع دعوتي المجموعة وانضم من التعارفات} few{راجع دعوات المجموعة وانضم من التعارفات} many{راجع دعوات المجموعة وانضم من التعارفات} other{راجع دعوة المجموعة وانضم من التعارفات}}",
+  "@orbit_intro_banner_invites": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_banner_intros": "راجع التعارفات واقبلها لبدء الدردشة",
+  "group_member_invited_count": "{count, plural, =1{تمت دعوة عضو واحد} =2{تمت دعوة عضوين} few{تمت دعوة {count} أعضاء} many{تمت دعوة {count} عضوًا} other{تمت دعوة {count} عضو}}",
+  "@group_member_invited_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_member_added_count": "{count, plural, =1{تمت إضافة عضو واحد} =2{تمت إضافة عضوين} few{تمت إضافة {count} أعضاء} many{تمت إضافة {count} عضوًا} other{تمت إضافة {count} عضو}}",
+  "@group_member_added_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_invite_missing_key_issue": "لم تُرسل الدعوات لأن المجموعة تفتقد أحدث مفتاح لها",
+  "group_invite_issues": "مشكلات الدعوة: {details}",
+  "@group_invite_issues": {
+    "placeholders": {
+      "details": {
+        "type": "String"
+      }
+    }
+  },
+  "group_members_publish_failed_issue": "تعذر نشر حدث إضافة الأعضاء",
+  "group_member_added_with_warnings": "{prefix}، لكن {issues}.",
+  "@group_member_added_with_warnings": {
+    "placeholders": {
+      "prefix": {
+        "type": "String"
+      },
+      "issues": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_joined": "انضممت إلى {name}",
+  "@group_invite_joined": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_no_longer_available": "لم تعد الدعوة متاحة",
+  "group_invite_expired": "انتهت صلاحية الدعوة",
+  "group_invite_revoked": "تم إلغاء الدعوة",
+  "group_invite_already_used": "تم استخدام الدعوة بالفعل",
+  "group_invite_wrong_identity": "الدعوة لهوية أخرى",
+  "group_invite_needs_key": "تحتاج الدعوة إلى مادة مفاتيح جديدة",
+  "group_invite_invalid": "لم تعد الدعوة صالحة",
+  "group_invite_duplicate_group": "تمت إضافة المجموعة بالفعل",
+  "group_invite_joined_recovery": "انضممت إلى {name}، لكن الاسترداد ما زال يلحق بالرسائل",
+  "@group_invite_joined_recovery": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_accepted_recovery": "تم قبول الدعوة، لكن الاسترداد ما زال يلحق بالرسائل",
+  "group_invite_accept_failed": "فشل قبول الدعوة",
+  "group_invite_declined": "تم رفض الدعوة",
+  "group_invite_decline_failed": "فشل رفض الدعوة",
+  "post_pin_retrying": "سيستمر تحديث التثبيت في إعادة المحاولة",
+  "post_pin_queued": "تمت جدولة تحديث التثبيت لإعادة المحاولة",
+  "post_pin_failed": "فشل تحديث التثبيت",
+  "post_pin_could_not": "تعذر تثبيت المنشور",
+  "post_pinned_update_retrying": "سيستمر تحديث المنشور المثبّت في إعادة المحاولة",
+  "post_pinned_update_queued": "تمت جدولة تحديث المنشور المثبّت لإعادة المحاولة",
+  "post_pinned_update_failed": "فشل تحديث المنشور المثبّت",
+  "post_pinned_update_could_not": "تعذر تحديث المنشور المثبّت",
+  "post_pin_removal_retrying": "سيستمر إزالة التثبيت في إعادة المحاولة",
+  "post_pin_removal_queued": "تمت جدولة إزالة التثبيت لإعادة المحاولة",
+  "post_pin_removal_failed": "فشلت إزالة التثبيت",
+  "post_pin_remove_could_not": "تعذرت إزالة التثبيت",
+  "post_repost_retrying": "سيستمر إعادة النشر في إعادة المحاولة",
+  "post_repost_queued": "تمت جدولة إعادة النشر لإعادة المحاولة",
+  "post_repost_media_failed": "تعذر تجهيز وسائط إعادة النشر",
+  "post_repost_could_not": "تعذر تجهيز إعادة النشر",
+  "post_no_longer_available": "لم يعد المنشور متاحًا",
+  "post_repost_not_allowed": "لا يمكن إعادة نشر هذا المنشور",
+  "identity_generate_failed": "فشل إنشاء الهوية",
+  "identity_save_failed": "فشل حفظ الهوية",
+  "qr_no_identity_detail": "لم يتم العثور على هوية. يُرجى إنشاء واحدة أولًا.",
+  "qr_sign_failed": "تعذر توقيع رمز QR. يُرجى المحاولة مرة أخرى.",
+  "qr_unexpected_error": "حدث خطأ غير متوقع. يُرجى المحاولة مرة أخرى.",
+  "qr_invalid_title": "رمز QR غير صالح",
+  "qr_invalid_body": "لا يبدو هذا كرمز QR صالح لجهة اتصال.",
+  "qr_incomplete_title": "رمز QR غير مكتمل",
+  "qr_incomplete_body": "يفتقد رمز QR هذا معلومات مطلوبة.",
+  "qr_invalid_signature_title": "توقيع غير صالح",
+  "qr_invalid_signature_body": "تعذر التحقق من رمز QR هذا.",
+  "qr_expired_title": "انتهت صلاحية رمز QR",
+  "qr_expired_body": "انتهت صلاحية رمز QR هذا. اطلب من صديقك رمزًا جديدًا.",
+  "qr_self_title": "هذا أنت!",
+  "qr_self_body": "لا يمكنك إضافة نفسك كجهة اتصال.",
+  "qr_add_failed": "فشلت إضافة جهة الاتصال. يُرجى المحاولة مرة أخرى."
 }

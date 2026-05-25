@@ -97,6 +97,7 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
   String? recipientKeyPackagePublicMaterial,
   DateTime? issuedAt,
   DateTime? expiresAt,
+  String? membershipWatermark,
 }) {
   final issuedAtUtc = issuedAt ?? DateTime.utc(2026, 3, 2, 12);
   final stateHash = buildGroupConfigStateHash(
@@ -116,7 +117,7 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
     inviterPublicKey: 'alicePubKey64',
     keyEpoch: keyEpoch,
     groupConfigStateHash: stateHash,
-    membershipWatermark: stateHash,
+    membershipWatermark: membershipWatermark ?? stateHash,
     issuedAt: issuedAtUtc,
     expiresAt: expiresAt ?? issuedAtUtc.add(groupInviteMembershipFreshnessTtl),
     inviterMemberSnapshot: {
@@ -143,6 +144,7 @@ GroupInvitePayload _makePayload({
   String? recipientKeyPackagePublicMaterial,
   DateTime? membershipProofIssuedAt,
   DateTime? membershipProofExpiresAt,
+  String? membershipWatermark,
 }) {
   final issuedAtUtc = (membershipProofIssuedAt ?? DateTime.now().toUtc())
       .toUtc();
@@ -214,6 +216,7 @@ GroupInvitePayload _makePayload({
       keyEpoch: keyEpoch,
       issuedAt: issuedAtUtc,
       expiresAt: membershipProofExpiresAt,
+      membershipWatermark: membershipWatermark,
     ),
   );
   return payload.withInviteSignature(signature: 'signed-invite-by-alice');
@@ -394,6 +397,43 @@ void main() {
         expect(key, isNotNull);
         expect(key!.encryptedKey, equals('base64GroupKey=='));
         expect(key.keyGeneration, equals(1));
+      },
+    );
+
+    test(
+      'uses membership freshness watermark for accepted invite membership state',
+      () async {
+        final membershipWatermark = DateTime.utc(2026, 3, 2, 12, 30, 45);
+        final staleConfigVersion = DateTime.utc(2026, 3, 2, 13, 5);
+        final groupConfig = {
+          ..._testGroupConfig,
+          groupConfigVersionField: staleConfigVersion.toIso8601String(),
+        };
+        final payload = _makePayload(
+          groupId: 'grp-membership-watermark',
+          groupConfig: groupConfig,
+          membershipWatermark: membershipWatermark.toIso8601String(),
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, HandleGroupInviteResult.success);
+        expect(groupId, 'grp-membership-watermark');
+
+        final group = await groupRepo.getGroup('grp-membership-watermark');
+        expect(group?.lastMembershipEventAt, membershipWatermark);
+
+        final members = await groupRepo.getMembers('grp-membership-watermark');
+        expect(members, hasLength(2));
+        for (final member in members) {
+          expect(member.joinedAt, membershipWatermark);
+        }
       },
     );
 

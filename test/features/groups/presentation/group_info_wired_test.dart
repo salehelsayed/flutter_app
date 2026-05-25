@@ -23,12 +23,21 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_wire
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+
+Widget _localizedMaterialApp({required Widget home}) {
+  return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: home,
+  );
+}
 
 // --- FakeIdentityRepository ---
 
@@ -373,7 +382,7 @@ _pumpResendInviteSurface(
   );
 
   await tester.pumpWidget(
-    MaterialApp(
+    _localizedMaterialApp(
       home: GroupInfoWired(
         group: group,
         groupRepo: groupRepo,
@@ -488,7 +497,7 @@ _pumpGca008RemovalFailureFixture(
   );
 
   await tester.pumpWidget(
-    MaterialApp(
+    _localizedMaterialApp(
       home: GroupInfoWired(
         group: group,
         groupRepo: groupRepo,
@@ -555,7 +564,7 @@ void main() {
       await groupRepo.saveMember(m3);
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -591,7 +600,7 @@ void main() {
 
         Future<void> pumpSnapshot(String snapshotId) async {
           await tester.pumpWidget(
-            MaterialApp(
+            _localizedMaterialApp(
               home: GroupInfoWired(
                 key: ValueKey('up001-$snapshotId'),
                 group: group,
@@ -661,7 +670,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -727,7 +736,7 @@ void main() {
 
       Future<void> pumpGroupInfo() async {
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -842,7 +851,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -907,7 +916,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -1015,7 +1024,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -1086,7 +1095,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -1172,7 +1181,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -1262,7 +1271,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -1392,7 +1401,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -1511,7 +1520,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -1609,7 +1618,7 @@ void main() {
       }
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -1712,7 +1721,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -1771,7 +1780,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -1834,7 +1843,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -1916,7 +1925,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -1951,7 +1960,7 @@ void main() {
       await _saveGroupReplayKey(groupRepo);
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -2016,7 +2025,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: created.copyWith(myRole: GroupRole.member),
               groupRepo: groupRepo,
@@ -2041,7 +2050,7 @@ void main() {
       await _saveGroupReplayKey(groupRepo);
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -2085,7 +2094,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -2158,7 +2167,7 @@ void main() {
       await _saveGroupReplayKey(groupRepo);
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -2211,7 +2220,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -2250,7 +2259,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: makeMemberGroup(),
             groupRepo: groupRepo,
@@ -2306,7 +2315,7 @@ void main() {
         };
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -2549,7 +2558,7 @@ void main() {
         bridge.responses['payload.sign'] = {'ok': false};
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -2628,7 +2637,7 @@ void main() {
         final bridge = FakeBridge();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -2690,6 +2699,10 @@ void main() {
                 as Map<String, dynamic>;
 
         expect(sysText['__sys'], 'member_role_updated');
+        expect(
+          DateTime.tryParse(sysText['eventAt'] as String? ?? ''),
+          isNotNull,
+        );
         expect(sysText['member']['peerId'], 'peer-alice');
         expect(sysText['member']['role'], 'admin');
 
@@ -2760,7 +2773,7 @@ void main() {
         final bridge = FakeBridge();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -2860,7 +2873,7 @@ void main() {
 
         // Use a Navigator stack to verify popUntil(isFirst)
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(
@@ -2931,7 +2944,7 @@ void main() {
       final bridge = FakeBridge();
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: Builder(
             builder: (context) => Scaffold(
               body: ElevatedButton(
@@ -2988,7 +3001,7 @@ void main() {
         };
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(
@@ -3090,7 +3103,7 @@ void main() {
         final p2pService = FakeP2PService();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(
@@ -3198,7 +3211,7 @@ void main() {
         final bridge = FakeBridge();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(
@@ -3293,7 +3306,7 @@ void main() {
         final bridge = FakeBridge();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(
@@ -3402,7 +3415,7 @@ void main() {
         final p2pService = FakeP2PService();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(
@@ -3543,7 +3556,7 @@ void main() {
         final p2pService = FakeP2PService();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(
@@ -3754,7 +3767,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -3848,7 +3861,7 @@ void main() {
       final p2pService = FakeP2PService();
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,
@@ -3932,7 +3945,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -4042,7 +4055,7 @@ void main() {
         final p2pService = FakeP2PService();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -4149,7 +4162,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -4288,7 +4301,7 @@ void main() {
         final bridge = FakeBridge();
 
         await tester.pumpWidget(
-          MaterialApp(
+          _localizedMaterialApp(
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
@@ -4363,7 +4376,7 @@ void main() {
       final bridge = FakeBridge();
 
       await tester.pumpWidget(
-        MaterialApp(
+        _localizedMaterialApp(
           home: GroupInfoWired(
             group: group,
             groupRepo: groupRepo,

@@ -47,7 +47,7 @@
   },
   "posts_compose_button": "Teile etwas mit deinen Freunden",
   "posts_empty_title": "Du bist auf dem neuesten Stand",
-  "posts_empty_desc": "Beiträge von deinen direkten Freunden erscheinen hier, sobald sie ankommen oder erneut geladen werden.",
+  "posts_empty_desc": "Beiträge von deinen direkten Freunden erscheinen hier, sobald sie ankommen oder nachträglich synchronisiert werden.",
   "posts_empty_button": "Ersten Beitrag erstellen",
   "posts_caught_up": "Du bist auf dem neuesten Stand",
   "posts_time_now": "Gerade eben",
@@ -67,7 +67,7 @@
   "compose_voice": "Sprachnachricht",
   "compose_voice_stop": "Stopp",
   "compose_voice_attached": "Sprachnachricht angehängt",
-  "compose_attachments": "{count} Anhänge",
+  "compose_attachments": "{count, plural, =0{Keine Anhänge} =1{1 Anhang} other{{count} Anhänge}}",
   "@compose_attachments": {
     "placeholders": {
       "count": {
@@ -79,7 +79,7 @@
   "compose_posting": "Wird gepostet...",
   "compose_post": "Posten",
   "compose_manage": "Verwalten",
-  "compose_pinned_1": "Du hast bereits 1 aktiven angepinnten Beitrag",
+  "compose_pinned_1": "Du hast bereits einen aktiven angepinnten Beitrag",
   "compose_pinned_n": "Du hast bereits {count} aktive angepinnte Beiträge",
   "@compose_pinned_n": {
     "placeholders": {
@@ -90,19 +90,19 @@
   },
   "compose_nearby_off": "„Leute in deiner Nähe“ ist in den Einstellungen deaktiviert",
   "compose_nearby_ready": "„Leute in deiner Nähe“ ist einsatzbereit",
-  "compose_nearby_refresh": "Nearby vor dem Posten aktualisieren",
+  "compose_nearby_refresh": "Nähe vor dem Posten aktualisieren",
   "compose_nearby_allow": "Standort erlauben, um Leute in deiner Nähe zu nutzen",
   "compose_nearby_perm_off": "Standortberechtigung ist deaktiviert",
   "compose_nearby_services": "Ortungsdienste einschalten",
   "compose_nearby_off_desc": "Aktiviere es in den Einstellungen, bevor du an Freunde in deiner Nähe postest.",
-  "compose_nearby_ready_desc": "Deine Nearby-Daten sind aktuell genug zum Posten.",
-  "compose_nearby_refresh_desc": "Aktualisiere deine Nearby-Daten, bevor du diese Zielgruppe nutzt.",
-  "compose_nearby_allow_desc": "Aktualisiere Nearby, um den Standortzugriff für diese Beiträge freizugeben.",
+  "compose_nearby_ready_desc": "Deine Daten zu Personen in deiner Nähe sind aktuell genug zum Posten.",
+  "compose_nearby_refresh_desc": "Aktualisiere deine Daten zu Personen in deiner Nähe, bevor du diese Zielgruppe nutzt.",
+  "compose_nearby_allow_desc": "Aktualisiere die Nähe-Funktion, um den Standortzugriff für Beiträge in deiner Nähe zu erlauben.",
   "compose_nearby_perm_desc": "Öffne die Systemeinstellungen, um den Standortzugriff wieder zu aktivieren.",
   "compose_nearby_services_desc": "Aktiviere die Ortungsdienste und aktualisiere Nearby erneut.",
   "compose_open_settings": "Einstellungen öffnen",
   "compose_refreshing": "Wird aktualisiert...",
-  "compose_refresh_nearby": "Nearby aktualisieren",
+  "compose_refresh_nearby": "Nähe aktualisieren",
   "post_badge_friend": "Freund",
   "post_uploading": "Medien werden hochgeladen...",
   "post_sending": "Wird gesendet...",
@@ -214,7 +214,7 @@
       }
     }
   },
-  "picker_introduce_to": "An {username} vorstellen",
+  "picker_introduce_to": "{username} vorstellen",
   "@picker_introduce_to": {
     "placeholders": {
       "username": {
@@ -290,7 +290,7 @@
   "startup_onboarding_desc": "Wir richten deine Identität ein",
   "btn_retry": "Erneut versuchen",
   "btn_cancel": "Abbrechen",
-  "btn_submit": "Senden",
+  "btn_submit": "Absenden",
   "error_add_contact": "Kontakt konnte nicht hinzugefügt werden. Bitte versuche es erneut.",
   "error_send_message": "Nachricht konnte nicht gesendet werden. Bitte versuche es erneut.",
   "error_update_photo": "Foto konnte nicht aktualisiert werden: {error}",
@@ -317,7 +317,7 @@
   "perm_location": "Diese App benötigt Standortzugriff, damit du Beiträge mit direkten Freunden in deiner Nähe teilen kannst",
   "perm_local_network": "mknoon sucht deine Freunde im selben WLAN, um Nachrichten direkt an ihr Handy zu senden. Das ist schneller, privater und wir sammeln niemals deine Daten.",
   "perm_notifications": "Diese App benötigt Mitteilungszugriff, um dich über eingehende Nachrichten zu informieren",
-  "connected_date": "Verbunden {date}",
+  "connected_date": "Verbunden am {date}",
   "@connected_date": {
     "placeholders": {
       "date": {
@@ -330,7 +330,7 @@
   "feed_collapse": "Einklappen",
   "feed_tap_expand": "Zum Öffnen tippen",
   "feed_you": "Du",
-  "feed_you_replied": "Du hast geantwortet {time}",
+  "feed_you_replied": "Du hast {time} geantwortet",
   "@feed_you_replied": {
     "placeholders": {
       "time": {
@@ -339,10 +339,10 @@
     }
   },
   "settings_photo_quality": "Fotoqualität",
-  "settings_share_nearby": "Leute in der Nähe teilen",
+  "settings_share_nearby": "Mit Leuten in der Nähe teilen",
   "settings_share_nearby_on": "An",
   "settings_share_nearby_off": "Aus",
-  "settings_share_nearby_desc": "Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karten und niemals Fremde.",
+  "settings_share_nearby_desc": "Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karte und nie mit Fremden.",
   "settings_recovery_title": "WIEDERHERSTELLUNGSPHRASE",
   "settings_recovery_warning": "Teile diese Phrase niemals mit jemandem. Sie gewährt vollen Zugriff auf dein Konto.",
   "settings_recovery_tap": "Zum Anzeigen tippen",
@@ -358,5 +358,859 @@
         "type": "String"
       }
     }
-  }
+  },
+  "load_retry_hint": "Prüfe deine Verbindung und versuche es erneut.",
+  "upload_leave_title": "Unterhaltung verlassen?",
+  "upload_leave_body": "Ein Upload läuft gerade. Wenn du gehst, kann er unterbrochen werden. Bist du sicher?",
+  "upload_leave_stay": "Bleiben",
+  "upload_leave_confirm": "Verlassen",
+  "upload_cancelled": "Upload abgebrochen.",
+  "media_too_large_title": "Medien zu groß",
+  "media_too_large_prompt": "Die angehängten Medien sind {totalSize} groß und überschreiten das Limit von {limitSize}. Möchtest du sie komprimieren und senden oder abbrechen?",
+  "@media_too_large_prompt": {
+    "placeholders": {
+      "totalSize": {
+        "type": "String"
+      },
+      "limitSize": {
+        "type": "String"
+      }
+    }
+  },
+  "media_compress": "Komprimieren",
+  "media_too_large_after_compress": "Die Medien sind auch nach der Komprimierung zu groß.",
+  "media_gif_too_large": "GIF-Dateien größer als 25 MB können nicht hinzugefügt werden.",
+  "media_unavailable": "Medien nicht verfügbar",
+  "media_retry_unavailable": "Nicht verfügbare Medien erneut laden",
+  "edit_save_failed": "Änderung konnte nicht gespeichert werden.",
+  "intro_pass": "Weitergeben",
+  "intro_accept": "Annehmen",
+  "intro_accepting": "Wird angenommen...",
+  "failed_message_retry_semantics": "Fehlgeschlagene Nachricht erneut senden",
+  "failed_media_retry_semantics": "Fehlgeschlagene Mediennachricht erneut senden",
+  "failed_media_delete_semantics": "Fehlgeschlagene Mediennachricht löschen",
+  "message_status_semantics": "Nachrichtenstatus: {status}",
+  "@message_status_semantics": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "message_status_delivered": "zugestellt",
+  "message_status_failed": "fehlgeschlagen",
+  "message_status_sending": "wird gesendet",
+  "message_status_sent": "gesendet",
+  "message_status_pending_inbox": "ausstehende Zustellung über Posteingang",
+  "share_send_failed": "Konnte nicht an die ausgewählten Ziele teilen.",
+  "group_info_title": "Gruppeninfo",
+  "group_edit_details": "Details bearbeiten",
+  "group_member_count": "{count, plural, =1{1 Mitglied} other{{count} Mitglieder}}",
+  "@group_member_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_title": "Sicherheit",
+  "group_security_key_change_visible": "Schlüsseländerung sichtbar",
+  "group_security_verification_warning": "Verifizierungswarnung",
+  "group_security_identity_warning_detail": "{count, plural, =1{1 Identität hat sich geändert. Prüfe die Sicherheitsnummern unten.} other{{count} Identitäten haben sich geändert. Prüfe die Sicherheitsnummern unten.}}",
+  "@group_security_identity_warning_detail": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_dissolved": "Gruppe aufgelöst",
+  "group_dissolved_read_only_desc": "Diese Unterhaltung ist jetzt schreibgeschützt. Frühere Nachrichten bleiben als Referenz verfügbar.",
+  "group_mute_notifications": "Mitteilungen stummschalten",
+  "group_mute_on_desc": "Neue Nachrichten kommen weiterhin an, aber diese Gruppe bleibt stumm.",
+  "group_mute_off_desc": "Du wirst benachrichtigt, wenn neue Nachrichten in dieser Gruppe ankommen.",
+  "group_members_title": "Mitglieder",
+  "group_add_member": "Mitglied hinzufügen",
+  "group_leave": "Gruppe verlassen",
+  "group_dissolve": "Gruppe auflösen",
+  "group_delete_from_device": "Von diesem Gerät löschen",
+  "group_delete_local_desc": "Behalte diesen aufgelösten Verlauf so lange du möchtest oder entferne ihn nur von diesem Gerät. Das betrifft niemand anderen.",
+  "group_delete_locally": "Gruppe lokal löschen",
+  "group_no_messages": "Noch keine Nachrichten",
+  "group_empty_dissolved_desc": "Diese Gruppe wurde aufgelöst. Neue Nachrichten sind deaktiviert.",
+  "group_empty_start": "Sende eine Nachricht, um die Unterhaltung zu starten",
+  "group_empty_waiting": "Warte auf Nachrichten",
+  "group_recovery_banner": "Verpasste Nachrichten werden nachgeholt. Neue Nachrichten erscheinen weiterhin hier.",
+  "group_read_only_dissolved": "Diese Gruppe wurde aufgelöst. Der Verlauf bleibt verfügbar, aber neue Nachrichten sind deaktiviert.",
+  "group_read_only_admin_only": "Nur Admins können in dieser Gruppe Nachrichten senden",
+  "group_removed_snackbar": "Du wurdest aus dieser Gruppe entfernt.",
+  "group_dissolved_snackbar": "Diese Gruppe wurde aufgelöst",
+  "group_info_mute_update_failed": "Stummschaltung konnte nicht aktualisiert werden",
+  "group_info_dissolve_title": "Diese Gruppe für alle auflösen?",
+  "group_info_dissolve_body": "Damit endet die Gruppe für alle Mitglieder. Der Verlauf bleibt sichtbar, aber nach der Auflösung kann niemand mehr neue Nachrichten senden.",
+  "group_info_dissolve_action": "Auflösen",
+  "group_info_dissolved_recovery": "Gruppe aufgelöst. Einige Mitglieder müssen sie möglicherweise wiederherstellen, um das zu sehen.",
+  "group_info_already_dissolved": "Gruppe ist bereits aufgelöst",
+  "group_info_admins_only_dissolve": "Nur Admins können Gruppen auflösen",
+  "group_info_not_found": "Gruppe existiert nicht mehr",
+  "group_info_dissolve_failed": "Gruppe konnte nicht aufgelöst werden",
+  "group_info_delete_local_title": "Diese aufgelöste Gruppe von diesem Gerät löschen?",
+  "group_info_delete_local_body": "Dadurch wird der aufgelöste Verlauf nur von diesem Gerät entfernt. Andere Personen sind nicht betroffen und es wird kein neues Verlassen-Ereignis gesendet.",
+  "group_info_delete_local_action": "Lokal löschen",
+  "group_info_remove_member_title": "{username} aus der Gruppe entfernen?",
+  "@group_info_remove_member_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_remove_member_body": "Diese Person erhält keine neuen Nachrichten aus dieser Gruppe mehr.",
+  "group_info_remove_action": "Entfernen",
+  "group_info_member_fallback": "Mitglied",
+  "group_info_make_admin_title": "{username} zum Admin machen?",
+  "@group_info_make_admin_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_remove_admin_title": "Admin-Zugriff von {username} entfernen?",
+  "@group_info_remove_admin_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_make_admin_body": "Diese Person kann Mitglieder hinzufügen, entfernen und verwalten.",
+  "group_info_remove_admin_body": "Diese Person verliert Admin-Aktionen, sobald die Änderung synchronisiert ist.",
+  "group_info_make_admin_action": "Zum Admin machen",
+  "group_info_remove_admin_action": "Admin entfernen",
+  "group_info_admin_added": "{username} ist jetzt Admin",
+  "@group_info_admin_added": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_admin_removed": "{username} ist nicht mehr Admin",
+  "@group_info_admin_removed": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_member_role_update_failed": "Mitgliedsrolle konnte nicht aktualisiert werden",
+  "group_info_details_updated": "Gruppendetails aktualisiert",
+  "group_info_details_update_failed": "Gruppendetails konnten nicht aktualisiert werden",
+  "group_info_invite_resend_failed": "Einladung konnte nicht erneut gesendet werden",
+  "group_info_invite_sent": "Einladung an {username} gesendet",
+  "@group_info_invite_sent": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_queued": "Einladung liegt im Posteingang von {username}",
+  "@group_info_invite_queued": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_needs_resend": "Einladung muss noch einmal gesendet werden",
+  "group_info_invite_joined": "{username} ist bereits beigetreten",
+  "@group_info_invite_joined": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_unknown": "Einladungsstatus unbekannt",
+  "group_edit_photo_pick_failed": "Gruppenfoto konnte nicht ausgewählt werden",
+  "group_edit_details_title": "Gruppendetails bearbeiten",
+  "group_edit_change_photo": "Foto ändern",
+  "group_edit_add_photo": "Foto hinzufügen",
+  "group_edit_remove_photo": "Foto entfernen",
+  "group_edit_name": "Gruppenname",
+  "group_edit_description": "Beschreibung",
+  "btn_save": "Speichern",
+  "group_member_sending": "Wird gesendet...",
+  "group_member_resend": "Erneut senden",
+  "group_member_manage_role": "Rolle verwalten",
+  "group_role_admin": "Admin",
+  "group_role_writer": "Schreibberechtigt",
+  "group_role_reader": "Lesend",
+  "group_identity_changed": "Identität geändert",
+  "group_current_safety": "Aktuelle Sicherheit",
+  "group_saved_safety": "Gespeicherte Sicherheit",
+  "group_card_no_messages": "Noch keine Nachrichten",
+  "group_security_encrypted": "Ende-zu-Ende verschlüsselt",
+  "group_security_pending": "Verschlüsselung ausstehend",
+  "group_security_no_key": "Kein Gruppenschlüssel auf diesem Gerät",
+  "group_security_key_changed": "Gruppenschlüssel auf Epoche {keyEpoch} geändert",
+  "@group_security_key_changed": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_current_key_epoch": "Aktuelle Schlüsselepoche {keyEpoch}",
+  "@group_security_current_key_epoch": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_no_members": "Keine Mitglieder zum Verifizieren",
+  "group_security_all_members_verified": "{count, plural, =1{1 Mitglied verifiziert} other{Alle {count} Mitglieder verifiziert}}",
+  "@group_security_all_members_verified": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_verified": "{verifiedCount} von {memberCount} Mitgliedern verifiziert",
+  "@group_security_members_verified": {
+    "placeholders": {
+      "verifiedCount": {
+        "type": "int"
+      },
+      "memberCount": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_need_review": "{count, plural, =1{1 Mitglied benötigt eine Verifizierungsprüfung} other{{count} Mitglieder benötigen eine Verifizierungsprüfung}}",
+  "@group_security_members_need_review": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_members_unverified": "{count, plural, =1{1 Mitglied nicht anhand gespeicherter Kontakte verifiziert} other{{count} Mitglieder nicht anhand gespeicherter Kontakte verifiziert}}",
+  "@group_security_members_unverified": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_security_no_warnings": "Keine Verifizierungswarnungen",
+  "group_security_compact_encrypted_epoch": "Verschlüsselt - Schlüsselepoche {keyEpoch}",
+  "@group_security_compact_encrypted_epoch": {
+    "placeholders": {
+      "keyEpoch": {
+        "type": "int"
+      }
+    }
+  },
+  "invite_status_sent": "Einladung gesendet",
+  "invite_status_queued": "Im Posteingang",
+  "invite_status_needs_resend": "Erneutes Senden nötig",
+  "invite_status_cannot_send": "Senden nicht möglich",
+  "invite_status_joined": "Beigetreten",
+  "invite_status_unknown": "Einladung unbekannt",
+  "invite_cannot_send_missing_secure_key_detail": "Uns fehlen die sicheren Informationen, um diesen Freund einzuladen. Bitte ihn, die App zu öffnen oder neu zu installieren, und versuche es erneut.",
+  "invite_cannot_send_group_key_missing_detail": "Dieser Gruppe fehlt der sichere Einladungsschlüssel. Öffne die App erneut und versuche es noch einmal.",
+  "invite_cannot_send_invalid_payload_detail": "Diese Einladung konnte nicht vorbereitet werden. Öffne die App erneut und versuche es noch einmal.",
+  "invite_cannot_send_generic_detail": "Wir konnten keine sichere Einladung für diesen Freund vorbereiten. Er muss möglicherweise die App öffnen oder neu installieren, bevor du ihn einladen kannst.",
+  "invite_cannot_send_missing_secure_key_snackbar": "Senden nicht möglich: Uns fehlen die sicheren Informationen, um diesen Freund einzuladen.",
+  "invite_cannot_send_group_key_missing_snackbar": "Senden nicht möglich: Dieser Gruppe fehlt der sichere Einladungsschlüssel.",
+  "invite_cannot_send_invalid_payload_snackbar": "Senden nicht möglich: Diese Einladung konnte nicht vorbereitet werden.",
+  "invite_cannot_send_generic_snackbar": "Senden nicht möglich: Wir konnten keine sichere Einladung für diesen Freund vorbereiten.",
+  "group_backlog_mixed_list_summary": "Älterer Rückstand nach {days} Tagen abgelaufen",
+  "@group_backlog_mixed_list_summary": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_mixed_banner": "Ältere verpasste Nachrichten sind nach {days} Tagen abgelaufen. Aktuelle Nachrichten wurden wiederhergestellt.",
+  "@group_backlog_mixed_banner": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_mixed_empty_title": "Aktuelle Nachrichten wiederhergestellt",
+  "group_backlog_mixed_empty_subtitle": "Ältere verpasste Nachrichten sind nach {days} Tagen während deiner Abwesenheit abgelaufen.",
+  "@group_backlog_mixed_empty_subtitle": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_list_summary": "Verpasster Rückstand nach {days} Tagen abgelaufen",
+  "@group_backlog_expired_list_summary": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_banner": "Verpasste Nachrichten, die älter als {days} Tage sind, sind während deiner Abwesenheit abgelaufen.",
+  "@group_backlog_expired_banner": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_backlog_expired_empty_title": "Älterer Rückstand abgelaufen",
+  "group_backlog_expired_empty_subtitle": "Verpasste Nachrichten, die älter als {days} Tage sind, sind während deiner Abwesenheit abgelaufen.",
+  "@group_backlog_expired_empty_subtitle": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "group_history_repair_active_banner": "Einige verpasste Nachrichten werden von vertrauenswürdigen Gruppenmitgliedern repariert.",
+  "group_history_repair_active_empty_title": "Verpasste Nachrichten werden repariert",
+  "group_history_repair_active_empty_subtitle": "Einige verpasste Nachrichten werden verifiziert, bevor sie hier erscheinen.",
+  "group_history_repair_failed_banner": "Einige verpasste Nachrichten konnten nicht von vertrauenswürdigen Gruppenmitgliedern repariert werden.",
+  "group_history_repair_failed_empty_title": "Verlaufsreparatur nötig",
+  "group_history_repair_failed_empty_subtitle": "Einige verpasste Nachrichten konnten nicht von vertrauenswürdigen Mitgliedern verifiziert werden.",
+  "group_history_repair_done_banner": "Verpasste Nachrichten wurden repariert und verifiziert.",
+  "group_history_repair_done_empty_title": "Nachrichten repariert",
+  "group_history_repair_done_empty_subtitle": "Verpasste Nachrichten wurden verifiziert und wiederhergestellt.",
+  "group_info_leave_failed": "Gruppe konnte nicht verlassen werden",
+  "group_info_notifications_muted": "Mitteilungen für diese Gruppe stummgeschaltet",
+  "group_info_notifications_restored": "Mitteilungen für diese Gruppe wieder aktiviert",
+  "group_info_delete_local_failed": "Gruppe konnte lokal nicht gelöscht werden",
+  "group_info_publish_member_removal_failed": "Entfernen des Mitglieds konnte nicht veröffentlicht werden",
+  "group_info_rotate_key_failed": "Gruppenschlüssel konnte nach dem Entfernen nicht rotiert werden",
+  "group_info_remove_member_failed": "Mitglied konnte nicht entfernt werden",
+  "group_info_no_identity": "Keine Identität gefunden",
+  "group_info_member_not_found": "Mitglied nicht gefunden",
+  "group_info_upload_photo_failed": "Gruppenfoto konnte nicht hochgeladen werden",
+  "group_info_sign_metadata_failed": "Aktualisierung der Gruppendaten konnte nicht signiert werden",
+  "groups_title": "Gruppen",
+  "groups_empty_title": "Noch keine Gruppen",
+  "groups_empty_desc": "Erstelle eine Gruppe, um loszulegen",
+  "groups_pending_invites": "Ausstehende Einladungen",
+  "groups_joined": "Beigetretene Gruppen",
+  "groups_unknown_sender": "Unbekannt",
+  "groups_no_joined": "Noch keine beigetretenen Gruppen. Nimm eine Einladung an, um sie hier hinzuzufügen.",
+  "group_type_discussion": "Diskussion",
+  "group_type_announce": "Ankündigung",
+  "group_type_qa": "Fragen",
+  "group_dissolved_badge": "Aufgelöst",
+  "pending_invite_expired": "Abgelaufen",
+  "pending_invite_accept": "Annehmen",
+  "pending_invite_decline": "Ablehnen",
+  "pending_invite_dismiss": "Ausblenden",
+  "pending_invite_invited_by": "Eingeladen von {username}",
+  "@pending_invite_invited_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "pending_invite_expires": "Läuft ab {date}",
+  "@pending_invite_expires": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "group_no_contacts_available": "Keine Kontakte verfügbar",
+  "settings_intro_debug_delete_row": "Zeile löschen",
+  "settings_intro_debug_delete_pair": "Paar löschen",
+  "settings_intro_debug_deleted_row": "Lokale Einführungszeile gelöscht",
+  "settings_intro_debug_deleted_pair": "Lokales Paar {pairLabel} gelöscht",
+  "@settings_intro_debug_deleted_pair": {
+    "placeholders": {
+      "pairLabel": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_intro_debug_heading": "DEBUG-EINFÜHRUNGEN",
+  "settings_intro_debug_description": "Lokal gesendete Einführungszeilen auf diesem Gerät. Wenn du ein Paar löschst, ist es in der Auswahl wieder verfügbar.",
+  "settings_intro_debug_empty": "Keine lokalen Einführungszeilen für den aktuellen Benutzer.",
+  "settings_intro_debug_status_line": "Status={status}  Empfänger={recipientStatus}  Vorgestellt={introducedStatus}",
+  "@settings_intro_debug_status_line": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      },
+      "recipientStatus": {
+        "type": "String"
+      },
+      "introducedStatus": {
+        "type": "String"
+      }
+    }
+  },
+  "settings_intro_debug_meta_line": "ID={id}  erstellt={createdAt}",
+  "@settings_intro_debug_meta_line": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "String"
+      }
+    }
+  },
+  "group_start_chat": "Gruppenchat starten",
+  "group_reactions_title": "Reaktionen",
+  "group_add_members_count": "Mitglieder hinzufügen ({count})",
+  "@group_add_members_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_loading_contacts": "Kontakte werden geladen...",
+  "group_send_invites": "Einladungen senden",
+  "group_send_permission_lost": "Du hast keine Berechtigung mehr, Nachrichten in dieser Gruppe zu senden.",
+  "group_unavailable_snackbar": "Diese Gruppe ist nicht mehr verfügbar.",
+  "media_retry_unavailable_now": "Erneut versuchen ist gerade nicht verfügbar.",
+  "media_unavailable_now": "Medien sind gerade nicht verfügbar.",
+  "media_still_unavailable": "Medien sind weiterhin nicht verfügbar.",
+  "failed_media_retry_failed": "Mediennachricht konnte nicht erneut versucht werden.",
+  "failed_media_delete_unavailable": "Löschen ist gerade nicht verfügbar.",
+  "picker_media_library": "Medienbibliothek",
+  "picker_record_video": "Video aufnehmen",
+  "perm_microphone_record": "Die Mikrofonberechtigung ist erforderlich, um Sprachnachrichten aufzunehmen.",
+  "group_read_only_not_active": "Du kannst den Verlauf dieser Gruppe lesen, bist aber kein aktives Mitglied.",
+  "group_read_only_waiting_key": "Warte auf den aktuellen Gruppenschlüssel, bevor du senden kannst.",
+  "group_read_only_waiting_identity": "Warte auf deine Identität, bevor du senden kannst.",
+  "group_media_unsupported": "Dieser Medientyp wird in Gruppen nicht unterstützt.",
+  "upload_progress_title": "Medien werden hochgeladen",
+  "upload_progress_keep_open": "Lass die App geöffnet, bis der Upload abgeschlossen ist",
+  "conversation_blocked_contact": "Du hast diesen Kontakt blockiert.",
+  "conversation_unblock": "Entsperren",
+  "conversation_empty_first_letter": "Schreib den ersten Brief,\num eure Unterhaltung zu beginnen",
+  "media_video_load_failed": "Video konnte nicht geladen werden",
+  "conversation_introduce_to_circle": "Deinem Kreis vorstellen",
+  "conversation_block_contact": "{username} blockieren",
+  "@conversation_block_contact": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "conversation_unblock_contact": "{username} entsperren",
+  "@conversation_unblock_contact": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "conversation_delete_chat_action": "Chat löschen",
+  "post_pass_along_title": "Weitergeben",
+  "post_pass_along_desc": "Wähle aus, wer diese Weitergabe über einen Hop erhalten soll.",
+  "post_pass_along_no_eligible": "Aktuell sind keine berechtigten Freunde verfügbar.",
+  "comments_count": "{count, plural, =0{Keine Kommentare} =1{1 Kommentar} other{{count} Kommentare}}",
+  "@comments_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "comments_empty": "Noch keine Kommentare",
+  "edit_pinned_post_title": "Angepinnten Beitrag bearbeiten",
+  "post_passed_along_by": "{username} hat dies weitergegeben",
+  "@post_passed_along_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "home_empty_circle_title": "Dein Kreis wartet darauf, gefüllt zu werden",
+  "home_empty_circle_desc": "Scanne den Code eines Freundes oder teile deinen, um dich zu verbinden",
+  "home_scan_friend_title": "Code eines Freundes scannen",
+  "home_scan_friend_desc": "Füge jemanden zu deinem Kreis hinzu",
+  "contact_request_message": "möchte sich mit dir verbinden",
+  "contact_request_decline": "Ablehnen",
+  "share_caption": "Beschriftung",
+  "share_title_count": "Teilen mit ({count})",
+  "@share_title_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "share_title_empty": "Teilen mit...",
+  "share_no_targets": "Noch keine Kontakte oder Gruppen",
+  "share_no_matches": "Keine Treffer gefunden",
+  "share_contacts_section": "Kontakte",
+  "share_groups_section": "Gruppen",
+  "share_group_type_announcement": "Ankündigung",
+  "share_group_type_chat": "Chat",
+  "share_sending": "Wird gesendet...",
+  "share_send": "Senden",
+  "share_target_count": "{count, plural, =1{1 Ziel} other{{count} Ziele}}",
+  "@share_target_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "share_summary_sent": "Gesendet an {targetCount}",
+  "@share_summary_sent": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_queued": "{targetCount} für erneuten Versuch gespeichert",
+  "@share_summary_queued": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_failed": "fehlgeschlagen für {targetCount}",
+  "@share_summary_failed": {
+    "placeholders": {
+      "targetCount": {
+        "type": "String"
+      }
+    }
+  },
+  "share_summary_nothing": "Es wurde nichts geteilt.",
+  "share_summary_skipped_gifs": "{count, plural, =1{1 zu großes GIF übersprungen.} other{{count} zu große GIFs übersprungen.}}",
+  "@share_summary_skipped_gifs": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_just_now": "gerade eben",
+  "time_min_ago": "{count, plural, =1{vor 1 Min.} other{vor {count} Min.}}",
+  "@time_min_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_hour_ago": "vor {count} Std.",
+  "@time_hour_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_day_ago": "vor {count} T.",
+  "@time_day_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "time_week_ago": "vor {count} Wo.",
+  "@time_week_ago": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expired": "Abgelaufen",
+  "post_expires_days_hours": "Läuft in {days} T. {hours} Std. ab",
+  "@post_expires_days_hours": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      },
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_days": "Läuft in {days} T. ab",
+  "@post_expires_days": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_hours": "Läuft in {hours} Std. ab",
+  "@post_expires_hours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_minutes": "Läuft in {minutes} Min. ab",
+  "@post_expires_minutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "post_expires_soon": "Läuft bald ab",
+  "post_photo_upload_failed": "Foto-Upload fehlgeschlagen",
+  "post_photo_pending_upload": "Foto wartet auf Upload",
+  "post_photos_pending_upload": "Fotos warten auf Upload",
+  "post_video_upload_failed": "Video-Upload fehlgeschlagen",
+  "post_video_pending_upload": "Video wartet auf Upload",
+  "post_voice_upload_failed": "Sprach-Upload fehlgeschlagen",
+  "post_voice_pending_upload": "Sprachnotiz wartet auf Upload",
+  "post_media_upload_failed": "Medien-Upload fehlgeschlagen",
+  "post_media_pending_upload": "Medien warten auf Upload",
+  "post_media_upload_failed_desc": "Dieser Beitrag blieb lokal, weil der Medien-Upload nicht abgeschlossen wurde.",
+  "post_media_pending_upload_desc": "Empfänger erhalten dies, sobald der Upload abgeschlossen ist.",
+  "post_send_pass": "Weitergabe senden",
+  "btn_saving": "Wird gespeichert...",
+  "intro_from": "Von",
+  "intro_empty": "Noch keine Einführungen",
+  "intro_tab_desc": "Das sind Menschen, die deine Freunde gut kennen. Sobald ihr beide annehmt, könnt ihr chatten.",
+  "intro_banner_title": "Hilf {username}, deinen Kreis kennenzulernen",
+  "@intro_banner_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "intro_banner_desc": "Stelle diese Person Freunden vor, mit denen es passen könnte",
+  "intro_make_introductions": "Einführungen machen",
+  "intro_maybe_later": "Vielleicht später",
+  "introduced_by_label": "Vorgestellt von",
+  "intro_unavailable": "Nicht verfügbar",
+  "intro_waiting_for": "Warte auf {username}",
+  "@intro_waiting_for": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "intro_waiting_for_them": "Warte auf die andere Person",
+  "intro_sent_count": "{count, plural, =1{1 Einführung gesendet} other{{count} Einführungen gesendet}}",
+  "@intro_sent_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "intro_back_to_conversation": "Zurück zur Unterhaltung",
+  "identity_tagline": "Deine Identität, deine Kontrolle",
+  "startup_failed_title": "Initialisierung fehlgeschlagen",
+  "identity_restore_action": "Identität wiederherstellen",
+  "settings_peer_id_title": "PEER-ID",
+  "settings_peer_id_desc": "Deine eindeutige Kennung im Netzwerk",
+  "intro_and_more": "{names} und {count} weitere",
+  "@intro_and_more": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_block_action": "Blockieren",
+  "orbit_unblock_action": "Entsperren",
+  "orbit_delete_action": "Löschen",
+  "orbit_archive_action": "Archivieren",
+  "orbit_unarchive_action": "Aus Archiv holen",
+  "orbit_archived_empty_title": "Noch keine archivierten Freunde",
+  "orbit_archived_empty_desc": "Wische bei einem Freund nach links, um ihn zu archivieren.",
+  "orbit_inner_circle_badge": "Innerer Kreis",
+  "orbit_inner_circle_title": "DEIN INNERER KREIS",
+  "orbit_pending_items": "{count, plural, =1{1 Element ausstehend} other{{count} Elemente ausstehend}}",
+  "@orbit_pending_items": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_pending_group_invites": "Ausstehende Gruppeneinladungen",
+  "orbit_pending_group_intro_desc": "Prüfe hier ausstehende Gruppeneinladungen und dann die Einführungen darunter. Nach dem Annehmen erscheint die Gruppe in Orbit und holt Nachrichten aus dem Offline-Postfach nach.",
+  "orbit_no_friends_matching": "Keine Freunde passend zu \"{query}\"",
+  "@orbit_no_friends_matching": {
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_blocked": "Blockiert",
+  "feed_introduced_by": "Vorgestellt von {username}",
+  "@feed_introduced_by": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_previously_seen": "BEREITS GESEHEN",
+  "feed_replying_to": "Antwort auf",
+  "feed_view_earlier_messages": "Frühere Nachrichten anzeigen",
+  "feed_ready_for_user": "Dein Feed ist bereit, @{username}. Neue Verbindungen erscheinen hier.",
+  "@feed_ready_for_user": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_loading": "Feed wird geladen...",
+  "feed_syncing_threads": "Deine letzten Threads werden noch synchronisiert.",
+  "qr_added_to_circle": "Zu deinem Kreis hinzugefügt!",
+  "btn_ok": "OK",
+  "qr_already_in_circle": "Bereits in deinem Kreis!",
+  "qr_contact_added_previously": "Dieser Kontakt wurde schon hinzugefügt",
+  "btn_got_it": "Verstanden",
+  "orbit_intro_banner_mixed": "{inviteCount, plural, =1{1 Gruppeneinladung} other{{inviteCount} Gruppeneinladungen}} und {introCount, plural, =1{1 Einführung} other{{introCount} Einführungen}} warten",
+  "@orbit_intro_banner_mixed": {
+    "placeholders": {
+      "inviteCount": {
+        "type": "int"
+      },
+      "introCount": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_banner_invites": "{count, plural, =1{Gruppeneinladung prüfen und über Intros beitreten} other{Gruppeneinladungen prüfen und über Intros beitreten}}",
+  "@orbit_intro_banner_invites": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_banner_intros": "Prüfe und akzeptiere Einführungen, um zu chatten",
+  "group_member_invited_count": "{count, plural, =1{Mitglied eingeladen} other{{count} Mitglieder eingeladen}}",
+  "@group_member_invited_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_member_added_count": "{count, plural, =1{1 Mitglied hinzugefügt} other{{count} Mitglieder hinzugefügt}}",
+  "@group_member_added_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "group_invite_missing_key_issue": "Einladungen wurden nicht gesendet, weil der Gruppe der neueste Schlüssel fehlt",
+  "group_invite_issues": "Einladungsprobleme: {details}",
+  "@group_invite_issues": {
+    "placeholders": {
+      "details": {
+        "type": "String"
+      }
+    }
+  },
+  "group_members_publish_failed_issue": "Das Ereignis zum Hinzufügen von Mitgliedern konnte nicht veröffentlicht werden",
+  "group_member_added_with_warnings": "{prefix}, aber {issues}.",
+  "@group_member_added_with_warnings": {
+    "placeholders": {
+      "prefix": {
+        "type": "String"
+      },
+      "issues": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_joined": "{name} beigetreten",
+  "@group_invite_joined": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_no_longer_available": "Einladung nicht mehr verfügbar",
+  "group_invite_expired": "Einladung abgelaufen",
+  "group_invite_revoked": "Einladung wurde widerrufen",
+  "group_invite_already_used": "Einladung bereits verwendet",
+  "group_invite_wrong_identity": "Einladung gehört zu einer anderen Identität",
+  "group_invite_needs_key": "Einladung benötigt frisches Schlüsselmaterial",
+  "group_invite_invalid": "Einladung ist nicht mehr gültig",
+  "group_invite_duplicate_group": "Gruppe bereits hinzugefügt",
+  "group_invite_joined_recovery": "{name} beigetreten, aber die Wiederherstellung holt noch auf",
+  "@group_invite_joined_recovery": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "group_invite_accepted_recovery": "Einladung angenommen, aber die Wiederherstellung holt noch auf",
+  "group_invite_accept_failed": "Einladung konnte nicht angenommen werden",
+  "group_invite_declined": "Einladung abgelehnt",
+  "group_invite_decline_failed": "Einladung konnte nicht abgelehnt werden",
+  "post_pin_retrying": "Pin-Aktualisierung wird weiter versucht",
+  "post_pin_queued": "Pin-Aktualisierung zum erneuten Versuch eingereiht",
+  "post_pin_failed": "Pin-Aktualisierung fehlgeschlagen",
+  "post_pin_could_not": "Beitrag konnte nicht angepinnt werden",
+  "post_pinned_update_retrying": "Aktualisierung des angepinnten Beitrags wird weiter versucht",
+  "post_pinned_update_queued": "Aktualisierung des angepinnten Beitrags zum erneuten Versuch eingereiht",
+  "post_pinned_update_failed": "Aktualisierung des angepinnten Beitrags fehlgeschlagen",
+  "post_pinned_update_could_not": "Angepinnter Beitrag konnte nicht aktualisiert werden",
+  "post_pin_removal_retrying": "Entfernen des Pins wird weiter versucht",
+  "post_pin_removal_queued": "Entfernen des Pins zum erneuten Versuch eingereiht",
+  "post_pin_removal_failed": "Entfernen des Pins fehlgeschlagen",
+  "post_pin_remove_could_not": "Pin konnte nicht entfernt werden",
+  "post_repost_retrying": "Repost wird weiter versucht",
+  "post_repost_queued": "Repost zum erneuten Versuch eingereiht",
+  "post_repost_media_failed": "Repost-Medien konnten nicht vorbereitet werden",
+  "post_repost_could_not": "Repost konnte nicht vorbereitet werden",
+  "post_no_longer_available": "Beitrag ist nicht mehr verfügbar",
+  "post_repost_not_allowed": "Dieser Beitrag kann nicht erneut gepostet werden",
+  "identity_generate_failed": "Identität konnte nicht erstellt werden",
+  "identity_save_failed": "Identität konnte nicht gespeichert werden",
+  "qr_no_identity_detail": "Keine Identität gefunden. Bitte erstelle zuerst eine.",
+  "qr_sign_failed": "QR-Code konnte nicht signiert werden. Bitte versuche es erneut.",
+  "qr_unexpected_error": "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es erneut.",
+  "qr_invalid_title": "Ungültiger QR-Code",
+  "qr_invalid_body": "Das sieht nicht wie ein gültiger Kontakt-QR-Code aus.",
+  "qr_incomplete_title": "Unvollständiger QR-Code",
+  "qr_incomplete_body": "Diesem QR-Code fehlen erforderliche Informationen.",
+  "qr_invalid_signature_title": "Ungültige Signatur",
+  "qr_invalid_signature_body": "Dieser QR-Code konnte nicht verifiziert werden.",
+  "qr_expired_title": "QR-Code abgelaufen",
+  "qr_expired_body": "Dieser QR-Code ist abgelaufen. Bitte deinen Freund um einen neuen.",
+  "qr_self_title": "Das bist du!",
+  "qr_self_body": "Du kannst dich nicht selbst als Kontakt hinzufügen.",
+  "qr_add_failed": "Kontakt konnte nicht hinzugefügt werden. Bitte versuche es erneut."
 }

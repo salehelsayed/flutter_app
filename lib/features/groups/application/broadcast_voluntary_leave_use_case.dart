@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -80,6 +81,10 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
   if (selfMember.isEmpty) {
     return VoluntaryLeaveBroadcastResult.skippedMemberNotFound;
   }
+  final senderBinding = resolveGroupSenderDeviceBindingFromMember(
+    member: selfMember.first,
+    senderPublicKey: identity.publicKey,
+  );
 
   final remainingMembers = members
       .where((member) => member.peerId != identity.peerId)
@@ -106,6 +111,9 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
     actorUsername: senderUsername,
     actorSigningPublicKey: identity.publicKey,
     actorPrivateKey: identity.privateKey,
+    actorDeviceId: senderBinding.deviceId,
+    actorTransportPeerId: senderBinding.transportPeerId,
+    actorKeyPackageId: senderBinding.keyPackageId,
     preTransitionStateHash: preTransitionStateHash,
     systemPayload: {
       '__sys': 'member_removed',
@@ -136,6 +144,10 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
     senderPublicKey: identity.publicKey,
     senderPrivateKey: identity.privateKey,
     senderUsername: senderUsername,
+    senderDeviceId: senderBinding.deviceId,
+    senderTransportPeerId: senderBinding.transportPeerId,
+    senderDevicePublicKey: senderBinding.devicePublicKey,
+    senderKeyPackageId: senderBinding.keyPackageId,
     messageId: sourceEventId,
   );
 
@@ -144,6 +156,10 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
       'groupId': group.id,
       'senderId': identity.peerId,
       'senderUsername': senderUsername,
+      if (senderBinding.deviceId != null)
+        'senderDeviceId': senderBinding.deviceId,
+      if (senderBinding.transportPeerId != null)
+        'transportPeerId': senderBinding.transportPeerId,
       'text': sysText,
       'timestamp': leftAt.toIso8601String(),
       'messageId': sourceEventId,
@@ -157,6 +173,9 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
       senderPeerId: identity.peerId,
       senderPublicKey: identity.publicKey,
       senderPrivateKey: identity.privateKey,
+      senderDeviceId: senderBinding.deviceId,
+      senderTransportPeerId: senderBinding.transportPeerId,
+      senderKeyPackageId: senderBinding.keyPackageId,
       messageId: leaveTimelineMessage.id,
       recipientPeerIds: remainingPeerIds,
     );

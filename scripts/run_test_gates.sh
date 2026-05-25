@@ -41,6 +41,7 @@ readonly INTRO_TESTS=(
   "test/features/introduction/application/pass_introduction_test.dart"
   "test/features/introduction/application/send_introduction_test.dart"
   "test/features/introduction/integration/intro_wiring_smoke_test.dart"
+  "test/features/introduction/integration/introduction_b_to_a_c_precondition_test.dart"
   "test/features/introduction/integration/introduction_multi_node_test.dart"
   "test/features/introduction/integration/introduction_smoke_test.dart"
   "test/features/introduction/presentation/screens/friend_picker_wired_test.dart"
@@ -49,6 +50,7 @@ readonly INTRO_TESTS=(
 
 readonly GROUP_TESTS=(
   "test/features/groups/integration/group_messaging_smoke_test.dart"
+  "test/features/groups/integration/group_admin_metadata_convergence_test.dart"
   "test/features/groups/integration/group_resume_recovery_test.dart"
   "test/features/groups/integration/group_edge_cases_smoke_test.dart"
   "test/features/groups/integration/invite_round_trip_test.dart"
@@ -112,6 +114,7 @@ readonly OPTIONAL_MANUAL_TESTS=(
   "integration_test/cold_start_sendable_no_user_action_test.dart"
   "integration_test/cold_start_message_render_simulator_test.dart"
   "integration_test/foreground_group_push_drain_test.dart"
+  "integration_test/group_admin_metadata_convergence_simulator_test.dart"
   "integration_test/group_delete_preserves_friends_simulator_test.dart"
   "integration_test/group_invite_accept_spinner_simulator_test.dart"
   "integration_test/group_new_member_media_simulator_proof_test.dart"

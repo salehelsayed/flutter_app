@@ -9,6 +9,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -166,6 +168,26 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     appendGroupEventLogEntry: appendGroupEventLogEntry,
     description: description,
   );
+  final currentSenderDeviceId = p2pService.currentState.peerId?.trim();
+  if (currentSenderDeviceId != null && currentSenderDeviceId.isNotEmpty) {
+    final creatorMember = await groupRepo.getMember(group.id, identity.peerId);
+    if (creatorMember != null &&
+        creatorMember.findDeviceById(currentSenderDeviceId) == null) {
+      await groupRepo.saveMember(
+        creatorMember.copyWith(
+          devices: [
+            ...creatorMember.devices,
+            GroupMemberDeviceIdentity(
+              deviceId: currentSenderDeviceId,
+              transportPeerId: currentSenderDeviceId,
+              deviceSigningPublicKey: identity.publicKey,
+              mlKemPublicKey: identity.mlKemPublicKey,
+            ),
+          ],
+        ),
+      );
+    }
+  }
   final preTransitionStateHash = await buildGroupTransitionStateHash(
     groupRepo,
     group.id,
@@ -211,13 +233,40 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
 
   // 4. Build full GroupConfig and update Go topic validator
   final allMembers = await groupRepo.getMembers(group.id);
-  final groupConfig = buildGroupConfigPayload(group, allMembers);
+  final membershipEventAt = DateTime.now().toUtc();
+  final groupForConfig = group.copyWith(
+    lastMembershipEventAt: membershipEventAt,
+  );
+  final groupConfig = buildGroupConfigPayload(
+    groupForConfig,
+    allMembers,
+    configVersionOverride: membershipEventAt,
+  );
+  final senderBinding = await resolveGroupSenderDeviceBinding(
+    groupRepo: groupRepo,
+    groupId: group.id,
+    senderPeerId: identity.peerId,
+    preferredDeviceId:
+        currentSenderDeviceId == null || currentSenderDeviceId.isEmpty
+        ? null
+        : currentSenderDeviceId,
+    preferredTransportPeerId:
+        currentSenderDeviceId == null || currentSenderDeviceId.isEmpty
+        ? null
+        : currentSenderDeviceId,
+    senderPublicKey: identity.publicKey,
+  );
 
   try {
     await callGroupUpdateConfig(
       bridge,
       groupId: group.id,
       groupConfig: groupConfig,
+    );
+    await recordGroupMembershipEventWatermark(
+      groupRepo: groupRepo,
+      groupId: group.id,
+      eventAt: membershipEventAt,
     );
   } catch (e) {
     for (final member in addedMembers) {
@@ -237,7 +286,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   }
 
   // 5. Broadcast members_added system message
-  final publishedAt = DateTime.now().toUtc();
+  final publishedAt = membershipEventAt;
   final sourceEventId =
       'members_added:${group.id}:${identity.peerId}:${publishedAt.microsecondsSinceEpoch}';
   final sysPayload = await signGroupSystemTransitionPayload(
@@ -251,20 +300,13 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     actorUsername: identity.username,
     actorSigningPublicKey: identity.publicKey,
     actorPrivateKey: identity.privateKey,
+    actorDeviceId: senderBinding.deviceId,
+    actorTransportPeerId: senderBinding.transportPeerId,
+    actorKeyPackageId: senderBinding.keyPackageId,
     preTransitionStateHash: preTransitionStateHash,
     systemPayload: {
       '__sys': 'members_added',
-      'members': addedMembers
-          .map(
-            (m) => {
-              'peerId': m.peerId,
-              'username': m.username,
-              'role': m.role.toValue(),
-              'publicKey': m.publicKey,
-              if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
-            },
-          )
-          .toList(),
+      'members': addedMembers.map((m) => m.toConfigJson()).toList(),
       'groupConfig': groupConfig,
     },
   );
@@ -280,6 +322,10 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       senderPublicKey: identity.publicKey,
       senderPrivateKey: identity.privateKey,
       senderUsername: identity.username,
+      senderDeviceId: senderBinding.deviceId,
+      senderTransportPeerId: senderBinding.transportPeerId,
+      senderDevicePublicKey: senderBinding.devicePublicKey,
+      senderKeyPackageId: senderBinding.keyPackageId,
       messageId: sourceEventId,
     );
     if (publishResult['ok'] != true) {
@@ -320,6 +366,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       senderPublicKey: identity.publicKey,
       senderPrivateKey: identity.privateKey,
       senderUsername: identity.username,
+      senderDeviceId: senderBinding.deviceId,
       groupId: group.id,
       groupKey: keyInfo.encryptedKey,
       keyEpoch: keyInfo.keyGeneration,
@@ -355,8 +402,10 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     },
   );
 
+  final updatedGroup = await groupRepo.getGroup(group.id) ?? groupForConfig;
+
   return CreateGroupWithMembersResult(
-    group: group,
+    group: updatedGroup,
     membersAdded: addedMembers.length,
     inviteBatchResult: inviteBatchResult,
     addMemberFailures: addMemberFailures,

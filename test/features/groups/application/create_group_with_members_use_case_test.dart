@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
@@ -650,6 +651,59 @@ void main() {
       },
     );
 
+    test(
+      'deviceful members_added publish carries sender device binding',
+      () async {
+        p2pService = FakeP2PService(
+          initialState: const NodeState(
+            peerId: 'device-admin-phone',
+            isStarted: true,
+          ),
+        );
+
+        await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          type: GroupType.chat,
+          name: 'My Group',
+        );
+
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+        );
+        final parsed = jsonDecode(publishMsg) as Map<String, dynamic>;
+        final payload = parsed['payload'] as Map<String, dynamic>;
+        expect(payload['senderDeviceId'], 'device-admin-phone');
+        expect(payload['senderTransportPeerId'], 'device-admin-phone');
+        expect(payload['senderDevicePublicKey'], testIdentity.publicKey);
+
+        final sysMsg =
+            jsonDecode(payload['text'] as String) as Map<String, dynamic>;
+        expect(sysMsg['__sys'], 'members_added');
+        final audit = sysMsg['signedTransitionAudit'] as Map<String, dynamic>;
+        final signedPayload =
+            jsonDecode(audit['signedPayload'] as String)
+                as Map<String, dynamic>;
+        final actor = signedPayload['actor'] as Map<String, dynamic>;
+        expect(actor['deviceId'], 'device-admin-phone');
+        expect(actor['transportPeerId'], 'device-admin-phone');
+
+        final groupConfig = sysMsg['groupConfig'] as Map<String, dynamic>;
+        final configMembers = groupConfig['members'] as List<dynamic>;
+        final creator = configMembers.cast<Map<String, dynamic>>().singleWhere(
+          (member) => member['peerId'] == testIdentity.peerId,
+        );
+        final devices = creator['devices'] as List<dynamic>;
+        expect(
+          devices.cast<Map<String, dynamic>>().single['deviceId'],
+          'device-admin-phone',
+        );
+      },
+    );
+
     test('sends individual encrypted P2P invites to each contact', () async {
       await createGroupWithMembers(
         bridge: bridge,
@@ -706,6 +760,76 @@ void main() {
           expect(
             payload.membershipFreshnessProof!.groupConfigStateHash,
             payload.groupConfig['stateHash'],
+          );
+        }
+      },
+    );
+
+    test(
+      'initial members_added watermark is persisted and matches config fanout',
+      () async {
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice, contactBob],
+          type: GroupType.chat,
+          name: 'My Group',
+        );
+
+        final persistedGroup = await groupRepo.getGroup('test-group-id');
+        expect(persistedGroup, isNotNull);
+        final persistedMembershipAt = persistedGroup!.lastMembershipEventAt;
+        expect(persistedMembershipAt, isNotNull);
+        expect(result.group.lastMembershipEventAt, persistedMembershipAt);
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:updateConfig',
+        );
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final groupConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        final expectedVersion = persistedMembershipAt!
+            .toUtc()
+            .toIso8601String();
+        expect(groupConfig[groupConfigVersionField], expectedVersion);
+
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysMsg =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        expect(
+          (sysMsg['groupConfig']
+              as Map<String, dynamic>)[groupConfigVersionField],
+          expectedVersion,
+        );
+        expect(
+          (sysMsg['signedTransitionAudit'] as Map<String, dynamic>)['eventAt'],
+          expectedVersion,
+        );
+
+        for (final entry in p2pService.sentMessageLog) {
+          final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          final payload = GroupInvitePayload.fromInnerJson(
+            encrypted['ciphertext'] as String,
+          );
+          expect(payload, isNotNull);
+          expect(
+            payload!.groupConfig[groupConfigVersionField],
+            expectedVersion,
           );
         }
       },

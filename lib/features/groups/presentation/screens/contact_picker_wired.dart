@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -48,30 +49,40 @@ class ContactPickerInviteResult {
       membersAddedPublishFailed ||
       (inviteBatchResult?.hasFailures ?? false);
 
-  String buildCompletionMessage() {
+  String buildCompletionMessage([AppLocalizations? l10n]) {
     if (!hasWarnings) {
-      return membersAdded == 1
-          ? 'Member invited'
-          : '$membersAdded members invited';
+      return l10n?.group_member_invited_count(membersAdded) ??
+          (membersAdded == 1
+              ? 'Member invited'
+              : '$membersAdded members invited');
     }
 
     final issues = <String>[];
     if (inviteDeliverySkippedMissingKey) {
       issues.add(
-        'invites were not sent because the group is missing its latest key',
+        l10n?.group_invite_missing_key_issue ??
+            'invites were not sent because the group is missing its latest key',
       );
     }
     if (inviteBatchResult?.hasFailures ?? false) {
-      issues.add('invite issues: ${inviteBatchResult!.describeFailures()}');
+      final details = inviteBatchResult!.describeFailures();
+      issues.add(
+        l10n?.group_invite_issues(details) ?? 'invite issues: $details',
+      );
     }
     if (membersAddedPublishFailed) {
-      issues.add('the add-members event could not be published');
+      issues.add(
+        l10n?.group_members_publish_failed_issue ??
+            'the add-members event could not be published',
+      );
     }
 
-    final prefix = membersAdded == 1
-        ? '1 member added'
-        : '$membersAdded members added';
-    return '$prefix, but ${issues.join('; ')}.';
+    final prefix =
+        l10n?.group_member_added_count(membersAdded) ??
+        (membersAdded == 1 ? '1 member added' : '$membersAdded members added');
+    final joinedIssues = issues.join('; ');
+    return l10n?.group_member_added_with_warnings(prefix, joinedIssues) ??
+        '$prefix, but $joinedIssues.';
   }
 }
 
@@ -111,6 +122,11 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
   bool _isLoadingContacts = true;
   String? _contactLoadErrorMessage;
   bool _isInviting = false;
+
+  String? get _currentSenderDeviceId {
+    final peerId = widget.p2pService.currentState.peerId?.trim();
+    return peerId == null || peerId.isEmpty ? null : peerId;
+  }
 
   @override
   void initState() {
@@ -248,6 +264,14 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       if (group == null) throw StateError('Group not found');
 
       final groupConfig = buildGroupConfigPayload(group, allMembers);
+      final senderBinding = await resolveGroupSenderDeviceBinding(
+        groupRepo: widget.groupRepo,
+        groupId: widget.groupId,
+        senderPeerId: identity.peerId,
+        preferredDeviceId: _currentSenderDeviceId,
+        preferredTransportPeerId: _currentSenderDeviceId,
+        senderPublicKey: identity.publicKey,
+      );
 
       try {
         await callGroupUpdateConfig(
@@ -286,21 +310,13 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         actorUsername: identity.username,
         actorSigningPublicKey: identity.publicKey,
         actorPrivateKey: identity.privateKey,
+        actorDeviceId: senderBinding.deviceId,
+        actorTransportPeerId: senderBinding.transportPeerId,
+        actorKeyPackageId: senderBinding.keyPackageId,
         preTransitionStateHash: preTransitionStateHash,
         systemPayload: {
           '__sys': 'members_added',
-          'members': addedMembers
-              .map(
-                (m) => {
-                  'peerId': m.peerId,
-                  'username': m.username,
-                  'role': m.role.toValue(),
-                  'publicKey': m.publicKey,
-                  if (m.mlKemPublicKey != null)
-                    'mlKemPublicKey': m.mlKemPublicKey,
-                },
-              )
-              .toList(),
+          'members': addedMembers.map((m) => m.toConfigJson()).toList(),
           'groupConfig': groupConfig,
         },
       );
@@ -316,6 +332,10 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           senderPublicKey: identity.publicKey,
           senderPrivateKey: identity.privateKey,
           senderUsername: identity.username,
+          senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId: senderBinding.transportPeerId,
+          senderDevicePublicKey: senderBinding.devicePublicKey,
+          senderKeyPackageId: senderBinding.keyPackageId,
           messageId: sourceEventId,
         );
         if (publishResult['ok'] != true) {
@@ -382,6 +402,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           senderPublicKey: identity.publicKey,
           senderPrivateKey: identity.privateKey,
           senderUsername: identity.username,
+          senderDeviceId: senderBinding.deviceId,
           groupId: widget.groupId,
           groupKey: keyInfo.encryptedKey,
           keyEpoch: keyInfo.keyGeneration,

@@ -14,7 +14,6 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
-import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
@@ -23,6 +22,7 @@ import 'package:flutter_app/features/groups/application/delete_group_and_message
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
@@ -47,6 +47,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.da
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Wired widget connecting GroupInfoScreen to business logic.
 class GroupInfoWired extends StatefulWidget {
@@ -60,7 +61,7 @@ class GroupInfoWired extends StatefulWidget {
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
-  final UploadMediaFn uploadMediaFn;
+  final UploadGroupAvatarFn uploadGroupAvatarFn;
   final BackgroundPreference backgroundPreference;
 
   const GroupInfoWired({
@@ -75,7 +76,7 @@ class GroupInfoWired extends StatefulWidget {
     this.inviteDeliveryAttemptRepo,
     this.imageProcessor,
     this.mediaPicker,
-    this.uploadMediaFn = uploadMedia,
+    this.uploadGroupAvatarFn = uploadGroupAvatar,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
@@ -100,6 +101,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   bool _isDeletingLocally = false;
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
+
+  String? get _currentSenderDeviceId {
+    final peerId = widget.p2pService.currentState.peerId?.trim();
+    return peerId == null || peerId.isEmpty ? null : peerId;
+  }
 
   @override
   void initState() {
@@ -358,7 +364,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         await _loadGroupInfo();
       }
       if (!mounted) return;
-      final message = e is StateError ? e.message : 'Failed to leave group';
+      final message = e is StateError
+          ? e.message
+          : AppLocalizations.of(context)!.group_info_leave_failed;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -390,8 +398,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         SnackBar(
           content: Text(
             isMuted
-                ? 'Notifications muted for this group'
-                : 'Notifications restored for this group',
+                ? AppLocalizations.of(context)!.group_info_notifications_muted
+                : AppLocalizations.of(
+                    context,
+                  )!.group_info_notifications_restored,
           ),
         ),
       );
@@ -409,9 +419,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Failed to update mute')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.group_info_mute_update_failed,
+          ),
+        ),
+      );
       await _loadGroupInfo();
     } finally {
       if (mounted) {
@@ -425,24 +439,25 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
     final shouldDissolve = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Dissolve this group for everyone?'),
-        content: const Text(
-          'This ends the group for all members. History stays visible, but no one can send new messages after it is dissolved.',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('group-dissolve-cancel'),
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey('group-dissolve-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Dissolve'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        return AlertDialog(
+          title: Text(l10n.group_info_dissolve_title),
+          content: Text(l10n.group_info_dissolve_body),
+          actions: [
+            TextButton(
+              key: const ValueKey('group-dissolve-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.btn_cancel),
+            ),
+            FilledButton(
+              key: const ValueKey('group-dissolve-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.group_info_dissolve_action),
+            ),
+          ],
+        );
+      },
     );
 
     if (shouldDissolve == true) {
@@ -460,7 +475,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
-        throw StateError('No identity found');
+        throw StateError(AppLocalizations.of(context)!.group_info_no_identity);
       }
 
       final (result, _) = await dissolveGroup(
@@ -479,41 +494,43 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           _didMutateGroup = true;
           await _loadGroupInfo();
           if (!mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Group dissolved')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(AppLocalizations.of(context)!.group_dissolved),
+            ),
+          );
           break;
         case DissolveGroupResult.bridgeError:
           _didMutateGroup = true;
           await _loadGroupInfo();
           if (!mounted) return;
+          final l10n = AppLocalizations.of(context)!;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Group dissolved. Some members may need recovery to see it.',
-              ),
-            ),
+            SnackBar(content: Text(l10n.group_info_dissolved_recovery)),
           );
           break;
         case DissolveGroupResult.alreadyDissolved:
           _didMutateGroup = true;
           await _loadGroupInfo();
           if (!mounted) return;
+          final l10n = AppLocalizations.of(context)!;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Group already dissolved')),
+            SnackBar(content: Text(l10n.group_info_already_dissolved)),
           );
           break;
         case DissolveGroupResult.unauthorized:
           if (!mounted) return;
+          final l10n = AppLocalizations.of(context)!;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Only admins can dissolve groups')),
+            SnackBar(content: Text(l10n.group_info_admins_only_dissolve)),
           );
           break;
         case DissolveGroupResult.notFound:
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Group no longer exists')),
-          );
+          final l10n = AppLocalizations.of(context)!;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(l10n.group_info_not_found)));
           break;
       }
     } catch (e) {
@@ -528,7 +545,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError ? e.message : 'Failed to dissolve group';
+      final message = e is StateError
+          ? e.message
+          : AppLocalizations.of(context)!.group_info_dissolve_failed;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -547,24 +566,25 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
     final shouldDelete = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete this dissolved group from this device?'),
-        content: const Text(
-          'This removes the dissolved history from this device only. It will not affect anyone else or send a new leave event.',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('group-delete-local-cancel'),
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey('group-delete-local-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete Locally'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        return AlertDialog(
+          title: Text(l10n.group_info_delete_local_title),
+          content: Text(l10n.group_info_delete_local_body),
+          actions: [
+            TextButton(
+              key: const ValueKey('group-delete-local-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.btn_cancel),
+            ),
+            FilledButton(
+              key: const ValueKey('group-delete-local-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.group_info_delete_local_action),
+            ),
+          ],
+        );
+      },
     );
 
     if (shouldDelete == true) {
@@ -605,7 +625,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       if (!mounted) return;
       final message = e is StateError
           ? e.message
-          : 'Failed to delete group locally';
+          : AppLocalizations.of(context)!.group_info_delete_local_failed;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -844,6 +864,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
         if (group != null) {
           final groupConfig = buildGroupConfigPayload(group, allMembers);
+          final senderBinding = await resolveGroupSenderDeviceBinding(
+            groupRepo: widget.groupRepo,
+            groupId: widget.group.id,
+            senderPeerId: identity.peerId,
+            preferredDeviceId: _currentSenderDeviceId,
+            preferredTransportPeerId: _currentSenderDeviceId,
+            senderPublicKey: identity.publicKey,
+          );
           final removalReplayRecipientPeerIds = <String>{
             member.peerId,
             ...allMembers
@@ -866,6 +894,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             actorUsername: identity.username,
             actorSigningPublicKey: identity.publicKey,
             actorPrivateKey: identity.privateKey,
+            actorDeviceId: senderBinding.deviceId,
+            actorTransportPeerId: senderBinding.transportPeerId,
+            actorKeyPackageId: senderBinding.keyPackageId,
             preTransitionStateHash: preTransitionStateHash,
             systemPayload: {
               '__sys': 'member_removed',
@@ -890,6 +921,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             'groupId': widget.group.id,
             'senderId': identity.peerId,
             'senderUsername': identity.username,
+            if (senderBinding.deviceId != null)
+              'senderDeviceId': senderBinding.deviceId,
+            if (senderBinding.transportPeerId != null)
+              'transportPeerId': senderBinding.transportPeerId,
             'text': sysMessage,
             'timestamp': removedAt.toIso8601String(),
             'messageId': sourceEventId,
@@ -903,6 +938,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPublicKey: identity.publicKey,
             senderPrivateKey: identity.privateKey,
             senderUsername: identity.username,
+            senderDeviceId: senderBinding.deviceId,
+            senderTransportPeerId: senderBinding.transportPeerId,
+            senderDevicePublicKey: senderBinding.devicePublicKey,
+            senderKeyPackageId: senderBinding.keyPackageId,
             messageId: sourceEventId,
           );
           if (publishResult['ok'] != true) {
@@ -910,7 +949,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             throw StateError(
               errorMessage != null && errorMessage.isNotEmpty
                   ? errorMessage
-                  : 'Failed to publish member removal',
+                  : AppLocalizations.of(
+                      context,
+                    )!.group_info_publish_member_removal_failed,
             );
           }
           final removalReplayEnvelope = await buildGroupOfflineReplayEnvelope(
@@ -922,6 +963,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPeerId: identity.peerId,
             senderPublicKey: identity.publicKey,
             senderPrivateKey: identity.privateKey,
+            senderDeviceId: senderBinding.deviceId,
+            senderTransportPeerId: senderBinding.transportPeerId,
+            senderKeyPackageId: senderBinding.keyPackageId,
             messageId: removalTimelineMessage.id,
             recipientPeerIds: removalReplayRecipientPeerIds,
           );
@@ -976,7 +1020,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             },
           );
           if (rotatedKey == null) {
-            throw StateError('Failed to rotate group key after removal');
+            throw StateError(
+              AppLocalizations.of(context)!.group_info_rotate_key_failed,
+            );
           }
         }
       }
@@ -1012,7 +1058,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         details: {'error': e.toString()},
       );
       if (!mounted) return;
-      final message = e is StateError ? e.message : 'Failed to remove member';
+      final message = e is StateError
+          ? e.message
+          : AppLocalizations.of(context)!.group_info_remove_member_failed;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -1025,24 +1073,29 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
     final shouldRemove = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Remove ${member.username ?? 'member'} from the group?'),
-        content: const Text(
-          'They will stop receiving new messages from this group.',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('group-remove-cancel'),
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        return AlertDialog(
+          title: Text(
+            l10n.group_info_remove_member_title(
+              member.username ?? l10n.group_info_member_fallback,
+            ),
           ),
-          FilledButton(
-            key: const ValueKey('group-remove-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+          content: Text(l10n.group_info_remove_member_body),
+          actions: [
+            TextButton(
+              key: const ValueKey('group-remove-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.btn_cancel),
+            ),
+            FilledButton(
+              key: const ValueKey('group-remove-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.group_info_remove_action),
+            ),
+          ],
+        );
+      },
     );
 
     if (shouldRemove == true) {
@@ -1059,7 +1112,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
-        throw StateError('No identity found');
+        throw StateError(AppLocalizations.of(context)!.group_info_no_identity);
       }
       final preTransitionStateHash = await buildGroupTransitionStateHash(
         widget.groupRepo,
@@ -1084,9 +1137,19 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final members = await widget.groupRepo.getMembers(_group.id);
 
       if (group == null || updatedMember == null) {
-        throw StateError('Member not found');
+        throw StateError(
+          AppLocalizations.of(context)!.group_info_member_not_found,
+        );
       }
 
+      final senderBinding = await resolveGroupSenderDeviceBinding(
+        groupRepo: widget.groupRepo,
+        groupId: _group.id,
+        senderPeerId: identity.peerId,
+        preferredDeviceId: _currentSenderDeviceId,
+        preferredTransportPeerId: _currentSenderDeviceId,
+        senderPublicKey: identity.publicKey,
+      );
       final sourceEventId =
           'member_role_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
       final sysPayload = await signGroupSystemTransitionPayload(
@@ -1100,17 +1163,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         actorUsername: identity.username,
         actorSigningPublicKey: identity.publicKey,
         actorPrivateKey: identity.privateKey,
+        actorDeviceId: senderBinding.deviceId,
+        actorTransportPeerId: senderBinding.transportPeerId,
+        actorKeyPackageId: senderBinding.keyPackageId,
         preTransitionStateHash: preTransitionStateHash,
         systemPayload: {
           '__sys': 'member_role_updated',
-          'member': {
-            'peerId': updatedMember.peerId,
-            'username': updatedMember.username,
-            'role': updatedMember.role.toValue(),
-            'publicKey': updatedMember.publicKey,
-            if (updatedMember.mlKemPublicKey != null)
-              'mlKemPublicKey': updatedMember.mlKemPublicKey,
-          },
+          'eventAt': changedAt.toIso8601String(),
+          'member': updatedMember.toConfigJson(),
           'groupConfig': _buildGroupConfig(group, members),
         },
       );
@@ -1138,6 +1198,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
+        senderDeviceId: senderBinding.deviceId,
+        senderTransportPeerId: senderBinding.transportPeerId,
+        senderDevicePublicKey: senderBinding.devicePublicKey,
+        senderKeyPackageId: senderBinding.keyPackageId,
         messageId: sourceEventId,
       );
 
@@ -1151,6 +1215,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'groupId': _group.id,
           'senderId': identity.peerId,
           'senderUsername': identity.username,
+          if (senderBinding.deviceId != null)
+            'senderDeviceId': senderBinding.deviceId,
+          if (senderBinding.transportPeerId != null)
+            'transportPeerId': senderBinding.transportPeerId,
           'text': sysText,
           'timestamp': changedAt.toIso8601String(),
           'messageId': sourceEventId,
@@ -1164,6 +1232,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           senderPeerId: identity.peerId,
           senderPublicKey: identity.publicKey,
           senderPrivateKey: identity.privateKey,
+          senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId: senderBinding.transportPeerId,
+          senderKeyPackageId: senderBinding.keyPackageId,
           messageId: roleTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
@@ -1172,13 +1243,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       _didMutateGroup = true;
       await _loadGroupInfo();
       if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             updatedMember.role == MemberRole.admin
-                ? '${_displayName(updatedMember)} is now an admin'
-                : '${_displayName(updatedMember)} is no longer an admin',
+                ? l10n.group_info_admin_added(_displayName(updatedMember))
+                : l10n.group_info_admin_removed(_displayName(updatedMember)),
           ),
         ),
       );
@@ -1199,7 +1271,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       if (!mounted) return;
       final message = e is StateError
           ? e.message
-          : 'Failed to update member role';
+          : AppLocalizations.of(context)!.group_info_member_role_update_failed;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -1211,31 +1283,41 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     if (!mounted) return;
 
     final isPromoting = member.role != MemberRole.admin;
-    final title = isPromoting
-        ? 'Make ${_displayName(member)} an admin?'
-        : 'Remove admin access from ${_displayName(member)}?';
-    final content = isPromoting
-        ? 'They will be able to add, remove, and manage members.'
-        : 'They will lose admin-only actions after the change syncs.';
 
     final shouldChangeRole = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(content),
-        actions: [
-          TextButton(
-            key: const ValueKey('group-role-change-cancel'),
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        final name = _displayName(member);
+        return AlertDialog(
+          title: Text(
+            isPromoting
+                ? l10n.group_info_make_admin_title(name)
+                : l10n.group_info_remove_admin_title(name),
           ),
-          FilledButton(
-            key: const ValueKey('group-role-change-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(isPromoting ? 'Make Admin' : 'Remove Admin'),
+          content: Text(
+            isPromoting
+                ? l10n.group_info_make_admin_body
+                : l10n.group_info_remove_admin_body,
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              key: const ValueKey('group-role-change-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.btn_cancel),
+            ),
+            FilledButton(
+              key: const ValueKey('group-role-change-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(
+                isPromoting
+                    ? l10n.group_info_make_admin_action
+                    : l10n.group_info_remove_admin_action,
+              ),
+            ),
+          ],
+        );
+      },
     );
 
     if (shouldChangeRole == true) {
@@ -1286,12 +1368,23 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
 
     final changedAt = DateTime.now().toUtc();
+    final l10n = AppLocalizations.of(context)!;
+    final noIdentityMessage = l10n.group_info_no_identity;
+    final uploadPhotoFailedMessage = l10n.group_info_upload_photo_failed;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
-        throw StateError('No identity found');
+        throw StateError(noIdentityMessage);
       }
+      final senderBinding = await resolveGroupSenderDeviceBinding(
+        groupRepo: widget.groupRepo,
+        groupId: _group.id,
+        senderPeerId: identity.peerId,
+        preferredDeviceId: _currentSenderDeviceId,
+        preferredTransportPeerId: _currentSenderDeviceId,
+        senderPublicKey: identity.publicKey,
+      );
       final preTransitionStateHash = await buildGroupTransitionStateHash(
         widget.groupRepo,
         _group.id,
@@ -1317,15 +1410,15 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       }
 
       if (isReplacingAvatar) {
-        final uploaded = await widget.uploadMediaFn(
+        final uploaded = await widget.uploadGroupAvatarFn(
           bridge: widget.bridge,
           localFilePath: edit.preparedAvatarPath!,
-          mime: 'image/jpeg',
-          recipientPeerId: _group.id,
+          groupId: _group.id,
           allowedPeers: allowedPeers,
+          mime: 'image/jpeg',
         );
         if (uploaded == null) {
-          throw StateError('Failed to upload group photo');
+          throw StateError(uploadPhotoFailedMessage);
         }
 
         await commitPreparedGroupAvatar(
@@ -1379,7 +1472,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           if (signResponse['ok'] != true ||
               signature is! String ||
               signature.isEmpty) {
-            throw StateError('Failed to sign group metadata update');
+            throw StateError(
+              AppLocalizations.of(context)!.group_info_sign_metadata_failed,
+            );
           }
 
           refreshedMembers = membersForConfig;
@@ -1406,6 +1501,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             actorUsername: identity.username,
             actorSigningPublicKey: identity.publicKey,
             actorPrivateKey: identity.privateKey,
+            actorDeviceId: senderBinding.deviceId,
+            actorTransportPeerId: senderBinding.transportPeerId,
+            actorKeyPackageId: senderBinding.keyPackageId,
             preTransitionStateHash: preTransitionStateHash,
             systemPayload: unsignedPayload,
           );
@@ -1416,7 +1514,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final signedSysText = sysText;
       final signedMembers = refreshedMembers;
       if (signedSysText == null || signedMembers == null) {
-        throw StateError('Failed to sign group metadata update');
+        throw StateError(
+          AppLocalizations.of(context)!.group_info_sign_metadata_failed,
+        );
       }
       final metadataTimelineMessage = buildGroupMetadataUpdatedTimelineMessage(
         groupId: _group.id,
@@ -1437,6 +1537,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
+        senderDeviceId: senderBinding.deviceId,
+        senderTransportPeerId: senderBinding.transportPeerId,
+        senderDevicePublicKey: senderBinding.devicePublicKey,
+        senderKeyPackageId: senderBinding.keyPackageId,
         messageId:
             'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}',
       );
@@ -1450,6 +1554,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'groupId': _group.id,
           'senderId': identity.peerId,
           'senderUsername': identity.username,
+          if (senderBinding.deviceId != null)
+            'senderDeviceId': senderBinding.deviceId,
+          if (senderBinding.transportPeerId != null)
+            'transportPeerId': senderBinding.transportPeerId,
           'text': signedSysText,
           'timestamp': changedAt.toIso8601String(),
           'messageId':
@@ -1464,6 +1572,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           senderPeerId: identity.peerId,
           senderPublicKey: identity.publicKey,
           senderPrivateKey: identity.privateKey,
+          senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId: senderBinding.transportPeerId,
+          senderKeyPackageId: senderBinding.keyPackageId,
           messageId: metadataTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
@@ -1472,9 +1583,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       _didMutateGroup = true;
       await _loadGroupInfo();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Group details updated')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.group_info_details_updated,
+          ),
+        ),
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1489,7 +1604,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       if (!mounted) return;
       final message = e is StateError
           ? e.message
-          : 'Failed to update group details';
+          : AppLocalizations.of(context)!.group_info_details_update_failed;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -1519,8 +1634,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             _didMutateGroup = true;
             _loadGroupInfo();
             if (mounted) {
+              final l10n = AppLocalizations.of(context)!;
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(result.buildCompletionMessage())),
+                SnackBar(content: Text(result.buildCompletionMessage(l10n))),
               );
             }
           }
@@ -1537,7 +1653,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
-        throw StateError('No identity found');
+        throw StateError(AppLocalizations.of(context)!.group_info_no_identity);
       }
       final result = await resendGroupInvite(
         p2pService: widget.p2pService,
@@ -1577,9 +1693,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Failed to resend invite')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.group_info_invite_resend_failed,
+          ),
+        ),
+      );
       await _loadGroupInfo();
     } finally {
       if (mounted) {
@@ -1595,20 +1715,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     ResendGroupInviteResult result, {
     String? lastError,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     final name = _displayName(member);
     switch (result.status) {
       case GroupInviteDeliveryStatus.sent:
-        return 'Invite sent to $name';
+        return l10n.group_info_invite_sent(name);
       case GroupInviteDeliveryStatus.queued:
-        return "Invite is in $name's inbox";
+        return l10n.group_info_invite_queued(name);
       case GroupInviteDeliveryStatus.needsResend:
-        return 'Invite still needs to be resent';
+        return l10n.group_info_invite_needs_resend;
       case GroupInviteDeliveryStatus.cannotSend:
-        return groupInviteCannotSendSnackBarMessage(lastError);
+        return groupInviteCannotSendSnackBarMessage(l10n, lastError);
       case GroupInviteDeliveryStatus.joined:
-        return '$name already joined';
+        return l10n.group_info_invite_joined(name);
       case GroupInviteDeliveryStatus.unknown:
-        return 'Invite status unknown';
+        return l10n.group_info_invite_unknown;
     }
   }
 
@@ -1665,7 +1786,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     if (username != null && username.isNotEmpty) {
       return username;
     }
-    return 'member';
+    return AppLocalizations.of(context)!.group_info_member_fallback;
   }
 
   String? _normalizeDescription(String? value) {
@@ -1763,7 +1884,11 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to pick group photo')),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.group_edit_photo_pick_failed,
+          ),
+        ),
       );
     } finally {
       if (mounted) {
@@ -1800,6 +1925,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return SafeArea(
       top: false,
@@ -1822,7 +1948,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
               ),
               const SizedBox(height: 16),
               Text(
-                'Edit Group Details',
+                l10n.group_edit_details_title,
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
@@ -1846,22 +1972,22 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                       label: Text(
                         _preparedAvatarPath != null ||
                                 widget.group.avatarPath != null
-                            ? 'Change Photo'
-                            : 'Add Photo',
+                            ? l10n.group_edit_change_photo
+                            : l10n.group_edit_add_photo,
                       ),
                     ),
                     if (_hasCurrentAvatar || _removeAvatar)
                       TextButton(
                         key: const ValueKey('group-edit-remove-photo'),
                         onPressed: _removePhoto,
-                        child: const Text('Remove Photo'),
+                        child: Text(l10n.group_edit_remove_photo),
                       ),
                   ],
                 ),
               ),
               const SizedBox(height: 20),
               Text(
-                'Group Name',
+                l10n.group_edit_name,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -1877,7 +2003,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
               ),
               const SizedBox(height: 16),
               Text(
-                'Description',
+                l10n.group_edit_description,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -1897,7 +2023,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                     child: OutlinedButton(
                       key: const ValueKey('group-edit-cancel'),
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancel'),
+                      child: Text(l10n.btn_cancel),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1907,7 +2033,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                       onPressed: _nameController.text.trim().isEmpty
                           ? null
                           : _save,
-                      child: const Text('Save'),
+                      child: Text(l10n.btn_save),
                     ),
                   ),
                 ],

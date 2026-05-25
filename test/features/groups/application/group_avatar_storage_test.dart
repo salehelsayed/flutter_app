@@ -29,6 +29,8 @@ class _AvatarDownloadBridge extends Bridge {
 
   final Uint8List downloadBytes;
   bool parentDirExistedBeforeWrite = false;
+  final List<String> sentMessages = <String>[];
+  final List<String> commandLog = <String>[];
 
   @override
   bool get isInitialized => true;
@@ -49,6 +51,10 @@ class _AvatarDownloadBridge extends Bridge {
   Future<String> send(String message) async {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
     final cmd = parsed['cmd'] as String?;
+    sentMessages.add(message);
+    if (cmd != null) {
+      commandLog.add(cmd);
+    }
     if (cmd == 'media:download') {
       final payload = parsed['payload'] as Map<String, dynamic>;
       final outputPath = payload['outputPath'] as String;
@@ -85,6 +91,23 @@ AvatarNormalizationHelper _makeAvatarNormalizer(Uint8List processedBytes) {
               path: path,
               processedBytes: processedBytes,
             );
+          },
+    ),
+  );
+}
+
+AvatarNormalizationHelper _makeMissingOutputAvatarNormalizer() {
+  return AvatarNormalizationHelper(
+    imageProcessor: ImageProcessor(
+      compressFile:
+          ({
+            required String path,
+            required int quality,
+            required bool keepExif,
+            int minWidth = 1920,
+            int minHeight = 1080,
+          }) async {
+            return XFile('${path}_compressed.jpg');
           },
     ),
   );
@@ -129,6 +152,93 @@ void main() {
       );
       expect(await committedAvatar.exists(), isTrue);
       expect(await committedAvatar.readAsBytes(), processedBytes);
+    },
+  );
+
+  test(
+    'uploadGroupAvatar stores a multi-recipient avatar without blob encryption',
+    () async {
+      final localFile = File(p.join(tempDir.path, 'prepared-avatar.jpg'));
+      await localFile.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0], flush: true);
+      final bridge = _AvatarDownloadBridge(Uint8List(0));
+
+      final result = await uploadGroupAvatar(
+        bridge: bridge,
+        localFilePath: localFile.path,
+        groupId: 'group-1',
+        allowedPeers: const ['peer-a', 'peer-b'],
+        blobId: 'avatar-blob-1',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.id, 'avatar-blob-1');
+      expect(result.mime, 'image/jpeg');
+      expect(bridge.commandLog, ['media:upload']);
+
+      final uploadMessage =
+          jsonDecode(bridge.sentMessages.single) as Map<String, dynamic>;
+      final payload = uploadMessage['payload'] as Map<String, dynamic>;
+      expect(payload['id'], 'avatar-blob-1');
+      expect(payload['to'], 'group-1');
+      expect(payload['mime'], 'image/jpeg');
+      expect(payload['filePath'], localFile.path);
+      expect(payload['filePath'] as String, isNot(endsWith('.enc')));
+      expect(payload['allowedPeers'], ['peer-a', 'peer-b']);
+    },
+  );
+
+  test(
+    'downloadGroupAvatar commits downloaded avatar when normalization output is missing',
+    () async {
+      final downloadedBytes = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]);
+      final bridge = _AvatarDownloadBridge(downloadedBytes);
+
+      final result = await downloadGroupAvatar(
+        bridge: bridge,
+        groupId: 'group-1',
+        blobId: 'blob-1',
+        avatarNormalizer: _makeMissingOutputAvatarNormalizer(),
+      );
+
+      expect(result, 'media/group_avatars/group-1.jpg');
+
+      final committedAvatar = File(
+        p.join(tempDir.path, 'media', 'group_avatars', 'group-1.jpg'),
+      );
+      expect(await committedAvatar.exists(), isTrue);
+      expect(await committedAvatar.readAsBytes(), downloadedBytes);
+
+      final downloadTemp = File(
+        p.join(
+          tempDir.path,
+          'media',
+          'group_avatars',
+          'group-1.jpg.download.jpg',
+        ),
+      );
+      expect(await downloadTemp.exists(), isFalse);
+    },
+  );
+
+  test(
+    'downloadGroupAvatar rejects fallback commit when downloaded blob is not an image',
+    () async {
+      final bridge = _AvatarDownloadBridge(
+        Uint8List.fromList([0x01, 0x02, 0x03, 0x04]),
+      );
+
+      final result = await downloadGroupAvatar(
+        bridge: bridge,
+        groupId: 'group-1',
+        blobId: 'blob-1',
+        avatarNormalizer: _makeMissingOutputAvatarNormalizer(),
+      );
+
+      expect(result, isNull);
+      final committedAvatar = File(
+        p.join(tempDir.path, 'media', 'group_avatars', 'group-1.jpg'),
+      );
+      expect(await committedAvatar.exists(), isFalse);
     },
   );
 }

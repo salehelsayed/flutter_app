@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -18,10 +19,12 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart'
     as group_leave;
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
+import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -360,6 +363,116 @@ class GroupTestUser {
       'keyEpoch': 0,
       'text': sysText,
       'timestamp': effectiveChangedAt.toIso8601String(),
+    }, senderDeviceId: deviceId);
+  }
+
+  /// Updates group metadata and broadcasts the signed system event peers use
+  /// to converge their local group row and avatar metadata.
+  Future<void> updateMetadata({
+    required String groupId,
+    required String name,
+    String? description,
+    String? avatarBlobId,
+    String? avatarMime,
+    String? avatarPath,
+    DateTime? changedAt,
+  }) async {
+    final effectiveChangedAt = changedAt?.toUtc() ?? DateTime.now().toUtc();
+    final preTransitionStateHash = await buildGroupTransitionStateHash(
+      groupRepo,
+      groupId,
+    );
+    String? sysText;
+
+    await updateGroupMetadata(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      name: name,
+      description: description,
+      avatarBlobId: avatarBlobId,
+      avatarMime: avatarMime,
+      avatarPath: avatarPath,
+      eventAt: effectiveChangedAt,
+      beforePersist: (updatedGroup) async {
+        final members = await groupRepo.getMembers(groupId);
+        final groupConfig = buildGroupConfigPayload(updatedGroup, members);
+        final actorPayload = buildGroupMetadataActorEventPayload(
+          groupId: groupId,
+          updatedAt: effectiveChangedAt,
+          actorPeerId: peerId,
+          actorUsername: username,
+          actorPublicKey: publicKey,
+          groupConfig: groupConfig,
+        );
+        final canonicalPayload = canonicalizeGroupMetadataActorEventPayload(
+          actorPayload,
+        );
+        final signResponse = await callSignPayload(
+          bridge: bridge,
+          dataToSign: canonicalPayload,
+          privateKey: privateKey,
+        );
+        final signature = signResponse['signature'];
+        if (signResponse['ok'] != true ||
+            signature is! String ||
+            signature.isEmpty) {
+          throw StateError('Failed to sign metadata update');
+        }
+        final sourceEventId =
+            'group_metadata_updated:$groupId:$peerId:${effectiveChangedAt.microsecondsSinceEpoch}';
+        final unsignedPayload = {
+          '__sys': 'group_metadata_updated',
+          'updatedAt': effectiveChangedAt.toIso8601String(),
+          'groupConfig': groupConfig,
+          groupMetadataActorEventEnvelopeField:
+              buildSignedGroupMetadataActorEventEnvelope(
+                signedPayload: canonicalPayload,
+                signature: signature,
+              ),
+        };
+        final signedPayload = await signGroupSystemTransitionPayload(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          transitionType: 'group_metadata_updated',
+          sourceEventId: sourceEventId,
+          eventAt: effectiveChangedAt,
+          actorPeerId: peerId,
+          actorUsername: username,
+          actorSigningPublicKey: publicKey,
+          actorPrivateKey: privateKey,
+          actorDeviceId: deviceId,
+          actorTransportPeerId: deviceId,
+          actorKeyPackageId: deviceIdentity.keyPackageId,
+          preTransitionStateHash: preTransitionStateHash,
+          systemPayload: unsignedPayload,
+        );
+        sysText = jsonEncode(signedPayload);
+      },
+    );
+
+    final signedSysText = sysText;
+    if (signedSysText == null) {
+      throw StateError('Metadata update was not signed');
+    }
+    await msgRepo.saveMessage(
+      buildGroupMetadataUpdatedTimelineMessage(
+        groupId: groupId,
+        senderId: peerId,
+        senderUsername: username,
+        eventAt: effectiveChangedAt,
+      ),
+    );
+
+    await _network.publish(groupId, peerId, {
+      'groupId': groupId,
+      'senderId': peerId,
+      'senderUsername': username,
+      'keyEpoch': 0,
+      'text': signedSysText,
+      'timestamp': effectiveChangedAt.toIso8601String(),
+      'messageId':
+          'group_metadata_updated:$groupId:$peerId:${effectiveChangedAt.microsecondsSinceEpoch}',
     }, senderDeviceId: deviceId);
   }
 

@@ -27,6 +27,14 @@ class AvatarNormalizationHelper {
         'Avatar processing did not produce a normalized file for $inputPath',
       );
     }
+    final processedFile = File(processedPath);
+    final processedExists = await processedFile.exists();
+    final processedLength = processedExists ? await processedFile.length() : 0;
+    if (!processedExists || processedLength <= 0) {
+      throw StateError(
+        'Avatar processing did not write a normalized file for $inputPath',
+      );
+    }
 
     return processedPath;
   }
