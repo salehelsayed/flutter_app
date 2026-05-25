@@ -25,6 +25,65 @@ void main() {
       expect(routeTarget.groupId, 'group-123');
     });
 
+    test(
+      'fromRemoteMessageData maps accepted group id aliases to group routes',
+      () {
+        final cases = <String, String>{
+          'group_id': 'group-snake',
+          'gid': 'group-gid',
+          'conversation_id': 'group-conversation',
+        };
+
+        for (final entry in cases.entries) {
+          final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+            'type': 'group_message',
+            entry.key: entry.value,
+            'message_id': 'msg-${entry.key}',
+          });
+
+          expect(routeTarget, isNotNull, reason: entry.key);
+          expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+          expect(routeTarget.groupId, entry.value);
+          expect(routeTarget.messageId, 'msg-${entry.key}');
+        }
+      },
+    );
+
+    test(
+      'fromRemoteMessageData maps alternate group-message identity fields',
+      () {
+        final cases = <Map<String, dynamic>>[
+          {
+            'payloadType': 'group_message',
+            'group_id': 'group-payload-type',
+            'message_id': 'msg-payload-type',
+          },
+          {
+            'kind': 'group_message',
+            'gid': 'group-kind',
+            'messageId': 'msg-kind',
+          },
+          {
+            'kind': 'group_offline_replay',
+            'payloadType': 'group_message',
+            'conversation_id': 'group-replay',
+            'msgId': 'msg-replay',
+          },
+        ];
+
+        for (final data in cases) {
+          final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+            data,
+          );
+
+          expect(routeTarget, isNotNull, reason: data.toString());
+          expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+          expect(routeTarget.groupId, startsWith('group-'));
+          expect(routeTarget.messageId, startsWith('msg-'));
+        }
+      },
+    );
+
     test('fromRemoteMessageData falls back to payload-only group routes', () {
       final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
         'payload': 'group:group-123',

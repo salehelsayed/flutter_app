@@ -32,6 +32,7 @@ import 'package:flutter_app/features/groups/application/signed_group_transition_
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -324,13 +325,22 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<void> _onLeave() async {
+    _LeaveRollbackSnapshot? rollbackSnapshot;
+    var voluntaryPreworkCompleted = false;
+
     try {
-      await _broadcastSelfRemovalIfNeeded();
+      rollbackSnapshot = await _captureLeaveRollbackSnapshot();
+      final msgRepo = widget.msgRepo;
+      final broadcastResult = await _broadcastSelfRemovalIfNeeded();
+      voluntaryPreworkCompleted = broadcastResult.didBroadcast;
       await leaveGroup(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
         groupId: _group.id,
       );
+      if (msgRepo != null) {
+        await msgRepo.deleteMessagesForGroup(_group.id);
+      }
 
       if (!mounted) return;
       // Pop back to group list (pop info screen + conversation screen)
@@ -341,6 +351,12 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         event: 'GROUP_INFO_FL_LEAVE_ERROR',
         details: {'error': e.toString()},
       );
+      if (voluntaryPreworkCompleted &&
+          rollbackSnapshot != null &&
+          _isNativeLeaveFailure(e)) {
+        await _rollbackFailedVoluntaryLeave(rollbackSnapshot);
+        await _loadGroupInfo();
+      }
       if (!mounted) return;
       final message = e is StateError ? e.message : 'Failed to leave group';
       ScaffoldMessenger.of(
@@ -602,8 +618,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
   }
 
-  Future<void> _broadcastSelfRemovalIfNeeded() async {
-    await broadcastVoluntaryLeaveAndRotateKey(
+  Future<VoluntaryLeaveBroadcastResult> _broadcastSelfRemovalIfNeeded() async {
+    return broadcastVoluntaryLeaveAndRotateKey(
       bridge: widget.bridge,
       groupRepo: widget.groupRepo,
       group: _group,
@@ -612,13 +628,197 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       sendP2PMessage: (peerId, message) async {
         return widget.p2pService.sendMessage(peerId, message);
       },
+      storeP2PMessageInInbox: (peerId, message) async {
+        return widget.p2pService.storeInInbox(peerId, message);
+      },
+    );
+  }
+
+  Future<_LeaveRollbackSnapshot?> _captureLeaveRollbackSnapshot() async {
+    final identity = await widget.identityRepo.loadIdentity();
+    if (identity == null) {
+      return null;
+    }
+
+    final operationStartedAt = DateTime.now().toUtc();
+    final latestKey = await widget.groupRepo.getLatestKey(_group.id);
+    final previousKey = latestKey != null && latestKey.keyGeneration > 1
+        ? await widget.groupRepo.getKeyByGeneration(
+            _group.id,
+            latestKey.keyGeneration - 1,
+          )
+        : null;
+    final groupRepo = widget.groupRepo;
+    GroupKeyRotationDraftRepository? draftRepo;
+    if (groupRepo is GroupKeyRotationDraftRepository) {
+      draftRepo = groupRepo as GroupKeyRotationDraftRepository;
+    }
+    final pendingDraft = await draftRepo?.getPendingKeyRotation(_group.id);
+
+    return _LeaveRollbackSnapshot(
+      groupId: _group.id,
+      operationStartedAt: operationStartedAt,
+      peerId: identity.peerId,
+      username: identity.username,
+      latestKey: latestKey,
+      previousKey: previousKey,
+      pendingDraft: pendingDraft,
+    );
+  }
+
+  bool _isNativeLeaveFailure(Object error) =>
+      error is BridgeCommandException && error.command == 'group:leave';
+
+  Future<void> _rollbackFailedVoluntaryLeave(
+    _LeaveRollbackSnapshot snapshot,
+  ) async {
+    await _deleteFailedSelfLeaveTimelineMessage(snapshot);
+    await _restoreFailedLeaveKeyWindow(snapshot);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INFO_FL_LEAVE_ROLLBACK_RESTORED',
+      details: {
+        'groupId': snapshot.groupId.length > 8
+            ? snapshot.groupId.substring(0, 8)
+            : snapshot.groupId,
+      },
+    );
+  }
+
+  Future<void> _deleteFailedSelfLeaveTimelineMessage(
+    _LeaveRollbackSnapshot snapshot,
+  ) async {
+    final msgRepo = widget.msgRepo;
+    if (msgRepo == null) {
+      return;
+    }
+
+    final leftAt = await msgRepo.getLatestSystemEventTimestampForTarget(
+      snapshot.groupId,
+      eventType: 'member_removed',
+      targetId: snapshot.peerId,
+    );
+    if (leftAt == null ||
+        leftAt.toUtc().isBefore(snapshot.operationStartedAt)) {
+      return;
+    }
+
+    final timelineMessage = buildMemberRemovedTimelineMessage(
+      groupId: snapshot.groupId,
+      removedPeerId: snapshot.peerId,
+      removedUsername: snapshot.username,
+      senderId: snapshot.peerId,
+      senderUsername: snapshot.username,
+      eventAt: leftAt,
+    );
+    await msgRepo.deleteMessage(timelineMessage.id);
+  }
+
+  Future<void> _restoreFailedLeaveKeyWindow(
+    _LeaveRollbackSnapshot snapshot,
+  ) async {
+    final latestKey = snapshot.latestKey;
+    if (latestKey == null) {
+      return;
+    }
+
+    final currentLatest = await widget.groupRepo.getLatestKey(snapshot.groupId);
+    if (currentLatest != null &&
+        currentLatest.keyGeneration <= latestKey.keyGeneration) {
+      return;
+    }
+
+    await widget.groupRepo.removeAllKeys(snapshot.groupId);
+    final previousKey = snapshot.previousKey;
+    if (previousKey != null) {
+      await widget.groupRepo.saveKey(previousKey);
+    }
+    await widget.groupRepo.saveKey(latestKey);
+
+    final pendingDraft = snapshot.pendingDraft;
+    final groupRepo = widget.groupRepo;
+    GroupKeyRotationDraftRepository? draftRepo;
+    if (groupRepo is GroupKeyRotationDraftRepository) {
+      draftRepo = groupRepo as GroupKeyRotationDraftRepository;
+    }
+    if (pendingDraft != null && draftRepo != null) {
+      await draftRepo.savePendingKeyRotation(pendingDraft);
+    }
+  }
+
+  Future<void> _rollbackFailedMemberRemoval({
+    required GroupModel preRemovalGroup,
+    required GroupMember removedMember,
+    required String? removalTimelineMessageId,
+  }) async {
+    final existingMember = await widget.groupRepo.getMember(
+      preRemovalGroup.id,
+      removedMember.peerId,
+    );
+    if (existingMember == null) {
+      await widget.groupRepo.saveMember(removedMember);
+    }
+
+    final currentGroup = await widget.groupRepo.getGroup(preRemovalGroup.id);
+    final restoredGroup = (currentGroup ?? preRemovalGroup).copyWith(
+      lastMembershipEventAt: preRemovalGroup.lastMembershipEventAt,
+    );
+    if (currentGroup != null) {
+      await widget.groupRepo.updateGroup(restoredGroup);
+    }
+
+    if (removalTimelineMessageId != null) {
+      await widget.msgRepo?.deleteMessage(removalTimelineMessageId);
+    }
+
+    final restoredMembers = await widget.groupRepo.getMembers(
+      preRemovalGroup.id,
+    );
+    await callGroupUpdateConfig(
+      widget.bridge,
+      groupId: preRemovalGroup.id,
+      groupConfig: buildGroupConfigPayload(restoredGroup, restoredMembers),
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INFO_FL_REMOVE_MEMBER_ROLLBACK_RESTORED',
+      details: {
+        'groupId': preRemovalGroup.id.length > 8
+            ? preRemovalGroup.id.substring(0, 8)
+            : preRemovalGroup.id,
+        'memberPeerId': removedMember.peerId.length > 10
+            ? removedMember.peerId.substring(0, 10)
+            : removedMember.peerId,
+      },
     );
   }
 
   Future<void> _onRemoveMember(GroupMember member) async {
+    GroupModel? preRemovalGroup;
+    GroupMember? preRemovalMember;
+    String? removalTimelineMessageId;
+    var localRemovalAccepted = false;
+
     try {
       final removedAt = DateTime.now().toUtc();
       final identity = await widget.identityRepo.loadIdentity();
+      preRemovalGroup = await widget.groupRepo.getGroup(widget.group.id);
+      preRemovalMember = await widget.groupRepo.getMember(
+        widget.group.id,
+        member.peerId,
+      );
+      if (identity != null) {
+        removalTimelineMessageId = buildMemberRemovedTimelineMessage(
+          groupId: widget.group.id,
+          removedPeerId: member.peerId,
+          removedUsername: member.username,
+          senderId: identity.peerId,
+          senderUsername: identity.username,
+          eventAt: removedAt,
+        ).id;
+      }
       final preTransitionStateHash = await buildGroupTransitionStateHash(
         widget.groupRepo,
         widget.group.id,
@@ -635,6 +835,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         eventAt: removedAt,
         msgRepo: widget.msgRepo,
       );
+      localRemovalAccepted = true;
 
       // 2. Broadcast member_removed system message to remaining members
       if (identity != null) {
@@ -694,7 +895,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             'messageId': sourceEventId,
           });
 
-          await callGroupPublish(
+          final publishResult = await callGroupPublish(
             widget.bridge,
             groupId: widget.group.id,
             text: sysMessage,
@@ -704,6 +905,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderUsername: identity.username,
             messageId: sourceEventId,
           );
+          if (publishResult['ok'] != true) {
+            final errorMessage = publishResult['errorMessage']?.toString();
+            throw StateError(
+              errorMessage != null && errorMessage.isNotEmpty
+                  ? errorMessage
+                  : 'Failed to publish member removal',
+            );
+          }
           final removalReplayEnvelope = await buildGroupOfflineReplayEnvelope(
             bridge: widget.bridge,
             groupRepo: widget.groupRepo,
@@ -721,6 +930,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             widget.group.id,
             removalReplayEnvelope,
             recipientPeerIds: removalReplayRecipientPeerIds,
+            preserveRecipientPeerIds: true,
           );
           unawaited(
             sendGroupMembershipUpdateDirect(
@@ -761,6 +971,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             sendP2PMessage: (peerId, message) async {
               return widget.p2pService.sendMessage(peerId, message);
             },
+            storeP2PMessageInInbox: (peerId, message) async {
+              return widget.p2pService.storeInInbox(peerId, message);
+            },
           );
           if (rotatedKey == null) {
             throw StateError('Failed to rotate group key after removal');
@@ -771,6 +984,28 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       _didMutateGroup = true;
       await _loadGroupInfo();
     } catch (e) {
+      if (localRemovalAccepted &&
+          preRemovalGroup != null &&
+          preRemovalMember != null) {
+        try {
+          await _rollbackFailedMemberRemoval(
+            preRemovalGroup: preRemovalGroup,
+            removedMember: preRemovalMember,
+            removalTimelineMessageId: removalTimelineMessageId,
+          );
+        } catch (rollbackError) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_INFO_FL_REMOVE_MEMBER_ROLLBACK_ERROR',
+            details: {
+              'groupId': widget.group.id.length > 8
+                  ? widget.group.id.substring(0, 8)
+                  : widget.group.id,
+              'error': rollbackError.toString(),
+            },
+          );
+        }
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INFO_FL_REMOVE_MEMBER_ERROR',
@@ -1683,6 +1918,26 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
       ),
     );
   }
+}
+
+class _LeaveRollbackSnapshot {
+  final String groupId;
+  final DateTime operationStartedAt;
+  final String peerId;
+  final String username;
+  final GroupKeyInfo? latestKey;
+  final GroupKeyInfo? previousKey;
+  final GroupKeyInfo? pendingDraft;
+
+  const _LeaveRollbackSnapshot({
+    required this.groupId,
+    required this.operationStartedAt,
+    required this.peerId,
+    required this.username,
+    required this.latestKey,
+    required this.previousKey,
+    required this.pendingDraft,
+  });
 }
 
 class GroupInfoScreenAvatarPreview extends StatelessWidget {

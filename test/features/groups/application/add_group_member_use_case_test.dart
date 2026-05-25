@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -866,6 +867,243 @@ void main() {
   );
 
   test(
+    'G3-001 rejects member group mismatch before save or config sync',
+    () async {
+      final mismatchedMember = GroupMember(
+        groupId: 'other-group',
+        peerId: 'peer-wrong-group',
+        username: 'Wrong Group',
+        role: MemberRole.writer,
+        publicKey: 'pk-peer-wrong-group',
+        joinedAt: DateTime.utc(2026, 5, 24, 8),
+      );
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: mismatchedMember,
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message,
+            'message',
+            contains(addGroupMemberGroupMismatchMessage),
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getMember('group-1', 'peer-wrong-group'), isNull);
+      expect(
+        await groupRepo.getMember('other-group', 'peer-wrong-group'),
+        isNull,
+      );
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test(
+    'G3-004 invite-only writer cannot add admin or permission overrides',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-inviter',
+          username: 'Inviter',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(inviteMembers: true),
+          publicKey: 'pk-inviter',
+          joinedAt: DateTime.utc(2026, 5, 24, 8),
+        ),
+      );
+
+      Future<void> expectBlocked(GroupMember candidate) async {
+        await expectLater(
+          addGroupMember(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: 'group-2',
+            newMember: candidate,
+            selfPeerId: 'peer-inviter',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains(addGroupMemberElevatedTargetBlockedMessage),
+            ),
+          ),
+        );
+        expect(await groupRepo.getMember('group-2', candidate.peerId), isNull);
+      }
+
+      await expectBlocked(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-admin-target',
+          username: 'Admin Target',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin-target',
+          joinedAt: DateTime.utc(2026, 5, 24, 8, 1),
+        ),
+      );
+      await expectBlocked(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-override-target',
+          username: 'Override Target',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(removeMembers: true),
+          publicKey: 'pk-override-target',
+          joinedAt: DateTime.utc(2026, 5, 24, 8, 2),
+        ),
+      );
+
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test('G3-006 rejects stale add event before save or config sync', () async {
+    final watermark = DateTime.utc(2026, 5, 24, 9);
+    await groupRepo.updateGroup(
+      adminGroup.copyWith(lastMembershipEventAt: watermark),
+    );
+
+    final staleMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-stale-add',
+      username: 'Stale Add',
+      role: MemberRole.writer,
+      publicKey: 'pk-stale-add',
+      joinedAt: watermark,
+    );
+
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: staleMember,
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains(staleGroupMembershipEventMessage),
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-stale-add'), isNull);
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+  });
+
+  test(
+    'G3-007 serializes same-group add mutations through config sync',
+    () async {
+      final lockedBridge = _BlockingUpdateConfigBridge();
+      final firstMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-lock-first',
+        username: 'Lock First',
+        role: MemberRole.writer,
+        publicKey: 'pk-lock-first',
+        joinedAt: DateTime.utc(2026, 5, 24, 10),
+      );
+      final secondMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-lock-second',
+        username: 'Lock Second',
+        role: MemberRole.writer,
+        publicKey: 'pk-lock-second',
+        joinedAt: DateTime.utc(2026, 5, 24, 10, 1),
+      );
+
+      final first = addGroupMember(
+        bridge: lockedBridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: firstMember,
+        selfPeerId: 'peer-admin',
+      );
+      await lockedBridge.updateConfigStarted.future;
+
+      final second = addGroupMember(
+        bridge: lockedBridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: secondMember,
+        selfPeerId: 'peer-admin',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(lockedBridge.updateConfigAttempts, 1);
+      expect(
+        await groupRepo.getMember('group-1', 'peer-lock-first'),
+        isNotNull,
+      );
+      expect(await groupRepo.getMember('group-1', 'peer-lock-second'), isNull);
+
+      lockedBridge.releaseUpdateConfig.complete();
+      await Future.wait([first, second]);
+
+      expect(
+        await groupRepo.getMember('group-1', 'peer-lock-second'),
+        isNotNull,
+      );
+      expect(
+        lockedBridge.commandLog.where(
+          (command) => command == 'group:updateConfig',
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test('G3-010 rejects add on dissolved group before mutation', () async {
+    final dissolvedAt = DateTime.utc(2026, 5, 24, 11);
+    await groupRepo.updateGroup(
+      adminGroup.copyWith(
+        isDissolved: true,
+        dissolvedAt: dissolvedAt,
+        dissolvedBy: 'peer-admin',
+      ),
+    );
+
+    final newMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-dissolved-add',
+      username: 'Dissolved Add',
+      role: MemberRole.writer,
+      publicKey: 'pk-dissolved-add',
+      joinedAt: dissolvedAt.add(const Duration(minutes: 1)),
+    );
+
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: newMember,
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains(groupMembershipMutationDissolvedMessage),
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-dissolved-add'), isNull);
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+  });
+
+  test(
     'rechecks revoked invite permission before adding a queued member',
     () async {
       await groupRepo.saveMember(
@@ -1137,7 +1375,10 @@ void main() {
       );
       bridge.commandLog.clear();
 
-      Future<void> expectOverflowRejected(String peerId) async {
+      Future<void> expectOverflowRejected(
+        String peerId, {
+        DateTime? joinedAt,
+      }) async {
         await expectLater(
           addGroupMember(
             bridge: bridge,
@@ -1149,7 +1390,7 @@ void main() {
               username: 'Overflow',
               role: MemberRole.writer,
               publicKey: 'pk-$peerId',
-              joinedAt: DateTime.utc(2026, 5, 16, 9),
+              joinedAt: joinedAt ?? DateTime.utc(2026, 5, 16, 9),
             ),
             selfPeerId: 'peer-admin',
           ),
@@ -1225,7 +1466,10 @@ void main() {
         isNot(contains('peer-seed-49')),
       );
 
-      await expectOverflowRejected('peer-st009-overflow-after-readd');
+      await expectOverflowRejected(
+        'peer-st009-overflow-after-readd',
+        joinedAt: DateTime.utc(2026, 5, 16, 9, 2),
+      );
       expect(
         bridge.commandLog.where((command) => command == 'group:updateConfig'),
         hasLength(1),
@@ -1398,4 +1642,23 @@ void main() {
       isEmpty,
     );
   });
+}
+
+class _BlockingUpdateConfigBridge extends FakeBridge {
+  final Completer<void> updateConfigStarted = Completer<void>();
+  final Completer<void> releaseUpdateConfig = Completer<void>();
+  int updateConfigAttempts = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:updateConfig') {
+      updateConfigAttempts++;
+      if (!updateConfigStarted.isCompleted) {
+        updateConfigStarted.complete();
+      }
+      await releaseUpdateConfig.future;
+    }
+    return super.send(message);
+  }
 }

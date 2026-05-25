@@ -23,6 +23,8 @@ enum GroupInvitePayloadParseFailure {
   malformed,
   invalidPolicy,
   invalidWelcomeKeyPackage,
+  expired,
+  staleMembershipFreshness,
   missingSignature,
   invalidSignature,
 }
@@ -43,6 +45,7 @@ class GroupInvitePayloadParseResult {
   bool get isSuccess => payload != null;
 
   bool get isSecurityFailure =>
+      failure == GroupInvitePayloadParseFailure.staleMembershipFreshness ||
       failure == GroupInvitePayloadParseFailure.missingSignature ||
       failure == GroupInvitePayloadParseFailure.invalidSignature;
 }
@@ -531,16 +534,23 @@ class GroupInvitePayload {
   /// Creates a GroupInvitePayload from inner JSON string (decrypted payload).
   ///
   /// Returns null if JSON is invalid or missing required fields.
-  static GroupInvitePayload? fromInnerJson(String innerJson) {
-    return parseInnerJsonDetailed(innerJson).payload;
+  static GroupInvitePayload? fromInnerJson(
+    String innerJson, {
+    DateTime? validationTime,
+  }) {
+    return parseInnerJsonDetailed(
+      innerJson,
+      validationTime: validationTime,
+    ).payload;
   }
 
   static GroupInvitePayloadParseResult parseInnerJsonDetailed(
-    String innerJson,
-  ) {
+    String innerJson, {
+    DateTime? validationTime,
+  }) {
     try {
       final payload = jsonDecode(innerJson) as Map<String, dynamic>;
-      return _fromPayloadMap(payload);
+      return _fromPayloadMap(payload, validationTime: validationTime);
     } catch (_) {
       return const GroupInvitePayloadParseResult.failure(
         GroupInvitePayloadParseFailure.malformed,
@@ -561,11 +571,20 @@ class GroupInvitePayload {
   /// Parses a JSON string into a GroupInvitePayload, or returns null if invalid.
   ///
   /// Expects the full v1 envelope: `{ "type": "group_invite", "version": "1", "payload": {...} }`.
-  static GroupInvitePayload? fromJson(String jsonString) {
-    return parseJsonDetailed(jsonString).payload;
+  static GroupInvitePayload? fromJson(
+    String jsonString, {
+    DateTime? validationTime,
+  }) {
+    return parseJsonDetailed(
+      jsonString,
+      validationTime: validationTime,
+    ).payload;
   }
 
-  static GroupInvitePayloadParseResult parseJsonDetailed(String jsonString) {
+  static GroupInvitePayloadParseResult parseJsonDetailed(
+    String jsonString, {
+    DateTime? validationTime,
+  }) {
     try {
       final json = jsonDecode(jsonString) as Map<String, dynamic>;
 
@@ -582,7 +601,7 @@ class GroupInvitePayload {
         );
       }
 
-      return _fromPayloadMap(payload);
+      return _fromPayloadMap(payload, validationTime: validationTime);
     } catch (_) {
       return const GroupInvitePayloadParseResult.failure(
         GroupInvitePayloadParseFailure.malformed,
@@ -682,9 +701,26 @@ class GroupInvitePayload {
     return !invitePolicy.expiresAt.isAfter(now.toUtc());
   }
 
-  static GroupInvitePayloadParseResult _fromPayloadMap(
-    Map<String, dynamic> payload,
+  GroupInvitePayloadParseFailure? currentTimeValidationFailure(
+    DateTime validationTime,
   ) {
+    final validationTimeUtc = validationTime.toUtc();
+    if (isInvitePolicyExpiredAt(validationTimeUtc)) {
+      return GroupInvitePayloadParseFailure.expired;
+    }
+
+    if ((hasWelcomeKeyPackage || requiresWelcomeKeyPackage) &&
+        !isWelcomeKeyPackageValid(validationTime: validationTimeUtc)) {
+      return GroupInvitePayloadParseFailure.invalidWelcomeKeyPackage;
+    }
+
+    return _validateMembershipFreshnessAt(validationTimeUtc);
+  }
+
+  static GroupInvitePayloadParseResult _fromPayloadMap(
+    Map<String, dynamic> payload, {
+    DateTime? validationTime,
+  }) {
     final id = payload['id'] as String?;
     final groupId = payload['groupId'] as String?;
     final groupKey = payload['groupKey'] as String?;
@@ -788,7 +824,36 @@ class GroupInvitePayload {
       return GroupInvitePayloadParseResult.failure(attestationFailure);
     }
 
+    final currentTimeFailure = validationTime == null
+        ? null
+        : invite.currentTimeValidationFailure(validationTime);
+    if (currentTimeFailure != null) {
+      return GroupInvitePayloadParseResult.failure(currentTimeFailure);
+    }
+
     return GroupInvitePayloadParseResult.success(invite);
+  }
+
+  GroupInvitePayloadParseFailure? _validateMembershipFreshnessAt(
+    DateTime validationTime,
+  ) {
+    final proof = membershipFreshnessProof;
+    if (proof == null || !proof.structurallyMatchesPayload(this)) {
+      return GroupInvitePayloadParseFailure.invalidSignature;
+    }
+    if (!proof.hasSaneTtlWindow()) {
+      return GroupInvitePayloadParseFailure.invalidSignature;
+    }
+
+    final payloadTimestamp = DateTime.tryParse(timestamp)?.toUtc();
+    if (payloadTimestamp == null ||
+        !proof.issueTimeIsCompatibleWith(payloadTimestamp)) {
+      return GroupInvitePayloadParseFailure.invalidSignature;
+    }
+    if (!proof.isFreshAt(validationTime)) {
+      return GroupInvitePayloadParseFailure.staleMembershipFreshness;
+    }
+    return null;
   }
 
   GroupInvitePayloadParseFailure? _validateInviteSignature() {

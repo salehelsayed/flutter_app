@@ -111,6 +111,7 @@ class GoBridgeClient extends Bridge {
     'group:join': _CmdSpec('groupJoinTopic', true),
     'group:leave': _CmdSpec('groupLeaveTopic', true),
     'group:publish': _CmdSpec('groupPublish', true),
+    'group:sendReliable': _CmdSpec('groupSendReliable', true),
     'group:publishReaction': _CmdSpec('groupPublishReaction', true),
     'group:updateConfig': _CmdSpec('groupUpdateConfig', true),
     'group:generateNextKey': _CmdSpec('groupGenerateNextKey', true),
@@ -129,7 +130,7 @@ class GoBridgeClient extends Bridge {
     'blob:encrypt': _CmdSpec('blobEncrypt', true),
     'blob:decrypt': _CmdSpec('blobDecrypt', true),
     // Background task (iOS)
-    'bg:begin': _CmdSpec('bgBegin', false),
+    'bg:begin': _CmdSpec('bgBegin', false, allowRawStringResponse: true),
     'bg:end': _CmdSpec('bgEnd', true),
   };
 
@@ -317,6 +318,36 @@ class GoBridgeClient extends Bridge {
     };
   }
 
+  Map<String, dynamic> _groupPushLossDiagnosticDetails({
+    required String reason,
+    String? error,
+    String? streamFailureReason,
+    Map<String, dynamic>? eventData,
+  }) {
+    final safeError = sanitizeDiagnosticText(error);
+    final details = <String, dynamic>{
+      'reason': reason,
+      if (safeError.isNotEmpty) 'error': safeError,
+      'streamFailureReason': ?streamFailureReason,
+    };
+    final data = eventData;
+    if (data != null) {
+      for (final field in const [
+        'groupId',
+        'messageId',
+        'keyEpoch',
+        'senderId',
+        'senderDeviceId',
+        'transportPeerId',
+      ]) {
+        if (data.containsKey(field)) {
+          details[field] = data[field];
+        }
+      }
+    }
+    return details;
+  }
+
   Map<String, Object?> _diagnosticDetails({
     required String reason,
     required int count,
@@ -449,6 +480,14 @@ class GoBridgeClient extends Bridge {
         layer: 'FL',
         event: 'GO_BRIDGE_EVENT_STREAM_RECOVERY_SUCCESS',
         details: {'reason': reason},
+      );
+      emitGroupDiagnosticEvent(
+        groupPushLossDetectedEvent,
+        _groupPushLossDiagnosticDetails(
+          reason: 'event_stream_recovered',
+          streamFailureReason: reason,
+          error: safeError,
+        ),
       );
     } catch (error) {
       _initialized = false;
@@ -624,6 +663,14 @@ class GoBridgeClient extends Bridge {
                 event: 'GROUP_MESSAGE_CALLBACK_ERROR',
                 details: {'error': error},
               );
+              emitGroupDiagnosticEvent(
+                groupPushLossDetectedEvent,
+                _groupPushLossDiagnosticDetails(
+                  reason: 'group_message_callback_error',
+                  error: error,
+                  eventData: eventData,
+                ),
+              );
             }
           }
           break;
@@ -768,6 +815,9 @@ class GoBridgeClient extends Bridge {
           'errorMessage': 'Native bridge returned null',
         });
       }
+      if (spec.allowRawStringResponse) {
+        return result;
+      }
       return _sanitizeBridgeResult(result);
     } on MissingPluginException catch (e) {
       bridgeStopwatch.stop();
@@ -892,6 +942,11 @@ String _sanitizeBridgeResult(String result) {
 class _CmdSpec {
   final String methodName;
   final bool hasPayload;
+  final bool allowRawStringResponse;
 
-  const _CmdSpec(this.methodName, this.hasPayload);
+  const _CmdSpec(
+    this.methodName,
+    this.hasPayload, {
+    this.allowRawStringResponse = false,
+  });
 }

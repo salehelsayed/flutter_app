@@ -126,6 +126,38 @@ void main() {
     });
 
     test(
+      'G3-006 fromConfigMap prefers explicit config joinedAt over existing',
+      () {
+        final existingJoinedAt = DateTime.parse('2026-01-15T12:00:00.000Z');
+        final configJoinedAt = DateTime.parse('2026-01-15T12:30:00.000Z');
+        final existing = GroupMember(
+          groupId: 'group-1',
+          peerId: 'member-b',
+          username: 'Old Bob',
+          role: MemberRole.writer,
+          publicKey: 'old-pk',
+          joinedAt: existingJoinedAt,
+        );
+
+        final parsed = GroupMember.fromConfigMap(
+          groupId: 'group-1',
+          existing: existing,
+          map: {
+            'peerId': 'member-b',
+            'username': 'New Bob',
+            'role': 'writer',
+            'publicKey': 'new-pk',
+            'joinedAt': configJoinedAt.toIso8601String(),
+          },
+        );
+
+        expect(parsed.joinedAt, configJoinedAt);
+        expect(parsed.username, 'New Bob');
+        expect(parsed.publicKey, 'new-pk');
+      },
+    );
+
+    test(
       'legacy fallback device is explicit and member equality stays scoped',
       () {
         final legacy = GroupMember.fromMap(makeMap(peerId: 'member-legacy'));
@@ -186,6 +218,87 @@ void main() {
           ],
         }),
         'duplicate_peer_id_variant:peer-a',
+      );
+    });
+
+    test(
+      'G3-019 rejects invalid and duplicate device identities in config',
+      () {
+        expect(
+          groupMemberConfigKeyMaterialRejectReason({
+            'peerId': 'peer-a',
+            'devices': [
+              {'deviceId': 'device-a', 'deviceSigningPublicKey': 'device-pk-a'},
+            ],
+          }),
+          'invalid_device_transport_peer_id',
+        );
+        expect(
+          groupMemberConfigKeyMaterialRejectReason({
+            'peerId': 'peer-a',
+            'devices': [
+              {'deviceId': 'device-a', 'transportPeerId': 'transport-a'},
+            ],
+          }),
+          'invalid_device_signing_public_key',
+        );
+        expect(
+          groupMemberConfigKeyMaterialRejectReason({
+            'peerId': 'peer-a',
+            'devices': [
+              {
+                'deviceId': 'device-a',
+                'transportPeerId': 'transport-a',
+                'deviceSigningPublicKey': 'device-pk-a',
+              },
+              {
+                'deviceId': 'DEVICE-A',
+                'transportPeerId': 'transport-a-tablet',
+                'deviceSigningPublicKey': 'device-pk-a-tablet',
+              },
+            ],
+          }),
+          'duplicate_device_id:DEVICE-A',
+        );
+        expect(
+          groupConfigMemberKeyMaterialRejectReason({
+            'members': [
+              {
+                'peerId': 'peer-a',
+                'devices': [
+                  {
+                    'deviceId': 'device-a',
+                    'transportPeerId': 'transport-a',
+                    'deviceSigningPublicKey': 'device-pk-a',
+                  },
+                  {
+                    'deviceId': 'device-a',
+                    'transportPeerId': 'transport-a-tablet',
+                    'deviceSigningPublicKey': 'device-pk-a-tablet',
+                  },
+                ],
+              },
+            ],
+          }),
+          'duplicate_device_id:device-a:peer-a',
+        );
+      },
+    );
+
+    test('G3-019 preserves legacy device aliases during validation', () {
+      expect(
+        groupMemberConfigKeyMaterialRejectReason({
+          'peerId': 'peer-a',
+          'devices': [
+            {
+              'deviceId': 'device-a',
+              'peerId': 'transport-a',
+              'publicKey': 'device-pk-a',
+              'keyPackagePublicKey': 'key-package-public-a',
+            },
+          ],
+        }),
+        isNull,
       );
     });
   });

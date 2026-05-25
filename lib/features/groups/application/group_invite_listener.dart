@@ -38,6 +38,7 @@ class GroupInviteListener {
   final DateTime Function() now;
 
   StreamSubscription<ChatMessage>? _subscription;
+  Future<void> _messageProcessing = Future<void>.value();
   final _groupJoinedController = StreamController<GroupModel>.broadcast();
   final _pendingInviteController =
       StreamController<PendingGroupInvite>.broadcast();
@@ -79,11 +80,11 @@ class GroupInviteListener {
     );
 
     _subscription = groupInviteStream.listen(
-      _onMessage,
+      _enqueueMessage,
       onError: (error) {
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_INVITE_LISTENER_STREAM_ERROR',
+          event: 'GROUP_INVITE_LISTENER_ERROR',
           details: {'error': error.toString()},
         );
       },
@@ -114,6 +115,25 @@ class GroupInviteListener {
     stop();
     _groupJoinedController.close();
     _pendingInviteController.close();
+  }
+
+  void _enqueueMessage(ChatMessage message) {
+    _messageProcessing = _messageProcessing
+        .catchError((Object error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_INVITE_LISTENER_ERROR',
+            details: {'error': error.toString()},
+          );
+        })
+        .then((_) => _onMessage(message))
+        .catchError((Object error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_INVITE_LISTENER_ERROR',
+            details: {'error': error.toString()},
+          );
+        });
   }
 
   Future<void> _onMessage(ChatMessage message) async {
@@ -163,9 +183,7 @@ class GroupInviteListener {
           bridge: bridge,
           ownMlKemSecretKey: ownSecretKey,
           ownPeerId: ownPeerId,
-          now:
-              DateTime.tryParse(message.timestamp)?.toUtc() ??
-              DateTime.now().toUtc(),
+          now: now().toUtc(),
         );
 
         if (result == HandleGroupInviteRevocationResult.revoked &&

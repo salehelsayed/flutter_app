@@ -282,6 +282,19 @@ void main() {
       expect(result, isNull);
     });
 
+    test('PGC-005 dbLoadGroupMessage rethrows database errors', () async {
+      final closedDb = await openDatabase(inMemoryDatabasePath, version: 1);
+      await runGroupMessagesTablesMigration(closedDb);
+      await runGroupQuotedMessageIdMigration(closedDb);
+      await runGroupMessageTransportPeerIdMigration(closedDb);
+      await closedDb.close();
+
+      await expectLater(
+        dbLoadGroupMessage(closedDb, 'msg-001'),
+        throwsA(anything),
+      );
+    });
+
     test('returns message when it exists', () async {
       await dbInsertGroupMessage(db, makeMessageRow());
 

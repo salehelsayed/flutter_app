@@ -4,6 +4,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
@@ -155,6 +156,19 @@ Future<SendGroupInviteResult> sendGroupInvite({
     return SendGroupInviteResult.invalidPayload;
   }
   final effectiveGroupConfig = currentFreshnessState.groupConfig;
+  final latestKey = await groupRepo.getLatestKey(groupId);
+  if (!_matchesLatestGroupKey(
+    latestKey: latestKey,
+    suppliedGroupKey: groupKey,
+    suppliedKeyEpoch: keyEpoch,
+  )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_SEND_INVALID_PAYLOAD',
+      details: {'reason': 'stale_group_key_material'},
+    );
+    return SendGroupInviteResult.invalidPayload;
+  }
   final recipientDevice = _resolveRecipientDeviceBinding(
     groupConfig: effectiveGroupConfig,
     recipientPeerId: recipientPeerId,
@@ -432,6 +446,21 @@ Future<SendGroupInviteResult> sendGroupInvite({
   return SendGroupInviteResult.sendFailed;
 }
 
+bool _matchesLatestGroupKey({
+  required GroupKeyInfo? latestKey,
+  required String suppliedGroupKey,
+  required int suppliedKeyEpoch,
+}) {
+  final latestMaterial = latestKey?.encryptedKey.trim();
+  final suppliedMaterial = suppliedGroupKey.trim();
+  return latestKey != null &&
+      latestMaterial != null &&
+      latestMaterial.isNotEmpty &&
+      suppliedMaterial.isNotEmpty &&
+      latestKey.keyGeneration == suppliedKeyEpoch &&
+      latestMaterial == suppliedMaterial;
+}
+
 bool _recipientHasRegisteredDevices(
   Map<String, dynamic> groupConfig,
   String recipientPeerId,
@@ -473,8 +502,20 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
     },
   );
 
+  final currentFreshnessState = await loadCurrentInviteMembershipFreshnessState(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    inviterPeerId: senderPeerId,
+    trustedInviterPublicKey: senderPublicKey,
+  );
+  final targetConfig = currentFreshnessState?.groupConfig ?? groupConfig;
+  final targets = _expandInviteRecipientsForRegisteredDevices(
+    recipients: recipients,
+    groupConfig: targetConfig,
+  );
+
   final attempts = await Future.wait(
-    recipients.map((r) async {
+    targets.map((r) async {
       try {
         final result = await sendGroupInvite(
           p2pService: p2pService,
@@ -490,6 +531,7 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
           groupKey: groupKey,
           keyEpoch: keyEpoch,
           groupConfig: groupConfig,
+          recipientDeviceId: r.recipientDeviceId,
           reusePolicy: reusePolicy,
         );
         return GroupInviteAttempt(
@@ -516,9 +558,57 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_INVITES_PARALLEL_DONE',
-    details: {'sent': summary.successCount, 'total': recipients.length},
+    details: {'sent': summary.successCount, 'total': attempts.length},
   );
   return summary;
+}
+
+List<
+  ({
+    String peerId,
+    String? username,
+    String? mlKemPublicKey,
+    String? recipientDeviceId,
+  })
+>
+_expandInviteRecipientsForRegisteredDevices({
+  required List<({String peerId, String? username, String? mlKemPublicKey})>
+  recipients,
+  required Map<String, dynamic> groupConfig,
+}) {
+  final targets =
+      <
+        ({
+          String peerId,
+          String? username,
+          String? mlKemPublicKey,
+          String? recipientDeviceId,
+        })
+      >[];
+  for (final recipient in recipients) {
+    final member = _recipientMember(groupConfig, recipient.peerId);
+    final activeDevices = GroupMemberDeviceIdentity.listFromJson(
+      member?['devices'],
+    ).where((device) => device.isActive).toList(growable: false);
+    if (activeDevices.isEmpty) {
+      targets.add((
+        peerId: recipient.peerId,
+        username: recipient.username,
+        mlKemPublicKey: recipient.mlKemPublicKey,
+        recipientDeviceId: null,
+      ));
+      continue;
+    }
+    for (final device in activeDevices) {
+      targets.add((
+        peerId: recipient.peerId,
+        username: recipient.username,
+        mlKemPublicKey: device.mlKemPublicKey,
+        recipientDeviceId: device.deviceId,
+      ));
+    }
+  }
+  return targets;
 }
 
 GroupInvitePolicy? _deriveInvitePolicy({

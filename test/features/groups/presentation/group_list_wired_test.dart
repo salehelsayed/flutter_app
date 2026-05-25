@@ -716,7 +716,7 @@ void main() {
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsNothing,
         );
-        expect(find.text('Book Club'), findsOneWidget);
+        expect(find.text('Book Club'), findsAtLeastNWidgets(1));
         expect(find.text('Joined Book Club'), findsOneWidget);
         expect(await msgRepo.getMessage('offline-msg-1'), isNotNull);
 
@@ -797,10 +797,14 @@ void main() {
 
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
-          isNull,
+          isNotNull,
         );
         expect(await groupRepo.getGroup(invite.groupId), isNotNull);
-        expect(find.text('Book Club'), findsOneWidget);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(find.text('Book Club'), findsAtLeastNWidgets(1));
         expect(
           find.text('Joined Book Club, but recovery is still catching up'),
           findsOneWidget,
@@ -1006,7 +1010,9 @@ void main() {
       expect(find.byKey(const ValueKey('group-loading-row-0')), findsNothing);
     });
 
-    testWidgets('loading clears on error', (tester) async {
+    testWidgets('load failure shows retryable error instead of empty state', (
+      tester,
+    ) async {
       final errorGroupRepo = _ThrowingGroupRepository();
 
       await tester.pumpWidget(
@@ -1030,9 +1036,23 @@ void main() {
       );
       await pumpFrames(tester);
 
-      // No spinner stuck — empty state shown instead
       expect(find.byKey(const ValueKey('group-loading-row-0')), findsNothing);
-      expect(find.text('No groups yet'), findsOneWidget);
+      expect(find.text("Couldn't load groups"), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
+      expect(find.text('No groups yet'), findsNothing);
+
+      expect(errorGroupRepo.getActiveGroupsCalls, 1);
+      errorGroupRepo.holdNextFailure();
+      await tester.tap(find.widgetWithText(TextButton, 'Retry'));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('group-loading-row-0')), findsOneWidget);
+      expect(errorGroupRepo.getActiveGroupsCalls, 2);
+
+      errorGroupRepo.releaseNextFailure();
+      await pumpFrames(tester);
+
+      expect(find.text("Couldn't load groups"), findsOneWidget);
     });
   });
 }
@@ -1054,8 +1074,30 @@ class _SlowGroupRepository extends InMemoryGroupRepository {
 }
 
 class _ThrowingGroupRepository extends InMemoryGroupRepository {
+  int getActiveGroupsCalls = 0;
+  Completer<void>? _nextFailureGate;
+
+  void holdNextFailure() {
+    _nextFailureGate = Completer<void>();
+  }
+
+  void releaseNextFailure() {
+    final failureGate = _nextFailureGate;
+    if (failureGate != null && !failureGate.isCompleted) {
+      failureGate.complete();
+    }
+  }
+
   @override
   Future<List<GroupModel>> getActiveGroups() async {
+    getActiveGroupsCalls += 1;
+    final failureGate = _nextFailureGate;
+    if (failureGate != null) {
+      await failureGate.future;
+      if (identical(_nextFailureGate, failureGate)) {
+        _nextFailureGate = null;
+      }
+    }
     throw Exception('Simulated group loading error');
   }
 }

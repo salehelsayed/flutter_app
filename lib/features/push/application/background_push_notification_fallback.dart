@@ -1,5 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 
 const backgroundPushDefaultTitle = 'New Message';
 const backgroundPushDefaultBody = 'You have a new message';
@@ -41,6 +43,28 @@ BackgroundPushNotificationFallback buildBackgroundPushFallbackNotification(
     body: body,
     payload: payload,
   );
+}
+
+Future<bool> showForegroundPushFallbackNotificationIfNeeded({
+  required ForegroundRemoteMessageResult result,
+  required NotificationService notificationService,
+  required RemoteMessage message,
+}) async {
+  if (result != ForegroundRemoteMessageResult.notificationNeeded) {
+    return false;
+  }
+
+  final fallback = buildBackgroundPushFallbackNotification(message);
+  if (fallback.payload == null) {
+    return false;
+  }
+
+  await notificationService.showNotification(
+    title: fallback.title,
+    body: fallback.body,
+    payload: fallback.payload,
+  );
+  return true;
 }
 
 String? backgroundPushFallbackDedupeKey(RemoteMessage message) {
@@ -114,7 +138,8 @@ String _resolvedBody(RemoteMessage message) {
 
 bool _usesProtectedMessagePreview(RemoteMessage message) {
   final type = _trimToNull(message.data['type']?.toString());
-  return type == 'new_message' || type == 'group_message';
+  return type == 'new_message' ||
+      NotificationRouteTarget.isGroupMessageLikeRemoteData(message.data);
 }
 
 String? _trimToNull(String? value) {

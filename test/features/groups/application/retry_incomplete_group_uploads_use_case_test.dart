@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -25,6 +29,32 @@ import '../../conversation/application/helpers/fake_upload_media_fn.dart';
 
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _retryJpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
+const _retryPdfBytes = <int>[0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37];
+const _retryGifBytes = <int>[0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
+
+String _retryFixturePath(String localPath) {
+  if (localPath.startsWith('/')) return localPath;
+  return '${Directory.systemTemp.path}/test_docs/$localPath';
+}
+
+List<int> _retryFixtureBytesForMime(String mime) {
+  return switch (mime) {
+    'image/gif' => _retryGifBytes,
+    'application/pdf' => _retryPdfBytes,
+    _ => _retryJpegBytes,
+  };
+}
+
+void _writeRetryFixtureFile({
+  required String localPath,
+  required String mime,
+  List<int>? bytes,
+}) {
+  final file = File(_retryFixturePath(localPath));
+  file.parent.createSync(recursive: true);
+  file.writeAsBytesSync(bytes ?? _retryFixtureBytesForMime(mime));
+}
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
@@ -63,6 +93,7 @@ MediaAttachment _pendingAttachment({
   int size = 2048,
   int? uploadRetryCount,
 }) {
+  _writeRetryFixtureFile(localPath: localPath, mime: mime);
   return MediaAttachment(
     id: id,
     messageId: messageId,
@@ -193,6 +224,152 @@ void main() {
 
       expect(count, 0);
     });
+
+    test(
+      'returns 0 for overlapping same-isolate retry while first upload is in flight',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-concurrent-retry',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Concurrent retry',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-concurrent-retry',
+            messageId: 'msg-concurrent-retry',
+            localPath: 'pending_uploads/msg-concurrent-retry/photo.jpg',
+          ),
+        );
+
+        final uploadStarted = Completer<void>();
+        final allowUpload = Completer<void>();
+        var uploadCallCount = 0;
+        Future<MediaAttachment?> blockingUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+        }) async {
+          uploadCallCount++;
+          if (!uploadStarted.isCompleted) {
+            uploadStarted.complete();
+          }
+          await allowUpload.future;
+          return _doneAttachment(
+            id: blobId ?? 'pending-concurrent-retry',
+            messageId: 'msg-concurrent-retry',
+          );
+        }
+
+        final firstRetry = retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: blockingUpload,
+          mediaFileManager: mediaFileManager,
+        );
+        await uploadStarted.future;
+
+        final secondRetry = retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: blockingUpload,
+          mediaFileManager: mediaFileManager,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(uploadCallCount, 1);
+        allowUpload.complete();
+
+        expect(await secondRetry, 0);
+        expect(await firstRetry, 1);
+        expect(uploadCallCount, 1);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:inboxStore'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'skips fresh outgoing sending parent before upload or publish',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-fresh-sending-parent',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Fresh active send',
+            timestamp: DateTime.now().toUtc(),
+            status: 'sending',
+            isIncoming: false,
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-fresh-sending-parent',
+            messageId: 'msg-fresh-sending-parent',
+            localPath: 'pending_uploads/msg-fresh-sending-parent/photo.jpg',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-fresh-sending-parent',
+            messageId: 'msg-fresh-sending-parent',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(
+          (await mediaRepo.getAttachmentsForMessage(
+            'msg-fresh-sending-parent',
+          )).single.downloadStatus,
+          'upload_pending',
+        );
+      },
+    );
 
     test(
       'MD-012 quarantined download failures are not picked up by incomplete upload retry',
@@ -478,6 +655,114 @@ void main() {
         expect(attachments.single.downloadStatus, 'upload_failed');
       },
     );
+
+    test(
+      'terminalizes octet-stream pending attachments without upload or resend',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-octet-mime',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Blocked octet',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-octet',
+            messageId: 'msg-octet-mime',
+            localPath: 'pending_uploads/msg-octet-mime/payload.bin',
+            mime: 'application/octet-stream',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(id: 'pending-octet', messageId: 'msg-octet-mime'),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          (await mediaRepo.getAttachmentsForMessage(
+            'msg-octet-mime',
+          )).single.downloadStatus,
+          'upload_failed',
+        );
+      },
+    );
+
+    test('terminalizes spoofed retry bytes before upload or resend', () async {
+      const localPath = 'pending_uploads/msg-spoofed-retry/photo.jpg';
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-spoofed-retry',
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Spoofed retry',
+          timestamp: DateTime.utc(2026, 1, 1),
+          status: 'failed',
+          isIncoming: false,
+          createdAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      await mediaRepo.saveAttachment(
+        _pendingAttachment(
+          id: 'pending-spoofed-retry',
+          messageId: 'msg-spoofed-retry',
+          localPath: localPath,
+          mime: 'image/jpeg',
+        ),
+      );
+      _writeRetryFixtureFile(
+        localPath: localPath,
+        mime: 'image/jpeg',
+        bytes: _retryPdfBytes,
+      );
+      uploadFn.willReturn(
+        _doneAttachment(
+          id: 'pending-spoofed-retry',
+          messageId: 'msg-spoofed-retry',
+        ),
+      );
+
+      final count = await retryIncompleteGroupUploads(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+        mediaAttachmentRepo: mediaRepo,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        uploadMediaFn: uploadFn.call,
+        mediaFileManager: mediaFileManager,
+      );
+
+      expect(count, 0);
+      expect(uploadFn.callCount, 0);
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(
+        (await mediaRepo.getAttachmentsForMessage(
+          'msg-spoofed-retry',
+        )).single.downloadStatus,
+        'upload_failed',
+      );
+    });
 
     test(
       'MD-011 retry excludes a removed member from media ACLs and inbox recipients',

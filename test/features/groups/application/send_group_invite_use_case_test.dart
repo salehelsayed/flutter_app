@@ -1008,6 +1008,37 @@ void main() {
     );
 
     test(
+      'rejects stale caller groupKey and keyEpoch before signing or encryption',
+      () async {
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(
+            _testGroupConfig,
+            groupKey: 'currentGroupKey==',
+            keyEpoch: 2,
+          ),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
+
+        expect(result, SendGroupInviteResult.invalidPayload);
+        expect(bridge.commandLog, isNot(contains('payload.sign')));
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
       'ML-013 bare writer cannot sign encrypt or deliver a group invite',
       () async {
         final result = await sendGroupInvite(
@@ -1113,6 +1144,108 @@ void main() {
         expect(result.successCount, equals(2));
         expect(result.failures, isEmpty);
         expect(p2pService.sentMessageLog.length, equals(2));
+      },
+    );
+
+    test(
+      'targets each active registered device for one recipient from current config',
+      () async {
+        final currentConfig = {
+          ..._parallelGroupConfig,
+          'members': [
+            (_parallelGroupConfig['members'] as List<dynamic>)[0],
+            {
+              ...((_parallelGroupConfig['members'] as List<dynamic>)[1]
+                  as Map<String, dynamic>),
+              'devices': [
+                {
+                  'deviceId': 'bob-phone',
+                  'transportPeerId': 'bob-phone',
+                  'deviceSigningPublicKey': 'bobPhonePubKey64',
+                  'mlKemPublicKey': 'bobPhoneMlKem64',
+                  'keyPackageId': 'bob-phone-kp',
+                  'keyPackagePublicMaterial': 'bob-phone-kpm',
+                  'status': 'active',
+                },
+                {
+                  'deviceId': 'bob-tablet',
+                  'transportPeerId': 'bob-tablet',
+                  'deviceSigningPublicKey': 'bobTabletPubKey64',
+                  'mlKemPublicKey': 'bobTabletMlKem64',
+                  'keyPackageId': 'bob-tablet-kp',
+                  'keyPackagePublicMaterial': 'bob-tablet-kpm',
+                  'status': 'active',
+                },
+                {
+                  'deviceId': 'bob-old-phone',
+                  'transportPeerId': 'bob-old-phone',
+                  'deviceSigningPublicKey': 'bobOldPubKey64',
+                  'mlKemPublicKey': 'bobOldMlKem64',
+                  'keyPackageId': 'bob-old-kp',
+                  'keyPackagePublicMaterial': 'bob-old-kpm',
+                  'status': 'revoked',
+                },
+              ],
+            },
+          ],
+        };
+
+        final result = await sendGroupInvitesInParallel(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(currentConfig),
+          senderPeerId: sharedArgs.senderPeerId,
+          senderPublicKey: sharedArgs.senderPublicKey,
+          senderPrivateKey: sharedArgs.senderPrivateKey,
+          senderUsername: sharedArgs.senderUsername,
+          groupId: sharedArgs.groupId,
+          groupKey: sharedArgs.groupKey,
+          keyEpoch: sharedArgs.keyEpoch,
+          groupConfig: _parallelGroupConfig,
+          recipients: [
+            (
+              peerId: '12D3KooWBob',
+              username: 'Bob' as String?,
+              mlKemPublicKey: 'staleBobMlKem64' as String?,
+            ),
+          ],
+        );
+
+        expect(result.attempts, hasLength(2));
+        expect(result.successCount, 2);
+        expect(
+          p2pService.sentMessageLog.map((entry) => entry.peerId),
+          unorderedEquals(['bob-phone', 'bob-tablet']),
+        );
+
+        final payloadsByDevice = <String, GroupInvitePayload>{};
+        for (final entry in p2pService.sentMessageLog) {
+          final envelope = GroupInvitePayload.parseEncryptedEnvelope(
+            entry.content,
+          )!;
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          payloadsByDevice[entry.peerId] = GroupInvitePayload.fromInnerJson(
+            encrypted['ciphertext'] as String,
+          )!;
+        }
+
+        expect(payloadsByDevice['bob-phone']!.recipientDeviceId, 'bob-phone');
+        expect(
+          payloadsByDevice['bob-phone']!.recipientMlKemPublicKey,
+          'bobPhoneMlKem64',
+        );
+        expect(payloadsByDevice['bob-phone']!.invitePolicy.allowedDevices, [
+          'bob-phone',
+        ]);
+        expect(payloadsByDevice['bob-tablet']!.recipientDeviceId, 'bob-tablet');
+        expect(
+          payloadsByDevice['bob-tablet']!.recipientMlKemPublicKey,
+          'bobTabletMlKem64',
+        );
+        expect(payloadsByDevice['bob-tablet']!.invitePolicy.allowedDevices, [
+          'bob-tablet',
+        ]);
+        expect(payloadsByDevice.containsKey('bob-old-phone'), isFalse);
       },
     );
 

@@ -19,6 +19,7 @@ const groupKeyRepairReasonLiveDiagnostic = 'live_decryption_failed';
 const groupKeyRepairReasonReceivedMessageEpochMissingLocalKey =
     'received_message_epoch_missing_local_key';
 const groupKeyRepairReasonKeyUpdateApplyFailed = 'key_update_apply_failed';
+const groupKeyRepairReasonSameEpochKeyConflict = 'same_epoch_key_conflict';
 
 class GroupKeyRepairRequest {
   final String groupId;
@@ -421,12 +422,25 @@ class GroupPendingKeyRepairRunner {
   }
 
   Future<bool> _retryOne(GroupPendingKeyRepair repair) async {
-    await pendingKeyRepairRepo.recordAttempt(repair.id, lastError: null);
     final rawEnvelope = repair.replayEnvelopeJson;
     if (rawEnvelope == null || rawEnvelope.isEmpty) {
-      await _finalizeUndecryptable(repair, 'missing replay envelope');
+      await pendingKeyRepairRepo.recordAttempt(
+        repair.id,
+        lastError: 'waiting for replay envelope',
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_PENDING_KEY_REPAIR_WAITING_FOR_REPLAY_ENVELOPE',
+        details: {
+          'groupId': _safeId(repair.groupId),
+          'messageId': _safeId(repair.messageId),
+          'keyEpoch': repair.keyEpoch,
+        },
+      );
       return false;
     }
+
+    await pendingKeyRepairRepo.recordAttempt(repair.id, lastError: null);
 
     try {
       final envelope = jsonDecode(rawEnvelope) as Map<String, dynamic>;
@@ -443,14 +457,20 @@ class GroupPendingKeyRepairRunner {
         if (reactions == null) {
           throw StateError('missing reaction repository');
         }
-        await handleIncomingGroupReaction(
+        final (result, _) = await handleIncomingGroupReaction(
           groupRepo: groupRepo,
           reactionRepo: reactions,
+          msgRepo: msgRepo,
           groupId: repair.groupId,
           senderId: repair.senderPeerId ?? 'unknown',
           transportPeerId: repair.transportPeerId,
+          senderDeviceId: envelope['senderDeviceId'] as String?,
+          senderPublicKey: envelope['senderPublicKey'] as String?,
           reactionJson: plaintext,
         );
+        if (result != HandleGroupReactionResult.success) {
+          throw StateError('reaction replay validation rejected: $result');
+        }
       } else {
         final payload = Map<String, dynamic>.from(jsonDecode(plaintext) as Map);
         payload.putIfAbsent('groupId', () => repair.groupId);

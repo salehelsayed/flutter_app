@@ -1265,6 +1265,100 @@ void main() {
   });
 
   test(
+    'PGC-007 distinct stable message IDs with same content and timestamp both persist',
+    () async {
+      final ts = DateTime.utc(2026, 5, 23, 12).toIso8601String();
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'PGC-007 collision text',
+        timestamp: ts,
+        messageId: 'pgc007-stable-id-1',
+      );
+      final second = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'PGC-007 collision text',
+        timestamp: ts,
+        messageId: 'pgc007-stable-id-2',
+      );
+
+      expect(first, isNotNull);
+      expect(first!.id, 'pgc007-stable-id-1');
+      expect(second, isNotNull);
+      expect(second!.id, 'pgc007-stable-id-2');
+      expect(msgRepo.count, 2);
+
+      final page = await msgRepo.getMessagesPage('group-1');
+      expect(page, hasLength(2));
+      expect(
+        page.map((message) => message.id),
+        containsAll(['pgc007-stable-id-1', 'pgc007-stable-id-2']),
+      );
+    },
+  );
+
+  test(
+    'PGC-007 event-log path keeps distinct stable message IDs despite same content',
+    () async {
+      final eventLog = _FakeEventLog();
+      final ts = DateTime.utc(2026, 5, 23, 12, 1).toIso8601String();
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'PGC-007 event-log collision text',
+        timestamp: ts,
+        messageId: 'pgc007-event-log-id-1',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      final second = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'PGC-007 event-log collision text',
+        timestamp: ts,
+        messageId: 'pgc007-event-log-id-2',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+
+      expect(first, isNotNull);
+      expect(first!.id, 'pgc007-event-log-id-1');
+      expect(second, isNotNull);
+      expect(second!.id, 'pgc007-event-log-id-2');
+      expect(msgRepo.count, 2);
+      expect(eventLog.entries, hasLength(2));
+      expect(
+        eventLog.entries.map((entry) => entry['sourceEventId']),
+        containsAll(['pgc007-event-log-id-1', 'pgc007-event-log-id-2']),
+      );
+
+      final page = await msgRepo.getMessagesPage('group-1');
+      expect(page, hasLength(2));
+      expect(
+        page.map((message) => message.id),
+        containsAll(['pgc007-event-log-id-1', 'pgc007-event-log-id-2']),
+      );
+    },
+  );
+
+  test(
     'deduplicates messages after sanitizing invisible bidi controls',
     () async {
       final ts = DateTime.now().toUtc().toIso8601String();

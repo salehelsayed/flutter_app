@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
@@ -38,6 +39,18 @@ void _expectSignedReactionReplayEnvelope(Map<String, dynamic> envelope) {
   expect(signedPayload['plaintextHash'], isA<String>());
 }
 
+Future<T> _captureFlowEvents<T>(
+  List<Map<String, dynamic>> events,
+  Future<T> Function() action,
+) async {
+  debugSetFlowEventSink(events.add);
+  try {
+    return await action();
+  } finally {
+    debugSetFlowEventSink(null);
+  }
+}
+
 void main() {
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -60,6 +73,7 @@ void main() {
     peerId: 'peer-1',
     username: 'Alice',
     role: MemberRole.admin,
+    publicKey: 'pk-1',
     joinedAt: DateTime.now().toUtc(),
   );
 
@@ -126,6 +140,48 @@ void main() {
   });
 
   test(
+    'successful reaction add emits queued local delivery contract',
+    () async {
+      final events = <Map<String, dynamic>>[];
+
+      final (result, reaction) = await _captureFlowEvents(
+        events,
+        () => sendGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+        ),
+      );
+
+      expect(result, SendGroupReactionResult.success);
+      expect(reaction, isNotNull);
+      expect(
+        events.where(
+          (event) => event['event'] == 'GROUP_REACTION_SEND_SUCCESS',
+        ),
+        isEmpty,
+      );
+
+      final queued = events.singleWhere(
+        (event) => event['event'] == 'GROUP_REACTION_SEND_QUEUED',
+      );
+      final details = queued['details'] as Map<String, dynamic>;
+      expect(details['deliveryMode'], 'live_publish_replay_queued');
+      expect(details['deliveryConfirmed'], isFalse);
+      expect(details['localState'], 'optimistic');
+      expect(details['replayStatus'], 'pending');
+    },
+  );
+
+  test(
     'PL-009 active member publishes reaction command and stores local reaction once',
     () async {
       final (result, reaction) = await sendGroupReaction(
@@ -173,6 +229,48 @@ void main() {
   );
 
   test(
+    'G3-014 add reaction id is deterministic for the same add tuple',
+    () async {
+      final first = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+      final second = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(first.$1, SendGroupReactionResult.success);
+      expect(second.$1, SendGroupReactionResult.success);
+      expect(first.$2, isNotNull);
+      expect(second.$2, isNotNull);
+      expect(second.$2!.id, first.$2!.id);
+
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+      expect(stored.single.id, first.$2!.id);
+    },
+  );
+
+  test(
     'PL-010 removed member reaction send is rejected without publish or local mutation',
     () async {
       await groupRepo.removeMember('group-1', 'peer-1');
@@ -193,6 +291,34 @@ void main() {
       );
 
       expect(result, SendGroupReactionResult.notMember);
+      expect(reaction, isNull);
+      expect(bridge.sentMessages.length, sentBefore);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      expect(reactionRepo.saveReactionCallCount, 0);
+      expect(reactionReplayOutboxRepo.entries, isEmpty);
+    },
+  );
+
+  test(
+    'G3-012 member with unbound sender signing key is rejected before publish',
+    () async {
+      final sentBefore = bridge.sentMessages.length;
+
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-attacker',
+        senderPrivateKey: 'sk-attacker',
+      );
+
+      expect(result, SendGroupReactionResult.unauthorizedSenderKey);
       expect(reaction, isNull);
       expect(bridge.sentMessages.length, sentBefore);
       expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
@@ -347,6 +473,7 @@ void main() {
       peerId: 'peer-reader',
       username: 'Reader',
       role: MemberRole.writer,
+      publicKey: 'pk-reader',
       joinedAt: DateTime.now().toUtc(),
     );
     await groupRepo.saveMember(readerMember);
@@ -445,6 +572,7 @@ void main() {
         peerId: 'peer-reader',
         username: 'Reader',
         role: MemberRole.writer,
+        publicKey: 'pk-reader',
         joinedAt: DateTime.now().toUtc(),
       ),
     );
@@ -524,6 +652,61 @@ void main() {
     expect(result, SendGroupReactionResult.messageNotFound);
     expect(reaction, isNull);
   });
+
+  test(
+    'G3-011 target message from another group is rejected without publish',
+    () async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-2',
+          name: 'Other Group',
+          type: GroupType.chat,
+          topicName: 'group-topic-2',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-1',
+          myRole: GroupRole.admin,
+        ),
+      );
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-other-group',
+          groupId: 'group-2',
+          senderPeerId: 'peer-2',
+          senderUsername: 'Bob',
+          text: 'Wrong group target',
+          timestamp: DateTime.now().toUtc(),
+          keyGeneration: 0,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final sentBefore = bridge.sentMessages.length;
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-other-group',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, SendGroupReactionResult.messageNotFound);
+      expect(reaction, isNull);
+      expect(bridge.sentMessages.length, sentBefore);
+      expect(
+        await reactionRepo.getReactionsForMessage('msg-other-group'),
+        isEmpty,
+      );
+      expect(reactionReplayOutboxRepo.entries, isEmpty);
+    },
+  );
 
   test('unknown group is rejected', () async {
     final (result, reaction) = await sendGroupReaction(

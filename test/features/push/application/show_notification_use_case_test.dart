@@ -323,6 +323,44 @@ void main() {
       },
     );
 
+    test(
+      'suppresses active group notification when the contact key is message anchored',
+      () async {
+        tracker.setActive('group:group-123');
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'group:group-123|message:msg-123',
+          routePayload: 'group:group-123|message:msg-123',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Hello group!',
+        );
+
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test(
+      'suppresses active group notification using the anchored route payload',
+      () async {
+        tracker.setActive('group:group-123');
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'group:group-123',
+          routePayload: 'group:group-123|message:msg-123',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Hello group!',
+        );
+
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
     test('shows notification when app is inactive (not resumed)', () async {
       tracker.setActive('peer-123');
 
@@ -377,6 +415,24 @@ void main() {
       tracker.setActive('peer-456');
       expect(tracker.isViewing('peer-123'), isFalse);
       expect(tracker.isViewing('peer-456'), isTrue);
+    });
+
+    test('clearIfActive only clears the matching active key', () {
+      tracker.setActive('peer-123');
+      tracker.clearIfActive('peer-456');
+      expect(tracker.isViewing('peer-123'), isTrue);
+
+      tracker.clearIfActive('peer-123');
+      expect(tracker.isViewing('peer-123'), isFalse);
+    });
+
+    test('clearIfActive normalizes anchored group route keys', () {
+      tracker.setActive('group:group-123');
+      tracker.clearIfActive('group:group-456|message:msg-456');
+      expect(tracker.isViewing('group:group-123'), isTrue);
+
+      tracker.clearIfActive('group:group-123|message:msg-123');
+      expect(tracker.isViewing('group:group-123'), isFalse);
     });
   });
 }

@@ -35,7 +35,7 @@ Future<Map<String, dynamic>> callGroupCreate(
   required String type,
   required String creatorPeerId,
   required String creatorPublicKey,
-  String? creatorMlKemPublicKey,
+  required String creatorMlKemPublicKey,
   String? description,
   Duration timeout = const Duration(seconds: 30),
 }) async {
@@ -45,6 +45,18 @@ Future<Map<String, dynamic>> callGroupCreate(
     details: {'name': name, 'type': type},
   );
 
+  final trimmedCreatorMlKemPublicKey = creatorMlKemPublicKey.trim();
+  if (trimmedCreatorMlKemPublicKey.isEmpty) {
+    const errorCode = 'INVALID_INPUT';
+    const errorMessage = 'Creator ML-KEM public key must not be empty';
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_CREATE_RESPONSE',
+      details: {'ok': false, 'errorCode': errorCode},
+    );
+    return {'ok': false, 'errorCode': errorCode, 'errorMessage': errorMessage};
+  }
+
   final request = {
     'cmd': 'group:create',
     'payload': {
@@ -52,9 +64,7 @@ Future<Map<String, dynamic>> callGroupCreate(
       'groupType': type,
       'creatorPeerId': creatorPeerId,
       'creatorPublicKey': creatorPublicKey,
-      ...?creatorMlKemPublicKey == null
-          ? null
-          : <String, Object?>{'creatorMlKemPublicKey': creatorMlKemPublicKey},
+      'creatorMlKemPublicKey': trimmedCreatorMlKemPublicKey,
       ...?description == null
           ? null
           : <String, Object?>{'description': description},
@@ -381,6 +391,71 @@ Future<Map<String, dynamic>> callGroupPublish(
   }
 }
 
+Future<Map<String, dynamic>> callGroupSendReliable(
+  Bridge bridge, {
+  required String groupId,
+  required String text,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  String senderUsername = '',
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  String? senderDevicePublicKey,
+  String? senderKeyPackageId,
+  String? messageId,
+  DateTime? timestamp,
+  String? quotedMessageId,
+  List<Map<String, dynamic>>? media,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final payload = <String, dynamic>{
+    'groupId': groupId,
+    'text': text,
+    'senderPeerId': senderPeerId,
+    'senderPublicKey': senderPublicKey,
+    'senderPrivateKey': senderPrivateKey,
+    'senderUsername': senderUsername,
+  };
+  if (senderDeviceId != null && senderDeviceId.isNotEmpty) {
+    payload['senderDeviceId'] = senderDeviceId;
+  }
+  if (senderTransportPeerId != null && senderTransportPeerId.isNotEmpty) {
+    payload['senderTransportPeerId'] = senderTransportPeerId;
+  }
+  if (senderDevicePublicKey != null && senderDevicePublicKey.isNotEmpty) {
+    payload['senderDevicePublicKey'] = senderDevicePublicKey;
+  }
+  if (senderKeyPackageId != null && senderKeyPackageId.isNotEmpty) {
+    payload['senderKeyPackageId'] = senderKeyPackageId;
+  }
+  if (messageId != null && messageId.isNotEmpty) {
+    payload['messageId'] = messageId;
+  }
+  if (timestamp != null) {
+    payload['timestamp'] = timestamp.toUtc().toIso8601String();
+  }
+  if (quotedMessageId != null && quotedMessageId.isNotEmpty) {
+    payload['quotedMessageId'] = quotedMessageId;
+  }
+  if (media != null && media.isNotEmpty) {
+    payload['media'] = media;
+  }
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode({'cmd': 'group:sendReliable', 'payload': payload}))
+        .timeout(timeout);
+    return jsonDecode(responseJson) as Map<String, dynamic>;
+  } on TimeoutException {
+    return {
+      'ok': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage': 'Timed out waiting for group:sendReliable response',
+    };
+  }
+}
+
 /// Calls the bridge to publish a reaction to a group topic.
 ///
 /// The reaction payload is encrypted and signed inside a v3 group_reaction
@@ -654,6 +729,7 @@ Future<void> callGroupInboxStore(
   String groupId,
   String message, {
   List<String>? recipientPeerIds,
+  bool preserveRecipientPeerIds = false,
   Duration timeout = const Duration(seconds: 10),
 }) async {
   emitFlowEvent(
@@ -671,6 +747,7 @@ Future<void> callGroupInboxStore(
       'message': message,
       if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
         'recipientPeerIds': recipientPeerIds,
+      if (preserveRecipientPeerIds) 'preserveRecipientPeerIds': true,
     },
   };
 

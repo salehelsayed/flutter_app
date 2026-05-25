@@ -14,6 +14,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -228,7 +230,8 @@ void main() {
     (tester) async {
       identityRepository.seed(identityWithContacts);
       contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
-      await groupRepository.saveGroup(
+      await _saveWritableGroup(
+        groupRepository,
         _makeGroup('group-chat', 'Writers', GroupType.chat, GroupRole.admin),
       );
       final coordinator = _RecordingBatchCoordinator.failAll();
@@ -613,7 +616,8 @@ void main() {
     '6i: announcement group where user is not admin is excluded from picker',
     (tester) async {
       identityRepository.seed(identityWithContacts);
-      await groupRepository.saveGroup(
+      await _saveWritableGroup(
+        groupRepository,
         _makeGroup(
           'announce-member',
           'Announcements',
@@ -621,7 +625,8 @@ void main() {
           GroupRole.member,
         ),
       );
-      await groupRepository.saveGroup(
+      await _saveWritableGroup(
+        groupRepository,
         _makeGroup(
           'announce-admin',
           'Admin Announcements',
@@ -643,6 +648,34 @@ void main() {
       expect(find.text('Announcements'), findsNothing);
       expect(find.text('Admin Announcements'), findsOneWidget);
     },
+  );
+}
+
+Future<void> _saveWritableGroup(
+  InMemoryGroupRepository repository,
+  GroupModel group,
+) async {
+  await repository.saveGroup(group);
+  await repository.saveMember(
+    GroupMember(
+      groupId: group.id,
+      peerId: 'my-peer-id-12345',
+      username: 'Me',
+      role: group.myRole == GroupRole.admin
+          ? MemberRole.admin
+          : MemberRole.writer,
+      publicKey: 'my-public-key',
+      mlKemPublicKey: 'mlkem-public',
+      joinedAt: DateTime.parse('2026-03-09T08:00:00.000Z'),
+    ),
+  );
+  await repository.saveKey(
+    GroupKeyInfo(
+      groupId: group.id,
+      keyGeneration: 1,
+      encryptedKey: 'key-${group.id}',
+      createdAt: DateTime.parse('2026-03-09T08:00:00.000Z'),
+    ),
   );
 }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -269,6 +270,29 @@ class _PeerSelectiveFailureP2PService extends FakeP2PService {
   }
 }
 
+class _PendingActiveContactsRepository extends InMemoryContactRepository {
+  final Completer<List<ContactModel>> activeContactsCompleter;
+
+  _PendingActiveContactsRepository(this.activeContactsCompleter);
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() =>
+      activeContactsCompleter.future;
+}
+
+class _FailOnceActiveContactsRepository extends InMemoryContactRepository {
+  var _calls = 0;
+
+  @override
+  Future<List<ContactModel>> getActiveContacts() async {
+    _calls += 1;
+    if (_calls == 1) {
+      throw StateError('contacts unavailable');
+    }
+    return super.getActiveContacts();
+  }
+}
+
 // --- Test helpers ---
 
 /// Pump enough frames for async operations to complete.
@@ -330,6 +354,66 @@ Widget buildDirectWiredTestWidget({
 
 void main() {
   group('ContactPickerWired', () {
+    testWidgets(
+      'shows loading state instead of empty state while contacts load',
+      (tester) async {
+        final contactsCompleter = Completer<List<ContactModel>>();
+        final contactRepo = _PendingActiveContactsRepository(contactsCompleter);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('Loading contacts...'), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(find.text('No contacts available'), findsNothing);
+
+        contactsCompleter.complete([contactAlice]);
+        await pumpFrames(tester);
+
+        expect(find.text('Alice'), findsOneWidget);
+        expect(find.text('Loading contacts...'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'contact load failure shows retryable error instead of empty state',
+      (tester) async {
+        final contactRepo = _FailOnceActiveContactsRepository();
+        contactRepo.addTestContact(contactAlice);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text("Couldn't load contacts"), findsOneWidget);
+        expect(find.text('Retry'), findsOneWidget);
+        expect(find.text('No contacts available'), findsNothing);
+
+        await tester.tap(find.text('Retry'));
+        await pumpFrames(tester);
+
+        expect(find.text('Alice'), findsOneWidget);
+        expect(find.text("Couldn't load contacts"), findsNothing);
+      },
+    );
+
     testWidgets('shows contacts excluding existing group members', (
       tester,
     ) async {

@@ -2,6 +2,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+
+import '../../../shared/fakes/fake_notification_service.dart';
 
 void main() {
   group('background push fallback notifications', () {
@@ -161,6 +164,75 @@ void main() {
       expect(fallback.title, backgroundPushDefaultTitle);
       expect(fallback.body, backgroundPushDefaultBody);
       expect(fallback.payload, 'group:group-abc-123|message:msg-123');
+    });
+
+    test('shows fallback for group-message aliases', () {
+      const message = RemoteMessage(
+        data: {
+          'payloadType': 'group_message',
+          'group_id': 'group-snake-123',
+          'message_id': 'msg-123',
+          'title': 'Team Chat',
+          'body': 'New group message',
+        },
+      );
+
+      expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, backgroundPushDefaultTitle);
+      expect(fallback.body, backgroundPushDefaultBody);
+      expect(fallback.payload, 'group:group-snake-123|message:msg-123');
+    });
+
+    test(
+      'foreground fallback helper shows local notification when requested',
+      () async {
+        final notificationService = FakeNotificationService();
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'message_id': 'msg-123',
+            'title': 'Team Chat',
+            'body': 'New group message',
+          },
+        );
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: message,
+        );
+
+        expect(shown, isTrue);
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(notificationService.shownGeneric.single.title, 'New Message');
+        expect(
+          notificationService.shownGeneric.single.body,
+          'You have a new message',
+        );
+        expect(
+          notificationService.shownGeneric.single.payload,
+          'group:group-abc-123|message:msg-123',
+        );
+      },
+    );
+
+    test('foreground fallback helper is a no-op when not requested', () async {
+      final notificationService = FakeNotificationService();
+      const message = RemoteMessage(
+        data: {'type': 'group_message', 'groupId': 'group-abc-123'},
+      );
+
+      final shown = await showForegroundPushFallbackNotificationIfNeeded(
+        result: ForegroundRemoteMessageResult.drained,
+        notificationService: notificationService,
+        message: message,
+      );
+
+      expect(shown, isFalse);
+      expect(notificationService.shownGeneric, isEmpty);
     });
 
     test(

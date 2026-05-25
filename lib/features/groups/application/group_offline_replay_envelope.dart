@@ -162,6 +162,7 @@ Future<void> storeGroupOfflineReplayEnvelope({
   String? senderTransportPeerId,
   String? senderKeyPackageId,
   List<String>? recipientPeerIds,
+  bool preserveRecipientPeerIds = false,
 }) async {
   final replayEnvelope = await buildGroupOfflineReplayEnvelope(
     bridge: bridge,
@@ -185,6 +186,7 @@ Future<void> storeGroupOfflineReplayEnvelope({
     groupId,
     replayEnvelope,
     recipientPeerIds: recipientPeerIds,
+    preserveRecipientPeerIds: preserveRecipientPeerIds,
   );
 }
 

@@ -324,7 +324,7 @@ func newMemoryGroupInboxBackend(maxPerGroup int, ttl time.Duration) *memoryGroup
 }
 
 func (b *memoryGroupInboxBackend) Store(groupId string, from string, message string) error {
-	return b.StoreWithRecipients(groupId, from, message, nil)
+	return b.StoreWithRecipients(groupId, from, message, []string{from})
 }
 
 func (b *memoryGroupInboxBackend) StoreWithRecipients(
@@ -333,6 +333,11 @@ func (b *memoryGroupInboxBackend) StoreWithRecipients(
 	message string,
 	recipientPeerIds []string,
 ) error {
+	normalizedRecipients := normalizePeerIds(recipientPeerIds)
+	if len(normalizedRecipients) == 0 {
+		return fmt.Errorf("recipientPeerIds required")
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -351,7 +356,7 @@ func (b *memoryGroupInboxBackend) StoreWithRecipients(
 		Message:          message,
 		Timestamp:        time.Now().UnixMilli(),
 		ID:               fmt.Sprintf("%d", b.idCounter),
-		RecipientPeerIds: normalizePeerIds(recipientPeerIds),
+		RecipientPeerIds: normalizedRecipients,
 	})
 	b.messages[groupId] = msgs
 	return nil

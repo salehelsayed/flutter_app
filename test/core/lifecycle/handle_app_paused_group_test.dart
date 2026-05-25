@@ -8,8 +8,18 @@ import '../../shared/fakes/in_memory_message_repository.dart';
 
 class _ThrowingGroupMessageRepository extends InMemoryGroupMessageRepository {
   @override
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async {
+    throw Exception('group pause stale recovery failed');
+  }
+}
+
+class _TrackingGroupMessageRepository extends InMemoryGroupMessageRepository {
+  bool transitionSendingToFailedCalled = false;
+
+  @override
   Future<int> transitionSendingToFailed() async {
-    throw Exception('group pause transition failed');
+    transitionSendingToFailedCalled = true;
+    throw StateError('group pause must not use blanket transition');
   }
 }
 
@@ -32,21 +42,24 @@ ConversationMessage _makeSendingMessage({
 GroupMessage _makeGroupSendingMessage({
   required String id,
   required String groupId,
+  DateTime? timestamp,
   String status = 'sending',
   String? wireEnvelope,
   String? inboxRetryPayload,
   bool inboxStored = false,
 }) {
+  final resolvedTimestamp =
+      timestamp ?? DateTime.parse('2026-01-01T00:00:00.000Z');
   return GroupMessage(
     id: id,
     groupId: groupId,
     senderPeerId: 'peer-me',
     senderUsername: 'Alice',
     text: 'Hello group',
-    timestamp: DateTime.parse('2026-01-01T00:00:00.000Z'),
+    timestamp: resolvedTimestamp,
     status: status,
     isIncoming: false,
-    createdAt: DateTime.parse('2026-01-01T00:00:00.000Z'),
+    createdAt: resolvedTimestamp,
     wireEnvelope: wireEnvelope,
     inboxStored: inboxStored,
     inboxRetryPayload: inboxRetryPayload,
@@ -55,14 +68,29 @@ GroupMessage _makeGroupSendingMessage({
 
 void main() {
   group('handleAppPaused for groups', () {
-    test('transitions group alongside 1:1', () async {
+    test('recovers only stale group sends alongside 1:1', () async {
       final messageRepo = InMemoryMessageRepository();
-      final groupMsgRepo = InMemoryGroupMessageRepository();
+      final groupMsgRepo = _TrackingGroupMessageRepository();
+      final oldSendingAt = DateTime.now().toUtc().subtract(
+        kPausedGroupSendingRecoveryThreshold + const Duration(seconds: 5),
+      );
+      final freshSendingAt = DateTime.now().toUtc();
       await messageRepo.saveMessage(
         _makeSendingMessage(id: 'dm-1', contactPeerId: 'peer-a'),
       );
       await groupMsgRepo.saveMessage(
-        _makeGroupSendingMessage(id: 'group-1', groupId: 'group-a'),
+        _makeGroupSendingMessage(
+          id: 'group-old',
+          groupId: 'group-a',
+          timestamp: oldSendingAt,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        _makeGroupSendingMessage(
+          id: 'group-fresh',
+          groupId: 'group-a',
+          timestamp: freshSendingAt,
+        ),
       );
 
       final result = await handleAppPaused(
@@ -76,10 +104,9 @@ void main() {
         (await messageRepo.getMessagesForContact('peer-a')).single.status,
         'failed',
       );
-      expect(
-        (await groupMsgRepo.getMessagesPage('group-a')).single.status,
-        'failed',
-      );
+      expect((await groupMsgRepo.getMessage('group-old'))!.status, 'failed');
+      expect((await groupMsgRepo.getMessage('group-fresh'))!.status, 'sending');
+      expect(groupMsgRepo.transitionSendingToFailedCalled, isFalse);
     });
 
     test('group error isolation leaves 1:1 transition intact', () async {
@@ -119,8 +146,15 @@ void main() {
       () async {
         final messageRepo = InMemoryMessageRepository();
         final groupMsgRepo = InMemoryGroupMessageRepository();
+        final oldSendingAt = DateTime.now().toUtc().subtract(
+          kPausedGroupSendingRecoveryThreshold + const Duration(seconds: 5),
+        );
         await groupMsgRepo.saveMessage(
-          _makeGroupSendingMessage(id: 'group-2', groupId: 'group-b'),
+          _makeGroupSendingMessage(
+            id: 'group-2',
+            groupId: 'group-b',
+            timestamp: oldSendingAt,
+          ),
         );
 
         final result = await handleAppPaused(

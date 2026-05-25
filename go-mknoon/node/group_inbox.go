@@ -69,6 +69,10 @@ type GroupInboxCursorResult struct {
 	HistoryGaps []GroupInboxHistoryGap
 }
 
+type GroupInboxStoreOptions struct {
+	PreserveRecipientPeerIds bool
+}
+
 // GroupHistoryRepairRangeRequest describes a bounded request for encrypted
 // replay envelopes that fill one explicit history gap.
 type GroupHistoryRepairRangeRequest struct {
@@ -145,6 +149,89 @@ func (n *Node) GroupInboxStore(
 	pushTitle,
 	pushBody string,
 ) error {
+	return n.GroupInboxStoreWithOptions(
+		groupId,
+		message,
+		recipientPeerIds,
+		pushTitle,
+		pushBody,
+		GroupInboxStoreOptions{},
+	)
+}
+
+func (n *Node) GroupInboxStoreWithOptions(
+	groupId,
+	message string,
+	recipientPeerIds []string,
+	pushTitle,
+	pushBody string,
+	options GroupInboxStoreOptions,
+) error {
+	groupId = strings.TrimSpace(groupId)
+	n.mu.RLock()
+	h := n.host
+	senderTransportPeerId := strings.TrimSpace(n.peerId)
+	var config *GroupConfig
+	if storedConfig := n.groupConfigs[groupId]; storedConfig != nil {
+		config = cloneGroupConfig(storedConfig)
+	}
+	n.mu.RUnlock()
+
+	if h == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	if config != nil {
+		if options.PreserveRecipientPeerIds {
+			if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+				return fmt.Errorf("invalid group config for group %s: %w", groupId, err)
+			}
+			if len(normalizeGroupInboxRecipientPeerIds(recipientPeerIds)) == 0 {
+				return fmt.Errorf("explicit group inbox recipients empty for group %s", groupId)
+			}
+		} else {
+			if senderTransportPeerId == "" {
+				return fmt.Errorf("missing sender transport peer id")
+			}
+			derivedRecipients, err := activeGroupInboxRecipientsForConfig(groupId, config, senderTransportPeerId)
+			if err != nil {
+				return err
+			}
+			recipientPeerIds = derivedRecipients
+		}
+	}
+
+	return n.groupInboxStore(groupId, message, recipientPeerIds, pushTitle, pushBody)
+}
+
+func (n *Node) groupInboxStore(
+	groupId,
+	message string,
+	recipientPeerIds []string,
+	pushTitle,
+	pushBody string,
+) error {
+	err := n.groupInboxStoreOnce(groupId, message, recipientPeerIds, pushTitle, pushBody)
+	if err == nil || !isTransientGroupInboxRelayStreamError(err) {
+		return err
+	}
+
+	log.Printf("[GROUP_INBOX] Store hit transient relay stream error, reconnecting relays before retry: %v", err)
+	if recoverErr := n.recoverGroupInboxRelayStream(err); recoverErr != nil {
+		log.Printf("[GROUP_INBOX] Relay reconnect after group inbox store stream error failed: %v", recoverErr)
+		return err
+	}
+
+	return n.groupInboxStoreOnce(groupId, message, recipientPeerIds, pushTitle, pushBody)
+}
+
+func (n *Node) groupInboxStoreOnce(
+	groupId,
+	message string,
+	recipientPeerIds []string,
+	pushTitle,
+	pushBody string,
+) error {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -210,6 +297,77 @@ func (n *Node) GroupInboxStore(
 	})
 }
 
+func (n *Node) ActiveGroupInboxRecipients(groupId string, senderTransportPeerId string) ([]string, error) {
+	groupId = strings.TrimSpace(groupId)
+	senderTransportPeerId = strings.TrimSpace(senderTransportPeerId)
+	if groupId == "" {
+		return nil, fmt.Errorf("missing group id")
+	}
+	if senderTransportPeerId == "" {
+		return nil, fmt.Errorf("missing sender transport peer id")
+	}
+
+	n.mu.RLock()
+	config := cloneGroupConfig(n.groupConfigs[groupId])
+	n.mu.RUnlock()
+	if config == nil {
+		return nil, fmt.Errorf("group not joined: %s", groupId)
+	}
+
+	return activeGroupInboxRecipientsForConfig(groupId, config, senderTransportPeerId)
+}
+
+func activeGroupInboxRecipientsForConfig(groupId string, config *GroupConfig, senderTransportPeerId string) ([]string, error) {
+	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+		return nil, fmt.Errorf("invalid group config for group %s: %w", groupId, err)
+	}
+	recipients, hasActiveRemote := deriveActiveGroupInboxRecipients(config, senderTransportPeerId)
+	if len(recipients) == 0 && hasActiveRemote {
+		return nil, fmt.Errorf("active group inbox recipients empty for group %s with active remote members", groupId)
+	}
+	return recipients, nil
+}
+
+func deriveActiveGroupInboxRecipients(config *GroupConfig, senderTransportPeerId string) ([]string, bool) {
+	if config == nil {
+		return nil, false
+	}
+
+	senderTransportPeerId = strings.TrimSpace(senderTransportPeerId)
+	seen := make(map[string]struct{})
+	recipients := make([]string, 0, len(config.Members))
+	hasActiveRemote := false
+	add := func(peerId string) {
+		peerId = strings.TrimSpace(peerId)
+		if peerId == "" {
+			hasActiveRemote = true
+			return
+		}
+		if peerId == senderTransportPeerId {
+			return
+		}
+		hasActiveRemote = true
+		if _, exists := seen[peerId]; exists {
+			return
+		}
+		seen[peerId] = struct{}{}
+		recipients = append(recipients, peerId)
+	}
+
+	for _, member := range normalizeGroupConfigMembers(config.Members) {
+		if len(member.Devices) == 0 {
+			add(member.PeerId)
+			continue
+		}
+		for _, device := range member.Devices {
+			if groupMemberDeviceIsActive(device) {
+				add(device.TransportPeerId)
+			}
+		}
+	}
+	return recipients, hasActiveRemote
+}
+
 func buildGroupInboxStoreRequest(
 	groupId,
 	from,
@@ -233,11 +391,16 @@ func normalizeGroupInboxRecipientPeerIds(recipientPeerIds []string) []string {
 	}
 
 	normalized := make([]string, 0, len(recipientPeerIds))
+	seen := make(map[string]struct{}, len(recipientPeerIds))
 	for _, recipientPeerId := range recipientPeerIds {
 		trimmed := strings.TrimSpace(recipientPeerId)
 		if trimmed == "" {
 			continue
 		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
 		normalized = append(normalized, trimmed)
 	}
 	if len(normalized) == 0 {
@@ -417,11 +580,24 @@ func isTransientGroupInboxRelayStreamError(err error) bool {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "read response") &&
-		(strings.Contains(msg, "eof") ||
+	if strings.Contains(msg, "group inbox store failed") || strings.Contains(msg, "group inbox retrieve failed") {
+		return false
+	}
+	if strings.Contains(msg, "connect to relay") ||
+		strings.Contains(msg, "open inbox stream") ||
+		strings.Contains(msg, "failed to dial") ||
+		strings.Contains(msg, "no addresses") {
+		return true
+	}
+	if strings.Contains(msg, "read response") || strings.Contains(msg, "write request") {
+		return strings.Contains(msg, "eof") ||
 			strings.Contains(msg, "reset") ||
 			strings.Contains(msg, "timeout") ||
-			strings.Contains(msg, "deadline"))
+			strings.Contains(msg, "deadline")
+	}
+	return strings.Contains(msg, "reset") ||
+		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "deadline")
 }
 
 func (n *Node) groupInboxRetrieveOnce(req groupInboxRequest) (*groupInboxResponse, error) {

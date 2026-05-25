@@ -21,7 +21,6 @@ void main() {
         'audio/aac': 'audio',
         'audio/mpeg': 'audio',
         'audio/ogg': 'audio',
-        'application/octet-stream': 'file',
       };
 
       for (final entry in expected.entries) {
@@ -54,6 +53,7 @@ void main() {
         'image/svg+xml',
         'application/zip',
         'application/x-msdownload',
+        'application/octet-stream',
         'video/x-matroska',
         'video/x-msvideo',
         'audio/x-m4a',
@@ -124,6 +124,42 @@ void main() {
         'dangerous_signature',
       );
     });
+
+    test(
+      'accepts unknown local signatures only for explicitly allowed MIME values',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'group_mime_unknown_',
+        );
+        addTearDown(() async {
+          if (await dir.exists()) {
+            await dir.delete(recursive: true);
+          }
+        });
+
+        final unknownJpeg = File('${dir.path}/unknown.jpg')
+          ..writeAsStringSync('plain bytes with no known media signature');
+        final unknownOctet = File('${dir.path}/unknown.bin')
+          ..writeAsStringSync('plain bytes with no known media signature');
+
+        expect(
+          (await GroupMediaMimePolicy.validateFile(
+            path: unknownJpeg.path,
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          )).isValid,
+          isTrue,
+        );
+        expect(
+          (await GroupMediaMimePolicy.validateFile(
+            path: unknownOctet.path,
+            mime: 'application/octet-stream',
+            mediaType: 'file',
+          )).reason,
+          'disallowed_mime',
+        );
+      },
+    );
 
     test(
       'rejects known content signatures that disagree with declared MIME',

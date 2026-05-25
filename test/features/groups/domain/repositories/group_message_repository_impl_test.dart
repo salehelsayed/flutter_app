@@ -23,6 +23,88 @@ void main() {
     databaseFactory = databaseFactoryFfi;
   });
 
+  GroupMessageRepositoryImpl buildRepo(
+    dynamic executor, {
+    bool enableTransactions = false,
+    Future<Map<String, Object?>?> Function(String id)?
+    dbLoadGroupMessageOverride,
+  }) {
+    return GroupMessageRepositoryImpl(
+      dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
+      dbLoadGroupMessagesPage: (groupId, {int limit = 50, int offset = 0}) =>
+          dbLoadGroupMessagesPage(
+            executor,
+            groupId,
+            limit: limit,
+            offset: offset,
+          ),
+      dbLoadGroupMessage:
+          dbLoadGroupMessageOverride ??
+          (id) => dbLoadGroupMessage(executor, id),
+      dbLoadLatestGroupMessage: (groupId) =>
+          dbLoadLatestGroupMessage(executor, groupId),
+      dbUpdateGroupMessageStatus: (id, status) =>
+          dbUpdateGroupMessageStatus(executor, id, status),
+      dbCountGroupMessages: (groupId) =>
+          dbCountGroupMessages(executor, groupId),
+      dbCountUnreadGroupMessages: (groupId) =>
+          dbCountUnreadGroupMessages(executor, groupId),
+      dbCountTotalUnreadGroupMessages: () =>
+          dbCountTotalUnreadGroupMessages(executor),
+      dbMarkGroupMessagesAsRead: (groupId) =>
+          dbMarkGroupMessagesAsRead(executor, groupId),
+      dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
+      dbDeleteGroupMessageForMembershipRepairFn: (id) =>
+          dbDeleteGroupMessageForMembershipRepair(executor, id),
+      dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
+          dbExistsGroupMessageByContent(
+            executor,
+            groupId,
+            senderPeerId,
+            text,
+            timestamp,
+          ),
+      dbDeleteGroupMessagesForGroup: (groupId) =>
+          dbDeleteGroupMessagesForGroup(executor, groupId),
+      dbLoadGroupThreadSummaries: (groupIds) =>
+          dbLoadGroupThreadSummaries(executor, groupIds),
+      dbLoadFailedOutgoingGroupMessagesFn: () =>
+          dbLoadFailedOutgoingGroupMessages(executor),
+      dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
+          dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
+      dbLoadGroupInboxCursorFn: (groupId) async {
+        final row = await dbLoadGroupInboxCursor(executor, groupId);
+        return row?['cursor'] as String?;
+      },
+      dbLoadGroupMessageReceiptsFn:
+          (groupId, messageId, {String? receiptType}) =>
+              dbLoadGroupMessageReceipts(
+                executor,
+                groupId: groupId,
+                messageId: messageId,
+                receiptType: receiptType,
+              ),
+      dbRunGroupInboxPageTransactionFn: enableTransactions
+          ? ({
+              required groupId,
+              required nextCursor,
+              required apply,
+              required receipts,
+              required markReadMessageIds,
+            }) => dbApplyGroupInboxPageTransaction(
+              db,
+              groupId: groupId,
+              nextCursor: nextCursor,
+              receiptRows: () =>
+                  receipts.map((receipt) => receipt.toMap()).toList(),
+              markReadMessageIds: () => markReadMessageIds,
+              apply: (transactionExecutor) =>
+                  apply(buildRepo(transactionExecutor)),
+            )
+          : null,
+    );
+  }
+
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupMessagesTablesMigration(db);
@@ -31,85 +113,6 @@ void main() {
     await runGroupMessageTransportPeerIdMigration(db);
     await runGroupSyncReceiptsMigration(db);
     await runGroupMessageLocalDeletionsMigration(db);
-
-    GroupMessageRepositoryImpl buildRepo(
-      dynamic executor, {
-      bool enableTransactions = false,
-    }) {
-      return GroupMessageRepositoryImpl(
-        dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
-        dbLoadGroupMessagesPage: (groupId, {int limit = 50, int offset = 0}) =>
-            dbLoadGroupMessagesPage(
-              executor,
-              groupId,
-              limit: limit,
-              offset: offset,
-            ),
-        dbLoadGroupMessage: (id) => dbLoadGroupMessage(executor, id),
-        dbLoadLatestGroupMessage: (groupId) =>
-            dbLoadLatestGroupMessage(executor, groupId),
-        dbUpdateGroupMessageStatus: (id, status) =>
-            dbUpdateGroupMessageStatus(executor, id, status),
-        dbCountGroupMessages: (groupId) =>
-            dbCountGroupMessages(executor, groupId),
-        dbCountUnreadGroupMessages: (groupId) =>
-            dbCountUnreadGroupMessages(executor, groupId),
-        dbCountTotalUnreadGroupMessages: () =>
-            dbCountTotalUnreadGroupMessages(executor),
-        dbMarkGroupMessagesAsRead: (groupId) =>
-            dbMarkGroupMessagesAsRead(executor, groupId),
-        dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
-        dbDeleteGroupMessageForMembershipRepairFn: (id) =>
-            dbDeleteGroupMessageForMembershipRepair(executor, id),
-        dbExistsGroupMessageByContent:
-            (groupId, senderPeerId, text, timestamp) =>
-                dbExistsGroupMessageByContent(
-                  executor,
-                  groupId,
-                  senderPeerId,
-                  text,
-                  timestamp,
-                ),
-        dbDeleteGroupMessagesForGroup: (groupId) =>
-            dbDeleteGroupMessagesForGroup(executor, groupId),
-        dbLoadGroupThreadSummaries: (groupIds) =>
-            dbLoadGroupThreadSummaries(executor, groupIds),
-        dbLoadFailedOutgoingGroupMessagesFn: () =>
-            dbLoadFailedOutgoingGroupMessages(executor),
-        dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
-            dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
-        dbLoadGroupInboxCursorFn: (groupId) async {
-          final row = await dbLoadGroupInboxCursor(executor, groupId);
-          return row?['cursor'] as String?;
-        },
-        dbLoadGroupMessageReceiptsFn:
-            (groupId, messageId, {String? receiptType}) =>
-                dbLoadGroupMessageReceipts(
-                  executor,
-                  groupId: groupId,
-                  messageId: messageId,
-                  receiptType: receiptType,
-                ),
-        dbRunGroupInboxPageTransactionFn: enableTransactions
-            ? ({
-                required groupId,
-                required nextCursor,
-                required apply,
-                required receipts,
-                required markReadMessageIds,
-              }) => dbApplyGroupInboxPageTransaction(
-                db,
-                groupId: groupId,
-                nextCursor: nextCursor,
-                receiptRows: () =>
-                    receipts.map((receipt) => receipt.toMap()).toList(),
-                markReadMessageIds: () => markReadMessageIds,
-                apply: (transactionExecutor) =>
-                    apply(buildRepo(transactionExecutor)),
-              )
-            : null,
-      );
-    }
 
     repo = buildRepo(db, enableTransactions: true);
   });
@@ -178,6 +181,23 @@ void main() {
     test('returns null for non-existent', () async {
       final result = await repo.getMessage('non-existent');
       expect(result, isNull);
+    });
+
+    test('PGC-005 getMessage propagates db load errors', () async {
+      final loadError = StateError('group message load failed');
+      final failingRepo = buildRepo(
+        db,
+        dbLoadGroupMessageOverride: (_) async => throw loadError,
+      );
+
+      await expectLater(
+        failingRepo.getMessage('msg-001'),
+        throwsA(same(loadError)),
+      );
+      await expectLater(
+        failingRepo.existsByMessageId('msg-001'),
+        throwsA(same(loadError)),
+      );
     });
 
     test(
@@ -843,6 +863,52 @@ void main() {
   });
 
   group('PREREQ-GROUP-SYNC-RECEIPTS inbox transaction state', () {
+    test(
+      'PGC-004 runInboxPageTransaction without helper fails before applying page writes',
+      () async {
+        final repoWithoutTransactionHelper = buildRepo(db);
+        var applyCalled = false;
+
+        await expectLater(
+          repoWithoutTransactionHelper.runInboxPageTransaction(
+            groupId: 'group-1',
+            nextCursor: 'cursor-2',
+            receipts: [
+              GroupMessageReceipt(
+                groupId: 'group-1',
+                messageId: 'msg-pgc004',
+                receiptType: groupMessageReceiptTypeDelivered,
+                memberPeerId: 'peer-local',
+                receiptAt: now,
+                createdAt: now,
+                updatedAt: now,
+              ),
+            ],
+            markReadMessageIds: const ['msg-pgc004'],
+            apply: (transactionRepo) async {
+              applyCalled = true;
+              await transactionRepo.saveMessage(makeMessage(id: 'msg-pgc004'));
+            },
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('dbRunGroupInboxPageTransactionFn'),
+            ),
+          ),
+        );
+
+        expect(applyCalled, isFalse);
+        expect(await repo.getMessage('msg-pgc004'), isNull);
+        expect(await repo.getInboxCursor('group-1'), isNull);
+        expect(
+          await repo.getReceiptsForMessage('group-1', 'msg-pgc004'),
+          isEmpty,
+        );
+      },
+    );
+
     test('loads durable cursor and receipts through repository', () async {
       final receiptAt = DateTime.utc(2026, 5, 1, 12, 1);
       await repo.runInboxPageTransaction(

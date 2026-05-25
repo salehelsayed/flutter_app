@@ -2047,7 +2047,9 @@ void main() {
         const removedWindowQuoteId = 'pl004-removed-window-quote';
         const postReaddParentId = 'pl004-post-readd-parent';
         const postReaddQuoteId = 'pl004-post-readd-quote';
-        final createdAt = DateTime.utc(2026, 5, 13, 20, 50);
+        final createdAt = DateTime.now().toUtc().subtract(
+          const Duration(hours: 2),
+        );
         final groupCreatedAt = createdAt.subtract(const Duration(seconds: 2));
         final joinedAt = createdAt.subtract(const Duration(seconds: 1));
 
@@ -3136,7 +3138,7 @@ void main() {
     );
 
     test(
-      'IR-015 fake-network replay drains text quote image video file GIF and voice uniformly',
+      'IR-015 fake-network replay drains text quote image video GIF and voice uniformly',
       () async {
         final alice = GroupTestUser.create(
           peerId: 'ir015-alice-peer',
@@ -3222,18 +3224,6 @@ void main() {
               width: 1920,
               height: 1080,
               durationMs: 4200,
-            ),
-          ],
-        );
-        await sendVariant(
-          key: 'ir015-file',
-          text: '',
-          media: [
-            _uploadedMedia(
-              id: 'ir015-file-att',
-              messageId: '',
-              mime: 'application/octet-stream',
-              localPath: 'media/ir015/file.bin',
             ),
           ],
         );
@@ -3337,7 +3327,6 @@ void main() {
         final video = await onlyAttachment('ir015-video');
         expect(video.mediaType, 'video');
         expect(video.durationMs, 4200);
-        expect((await onlyAttachment('ir015-file')).mediaType, 'file');
         expect((await onlyAttachment('ir015-gif')).mime, 'image/gif');
         final voice = await onlyAttachment('ir015-voice');
         expect(voice.mediaType, 'audio');
@@ -3554,9 +3543,9 @@ void main() {
             {
               'messageId': messageId,
               'receiptType': groupMessageReceiptTypeRead,
-              'memberPeerId': bob.peerId,
+              'memberPeerId': admin.peerId,
               'receiptAt': '2026-05-01T12:06:00.000Z',
-              'sourceEventId': 'de004-network-replay-read',
+              'sourceEventId': 'de004-network-replay-admin-read',
             },
           ];
         bobBridge.addPage(groupId, '', [
@@ -3591,7 +3580,7 @@ void main() {
         expect(matchingRows.single.timestamp, liveTimestamp);
         expect(matchingRows.single.senderPeerId, admin.peerId);
         expect(matchingRows.single.status, 'delivered');
-        expect(matchingRows.single.readAt, isNotNull);
+        expect(matchingRows.single.readAt, isNull);
         expect(
           emitted.where((message) => message.id == messageId),
           hasLength(1),
@@ -3608,8 +3597,11 @@ void main() {
           receiptType: groupMessageReceiptTypeRead,
         );
         expect(readReceipts, hasLength(1));
-        expect(readReceipts.single.memberPeerId, bob.peerId);
-        expect(readReceipts.single.sourceEventId, 'de004-network-replay-read');
+        expect(readReceipts.single.memberPeerId, admin.peerId);
+        expect(
+          readReceipts.single.sourceEventId,
+          'de004-network-replay-admin-read',
+        );
 
         final deliveredReceipts = await bob.msgRepo.getReceiptsForMessage(
           groupId,
@@ -4679,10 +4671,20 @@ void main() {
         });
 
         const groupId = 'group-ir003-boundary';
-        final boundary = DateTime.utc(2026, 5, 12, 12, 45);
+        final boundary = DateTime.now().toUtc().subtract(
+          const Duration(hours: 3),
+        );
         final boundaryMs = boundary.millisecondsSinceEpoch;
-        await admin.createGroup(groupId: groupId, name: 'IR003 Boundary');
-        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.createGroup(
+          groupId: groupId,
+          name: 'IR003 Boundary',
+          createdAt: boundary.subtract(const Duration(minutes: 10)),
+        );
+        await admin.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: boundary.subtract(const Duration(minutes: 5)),
+        );
         await bob.groupRepo.saveMember(
           GroupMember(
             groupId: groupId,
@@ -4844,13 +4846,23 @@ void main() {
         });
 
         const groupId = 'group-st004-boundary';
-        final relayBoundary = DateTime.utc(2026, 5, 16, 8, 4);
+        final relayBoundary = DateTime.now().toUtc().subtract(
+          const Duration(hours: 3),
+        );
         final relayBoundaryMs = relayBoundary.millisecondsSinceEpoch;
         final futureSkew = relayBoundary.add(const Duration(minutes: 10));
         final pastSkew = relayBoundary.subtract(const Duration(minutes: 7));
 
-        await admin.createGroup(groupId: groupId, name: 'ST004 Boundary');
-        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.createGroup(
+          groupId: groupId,
+          name: 'ST004 Boundary',
+          createdAt: relayBoundary.subtract(const Duration(minutes: 10)),
+        );
+        await admin.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: relayBoundary.subtract(const Duration(minutes: 5)),
+        );
         await bob.groupRepo.saveMember(
           GroupMember(
             groupId: groupId,
@@ -6540,7 +6552,7 @@ void main() {
 
           expect(result, SendGroupMessageResult.success);
           expect(sent, isNotNull);
-          expect(sent!.status, 'pending');
+          expect(sent!.status, 'sent');
           expect(sent.inboxStored, isFalse);
           expect(admin.bridge.commandLog, contains('group:publish'));
           expect(admin.bridge.commandLog, contains('group:inboxStore'));
@@ -6712,7 +6724,7 @@ void main() {
               );
           expect(pendingResult, SendGroupMessageResult.success);
           expect(pendingMessage, isNotNull);
-          expect(pendingMessage!.status, 'pending');
+          expect(pendingMessage!.status, 'sent');
           expect(pendingMessage.inboxStored, isFalse);
           expect(pendingMessage.inboxRetryPayload, isNotNull);
 
@@ -6726,7 +6738,7 @@ void main() {
           expect(failedMessageWrongOwner, 0);
           expect(
             (await admin.msgRepo.getMessage(pendingMessage.id))!.status,
-            'pending',
+            'sent',
           );
 
           final inboxOwnerRetried = await retryFailedGroupInboxStores(
@@ -6849,7 +6861,7 @@ void main() {
 
           expect(initialResult, SendGroupMessageResult.success);
           expect(initialMessage, isNotNull);
-          expect(initialMessage!.status, 'pending');
+          expect(initialMessage!.status, 'sent');
           expect(initialMessage.inboxStored, isFalse);
           final inboxRetryRows = await admin.msgRepo
               .getMessagesWithFailedInboxStore();
@@ -7004,7 +7016,7 @@ void main() {
           expect(initialResult, SendGroupMessageResult.success);
           expect(initialMessage, isNotNull);
           expect(initialMessage!.id, messageId);
-          expect(initialMessage.status, 'pending');
+          expect(initialMessage.status, 'sent');
           expect(initialMessage.inboxStored, isFalse);
           expect(initialMessage.inboxRetryPayload, isNotNull);
           expect(
@@ -7382,7 +7394,7 @@ void main() {
               );
           expect(inboxResult, SendGroupMessageResult.success);
           expect(inboxMessage, isNotNull);
-          expect(inboxMessage!.status, 'pending');
+          expect(inboxMessage!.status, 'sent');
           expect(inboxMessage.inboxStored, isFalse);
           expect(inboxMessage.inboxRetryPayload, isNotNull);
 
@@ -7561,7 +7573,7 @@ void main() {
               groupId,
               text: 'Slow send while backgrounded',
             );
-            expect(paused.status, 'failed');
+            expect(paused.status, 'sending');
           },
           afterResume: () async {
             publishGate.complete();
@@ -7643,7 +7655,7 @@ void main() {
             afterPause: () async {
               final paused = await admin.msgRepo.getMessage(messageId);
               expect(paused, isNotNull);
-              expect(paused!.status, 'failed');
+              expect(paused!.status, 'sending');
               expect(paused.wireEnvelope, isNotNull);
               expect(paused.inboxRetryPayload, isNotNull);
               final bobDuringPause = await bob.loadGroupMessages(groupId);
@@ -10667,7 +10679,7 @@ void main() {
               );
           expect(pendingResult, SendGroupMessageResult.success);
           expect(pendingMessage, isNotNull);
-          expect(pendingMessage!.status, 'pending');
+          expect(pendingMessage!.status, 'sent');
           expect(pendingMessage.inboxStored, isFalse);
           expect(pendingMessage.inboxRetryPayload, isNotNull);
 

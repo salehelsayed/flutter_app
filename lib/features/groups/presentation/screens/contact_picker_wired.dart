@@ -104,8 +104,12 @@ class ContactPickerWired extends StatefulWidget {
 }
 
 class _ContactPickerWiredState extends State<ContactPickerWired> {
+  static const _contactLoadErrorCopy = "Couldn't load contacts";
+
   List<ContactModel> _availableContacts = [];
   final Set<String> _selectedPeerIds = {};
+  bool _isLoadingContacts = true;
+  String? _contactLoadErrorMessage;
   bool _isInviting = false;
 
   @override
@@ -115,29 +119,61 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
   }
 
   Future<void> _loadAvailableContacts() async {
-    // 1. Get all non-archived contacts
-    final allContacts = await widget.contactRepo.getActiveContacts();
-
-    // 2. Get current group members
-    final members = await widget.groupRepo.getMembers(widget.groupId);
-    final excludePeerIds = members.map((m) => m.peerId).toSet();
-
-    // 3. Get own peerId to exclude self
-    final identity = await widget.identityRepo.loadIdentity();
-    if (identity != null) {
-      excludePeerIds.add(identity.peerId);
+    if (!_isLoadingContacts || _contactLoadErrorMessage != null) {
+      setState(() {
+        _isLoadingContacts = true;
+        _contactLoadErrorMessage = null;
+      });
     }
 
-    // 4. Filter: only contacts NOT already in the group and not self
-    if (!mounted) return;
-    setState(() {
-      _availableContacts =
+    try {
+      // 1. Get all non-archived contacts
+      final allContacts = await widget.contactRepo.getActiveContacts();
+
+      // 2. Get current group members
+      final members = await widget.groupRepo.getMembers(widget.groupId);
+      final excludePeerIds = members.map((m) => m.peerId).toSet();
+
+      // 3. Get own peerId to exclude self
+      final identity = await widget.identityRepo.loadIdentity();
+      if (identity != null) {
+        excludePeerIds.add(identity.peerId);
+      }
+
+      // 4. Filter: only contacts NOT already in the group and not self
+      final availableContacts =
           allContacts.where((c) => !excludePeerIds.contains(c.peerId)).toList()
             ..sort((a, b) => a.username.compareTo(b.username));
-    });
+
+      if (!mounted) return;
+      setState(() {
+        _availableContacts = availableContacts;
+        _isLoadingContacts = false;
+        _contactLoadErrorMessage = null;
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_PICKER_FL_LOAD_CONTACTS_ERROR',
+        details: {'groupId': widget.groupId, 'error': e.toString()},
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _isLoadingContacts = false;
+        _contactLoadErrorMessage = _availableContacts.isEmpty
+            ? _contactLoadErrorCopy
+            : null;
+      });
+    }
+  }
+
+  void _retryLoadAvailableContacts() {
+    _loadAvailableContacts();
   }
 
   void _onToggle(ContactModel contact) {
+    if (!mounted) return;
     setState(() {
       if (_selectedPeerIds.contains(contact.peerId)) {
         _selectedPeerIds.remove(contact.peerId);
@@ -419,6 +455,9 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
   Widget build(BuildContext context) {
     return ContactPickerScreen(
       contacts: _availableContacts,
+      isLoadingContacts: _isLoadingContacts,
+      contactLoadErrorMessage: _contactLoadErrorMessage,
+      onRetryLoadContacts: _retryLoadAvailableContacts,
       isInviting: _isInviting,
       onToggle: _onToggle,
       selectedPeerIds: _selectedPeerIds,

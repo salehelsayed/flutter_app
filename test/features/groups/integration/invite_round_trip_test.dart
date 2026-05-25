@@ -133,6 +133,9 @@ Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
 Future<InMemoryGroupRepository> _repoFromConfig(
   Map<String, dynamic> groupConfig, {
   String groupId = _groupId,
+  String groupKey = _groupKey,
+  int keyEpoch = _keyEpoch,
+  DateTime? keyCreatedAt,
 }) async {
   final repo = InMemoryGroupRepository();
   final createdAt =
@@ -161,6 +164,14 @@ Future<InMemoryGroupRepository> _repoFromConfig(
       ),
     );
   }
+  await repo.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: keyEpoch,
+      encryptedKey: groupKey,
+      createdAt: keyCreatedAt?.toUtc() ?? createdAt,
+    ),
+  );
   return repo;
 }
 
@@ -553,7 +564,9 @@ void main() {
         const groupKey = 'base64BB007AcceptedGroupKey==';
         const keyEpoch = 7;
         const replayMessageId = 'bb007-replay-at-accepted-epoch';
-        final receivedAt = DateTime.utc(2026, 5, 10, 20);
+        final receivedAt = DateTime.now().toUtc().subtract(
+          const Duration(hours: 2),
+        );
         final groupConfig = _makeGroupConfig();
         final receiverBridge = FakeBridge();
         final receiverPendingInviteRepo =
@@ -801,7 +814,12 @@ void main() {
         final sendResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
-          groupRepo: await _repoFromConfig(rejoinConfig),
+          groupRepo: await _repoFromConfig(
+            rejoinConfig,
+            groupKey: rotatedKey.encryptedKey,
+            keyEpoch: rotatedKey.keyGeneration,
+            keyCreatedAt: rotatedKey.createdAt,
+          ),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
@@ -1016,7 +1034,13 @@ void main() {
         final sendResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
-          groupRepo: await _repoFromConfig(rejoinConfig, groupId: groupId),
+          groupRepo: await _repoFromConfig(
+            rejoinConfig,
+            groupId: groupId,
+            groupKey: rotatedKey.encryptedKey,
+            keyEpoch: rotatedKey.keyGeneration,
+            keyCreatedAt: rotatedKey.createdAt,
+          ),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
@@ -1686,8 +1710,8 @@ void main() {
           now: receivedAt.add(const Duration(minutes: 2)),
         );
 
-        expect(replayResult, AcceptPendingGroupInviteResult.duplicateGroup);
-        expect(replayGroup, isNull);
+        expect(replayResult, AcceptPendingGroupInviteResult.success);
+        expect(replayGroup, isNotNull);
         expect(
           await receiverPendingInviteRepo.getPendingInvite(_groupId),
           isNull,
@@ -1697,7 +1721,7 @@ void main() {
         expect(await receiverGroupRepo.getLatestKey(_groupId), isNotNull);
         expect(
           receiverBridge.commandLog.where((cmd) => cmd == 'group:join'),
-          hasLength(1),
+          hasLength(2),
         );
         expect(
           await receiverPendingInviteRepo.getConsumedInvite(
@@ -2498,7 +2522,11 @@ void main() {
         final currentSendResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
-          groupRepo: await _repoFromConfig(groupConfig),
+          groupRepo: await _repoFromConfig(
+            groupConfig,
+            groupKey: 'current-readd-key',
+            keyEpoch: 2,
+          ),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
@@ -2785,7 +2813,7 @@ void main() {
     );
 
     test(
-      'bridgeError accept later rejoin and drain converge without the pending invite row',
+      'GCA-004 bridgeError accept retry drains recovered inbox and clears pending row',
       () async {
         final receiverBridge = FakeBridge();
         final receiverGroupRepo = InMemoryGroupRepository();
@@ -2897,6 +2925,12 @@ void main() {
         expect(group, isNotNull);
         expect(
           await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNotNull,
+        );
+        expect(
+          await receiverPendingInviteRepo.getConsumedInvite(
+            'invite-bridge-error',
+          ),
           isNull,
         );
         expect(await receiverGroupRepo.getGroup(_groupId), isNotNull);
@@ -2995,7 +3029,40 @@ void main() {
         expect(recoveredMessage!.text, 'Recovered after bridge error');
         expect(
           await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNotNull,
+        );
+
+        receiverBridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': const [],
+          'cursor': '',
+        };
+
+        final (retryResult, retryGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: receiverPendingInviteRepo,
+          groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          groupId: _groupId,
+          senderPeerId: _receiverPeerId,
+          senderPublicKey: 'receiverPubKey64',
+          senderPrivateKey: 'receiverPrivKey64',
+          senderUsername: 'Receiver',
+          groupMessageListener: replayListener,
+        );
+
+        expect(retryResult, AcceptPendingGroupInviteResult.success);
+        expect(retryGroup, isNotNull);
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
           isNull,
+        );
+        expect(
+          await receiverPendingInviteRepo.getConsumedInvite(
+            'invite-bridge-error',
+          ),
+          isNotNull,
         );
 
         final receiverHistoryAfterRecovery = await receiverMsgRepo
@@ -3011,7 +3078,7 @@ void main() {
             .map((message) => jsonDecode(message) as Map<String, dynamic>)
             .where((message) => message['cmd'] == 'group:join')
             .toList();
-        expect(joinCommands, hasLength(2));
+        expect(joinCommands, hasLength(3));
       },
     );
 

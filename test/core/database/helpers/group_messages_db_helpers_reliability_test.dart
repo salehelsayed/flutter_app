@@ -5,6 +5,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
+import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 
@@ -21,6 +22,7 @@ void main() {
     await runGroupMessagesTablesMigration(db);
     await runGroupQuotedMessageIdMigration(db);
     await runGroupMessageReliabilityColumnsMigration(db);
+    await runGroupMessageTransportPeerIdMigration(db);
   });
 
   tearDown(() async {
@@ -32,6 +34,7 @@ void main() {
     String id = 'msg-001',
     String groupId = 'group-1',
     String senderPeerId = 'peer-sender',
+    String? transportPeerId,
     String? senderUsername = 'Alice',
     String text = 'Hello group',
     String timestamp = '2026-01-15T12:00:00.000Z',
@@ -49,6 +52,7 @@ void main() {
       'id': id,
       'group_id': groupId,
       'sender_peer_id': senderPeerId,
+      'transport_peer_id': transportPeerId,
       'sender_username': senderUsername,
       'text': text,
       'timestamp': timestamp,
@@ -63,6 +67,162 @@ void main() {
       'inbox_retry_payload': inboxRetryPayload,
     };
   }
+
+  group('dbInsertGroupMessage duplicate handling', () {
+    test(
+      'PGC-006 duplicate incoming save preserves operational fields',
+      () async {
+        const readAt = '2026-01-15T13:00:00.000Z';
+        const createdAt = '2026-01-15T12:00:00.000Z';
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'pgc006-incoming',
+            transportPeerId: 'peer-sender-device-original',
+            text: 'original text',
+            timestamp: '2026-01-15T12:00:00.000Z',
+            quotedMessageId: 'quoted-original',
+            keyGeneration: 7,
+            status: 'sent',
+            isIncoming: 1,
+            readAt: readAt,
+            createdAt: createdAt,
+            wireEnvelope: '{"wire":"existing"}',
+            inboxStored: 1,
+            inboxRetryPayload: '{"retry":"existing"}',
+          ),
+        );
+
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'pgc006-incoming',
+            transportPeerId: null,
+            senderUsername: 'Mallory',
+            text: 'tampered duplicate text',
+            timestamp: '2026-01-16T12:00:00.000Z',
+            quotedMessageId: null,
+            keyGeneration: 99,
+            status: 'failed',
+            isIncoming: 1,
+            readAt: null,
+            createdAt: '2026-01-16T12:00:00.000Z',
+            wireEnvelope: null,
+            inboxStored: 0,
+            inboxRetryPayload: null,
+          ),
+        );
+
+        final rows = await db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: ['pgc006-incoming'],
+        );
+        expect(rows, hasLength(1));
+        final row = rows.single;
+        expect(row['sender_username'], 'Alice');
+        expect(row['text'], 'original text');
+        expect(row['timestamp'], '2026-01-15T12:00:00.000Z');
+        expect(row['transport_peer_id'], 'peer-sender-device-original');
+        expect(row['quoted_message_id'], 'quoted-original');
+        expect(row['key_generation'], 7);
+        expect(row['status'], 'sent');
+        expect(row['is_incoming'], 1);
+        expect(row['read_at'], readAt);
+        expect(row['created_at'], createdAt);
+        expect(row['wire_envelope'], '{"wire":"existing"}');
+        expect(row['inbox_stored'], 1);
+        expect(row['inbox_retry_payload'], '{"retry":"existing"}');
+      },
+    );
+
+    test(
+      'PGC-006 outgoing duplicate save preserves intentional state transitions',
+      () async {
+        Future<void> assertOutgoingTransition({
+          required String id,
+          required String status,
+          required String? wireEnvelope,
+          required int inboxStored,
+          required String? inboxRetryPayload,
+        }) async {
+          await dbInsertGroupMessage(
+            db,
+            makeRow(
+              id: id,
+              transportPeerId: 'outgoing-device-initial',
+              text: 'initial outgoing text',
+              quotedMessageId: 'quoted-initial',
+              status: 'sending',
+              isIncoming: 0,
+              wireEnvelope: '{"wire":"initial"}',
+              inboxStored: 0,
+              inboxRetryPayload: '{"retry":"initial"}',
+            ),
+          );
+
+          await dbInsertGroupMessage(
+            db,
+            makeRow(
+              id: id,
+              transportPeerId: 'outgoing-device-final-$status',
+              senderUsername: 'Alice Final',
+              text: 'final outgoing $status',
+              timestamp: '2026-01-15T12:01:00.000Z',
+              quotedMessageId: 'quoted-final-$status',
+              status: status,
+              isIncoming: 0,
+              readAt: null,
+              createdAt: '2026-01-15T12:01:00.000Z',
+              wireEnvelope: wireEnvelope,
+              inboxStored: inboxStored,
+              inboxRetryPayload: inboxRetryPayload,
+            ),
+          );
+
+          final rows = await db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+          expect(rows, hasLength(1));
+          final row = rows.single;
+          expect(row['sender_username'], 'Alice Final');
+          expect(row['text'], 'final outgoing $status');
+          expect(row['timestamp'], '2026-01-15T12:01:00.000Z');
+          expect(row['transport_peer_id'], 'outgoing-device-final-$status');
+          expect(row['quoted_message_id'], 'quoted-final-$status');
+          expect(row['status'], status);
+          expect(row['is_incoming'], 0);
+          expect(row['wire_envelope'], wireEnvelope);
+          expect(row['inbox_stored'], inboxStored);
+          expect(row['inbox_retry_payload'], inboxRetryPayload);
+        }
+
+        await assertOutgoingTransition(
+          id: 'pgc006-outgoing-sent',
+          status: 'sent',
+          wireEnvelope: null,
+          inboxStored: 1,
+          inboxRetryPayload: null,
+        );
+        await assertOutgoingTransition(
+          id: 'pgc006-outgoing-pending',
+          status: 'pending',
+          wireEnvelope: null,
+          inboxStored: 0,
+          inboxRetryPayload: '{"retry":"pending"}',
+        );
+        await assertOutgoingTransition(
+          id: 'pgc006-outgoing-failed',
+          status: 'failed',
+          wireEnvelope: '{"wire":"failed"}',
+          inboxStored: 0,
+          inboxRetryPayload: '{"retry":"failed"}',
+        );
+      },
+    );
+  });
 
   // ─── Migration Tests (1-5) ───────────────────────────────────────────
 
@@ -485,6 +645,7 @@ void main() {
           await runGroupMessagesTablesMigration(fileDb);
           await runGroupQuotedMessageIdMigration(fileDb);
           await runGroupMessageReliabilityColumnsMigration(fileDb);
+          await runGroupMessageTransportPeerIdMigration(fileDb);
           await dbInsertGroupMessage(
             fileDb,
             makeRow(

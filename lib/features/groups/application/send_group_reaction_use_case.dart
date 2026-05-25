@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
-import 'package:uuid/uuid.dart';
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
@@ -17,25 +18,28 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 /// Result of sending an emoji reaction to a group message.
 enum SendGroupReactionResult {
+  /// Live publish was accepted and local/replay state was queued.
+  ///
+  /// This is not a remote delivery confirmation.
   success,
   groupNotFound,
   groupDissolved,
   messageNotFound,
   notMember,
+  unauthorizedSenderKey,
   publishFailed,
 }
 
-const _uuid = Uuid();
-
-/// Sends an emoji reaction to a group message via GossipSub.
+/// Sends an emoji reaction to a group message via live publish plus replay outbox.
 ///
 /// 1. Validates group exists and sender is a member
 /// 2. Validates the target message exists
 /// 3. Builds reaction payload and publishes via bridge
-/// 4. Persists locally (optimistic)
-/// 5. Stores in relay inbox for offline members
+/// 4. Stages replay for offline members
+/// 5. Persists locally (optimistic)
 ///
-/// Returns (result, MessageReaction?) — reaction is non-null on success.
+/// Returns (result, MessageReaction?) — reaction is non-null when the local
+/// optimistic state was queued. This is not a delivery receipt.
 Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -97,27 +101,51 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     senderPublicKey,
     allowLegacyFallback: true,
   );
+  if (senderDevice == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_SEND_UNAUTHORIZED_SENDER_KEY',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderPeerId.length > 8
+            ? senderPeerId.substring(0, 8)
+            : senderPeerId,
+      },
+    );
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
 
   // 3. Validate message exists
   final message = await msgRepo.getMessage(messageId);
-  if (message == null) {
+  if (message == null || message.groupId != groupId) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REACTION_SEND_MSG_NOT_FOUND',
-      details: {},
+      details: {
+        if (message != null) 'reason': 'message_group_mismatch',
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'messageId': messageId.length > 8
+            ? messageId.substring(0, 8)
+            : messageId,
+      },
     );
     return (SendGroupReactionResult.messageNotFound, null);
   }
 
   // 4. Build reaction payload
-  final reactionId = _uuid.v4();
+  final reactionId = _deterministicAddReactionId(
+    groupId: groupId,
+    messageId: messageId,
+    senderPeerId: senderPeerId,
+    emoji: emoji,
+  );
   final timestamp = DateTime.now().toUtc().toIso8601String();
 
   final payload = GroupReactionPayload(
     id: reactionId,
     messageId: messageId,
     emoji: emoji,
-    action: 'add',
+    action: GroupReactionPayload.actionAdd,
     senderPeerId: senderPeerId,
     timestamp: timestamp,
   );
@@ -130,10 +158,10 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
       senderPeerId: senderPeerId,
       senderPublicKey: senderPublicKey,
       senderPrivateKey: senderPrivateKey,
-      senderDeviceId: senderDevice?.deviceId,
-      senderTransportPeerId: senderDevice?.transportPeerId,
-      senderDevicePublicKey: senderDevice?.deviceSigningPublicKey,
-      senderKeyPackageId: senderDevice?.keyPackageId,
+      senderDeviceId: senderDevice.deviceId,
+      senderTransportPeerId: senderDevice.transportPeerId,
+      senderDevicePublicKey: senderDevice.deviceSigningPublicKey,
+      senderKeyPackageId: senderDevice.keyPackageId,
       reactionPayload: payload.toInnerJson(),
     );
 
@@ -161,7 +189,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     reactionReplayOutboxRepo: reactionReplayOutboxRepo,
     groupId: groupId,
     payload: payload,
-    senderPublicKey: senderDevice?.deviceSigningPublicKey ?? senderPublicKey,
+    senderPublicKey: senderDevice.deviceSigningPublicKey,
     senderPrivateKey: senderPrivateKey,
     senderDevice: senderDevice,
   );
@@ -172,11 +200,35 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
 
   emitFlowEvent(
     layer: 'FL',
-    event: 'GROUP_REACTION_SEND_SUCCESS',
-    details: {'id': reactionId.substring(0, 8), 'emoji': emoji},
+    event: 'GROUP_REACTION_SEND_QUEUED',
+    details: {
+      'id': reactionId.substring(0, 8),
+      'emoji': emoji,
+      'deliveryMode': 'live_publish_replay_queued',
+      'deliveryConfirmed': false,
+      'localState': 'optimistic',
+      'replayStatus': 'pending',
+    },
   );
 
   return (SendGroupReactionResult.success, reaction);
+}
+
+String _deterministicAddReactionId({
+  required String groupId,
+  required String messageId,
+  required String senderPeerId,
+  required String emoji,
+}) {
+  final canonical = jsonEncode({
+    'action': GroupReactionPayload.actionAdd,
+    'emoji': emoji,
+    'groupId': groupId,
+    'messageId': messageId,
+    'senderPeerId': senderPeerId,
+  });
+  final digest = sha256.convert(utf8.encode(canonical)).toString();
+  return 'group-reaction-add-${digest.substring(0, 32)}';
 }
 
 /// Wraps inbox store in try/catch so failures don't propagate.
@@ -188,7 +240,7 @@ Future<void> _stageReactionInboxStore({
   required GroupReactionPayload payload,
   required String senderPublicKey,
   required String senderPrivateKey,
-  required GroupMemberDeviceIdentity? senderDevice,
+  required GroupMemberDeviceIdentity senderDevice,
 }) async {
   late final String inboxRetryPayload;
   try {
@@ -202,9 +254,9 @@ Future<void> _stageReactionInboxStore({
       senderPublicKey: senderPublicKey,
       senderPrivateKey: senderPrivateKey,
       messageId: payload.id,
-      senderDeviceId: senderDevice?.deviceId,
-      senderTransportPeerId: senderDevice?.transportPeerId,
-      senderKeyPackageId: senderDevice?.keyPackageId,
+      senderDeviceId: senderDevice.deviceId,
+      senderTransportPeerId: senderDevice.transportPeerId,
+      senderKeyPackageId: senderDevice.keyPackageId,
     );
   } catch (e) {
     emitFlowEvent(

@@ -140,7 +140,8 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     return (AcceptPendingGroupInviteResult.repairPending, null);
   }
   final payload = parsedPayload.payload!;
-  if (payload.isInvitePolicyExpiredAt(effectiveNow)) {
+  final currentTimeFailure = payload.currentTimeValidationFailure(effectiveNow);
+  if (currentTimeFailure == GroupInvitePayloadParseFailure.expired) {
     await pendingInviteRepo.deletePendingInvite(groupId);
     emitFlowEvent(
       layer: 'FL',
@@ -151,12 +152,26 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     );
     return (AcceptPendingGroupInviteResult.expired, null);
   }
-  if ((payload.hasWelcomeKeyPackage || payload.requiresWelcomeKeyPackage) &&
-      !payload.isWelcomeKeyPackageValid(validationTime: effectiveNow)) {
+  if (currentTimeFailure ==
+      GroupInvitePayloadParseFailure.invalidWelcomeKeyPackage) {
     await pendingInviteRepo.deletePendingInvite(groupId);
     emitFlowEvent(
       layer: 'FL',
       event: 'PENDING_GROUP_INVITE_ACCEPT_INVALID_WELCOME_PACKAGE',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    return (AcceptPendingGroupInviteResult.invalidPayload, null);
+  }
+  if (currentTimeFailure == GroupInvitePayloadParseFailure.invalidSignature ||
+      currentTimeFailure == GroupInvitePayloadParseFailure.missingSignature ||
+      currentTimeFailure ==
+          GroupInvitePayloadParseFailure.staleMembershipFreshness) {
+    await pendingInviteRepo.deletePendingInvite(groupId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_INVALID_SIGNATURE',
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
       },
@@ -276,19 +291,6 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
 
   switch (result) {
     case HandleGroupInviteResult.success:
-      if (isSingleUse) {
-        await _recordConsumedInvite(
-          pendingInviteRepo: pendingInviteRepo,
-          invite: invite,
-          consumedAt: effectiveNow,
-        );
-      }
-      await _recordWelcomeKeyPackageTombstone(
-        pendingInviteRepo: pendingInviteRepo,
-        payload: payload,
-        consumedAt: effectiveNow,
-      );
-      await pendingInviteRepo.deletePendingInvite(groupId);
       final acceptedId = acceptedGroupId ?? groupId;
       final inboxDrained = await _drainAcceptedGroupInboxBestEffort(
         bridge: bridge,
@@ -316,26 +318,18 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         senderTransportPeerId: ownTransportPeerId,
         senderKeyPackageId: ownKeyPackageId,
       );
-      return (
-        inboxDrained
-            ? AcceptPendingGroupInviteResult.success
-            : AcceptPendingGroupInviteResult.bridgeError,
-        group,
-      );
-    case HandleGroupInviteResult.bridgeError:
-      if (isSingleUse) {
-        await _recordConsumedInvite(
-          pendingInviteRepo: pendingInviteRepo,
-          invite: invite,
-          consumedAt: effectiveNow,
-        );
+      if (!inboxDrained) {
+        return (AcceptPendingGroupInviteResult.bridgeError, group);
       }
-      await _recordWelcomeKeyPackageTombstone(
+      await _commitAcceptedPendingInvite(
         pendingInviteRepo: pendingInviteRepo,
+        invite: invite,
         payload: payload,
         consumedAt: effectiveNow,
+        isSingleUse: isSingleUse,
       );
-      await pendingInviteRepo.deletePendingInvite(groupId);
+      return (AcceptPendingGroupInviteResult.success, group);
+    case HandleGroupInviteResult.bridgeError:
       final acceptedId = acceptedGroupId ?? groupId;
       final group = await groupRepo.getGroup(acceptedId);
       await _publishAcceptedJoinTimelineBestEffort(
@@ -353,8 +347,22 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
       );
       return (AcceptPendingGroupInviteResult.bridgeError, group);
     case HandleGroupInviteResult.duplicateGroup:
-      await pendingInviteRepo.deletePendingInvite(groupId);
-      return (AcceptPendingGroupInviteResult.duplicateGroup, null);
+      return _retryAcceptedMaterializedInvite(
+        pendingInviteRepo: pendingInviteRepo,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        invite: invite,
+        payload: payload,
+        consumedAt: effectiveNow,
+        isSingleUse: isSingleUse,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        reactionRepo: reactionRepo,
+        groupMessageListener: groupMessageListener,
+        senderPeerId: senderPeerId,
+        drainAcceptedInboxAllPages: drainAcceptedInboxAllPages,
+        acceptedInboxPageSize: acceptedInboxPageSize,
+      );
     case HandleGroupInviteResult.invalidPayload:
       emitFlowEvent(
         layer: 'FL',
@@ -369,6 +377,97 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
       await pendingInviteRepo.deletePendingInvite(groupId);
       return (AcceptPendingGroupInviteResult.invalidPayload, null);
   }
+}
+
+Future<(AcceptPendingGroupInviteResult, GroupModel?)>
+_retryAcceptedMaterializedInvite({
+  required PendingGroupInviteRepository pendingInviteRepo,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required Bridge bridge,
+  required PendingGroupInvite invite,
+  required GroupInvitePayload payload,
+  required DateTime consumedAt,
+  required bool isSingleUse,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
+  String? senderPeerId,
+  required bool drainAcceptedInboxAllPages,
+  required int acceptedInboxPageSize,
+}) async {
+  final group = await _compatibleAcceptedRetryGroup(
+    groupRepo: groupRepo,
+    payload: payload,
+  );
+  if (group == null) {
+    await pendingInviteRepo.deletePendingInvite(invite.groupId);
+    return (AcceptPendingGroupInviteResult.duplicateGroup, null);
+  }
+
+  try {
+    await callGroupJoinWithConfig(
+      bridge,
+      groupId: payload.groupId,
+      groupConfig: payload.groupConfig,
+      groupKey: payload.groupKey,
+      keyEpoch: payload.keyEpoch,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_RETRY_JOIN_WARNING',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+        'error': e.toString(),
+      },
+    );
+    return (AcceptPendingGroupInviteResult.bridgeError, group);
+  }
+
+  final inboxDrained = await _drainAcceptedGroupInboxBestEffort(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    groupId: payload.groupId,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    groupMessageListener: groupMessageListener,
+    selfPeerId: senderPeerId,
+    drainAllPages: drainAcceptedInboxAllPages,
+    pageSize: acceptedInboxPageSize,
+  );
+  if (!inboxDrained) {
+    return (AcceptPendingGroupInviteResult.bridgeError, group);
+  }
+
+  await _commitAcceptedPendingInvite(
+    pendingInviteRepo: pendingInviteRepo,
+    invite: invite,
+    payload: payload,
+    consumedAt: consumedAt,
+    isSingleUse: isSingleUse,
+  );
+  return (AcceptPendingGroupInviteResult.success, group);
+}
+
+Future<GroupModel?> _compatibleAcceptedRetryGroup({
+  required GroupRepository groupRepo,
+  required GroupInvitePayload payload,
+}) async {
+  final group = await groupRepo.getGroup(payload.groupId);
+  if (group == null) {
+    return null;
+  }
+  final latestKey = await groupRepo.getLatestKey(payload.groupId);
+  if (latestKey == null ||
+      latestKey.keyGeneration != payload.keyEpoch ||
+      latestKey.encryptedKey != payload.groupKey) {
+    return null;
+  }
+  return group;
 }
 
 Future<bool> _hasActiveWelcomeKeyPackageTombstone({
@@ -420,13 +519,35 @@ Future<bool> _isStaleAgainstLocalGroupState({
 
   final lastMembershipEventAt = localGroup.lastMembershipEventAt?.toUtc();
   if (lastMembershipEventAt == null) {
-    return true;
+    return false;
   }
   final inviteFreshnessAt =
       payload.membershipFreshnessProof?.issuedAt.toUtc() ??
       DateTime.tryParse(payload.timestamp)?.toUtc();
   return inviteFreshnessAt == null ||
       !inviteFreshnessAt.isAfter(lastMembershipEventAt);
+}
+
+Future<void> _commitAcceptedPendingInvite({
+  required PendingGroupInviteRepository pendingInviteRepo,
+  required PendingGroupInvite invite,
+  required GroupInvitePayload payload,
+  required DateTime consumedAt,
+  required bool isSingleUse,
+}) async {
+  if (isSingleUse) {
+    await _recordConsumedInvite(
+      pendingInviteRepo: pendingInviteRepo,
+      invite: invite,
+      consumedAt: consumedAt,
+    );
+  }
+  await _recordWelcomeKeyPackageTombstone(
+    pendingInviteRepo: pendingInviteRepo,
+    payload: payload,
+    consumedAt: consumedAt,
+  );
+  await pendingInviteRepo.deletePendingInvite(invite.groupId);
 }
 
 Future<void> _recordWelcomeKeyPackageTombstone({

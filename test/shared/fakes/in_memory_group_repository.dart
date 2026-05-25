@@ -1,4 +1,5 @@
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -85,6 +86,11 @@ class InMemoryGroupRepository
     if (duplicateRejectReason != null) {
       throw StateError(duplicateRejectReason);
     }
+    _members.putIfAbsent(member.groupId, () => {});
+    _members[member.groupId]![member.peerId] = member;
+  }
+
+  Future<void> saveMemberBypassingValidationForTest(GroupMember member) async {
     _members.putIfAbsent(member.groupId, () => {});
     _members[member.groupId]![member.peerId] = member;
   }
@@ -222,14 +228,16 @@ class InMemoryGroupRepository
 
   void _pruneObsoleteKeys(String groupId) {
     final groupKeys = _keys[groupId];
-    if (groupKeys == null || groupKeys.length <= 2) {
+    if (groupKeys == null || groupKeys.isEmpty) {
       return;
     }
 
     final latestGeneration = groupKeys
         .map((key) => key.keyGeneration)
         .reduce((a, b) => a > b ? a : b);
-    final minKeyGenerationToKeep = latestGeneration - 1;
+    final minKeyGenerationToKeep = minRetainedGroupKeyGeneration(
+      latestGeneration,
+    );
     groupKeys.removeWhere((key) => key.keyGeneration < minKeyGenerationToKeep);
   }
 }

@@ -88,6 +88,35 @@ void main() {
       },
     );
 
+    test(
+      'missing group id on group-message-like remote push emits dedicated hook',
+      () async {
+        final events = <String>[];
+
+        await routeRemoteNotificationOpen(
+          data: const {
+            'payloadType': 'group_message',
+            'message_id': 'msg-missing-group',
+          },
+          onBeforeRouteTarget: (_) async {
+            fail('should not prepare without a route target');
+          },
+          onRouteTarget: (_) async {
+            fail('should not route without a group id');
+          },
+          onMissingGroupRouteId: (data) async {
+            events.add('missing-group-id');
+            expect(data['payloadType'], 'group_message');
+          },
+          onMissingRouteTarget: () async {
+            events.add('missing');
+          },
+        );
+
+        expect(events, <String>['missing-group-id', 'missing']);
+      },
+    );
+
     test('local-notification payload routing remains unchanged', () async {
       NotificationRouteTarget? routedTarget;
 

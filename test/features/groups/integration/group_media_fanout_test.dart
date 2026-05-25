@@ -421,6 +421,9 @@ void main() {
         );
         await alice.addMember(groupId: groupId, invitee: bob);
         await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: 1);
 
         alice.start();
         bob.start();
@@ -723,11 +726,6 @@ void main() {
             size: 4,
             width: 320,
             height: 240,
-          ),
-          attachment(
-            id: 'blob-pl012-file',
-            mime: 'application/octet-stream',
-            size: 4,
           ),
           attachment(
             id: 'blob-pl012-video',
@@ -1088,6 +1086,9 @@ void main() {
         );
         await alice.addMember(groupId: groupId, invitee: bob);
         await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: 1);
 
         alice.start();
         bob.start();
@@ -1381,12 +1382,12 @@ void main() {
         expect(allowedPeers, isNot(contains(charlie.peerId)));
         expect(allowedPeers, isNot(contains('peer-dave-never-joined')));
 
-        final localMedia = File(p.join(tempDir.path, 'pl005.bin'));
+        final localMedia = File(p.join(tempDir.path, 'pl005.jpg'));
         await localMedia.writeAsBytes(<int>[1, 2, 3, 4]);
         final uploaded = await uploadMedia(
           bridge: alice.bridge,
           localFilePath: localMedia.path,
-          mime: 'application/octet-stream',
+          mime: 'image/jpeg',
           recipientPeerId: groupId,
           allowedPeers: allowedPeers,
           blobId: 'blob-pl005-active-media',

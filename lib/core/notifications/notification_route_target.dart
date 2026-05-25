@@ -150,16 +150,7 @@ class NotificationRouteTarget {
             ? null
             : NotificationRouteTarget.contactRequest(peerId);
       case 'group_message':
-        final groupId = _trimToNull(data['groupId']?.toString());
-        if (groupId == null) {
-          return null;
-        }
-        final messageId =
-            _trimToNull(data['message_id']?.toString()) ??
-            _trimToNull(data['messageId']?.toString()) ??
-            _trimToNull(data['id']?.toString()) ??
-            _trimToNull(data['msgId']?.toString());
-        return NotificationRouteTarget.group(groupId, messageId: messageId);
+        return _groupRouteFromRemoteMessageData(data);
       case 'group_invite':
         // Group invites are reviewed from the shared Intros surface, which
         // already renders pending invites alongside introductions.
@@ -193,8 +184,69 @@ class NotificationRouteTarget {
         return postId == null ? null : NotificationRouteTarget.post(postId);
     }
 
+    if (isGroupMessageLikeRemoteData(data)) {
+      return _groupRouteFromRemoteMessageData(data);
+    }
+
     return fromPayload(
       data['payload']?.toString() ?? data['route']?.toString(),
+    );
+  }
+
+  static bool isGroupMessageLikeRemoteData(Map<String, dynamic> data) {
+    final type = _trimToNull(data['type']?.toString());
+    if (type == 'group_invite') {
+      return false;
+    }
+
+    final payloadType = _trimToNull(data['payloadType']?.toString());
+    final kind = _trimToNull(data['kind']?.toString());
+    return type == 'group_message' ||
+        payloadType == 'group_message' ||
+        kind == 'group_message' ||
+        kind == 'group_offline_replay';
+  }
+
+  static String? groupIdFromRemoteMessageData(Map<String, dynamic> data) {
+    return _trimToNull(data['groupId']?.toString()) ??
+        _trimToNull(data['group_id']?.toString()) ??
+        _trimToNull(data['gid']?.toString()) ??
+        _trimToNull(data['conversation_id']?.toString());
+  }
+
+  static String? messageIdFromRemoteMessageData(Map<String, dynamic> data) {
+    return _trimToNull(data['message_id']?.toString()) ??
+        _trimToNull(data['messageId']?.toString()) ??
+        _trimToNull(data['id']?.toString()) ??
+        _trimToNull(data['msgId']?.toString());
+  }
+
+  static Map<String, Object?> missingGroupIdTelemetryDetails(
+    Map<String, dynamic> data,
+  ) {
+    return {
+      'type': _trimToNull(data['type']?.toString()),
+      'payloadType': _trimToNull(data['payloadType']?.toString()),
+      'kind': _trimToNull(data['kind']?.toString()),
+      'dataKeys': data.keys.toList(growable: false),
+      'hasGroupId': _trimToNull(data['groupId']?.toString()) != null,
+      'hasGroup_id': _trimToNull(data['group_id']?.toString()) != null,
+      'hasGid': _trimToNull(data['gid']?.toString()) != null,
+      'hasConversationId':
+          _trimToNull(data['conversation_id']?.toString()) != null,
+    };
+  }
+
+  static NotificationRouteTarget? _groupRouteFromRemoteMessageData(
+    Map<String, dynamic> data,
+  ) {
+    final groupId = groupIdFromRemoteMessageData(data);
+    if (groupId == null) {
+      return null;
+    }
+    return NotificationRouteTarget.group(
+      groupId,
+      messageId: messageIdFromRemoteMessageData(data),
     );
   }
 

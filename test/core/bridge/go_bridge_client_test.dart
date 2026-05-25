@@ -18,6 +18,7 @@ void main() {
   MethodCall? lastCall;
   const goBridgeEventChannelName = 'com.mknoon/go_bridge_events';
   const goBridgeEventCodec = StandardMethodCodec();
+  const groupPushLossDetectedEvent = 'group:push_loss_detected';
 
   /// Default mock handler: records the call and returns a success JSON string.
   String? defaultHandler(MethodCall call) {
@@ -1873,6 +1874,11 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       () async {
         final eventChannelCalls = <String>[];
         final flowEvents = <Map<String, dynamic>>[];
+        final groupDiagnostics = <Map<String, dynamic>>[];
+        final diagnosticSub = groupDiagnosticEventStream.listen(
+          groupDiagnostics.add,
+        );
+        addTearDown(diagnosticSub.cancel);
         installMockGoBridgeEventChannel(calls: eventChannelCalls);
         debugSetFlowEventSink(flowEvents.add);
 
@@ -1895,6 +1901,15 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
           () => eventChannelCalls.where((call) => call == 'listen').length >= 2,
           description: 'EventChannel error recovery listen',
         );
+        await waitForCondition(
+          () => groupDiagnostics.any(
+            (event) =>
+                event['event'] == groupPushLossDetectedEvent &&
+                event['reason'] == 'event_stream_recovered' &&
+                event['streamFailureReason'] == 'error',
+          ),
+          description: 'EventChannel error push-loss diagnostic',
+        );
 
         expect(client.isInitialized, isTrue);
         expect(eventChannelCalls, contains('cancel'));
@@ -1912,6 +1927,16 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
           (event) => event['event'] == 'GO_BRIDGE_EVENT_STREAM_ERROR',
         );
         expect(jsonEncode(errorEvent), isNot(contains('secretKey=hidden')));
+        final pushLossDiagnostic = groupDiagnostics.singleWhere(
+          (event) =>
+              event['event'] == groupPushLossDetectedEvent &&
+              event['streamFailureReason'] == 'error',
+        );
+        expect(pushLossDiagnostic['reason'], 'event_stream_recovered');
+        expect(
+          jsonEncode(pushLossDiagnostic),
+          isNot(contains('secretKey=hidden')),
+        );
 
         await sendMockGoBridgeEvent(
           jsonEncode({
@@ -1943,6 +1968,11 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       () async {
         final eventChannelCalls = <String>[];
         final flowEvents = <Map<String, dynamic>>[];
+        final groupDiagnostics = <Map<String, dynamic>>[];
+        final diagnosticSub = groupDiagnosticEventStream.listen(
+          groupDiagnostics.add,
+        );
+        addTearDown(diagnosticSub.cancel);
         installMockGoBridgeEventChannel(calls: eventChannelCalls);
         debugSetFlowEventSink(flowEvents.add);
 
@@ -1965,6 +1995,15 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
           () => eventChannelCalls.where((call) => call == 'listen').length >= 2,
           description: 'EventChannel done recovery listen',
         );
+        await waitForCondition(
+          () => groupDiagnostics.any(
+            (event) =>
+                event['event'] == groupPushLossDetectedEvent &&
+                event['reason'] == 'event_stream_recovered' &&
+                event['streamFailureReason'] == 'done',
+          ),
+          description: 'EventChannel done push-loss diagnostic',
+        );
 
         expect(client.isInitialized, isTrue);
         expect(eventChannelCalls, contains('cancel'));
@@ -1978,6 +2017,12 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
             'GO_BRIDGE_EVENT_STREAM_RECOVERY_SUCCESS',
           ]),
         );
+        final pushLossDiagnostic = groupDiagnostics.singleWhere(
+          (event) =>
+              event['event'] == groupPushLossDetectedEvent &&
+              event['streamFailureReason'] == 'done',
+        );
+        expect(pushLossDiagnostic['reason'], 'event_stream_recovered');
 
         await sendMockGoBridgeEvent(
           jsonEncode({
@@ -2005,6 +2050,11 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'OB-010 group callback exceptions emit diagnostics and later events deliver',
       () {
         final flowEvents = <Map<String, dynamic>>[];
+        final groupDiagnostics = <Map<String, dynamic>>[];
+        final diagnosticSub = groupDiagnosticEventStream.listen(
+          groupDiagnostics.add,
+        );
+        addTearDown(diagnosticSub.cancel);
         debugSetFlowEventSink(flowEvents.add);
         final printed = <String>[];
         debugPrint = (String? message, {int? wrapWidth}) {
@@ -2039,8 +2089,12 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
             'data': {
               'groupId': 'group-ob010',
               'senderId': 'peer-ob010',
+              'senderDeviceId': 'device-ob010',
+              'transportPeerId': 'trn-ob010',
               'messageId': 'ob010-message-throws',
+              'keyEpoch': 3,
               'text': 'throws first',
+              'payload': {'ciphertext': 'OB-010 ciphertext must not leak'},
             },
           }),
         );
@@ -2109,6 +2163,28 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
         expect(
           messageError['details'],
           containsPair('error', 'Bad state: OB-010 message callback failed'),
+        );
+        final pushLossDiagnostics = groupDiagnostics
+            .where((event) => event['event'] == groupPushLossDetectedEvent)
+            .toList(growable: false);
+        expect(pushLossDiagnostics, hasLength(1));
+        final pushLossDiagnostic = pushLossDiagnostics.single;
+        expect(pushLossDiagnostic['reason'], 'group_message_callback_error');
+        expect(pushLossDiagnostic['groupId'], 'group-ob010');
+        expect(pushLossDiagnostic['messageId'], 'ob010-message-throws');
+        expect(pushLossDiagnostic['keyEpoch'], 3);
+        expect(pushLossDiagnostic['senderId'], 'peer-ob010');
+        expect(pushLossDiagnostic['senderDeviceId'], 'device-ob010');
+        expect(pushLossDiagnostic['transportPeerId'], 'trn-ob010');
+        expect(
+          pushLossDiagnostic['error'],
+          'Bad state: OB-010 message callback failed',
+        );
+        final encodedPushLoss = jsonEncode(pushLossDiagnostic);
+        expect(encodedPushLoss, isNot(contains('throws first')));
+        expect(
+          encodedPushLoss,
+          isNot(contains('OB-010 ciphertext must not leak')),
         );
         final reactionError = flowEvents.singleWhere(
           (event) => event['event'] == 'GROUP_REACTION_CALLBACK_ERROR',

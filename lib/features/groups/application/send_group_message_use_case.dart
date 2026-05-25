@@ -96,6 +96,58 @@ Map<String, dynamic> _groupPublishFanoutEvidence({
   return evidence;
 }
 
+bool _hasReliableGroupSendContract(Map<String, dynamic>? result) {
+  if (result == null || result['ok'] != true) return false;
+  return result.containsKey('publishSucceeded') &&
+      result.containsKey('inboxStored') &&
+      result.containsKey('expectedRecipientCount') &&
+      (result.containsKey('topicPeerCount') ||
+          result.containsKey('topicPeers'));
+}
+
+bool _reliableGroupSendUnavailable(Map<String, dynamic>? result) {
+  if (result == null) return false;
+  if (result['ok'] == true) return !_hasReliableGroupSendContract(result);
+  final code = result['errorCode']?.toString();
+  return code == 'UNKNOWN_COMMAND' ||
+      code == 'MISSING_PLUGIN' ||
+      code == 'NOT_IMPLEMENTED' ||
+      code == 'UNIMPLEMENTED';
+}
+
+int? _intResultField(Map<String, dynamic> result, String key) {
+  final value = result[key];
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return null;
+}
+
+List<String> _stringListResultField(Map<String, dynamic> result, String key) {
+  final value = result[key];
+  if (value is! List) return const <String>[];
+  return value
+      .whereType<String>()
+      .map((entry) => entry.trim())
+      .where((entry) => entry.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+}
+
+String? _nativeReliableInboxRetryPayload({
+  required String groupId,
+  required Map<String, dynamic> result,
+  required String? fallback,
+}) {
+  final envelope = result['envelope'];
+  if (envelope is! String || envelope.trim().isEmpty) return fallback;
+  final recipientPeerIds = _stringListResultField(result, 'recipientPeerIds');
+  return jsonEncode({
+    'groupId': groupId,
+    'message': envelope,
+    if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
+  });
+}
+
 String _defaultGroupMessageIdFactory() => const Uuid().v4();
 
 GroupMemberDeviceIdentity? _resolveOutgoingSenderDevice({
@@ -765,6 +817,146 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   prepareStopwatch.stop();
   prepareMs = prepareStopwatch.elapsedMilliseconds;
 
+  final reliableStopwatch = Stopwatch()..start();
+  Map<String, dynamic> reliableResult;
+  try {
+    reliableResult = await callGroupSendReliable(
+      bridge,
+      groupId: groupId,
+      text: sanitizedText,
+      senderPeerId: senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      senderUsername: senderUsername,
+      senderDeviceId: resolvedSenderDeviceId,
+      senderTransportPeerId: resolvedSenderTransportPeerId,
+      senderDevicePublicKey: resolvedSenderDevicePublicKey,
+      senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
+      messageId: resolvedMessageId,
+      timestamp: now,
+      quotedMessageId: quotedMessageId,
+      media: mediaJson,
+    );
+  } catch (e) {
+    reliableResult = {
+      'ok': false,
+      'errorCode': 'RELIABLE_SEND_FAILED',
+      'errorMessage': e.toString(),
+    };
+  }
+  reliableStopwatch.stop();
+  if (!_reliableGroupSendUnavailable(reliableResult)) {
+    publishMs = reliableStopwatch.elapsedMilliseconds;
+    final reliableOk = reliableResult['ok'] == true;
+    final publishSucceeded = reliableResult['publishSucceeded'] == true;
+    final inboxOk = reliableResult['inboxStored'] == true;
+    final topicPeers =
+        _intResultField(reliableResult, 'topicPeerCount') ??
+        _intResultField(reliableResult, 'topicPeers');
+    final reliableExpectedRecipientCount =
+        _intResultField(reliableResult, 'expectedRecipientCount') ??
+        expectedRecipientCount;
+    final retryPayload = inboxOk
+        ? null
+        : _nativeReliableInboxRetryPayload(
+            groupId: groupId,
+            result: reliableResult,
+            fallback: prePersistMessage.inboxRetryPayload,
+          );
+
+    if (!reliableOk || (!publishSucceeded && !inboxOk)) {
+      await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
+      await msgRepo.updateInboxStored(resolvedMessageId, stored: inboxOk);
+      final failedMessage = prePersistMessage.copyWith(
+        status: 'failed',
+        inboxStored: inboxOk,
+        inboxRetryPayload: retryPayload,
+      );
+      emitGroupSendTiming(
+        outcome: 'reliable_failed',
+        details: {
+          'deliveryMode': reliableResult['deliveryMode'],
+          ..._groupPublishFanoutEvidence(
+            topicPeers: topicPeers,
+            expectedRecipientCount: reliableExpectedRecipientCount,
+            inboxOk: inboxOk,
+          ),
+        },
+      );
+      return (SendGroupMessageResult.error, failedMessage);
+    }
+
+    final canMarkSent = inboxOk || (publishSucceeded && (topicPeers ?? 0) > 0);
+    if (!canMarkSent && (topicPeers ?? 0) <= 0) {
+      await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
+      final failedMessage = prePersistMessage.copyWith(
+        status: 'failed',
+        inboxStored: false,
+        inboxRetryPayload: retryPayload,
+      );
+      emitGroupSendTiming(
+        outcome: 'zero_peers_inbox_failed',
+        details: _groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: reliableExpectedRecipientCount,
+          inboxOk: false,
+        ),
+      );
+      return (SendGroupMessageResult.error, failedMessage);
+    }
+
+    final finalMessage = prePersistMessage.copyWith(
+      status: canMarkSent ? 'sent' : 'pending',
+      wireEnvelope: null,
+      inboxStored: inboxOk,
+      inboxRetryPayload: retryPayload,
+    );
+    await msgRepo.saveMessage(finalMessage);
+    await _persistOutgoingMedia(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: groupMediaAttachments
+          ?.map(
+            (attachment) => attachment.copyWith(messageId: resolvedMessageId),
+          )
+          .toList(growable: false),
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: topicPeers == 0 && inboxOk
+          ? 'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS'
+          : 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+      details: {
+        'messageId': resolvedMessageId.length > 8
+            ? resolvedMessageId.substring(0, 8)
+            : resolvedMessageId,
+        'deliveryMode': reliableResult['deliveryMode'],
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: reliableExpectedRecipientCount,
+          inboxOk: inboxOk,
+        ),
+      },
+    );
+    emitGroupSendTiming(
+      outcome: topicPeers == 0 && inboxOk ? 'success_no_peers' : 'success',
+      details: {
+        'status': finalMessage.status,
+        'deliveryMode': reliableResult['deliveryMode'],
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: reliableExpectedRecipientCount,
+          inboxOk: inboxOk,
+        ),
+      },
+    );
+    return (
+      topicPeers == 0 && inboxOk
+          ? SendGroupMessageResult.successNoPeers
+          : SendGroupMessageResult.success,
+      finalMessage,
+    );
+  }
+
   // 5. Start publish + inbox store concurrently
   final publishStopwatch = Stopwatch()..start();
   final publishFuture = callGroupPublish(
@@ -982,13 +1174,14 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   }
 
   if (topicPeers > 0) {
-    // Normal success: peers > 0
+    // Normal success: explicit live peers make the message visibly sent.
+    // Offline inbox custody remains tracked separately for retry.
     if (inboxResult == null) {
       await Future<void>.value();
     }
     final resolvedInboxOk = inboxResult;
     final finalMessage = prePersistMessage.copyWith(
-      status: resolvedInboxOk == true ? 'sent' : 'pending',
+      status: 'sent',
       wireEnvelope: null,
       inboxStored: resolvedInboxOk == true,
       inboxRetryPayload: resolvedInboxOk == true

@@ -491,7 +491,7 @@ void main() {
     );
 
     test(
-      'accepted group survives inbox catch-up failure and returns recovery warning',
+      'GCA-004 inbox bridgeError keeps pending invite retryable until drain succeeds',
       () async {
         await pendingInviteRepo.savePendingInvite(makeInvite());
         bridge.responses['group:inboxRetrieveCursor'] = {
@@ -512,13 +512,53 @@ void main() {
         expect(result, AcceptPendingGroupInviteResult.bridgeError);
         expect(group, isNotNull);
         expect(group!.id, 'grp-abc123');
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': const [],
+          'cursor': '',
+        };
+
+        final (retryResult, retryGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+        );
+
+        expect(retryResult, AcceptPendingGroupInviteResult.success);
+        expect(retryGroup, isNotNull);
+        expect(retryGroup!.id, 'grp-abc123');
         expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
         expect(
           await pendingInviteRepo.getConsumedInvite('invite-1'),
           isNotNull,
         );
-        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
-        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(2),
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(2),
+        );
       },
     );
 
@@ -538,7 +578,7 @@ void main() {
           groupRepo: groupRepo,
           msgRepo: msgRepo,
           bridge: bridge,
-          getSelfPeerId: () async => 'peer-self',
+          getSelfPeerId: () async => '12D3KooWReceiver',
           reactionRepo: reactionRepo,
         );
         addTearDown(listener.dispose);
@@ -844,9 +884,20 @@ void main() {
     );
 
     test(
-      'bridgeError keeps a durable join owner and clears the pending invite row',
+      'GCA-004 join bridgeError keeps welcome package retryable until retry succeeds',
       () async {
-        await pendingInviteRepo.savePendingInvite(makeInvite());
+        await pendingInviteRepo.savePendingInvite(
+          signedInvite(
+            makeInvite(
+              groupConfig: receiverDeviceBoundConfig(),
+              recipientDeviceId: 'receiver-device-1',
+              recipientTransportPeerId: 'receiver-device-1',
+              recipientMlKemPublicKey: 'receiverMlKem64',
+              recipientKeyPackageId: 'receiver-kp-1',
+              recipientKeyPackagePublicMaterial: 'receiver-kpm-1',
+            ),
+          ),
+        );
         bridge.responses['group:join'] = {
           'ok': false,
           'errorCode': 'JOIN_FAILED',
@@ -867,25 +918,92 @@ void main() {
           senderPublicKey: 'receiver-public-key',
           senderPrivateKey: 'receiver-private-key',
           senderUsername: 'Receiver',
+          ownDeviceId: 'receiver-device-1',
+          ownTransportPeerId: 'receiver-device-1',
+          ownMlKemPublicKey: 'receiverMlKem64',
+          ownKeyPackageId: 'receiver-kp-1',
+          ownKeyPackagePublicMaterial: 'receiver-kpm-1',
         );
 
         expect(result, AcceptPendingGroupInviteResult.bridgeError);
         expect(group, isNotNull);
         expect(group!.id, 'grp-abc123');
-        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
         expect(
-          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
           isNotNull,
+        );
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+        expect(
+          await pendingInviteRepo.getWelcomeKeyPackageTombstone(
+            packageId: 'receiver-kp-1',
+            recipientDeviceId: 'receiver-device-1',
+            groupId: 'grp-abc123',
+          ),
+          isNull,
         );
         expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
         expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
         expect(msgRepo.count, 1);
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(1),
+        );
 
         final latestMessage = await msgRepo.getLatestMessage('grp-abc123');
         expect(latestMessage, isNotNull);
         expect(latestMessage!.text, 'Receiver joined the group');
+
+        bridge.responses['group:join'] = {'ok': true};
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': const [],
+          'cursor': '',
+        };
+
+        final (retryResult, retryGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+          ownDeviceId: 'receiver-device-1',
+          ownTransportPeerId: 'receiver-device-1',
+          ownMlKemPublicKey: 'receiverMlKem64',
+          ownKeyPackageId: 'receiver-kp-1',
+          ownKeyPackagePublicMaterial: 'receiver-kpm-1',
+        );
+
+        expect(retryResult, AcceptPendingGroupInviteResult.success);
+        expect(retryGroup, isNotNull);
+        expect(retryGroup!.id, 'grp-abc123');
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
+        final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
+          packageId: 'receiver-kp-1',
+          recipientDeviceId: 'receiver-device-1',
+          groupId: 'grp-abc123',
+        );
+        expect(tombstone, isNotNull);
+        expect(tombstone!.inviteId, 'invite-1');
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(2),
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+        expect(msgRepo.count, 1);
       },
     );
 
@@ -1348,6 +1466,44 @@ void main() {
       expect(bridge.commandLog, isNot(contains('group:join')));
       expect(msgRepo.count, 0);
     });
+
+    test(
+      'G3-003 rejects expired payload policy even when pending row is not expired',
+      () async {
+        final receivedAt = DateTime.utc(2026, 4, 29, 12);
+        final invite = makeInvite(receivedAt: receivedAt);
+        await pendingInviteRepo.savePendingInvite(
+          PendingGroupInvite.fromMap({
+            ...invite.toMap(),
+            'expires_at': receivedAt
+                .add(const Duration(days: 30))
+                .toIso8601String(),
+          }),
+        );
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: receivedAt
+              .add(pendingGroupInviteTtl)
+              .add(const Duration(seconds: 1)),
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.expired);
+        expect(group, isNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('payload.verify')));
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(msgRepo.count, 0);
+      },
+    );
 
     test(
       'returns revoked and removes stale pending row without joining',
@@ -1925,6 +2081,7 @@ void main() {
         expect(pendingInviteRepo.welcomeKeyPackageTombstoneCount, 0);
         expect(await groupRepo.getGroup('grp-abc123'), isNull);
         expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('payload.verify')));
         expect(bridge.commandLog, isNot(contains('group:join')));
         expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
         expect(msgRepo.count, 0);

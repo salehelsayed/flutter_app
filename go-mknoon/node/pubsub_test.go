@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	libp2p "github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -50,6 +52,405 @@ func generateEd25519KeyPair(t *testing.T) (privB64, pubB64 string) {
 	}
 	return base64.StdEncoding.EncodeToString(priv),
 		base64.StdEncoding.EncodeToString(pub)
+}
+
+func TestGroupPublishDeviceBinding_DevicefulMissingExplicitDeviceFailsWhenAmbiguous(t *testing.T) {
+	_, accountPub := generateEd25519KeyPair(t)
+	deviceOnePriv, deviceOnePub := generateEd25519KeyPair(t)
+	_, deviceTwoPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "gsd001-message-ambiguous-device"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "GSD001 Ambiguous Device",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: accountPub,
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: deviceOnePub, Status: "active"},
+					{DeviceId: "alice-tablet", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: deviceTwoPub, Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	_, _, err = n.PublishGroupMessage(
+		groupId,
+		deviceOnePriv,
+		"alice-account",
+		accountPub,
+		"Alice",
+		"ambiguous device publish",
+		"gsd001-message-ambiguous",
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous sender device") {
+		t.Fatalf("PublishGroupMessage error = %v, want ambiguous sender device", err)
+	}
+}
+
+func TestGroupPublishDeviceBinding_DevicefulSingleLocalDeviceDefaultsAndSigns(t *testing.T) {
+	_, accountPub := generateEd25519KeyPair(t)
+	devicePriv, devicePub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "gsd001-message-single-local-device"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 3}
+	config := &GroupConfig{
+		Name:      "GSD001 Single Local Device",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: accountPub,
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: devicePub, KeyPackageId: "alice-phone-kp", Status: "active"},
+					{DeviceId: "alice-old", TransportPeerId: "alice-old-transport", DeviceSigningPublicKey: accountPub, Status: "revoked"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	result, err := n.SendGroupMessageReliable(
+		groupId,
+		devicePriv,
+		"alice-account",
+		accountPub,
+		"Alice",
+		"single local device publish",
+		"gsd001-single-local-message",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("SendGroupMessageReliable: %v", err)
+	}
+	env, err := internal.ParseGroupEnvelope(result.Envelope)
+	if err != nil {
+		t.Fatalf("ParseGroupEnvelope: %v", err)
+	}
+	if env.SenderDeviceId != "alice-phone" {
+		t.Fatalf("SenderDeviceId = %q, want alice-phone", env.SenderDeviceId)
+	}
+	if env.SenderTransportPeerId != n.PeerId() {
+		t.Fatalf("SenderTransportPeerId = %q, want local peer %q", env.SenderTransportPeerId, n.PeerId())
+	}
+	if env.SenderDevicePublicKey != devicePub {
+		t.Fatalf("SenderDevicePublicKey = %q, want device public key", env.SenderDevicePublicKey)
+	}
+	if env.SenderKeyPackageId != "alice-phone-kp" {
+		t.Fatalf("SenderKeyPackageId = %q, want alice-phone-kp", env.SenderKeyPackageId)
+	}
+	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
+	valid, err := mcrypto.VerifyPayload(devicePub, sigData, env.Signature)
+	if err != nil || !valid {
+		t.Fatalf("signature valid with device key = %v, err=%v; want true", valid, err)
+	}
+}
+
+func TestGroupPublishDeviceBinding_DevicefulWrongDevicePublicKeyFails(t *testing.T) {
+	_, accountPub := generateEd25519KeyPair(t)
+	devicePriv, devicePub := generateEd25519KeyPair(t)
+	_, wrongPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "gsd001-message-wrong-device-public-key"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "GSD001 Wrong Device Key",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: accountPub,
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: devicePub, Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	_, _, err = n.PublishGroupMessage(
+		groupId,
+		devicePriv,
+		"alice-account",
+		accountPub,
+		"Alice",
+		"wrong device public key publish",
+		"gsd001-wrong-device-pub",
+		map[string]interface{}{
+			"senderDeviceId":        "alice-phone",
+			"senderTransportPeerId": n.PeerId(),
+			"senderDevicePublicKey": wrongPub,
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "sender device public key") {
+		t.Fatalf("PublishGroupMessage error = %v, want sender device public key mismatch", err)
+	}
+}
+
+func TestGroupReactionDeviceBinding_DevicefulMissingExplicitDeviceFailsWhenAmbiguous(t *testing.T) {
+	_, accountPub := generateEd25519KeyPair(t)
+	deviceOnePriv, deviceOnePub := generateEd25519KeyPair(t)
+	_, deviceTwoPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "gsd001-reaction-ambiguous-device"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "GSD001 Reaction Ambiguous Device",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: accountPub,
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: deviceOnePub, Status: "active"},
+					{DeviceId: "alice-tablet", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: deviceTwoPub, Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	err = n.PublishGroupReaction(
+		groupId,
+		deviceOnePriv,
+		"alice-account",
+		accountPub,
+		`{"messageId":"m1","action":"add","emoji":"+1"}`,
+	)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous sender device") {
+		t.Fatalf("PublishGroupReaction error = %v, want ambiguous sender device", err)
+	}
+}
+
+func TestPGC011PublishGroupMessageRejectsInvalidDeviceBeforePublish(t *testing.T) {
+	_, accountPub := generateEd25519KeyPair(t)
+	devicePriv, devicePub := generateEd25519KeyPair(t)
+	_, wrongPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	collector := &testEventCollector{}
+	n := startLocalNodeForMultiRelayTestWithCollector(t, collector)
+	groupId := "pgc011-message-invalid-device-before-publish"
+	config := &GroupConfig{
+		Name:      "PGC011 Invalid Message Device",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: accountPub,
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: devicePub, Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	_, _, err = n.PublishGroupMessage(
+		groupId,
+		devicePriv,
+		"alice-account",
+		accountPub,
+		"Alice",
+		"invalid sender device",
+		"pgc011-invalid-device-message",
+		map[string]interface{}{
+			"senderDeviceId":        "alice-phone",
+			"senderTransportPeerId": n.PeerId(),
+			"senderDevicePublicKey": wrongPub,
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "sender device public key") {
+		t.Fatalf("PublishGroupMessage error = %v, want sender device public key rejection", err)
+	}
+	assertPGC011NoCollectedEvent(t, collector, "group:publish_debug")
+}
+
+func TestPGC011SendGroupMessageReliableRejectsInvalidDeviceBeforeInboxStore(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	inboxRequestSeen := make(chan struct{}, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		select {
+		case inboxRequestSeen <- struct{}{}:
+		default:
+		}
+		_ = s.Reset()
+	})
+
+	_, accountPub := generateEd25519KeyPair(t)
+	devicePriv, devicePub := generateEd25519KeyPair(t)
+	_, wrongPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	groupId := "pgc011-reliable-invalid-device-before-inbox"
+	config := &GroupConfig{
+		Name:      "PGC011 Invalid Reliable Device",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: accountPub,
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: devicePub, Status: "active"},
+				},
+			},
+			{PeerId: "bob-legacy", Role: GroupRoleWriter, PublicKey: "bob-pub"},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	_, err = n.SendGroupMessageReliable(
+		groupId,
+		devicePriv,
+		"alice-account",
+		accountPub,
+		"Alice",
+		"invalid reliable sender device",
+		"pgc011-invalid-reliable-message",
+		map[string]interface{}{
+			"senderDeviceId":        "alice-phone",
+			"senderTransportPeerId": n.PeerId(),
+			"senderDevicePublicKey": wrongPub,
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "sender device public key") {
+		t.Fatalf("SendGroupMessageReliable error = %v, want sender device public key rejection", err)
+	}
+	select {
+	case <-inboxRequestSeen:
+		t.Fatal("GroupInboxStore was called before invalid sender device metadata was rejected")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestPGC011PublishGroupReactionRejectsInvalidDeviceBeforePublish(t *testing.T) {
+	_, accountPub := generateEd25519KeyPair(t)
+	devicePriv, devicePub := generateEd25519KeyPair(t)
+	_, wrongPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "pgc011-reaction-invalid-device-before-publish"
+	config := &GroupConfig{
+		Name:      "PGC011 Invalid Reaction Device",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: accountPub,
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: n.PeerId(), DeviceSigningPublicKey: devicePub, Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	err = n.PublishGroupReaction(
+		groupId,
+		devicePriv,
+		"alice-account",
+		accountPub,
+		`{"messageId":"m1","action":"add","emoji":"+1"}`,
+		map[string]interface{}{
+			"senderDeviceId":        "alice-phone",
+			"senderTransportPeerId": n.PeerId(),
+			"senderDevicePublicKey": wrongPub,
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "sender device public key") {
+		t.Fatalf("PublishGroupReaction error = %v, want sender device public key rejection", err)
+	}
+}
+
+func assertPGC011NoCollectedEvent(t *testing.T, collector *testEventCollector, eventName string) {
+	t.Helper()
+	needle := fmt.Sprintf(`"event":"%s"`, eventName)
+	for _, event := range collector.snapshot() {
+		if strings.Contains(event, needle) {
+			t.Fatalf("unexpected %s event after rejected outbound publish: %s", eventName, event)
+		}
+	}
 }
 
 // --- Rendezvous namespace tests ---
@@ -943,6 +1344,198 @@ func TestGK030BuildGroupMessageReceivedEventPreservesExtrasAndProtectsCanonicalF
 	if _, ok := event["deliveryMs"]; ok {
 		t.Fatal("deliveryMs must be owned by the receive path, not payload extras")
 	}
+}
+
+func TestGroupConfigActiveDeviceValidation(t *testing.T) {
+	_, legacyPub := generateEd25519KeyPair(t)
+	_, activeDevicePub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	newValidConfig := func(name string) *GroupConfig {
+		return &GroupConfig{
+			Name:      name,
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{
+					PeerId:    "gadc-legacy-admin",
+					Role:      GroupRoleAdmin,
+					PublicKey: legacyPub,
+				},
+				{
+					PeerId: "gadc-device-backed-member",
+					Role:   GroupRoleWriter,
+					Devices: []GroupMemberDevice{
+						{
+							DeviceId:               "gadc-active-device",
+							TransportPeerId:        generatePeerIDStr(t),
+							DeviceSigningPublicKey: activeDevicePub,
+							Status:                 "active",
+						},
+						{
+							DeviceId:               "",
+							TransportPeerId:        "legacy-inactive-device-transport",
+							DeviceSigningPublicKey: "",
+							Status:                 "revoked",
+							RevokedAt:              "2026-05-23T23:10:00Z",
+						},
+					},
+				},
+			},
+			CreatedBy: "gadc-legacy-admin",
+			CreatedAt: "2026-05-23T23:05:00Z",
+		}
+	}
+	activeDevice := func(config *GroupConfig) *GroupMemberDevice {
+		t.Helper()
+		if len(config.Members) < 2 || len(config.Members[1].Devices) == 0 {
+			t.Fatal("test config missing active device fixture")
+		}
+		return &config.Members[1].Devices[0]
+	}
+	keyInfo := func(epoch int) *GroupKeyInfo {
+		return &GroupKeyInfo{Key: groupKey, KeyEpoch: epoch}
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*GroupConfig)
+	}{
+		{
+			name: "blank device id",
+			mutate: func(config *GroupConfig) {
+				activeDevice(config).DeviceId = " "
+			},
+		},
+		{
+			name: "non canonical device id",
+			mutate: func(config *GroupConfig) {
+				activeDevice(config).DeviceId = " gadc-active-device"
+			},
+		},
+		{
+			name: "blank transport peer id",
+			mutate: func(config *GroupConfig) {
+				activeDevice(config).TransportPeerId = ""
+			},
+		},
+		{
+			name: "non canonical transport peer id",
+			mutate: func(config *GroupConfig) {
+				activeDevice(config).TransportPeerId = activeDevice(config).TransportPeerId + " "
+			},
+		},
+		{
+			name: "non libp2p transport peer id",
+			mutate: func(config *GroupConfig) {
+				activeDevice(config).TransportPeerId = "account-like-device-peer"
+			},
+		},
+		{
+			name: "blank device signing key",
+			mutate: func(config *GroupConfig) {
+				activeDevice(config).DeviceSigningPublicKey = ""
+			},
+		},
+		{
+			name: "non canonical device signing key",
+			mutate: func(config *GroupConfig) {
+				activeDevice(config).DeviceSigningPublicKey = activeDevice(config).DeviceSigningPublicKey + " "
+			},
+		},
+	}
+
+	joinNode := startLocalNodeForMultiRelayTest(t)
+	updateNode := startLocalNodeForMultiRelayTest(t)
+	refreshNode := startLocalNodeForMultiRelayTest(t)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			suffix := strings.ReplaceAll(tc.name, " ", "-")
+
+			joinGroupId := "gadc-join-" + suffix
+			joinConfig := newValidConfig("GADC invalid join " + tc.name)
+			tc.mutate(joinConfig)
+			if err := joinNode.JoinGroupTopic(joinGroupId, joinConfig, keyInfo(1)); err == nil || !strings.Contains(err.Error(), "invalid group config") {
+				t.Fatalf("JoinGroupTopic error = %v, want invalid group config", err)
+			}
+			joinNode.mu.RLock()
+			_, joinStored := joinNode.groupConfigs[joinGroupId]
+			joinNode.mu.RUnlock()
+			if joinStored {
+				t.Fatalf("JoinGroupTopic stored malformed config for %s", joinGroupId)
+			}
+
+			updateGroupId := "gadc-update-" + suffix
+			updateInitial := newValidConfig("GADC update original " + tc.name)
+			if err := updateNode.JoinGroupTopic(updateGroupId, updateInitial, keyInfo(1)); err != nil {
+				t.Fatalf("JoinGroupTopic valid update baseline: %v", err)
+			}
+			updateConfig := newValidConfig("GADC update invalid " + tc.name)
+			tc.mutate(updateConfig)
+			updateNode.UpdateGroupConfig(updateGroupId, updateConfig)
+			updateNode.mu.RLock()
+			storedUpdate := updateNode.groupConfigs[updateGroupId]
+			updateNode.mu.RUnlock()
+			if storedUpdate == nil || storedUpdate.Name != updateInitial.Name {
+				t.Fatalf("UpdateGroupConfig stored config = %#v, want original %q preserved", storedUpdate, updateInitial.Name)
+			}
+
+			refreshGroupId := "gadc-refresh-" + suffix
+			refreshInitial := newValidConfig("GADC refresh original " + tc.name)
+			if err := refreshNode.JoinGroupTopic(refreshGroupId, refreshInitial, keyInfo(1)); err != nil {
+				t.Fatalf("JoinGroupTopic valid refresh baseline: %v", err)
+			}
+			refreshConfig := newValidConfig("GADC refresh invalid " + tc.name)
+			refreshConfig.ConfigVersion = "2026-05-23T23:15:00Z"
+			refreshConfig.StateHash = "gadc-invalid-refresh-" + suffix
+			tc.mutate(refreshConfig)
+			refreshed, err := refreshNode.RefreshJoinedGroupStateIfNewer(refreshGroupId, refreshConfig, keyInfo(2))
+			if err == nil || !strings.Contains(err.Error(), "invalid group config") {
+				t.Fatalf("RefreshJoinedGroupStateIfNewer error = %v, want invalid group config", err)
+			}
+			if refreshed {
+				t.Fatal("RefreshJoinedGroupStateIfNewer returned refreshed=true for malformed config")
+			}
+			refreshNode.mu.RLock()
+			storedRefresh := refreshNode.groupConfigs[refreshGroupId]
+			storedRefreshKey := refreshNode.groupKeys[refreshGroupId]
+			refreshNode.mu.RUnlock()
+			if storedRefresh == nil || storedRefresh.Name != refreshInitial.Name {
+				t.Fatalf("RefreshJoinedGroupStateIfNewer stored config = %#v, want original %q preserved", storedRefresh, refreshInitial.Name)
+			}
+			if storedRefreshKey == nil || storedRefreshKey.KeyEpoch != 1 {
+				t.Fatalf("RefreshJoinedGroupStateIfNewer stored key = %#v, want epoch 1 preserved", storedRefreshKey)
+			}
+		})
+	}
+
+	compatNode := startLocalNodeForMultiRelayTest(t)
+	compatConfig := newValidConfig("GADC legacy and inactive compatibility")
+	if err := compatNode.JoinGroupTopic("gadc-compat", compatConfig, keyInfo(1)); err != nil {
+		t.Fatalf("JoinGroupTopic legacy no-device plus inactive malformed device: %v", err)
+	}
+	recipients, err := activeGroupInboxRecipientsForConfig("gadc-compat", compatConfig, compatConfig.Members[1].Devices[0].TransportPeerId)
+	if err != nil {
+		t.Fatalf("activeGroupInboxRecipientsForConfig compatibility: %v", err)
+	}
+	if !stringSliceContains(recipients, "gadc-legacy-admin") {
+		t.Fatalf("recipients = %v, want legacy no-device member retained", recipients)
+	}
+	if stringSliceContains(recipients, "legacy-inactive-device-transport") {
+		t.Fatalf("recipients = %v, want inactive malformed device ignored", recipients)
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Validator logic tests (pure functions, no libp2p host needed) ---
@@ -2128,6 +2721,181 @@ func TestGroupTopicValidator_NilConfigRejectsUnknownGroupForGL007(t *testing.T) 
 	result := validateGroupEnvelope(envelopeJSON, groupId, nil, keyInfo)
 	if result != "reject:unknown_group" {
 		t.Fatalf("expected reject:unknown_group, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_UsesPubSubAuthorForForwardedMessages(t *testing.T) {
+	forwarder := peer.ID("carol-forwarder")
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) (*Node, string, peer.ID, string, pubsub.ValidationResult)
+	}{
+		{
+			name: "forwarded_author_transport_match_accepts",
+			setup: func(t *testing.T) (*Node, string, peer.ID, string, pubsub.ValidationResult) {
+				t.Helper()
+				alicePriv, alicePub := generateEd25519KeyPair(t)
+				groupKey, err := mcrypto.GenerateGroupKey()
+				if err != nil {
+					t.Fatalf("generate group key: %v", err)
+				}
+				groupId := "group-forwarded-author-accepts"
+				aliceAuthor := peer.ID("alice-forwarded-author")
+				aliceTransportId := aliceAuthor.String()
+
+				n := NewNode()
+				n.groupConfigs = map[string]*GroupConfig{
+					groupId: {
+						Name:      "Forwarded Author Accepts",
+						GroupType: GroupTypeChat,
+						Members: []GroupMember{
+							{PeerId: aliceTransportId, Role: GroupRoleWriter, PublicKey: alicePub},
+						},
+						CreatedBy: aliceTransportId,
+					},
+				}
+				n.groupKeys = map[string]*GroupKeyInfo{
+					groupId: {Key: groupKey, KeyEpoch: 1},
+				}
+				envelopeJSON := buildTestDeviceEnvelope(
+					t,
+					groupId,
+					aliceTransportId,
+					aliceTransportId,
+					aliceTransportId,
+					alicePub,
+					"",
+					alicePriv,
+					alicePub,
+					groupKey,
+					1,
+					"valid forwarded author",
+				)
+				return n, groupId, aliceAuthor, envelopeJSON, pubsub.ValidationAccept
+			},
+		},
+		{
+			name: "forwarded_author_envelope_mismatch_rejects",
+			setup: func(t *testing.T) (*Node, string, peer.ID, string, pubsub.ValidationResult) {
+				t.Helper()
+				alicePriv, alicePub := generateEd25519KeyPair(t)
+				groupKey, err := mcrypto.GenerateGroupKey()
+				if err != nil {
+					t.Fatalf("generate group key: %v", err)
+				}
+				groupId := "group-forwarded-author-mismatch"
+				aliceAuthor := peer.ID("alice-forwarded-author-mismatch")
+				aliceTransportId := aliceAuthor.String()
+				malloryAuthor := peer.ID("mallory-forwarded-author")
+
+				n := NewNode()
+				n.groupConfigs = map[string]*GroupConfig{
+					groupId: {
+						Name:      "Forwarded Author Mismatch",
+						GroupType: GroupTypeChat,
+						Members: []GroupMember{
+							{PeerId: aliceTransportId, Role: GroupRoleWriter, PublicKey: alicePub},
+						},
+						CreatedBy: aliceTransportId,
+					},
+				}
+				n.groupKeys = map[string]*GroupKeyInfo{
+					groupId: {Key: groupKey, KeyEpoch: 1},
+				}
+				envelopeJSON := buildTestDeviceEnvelope(
+					t,
+					groupId,
+					aliceTransportId,
+					aliceTransportId,
+					aliceTransportId,
+					alicePub,
+					"",
+					alicePriv,
+					alicePub,
+					groupKey,
+					1,
+					"forged forwarded author",
+				)
+				return n, groupId, malloryAuthor, envelopeJSON, pubsub.ValidationReject
+			},
+		},
+		{
+			name: "forwarded_device_bound_author_accepts",
+			setup: func(t *testing.T) (*Node, string, peer.ID, string, pubsub.ValidationResult) {
+				t.Helper()
+				devicePriv, devicePub := generateEd25519KeyPair(t)
+				groupKey, err := mcrypto.GenerateGroupKey()
+				if err != nil {
+					t.Fatalf("generate group key: %v", err)
+				}
+				groupId := "group-forwarded-device-author"
+				aliceMemberId := "alice-member-forwarded"
+				aliceDeviceId := "alice-phone-forwarded"
+				aliceDeviceAuthor := peer.ID("alice-device-forwarded-author")
+				aliceDeviceTransportId := aliceDeviceAuthor.String()
+
+				n := NewNode()
+				n.groupConfigs = map[string]*GroupConfig{
+					groupId: {
+						Name:      "Forwarded Device Author",
+						GroupType: GroupTypeChat,
+						Members: []GroupMember{
+							{
+								PeerId:    aliceMemberId,
+								Role:      GroupRoleWriter,
+								PublicKey: "member-public-key",
+								Devices: []GroupMemberDevice{
+									{
+										DeviceId:               aliceDeviceId,
+										TransportPeerId:        aliceDeviceTransportId,
+										DeviceSigningPublicKey: devicePub,
+										KeyPackageId:           "kp-alice-phone",
+										Status:                 "active",
+									},
+								},
+							},
+						},
+						CreatedBy: aliceMemberId,
+					},
+				}
+				n.groupKeys = map[string]*GroupKeyInfo{
+					groupId: {Key: groupKey, KeyEpoch: 1},
+				}
+				envelopeJSON := buildTestDeviceEnvelope(
+					t,
+					groupId,
+					aliceMemberId,
+					aliceDeviceId,
+					aliceDeviceTransportId,
+					devicePub,
+					"kp-alice-phone",
+					devicePriv,
+					devicePub,
+					groupKey,
+					1,
+					"valid forwarded device author",
+				)
+				return n, groupId, aliceDeviceAuthor, envelopeJSON, pubsub.ValidationAccept
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			n, groupId, author, envelopeJSON, want := tc.setup(t)
+			msg := &pubsub.Message{
+				Message: &pb.Message{
+					Data: []byte(envelopeJSON),
+					From: []byte(author),
+				},
+			}
+			validator := n.groupTopicValidator(groupId)
+
+			if got := validator(context.Background(), forwarder, msg); got != want {
+				t.Fatalf("validator result = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -4755,7 +5523,7 @@ func TestGL019ConcurrentJoinLeaveUpdateSameGroupIsRaceFree(t *testing.T) {
 			if err == nil {
 				continue
 			}
-			if !strings.Contains(err.Error(), "already joined group topic") {
+			if !errors.Is(err, ErrGroupAlreadyJoined) {
 				recordUnexpected("JoinGroupTopic iteration %d: %v", i, err)
 			}
 		}
@@ -5679,8 +6447,8 @@ func TestJoinGroupTopic_RejectsDoubleJoin(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on double join")
 	}
-	if !strings.Contains(err.Error(), "already joined") {
-		t.Errorf("expected 'already joined' error, got %q", err.Error())
+	if !errors.Is(err, ErrGroupAlreadyJoined) {
+		t.Errorf("double join error = %v, want ErrGroupAlreadyJoined", err)
 	}
 }
 
@@ -5865,6 +6633,143 @@ func TestJoinGroupTopic_SubscribeFailureUnregistersValidatorClosesTopicAndAllows
 	}
 }
 
+func TestPGC012JoinGroupTopicSubscribeHookRunsOutsideNodeMutex(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	_, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "pgc012-join-subscribe-outside-node-mutex"
+	config := &GroupConfig{
+		Name:      "PGC012 Join Mutex",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	hookCalled := false
+	n.joinGroupTopicSubscribeHook = func(topic *pubsub.Topic) (*pubsub.Subscription, error) {
+		hookCalled = true
+		if !pgc012CanAcquireNodeRLock(n, 200*time.Millisecond) {
+			t.Error("join subscribe hook ran while n.mu was held")
+		}
+		return topic.Subscribe()
+	}
+
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+	if !hookCalled {
+		t.Fatal("joinGroupTopicSubscribeHook was not called")
+	}
+}
+
+func TestPGC012LeaveGroupTopicCleanupRunsOutsideNodeMutex(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	_, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "pgc012-leave-cleanup-outside-node-mutex"
+	config := &GroupConfig{
+		Name:      "PGC012 Leave Mutex",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	observedStages := map[string]bool{}
+	previousHook := groupTopicCleanupHook
+	groupTopicCleanupHook = func(stage string) {
+		observedStages[stage] = true
+		if !pgc012CanAcquireNodeRLock(n, 200*time.Millisecond) {
+			t.Errorf("leave cleanup stage %s ran while n.mu was held", stage)
+		}
+	}
+	defer func() {
+		groupTopicCleanupHook = previousHook
+	}()
+
+	if err := n.LeaveGroupTopic(groupId); err != nil {
+		t.Fatalf("LeaveGroupTopic: %v", err)
+	}
+	for _, stage := range []string{"discovery_cancel", "subscription_context_cancel", "subscription_cancel", "topic_close", "validator_unregister"} {
+		if !observedStages[stage] {
+			t.Fatalf("leave cleanup hook did not observe stage %s; observed=%v", stage, observedStages)
+		}
+	}
+
+	n.mu.RLock()
+	_, hasTopic := n.groupTopics[groupId]
+	_, hasSub := n.groupSubs[groupId]
+	_, hasConfig := n.groupConfigs[groupId]
+	_, hasKey := n.groupKeys[groupId]
+	_, hasSubCtx := n.groupSubCtx[groupId]
+	_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	n.mu.RUnlock()
+	if hasTopic || hasSub || hasConfig || hasKey || hasSubCtx || hasDiscoveryCtx {
+		t.Fatalf(
+			"LeaveGroupTopic left state behind: topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+			hasTopic,
+			hasSub,
+			hasConfig,
+			hasKey,
+			hasSubCtx,
+			hasDiscoveryCtx,
+		)
+	}
+}
+
+func pgc012CanAcquireNodeRLock(n *Node, timeout time.Duration) bool {
+	acquired := make(chan struct{})
+	go func() {
+		n.mu.RLock()
+		n.mu.RUnlock()
+		close(acquired)
+	}()
+
+	select {
+	case <-acquired:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 func TestJoinGroupTopic_DuplicateJoinPreservesExistingState(t *testing.T) {
 	hexKey := generateTestKey(t)
 
@@ -5957,8 +6862,8 @@ func TestJoinGroupTopic_DuplicateJoinPreservesExistingState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on duplicate join")
 	}
-	if !strings.Contains(err.Error(), "already joined") {
-		t.Fatalf("expected 'already joined' error, got %q", err.Error())
+	if !errors.Is(err, ErrGroupAlreadyJoined) {
+		t.Fatalf("duplicate join error = %v, want ErrGroupAlreadyJoined", err)
 	}
 
 	n.mu.RLock()
@@ -6159,6 +7064,129 @@ func TestRefreshJoinedGroupStateIfNewerUpdatesConfigAndKeyAtomically(t *testing.
 	}
 	if finalKey == nil || finalKey.Key != secondGroupKey || finalKey.KeyEpoch != 2 {
 		t.Fatalf("final key = %#v, want epoch 2 second key preserved", finalKey)
+	}
+}
+
+func TestRefreshJoinedGroupStateIfNewerAppliesSameEpochConfigRevisionWithoutKeyChange(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	_, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	conflictingSameEpochKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate conflicting same epoch group key: %v", err)
+	}
+
+	groupId := "refresh-same-epoch-config-revision"
+	initialConfig := &GroupConfig{
+		Name:          "same epoch config v1",
+		GroupType:     GroupTypeAnnouncement,
+		ConfigVersion: "2026-05-23T10:00:00Z",
+		StateHash:     "state-hash-v1",
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleWriter, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-23T10:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, initialConfig, &GroupKeyInfo{Key: groupKey, KeyEpoch: 2}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	revisedConfig := &GroupConfig{
+		Name:          "same epoch config v2",
+		GroupType:     GroupTypeAnnouncement,
+		ConfigVersion: "2026-05-23T10:01:00Z",
+		StateHash:     "state-hash-v2",
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-23T10:00:00Z",
+	}
+	refreshed, err := n.RefreshJoinedGroupStateIfNewer(
+		groupId,
+		revisedConfig,
+		&GroupKeyInfo{Key: conflictingSameEpochKey, KeyEpoch: 2},
+	)
+	if err != nil {
+		t.Fatalf("RefreshJoinedGroupStateIfNewer same epoch config revision: %v", err)
+	}
+	if !refreshed {
+		t.Fatal("RefreshJoinedGroupStateIfNewer same epoch config revision returned refreshed=false")
+	}
+
+	n.mu.RLock()
+	updatedConfig := n.groupConfigs[groupId]
+	updatedKey := n.groupKeys[groupId]
+	n.mu.RUnlock()
+
+	if updatedConfig == nil ||
+		updatedConfig.Name != revisedConfig.Name ||
+		updatedConfig.ConfigVersion != revisedConfig.ConfigVersion ||
+		updatedConfig.StateHash != revisedConfig.StateHash ||
+		updatedConfig.Members[0].Role != GroupRoleAdmin {
+		t.Fatalf("stored config = %#v, want same-epoch config revision", updatedConfig)
+	}
+	if updatedConfig == revisedConfig {
+		t.Fatal("stored config should snapshot same-epoch revision, not reuse caller pointer")
+	}
+	if updatedKey == nil ||
+		updatedKey.Key != groupKey ||
+		updatedKey.KeyEpoch != 2 ||
+		updatedKey.PrevKey != "" ||
+		updatedKey.PrevKeyEpoch != 0 ||
+		!updatedKey.GraceDeadline.IsZero() {
+		t.Fatalf("same-epoch config revision changed key state to %#v", updatedKey)
+	}
+
+	staleConfig := &GroupConfig{
+		Name:          "same epoch stale config",
+		GroupType:     GroupTypeAnnouncement,
+		ConfigVersion: "2026-05-23T09:59:00Z",
+		StateHash:     "state-hash-stale",
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleWriter, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-23T10:00:00Z",
+	}
+	refreshed, err = n.RefreshJoinedGroupStateIfNewer(
+		groupId,
+		staleConfig,
+		&GroupKeyInfo{Key: conflictingSameEpochKey, KeyEpoch: 2},
+	)
+	if err != nil {
+		t.Fatalf("RefreshJoinedGroupStateIfNewer stale same epoch config: %v", err)
+	}
+	if refreshed {
+		t.Fatal("RefreshJoinedGroupStateIfNewer stale same epoch config returned refreshed=true")
+	}
+
+	n.mu.RLock()
+	finalConfig := n.groupConfigs[groupId]
+	finalKey := n.groupKeys[groupId]
+	n.mu.RUnlock()
+
+	if finalConfig == nil || finalConfig.Name != revisedConfig.Name || finalConfig.StateHash != revisedConfig.StateHash {
+		t.Fatalf("final config = %#v, want same-epoch revision preserved", finalConfig)
+	}
+	if finalKey == nil || finalKey.Key != groupKey || finalKey.KeyEpoch != 2 {
+		t.Fatalf("final key = %#v, want original same-epoch key preserved", finalKey)
 	}
 }
 

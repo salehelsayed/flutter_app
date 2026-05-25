@@ -7119,8 +7119,8 @@ void main() {
         final initialKeyCreatedAt = DateTime.now().toUtc().subtract(
           const Duration(minutes: 1),
         );
-        final removedAt = DateTime.now().toUtc();
-        final rejoinKeyCreatedAt = removedAt.add(const Duration(seconds: 10));
+        late DateTime removedAt;
+        late DateTime rejoinKeyCreatedAt;
 
         final alice = GroupTestUser.create(
           peerId: 'peer-gm007-alice',
@@ -7186,6 +7186,8 @@ void main() {
         charlie.start();
         await pump();
 
+        removedAt = DateTime.now().toUtc();
+        rejoinKeyCreatedAt = removedAt.add(const Duration(seconds: 10));
         final (m0Result, m0Message) = await alice.sendGroupMessageViaBridge(
           groupId: groupId,
           text: m0,
@@ -7744,13 +7746,22 @@ void main() {
           return bobMember == null && charlieGroup == null;
         }, maxTicks: 40);
 
-        await removeGroupMember(
-          bridge: alice.bridge,
-          groupRepo: alice.groupRepo,
-          groupId: groupId,
-          memberPeerId: charlie.peerId,
-          selfPeerId: alice.peerId,
-          eventAt: removedAt,
+        await expectLater(
+          removeGroupMember(
+            bridge: alice.bridge,
+            groupRepo: alice.groupRepo,
+            groupId: groupId,
+            memberPeerId: charlie.peerId,
+            selfPeerId: alice.peerId,
+            eventAt: removedAt,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('Stale group membership event'),
+            ),
+          ),
         );
 
         expect(
@@ -13467,7 +13478,10 @@ void main() {
           await alice.groupRepo.removeMember(groupId, user.peerId);
         }
 
-        Future<void> readdLocalMember(GroupTestUser user) {
+        Future<void> readdLocalMember(
+          GroupTestUser user, {
+          required DateTime joinedAt,
+        }) {
           return addGroupMember(
             bridge: alice.bridge,
             groupRepo: alice.groupRepo,
@@ -13480,7 +13494,7 @@ void main() {
               publicKey: user.publicKey,
               mlKemPublicKey: 'mlkem-${user.peerId}',
               devices: [user.deviceIdentity],
-              joinedAt: readdAt,
+              joinedAt: joinedAt,
             ),
             selfPeerId: alice.peerId,
           );
@@ -13518,8 +13532,11 @@ void main() {
         await saveKey(bob);
         await seedRemovedLocalMember(charlie);
         await seedRemovedLocalMember(dave);
-        await readdLocalMember(charlie);
-        await readdLocalMember(dave);
+        await readdLocalMember(charlie, joinedAt: readdAt);
+        await readdLocalMember(
+          dave,
+          joinedAt: readdAt.add(const Duration(microseconds: 1)),
+        );
 
         await inviteStatusRepo.saveAttempt(
           GroupInviteDeliveryAttempt(
@@ -17388,24 +17405,11 @@ void main() {
             .map((message) => jsonDecode(message) as Map<String, dynamic>)
             .where((message) => message['cmd'] == 'group:updateConfig')
             .toList(growable: false);
-        expect(updateConfigMessages, hasLength(1));
-        final syncedConfig =
-            updateConfigMessages.single['payload']['groupConfig']
-                as Map<String, dynamic>;
+        expect(updateConfigMessages, isEmpty);
         expect(
-          isGroupConfigStateHashValid(
-            groupId: groupId,
-            groupConfig: syncedConfig,
-          ),
-          isTrue,
+          jsonEncode(bob.bridge.sentMessages),
+          isNot(contains('gm028-blank-device')),
         );
-        final syncedMembers = (syncedConfig['members'] as List<dynamic>)
-            .cast<Map<String, dynamic>>();
-        expect(syncedMembers.map((member) => member['peerId']).toSet(), {
-          alice.peerId,
-          bob.peerId,
-        });
-        expect(jsonEncode(syncedConfig), isNot(contains('gm028-blank-device')));
 
         const text = 'GM-028 Alice to Bob after rejected blank peer';
         final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(

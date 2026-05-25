@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -35,6 +36,18 @@ void _expectSignedReactionReplayEnvelope(Map<String, dynamic> envelope) {
   expect(signedPayload['senderSigningPublicKey'], 'pk-1');
   expect(signedPayload['messageId'], envelope['messageId']);
   expect(signedPayload['plaintextHash'], isA<String>());
+}
+
+Future<T> _captureFlowEvents<T>(
+  List<Map<String, dynamic>> events,
+  Future<T> Function() action,
+) async {
+  debugSetFlowEventSink(events.add);
+  try {
+    return await action();
+  } finally {
+    debugSetFlowEventSink(null);
+  }
 }
 
 void main() {
@@ -116,6 +129,46 @@ void main() {
     final after = await reactionRepo.getReactionsForMessage('msg-1');
     expect(after, isEmpty);
   });
+
+  test(
+    'successful reaction remove emits queued local delivery contract',
+    () async {
+      final events = <Map<String, dynamic>>[];
+
+      final result = await _captureFlowEvents(
+        events,
+        () => removeGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+        ),
+      );
+
+      expect(result, RemoveGroupReactionResult.success);
+      expect(
+        events.where(
+          (event) => event['event'] == 'GROUP_REACTION_REMOVE_SUCCESS',
+        ),
+        isEmpty,
+      );
+
+      final queued = events.singleWhere(
+        (event) => event['event'] == 'GROUP_REACTION_REMOVE_QUEUED',
+      );
+      final details = queued['details'] as Map<String, dynamic>;
+      expect(details['deliveryMode'], 'live_publish_replay_queued');
+      expect(details['deliveryConfirmed'], isFalse);
+      expect(details['localState'], 'optimistic');
+      expect(details['replayStatus'], 'pending');
+    },
+  );
 
   test('is idempotent when reaction absent', () async {
     final result = await removeGroupReaction(

@@ -351,6 +351,8 @@ ChatMessage _makeSignedV2RevocationMessage({
   String groupId = 'grp-abc123',
   String recipientPeerId = '12D3KooWBob',
   String revokedByPeerId = '12D3KooWAlice',
+  DateTime? expiresAt,
+  DateTime? messageTimestamp,
   Map<String, dynamic> revokerAuthorization = const {
     'peerId': '12D3KooWAlice',
     'publicKey': 'alicePubKey64',
@@ -364,7 +366,8 @@ ChatMessage _makeSignedV2RevocationMessage({
     recipientPeerId: recipientPeerId,
     revokedByPeerId: revokedByPeerId,
     revokedAt: '2026-03-02T12:10:00.000Z',
-    expiresAt: '2099-03-09T12:00:00.000Z',
+    expiresAt:
+        expiresAt?.toUtc().toIso8601String() ?? '2099-03-09T12:00:00.000Z',
     revokerAuthorization: revokerAuthorization,
   ).withRevocationSignature(signature: 'signed-revocation-by-alice');
   final envelope = GroupInviteRevocationPayload.buildEncryptedEnvelope(
@@ -378,9 +381,26 @@ ChatMessage _makeSignedV2RevocationMessage({
     from: revokedByPeerId,
     to: recipientPeerId,
     content: envelope,
-    timestamp: '2026-03-02T12:10:00.000Z',
+    timestamp:
+        messageTimestamp?.toUtc().toIso8601String() ??
+        '2026-03-02T12:10:00.000Z',
     isIncoming: true,
   );
+}
+
+class _DelayRevocationDecryptBridge extends PassthroughCryptoBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'message.decrypt') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final ciphertext = payload['ciphertext'] as String? ?? '';
+      if (ciphertext.contains('"revokedByPeerId"')) {
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      }
+    }
+    return super.send(message);
+  }
 }
 
 class _FailDecryptBridge extends FakeBridge {
@@ -942,6 +962,81 @@ void main() {
         expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
         expect(bridge.commandLog, contains('payload.verify'));
         expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'IJ003 revocation freshness uses local receive time over forged old message timestamp',
+      () async {
+        final pendingPayload = GroupInvitePayload.fromJson(
+          _makeV1InviteMessage().content,
+        )!;
+        await pendingInviteRepo.savePendingInvite(
+          PendingGroupInvite.fromPayload(
+            pendingPayload,
+            receivedAt: DateTime.utc(2026, 3, 2, 12),
+          ),
+        );
+
+        listenerNow = DateTime.utc(2026, 3, 3, 12);
+        listener.start();
+        final refreshSignals = <PendingGroupInvite>[];
+        listener.pendingInviteStream.listen(refreshSignals.add);
+
+        incomingController.add(
+          _makeSignedV2RevocationMessage(
+            expiresAt: DateTime.utc(2026, 3, 2, 12, 15),
+            messageTimestamp: DateTime.utc(2026, 3, 2, 12, 10),
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(refreshSignals, isEmpty);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(
+          await pendingInviteRepo.getRevokedInvite('invite-uuid-001'),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'IJ003 serializes revocation before later invite for the same invite id',
+      () async {
+        final delayedBridge = _DelayRevocationDecryptBridge();
+        final serializedListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: delayedBridge,
+          msgRepo: msgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          getOwnMlKemSecretKey: () async => 'mySecretKey',
+          getOwnPeerId: () async => '12D3KooWBob',
+          now: () => listenerNow,
+        );
+        addTearDown(serializedListener.dispose);
+
+        final refreshSignals = <PendingGroupInvite>[];
+        serializedListener.pendingInviteStream.listen(refreshSignals.add);
+        serializedListener.start();
+
+        incomingController
+          ..add(_makeSignedV2RevocationMessage())
+          ..add(_makeSignedV2InviteMessage());
+        await Future.delayed(const Duration(milliseconds: 250));
+
+        expect(refreshSignals, isEmpty);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getRevokedInvite('invite-uuid-001'),
+          isNotNull,
+        );
+        expect(delayedBridge.commandLog, isNot(contains('group:join')));
       },
     );
 

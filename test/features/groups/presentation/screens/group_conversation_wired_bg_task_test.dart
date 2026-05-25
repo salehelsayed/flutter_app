@@ -584,6 +584,46 @@ void main() {
       expect(bridge.commandLog, isNot(contains('bg:end')));
     });
 
+    testWidgets('send proceeds and resets when bg:begin throws', (
+      tester,
+    ) async {
+      final bridge = _OrderRecordingBridge(throwOnCommands: {'bg:begin'});
+
+      await _pumpGroupConversationWired(tester, bridge: bridge);
+
+      await _sendText(tester, 'begin throws once');
+      await pumpFrames(tester, count: 20);
+      await _sendText(tester, 'begin throws twice');
+      await pumpFrames(tester, count: 20);
+
+      expect(
+        bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+        hasLength(2),
+      );
+      expect(bridge.commandLog, isNot(contains('bg:end')));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('bg:end errors are swallowed so _isSending resets', (
+      tester,
+    ) async {
+      final bridge = _OrderRecordingBridge(throwOnCommands: {'bg:end'});
+
+      await _pumpGroupConversationWired(tester, bridge: bridge);
+
+      await _sendText(tester, 'end throws once');
+      await pumpFrames(tester, count: 20);
+      await _sendText(tester, 'end throws twice');
+      await pumpFrames(tester, count: 20);
+
+      expect(
+        bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+        hasLength(2),
+      );
+      expect(bridge.commandLog.where((cmd) => cmd == 'bg:end'), hasLength(2));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('bg:end fires when widget unmounts mid-send', (tester) async {
       final inboxGate = Completer<void>();
       final bridge = _OrderRecordingBridge(

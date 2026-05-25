@@ -137,8 +137,10 @@ class GroupMessageRepositoryImpl
   }) async {
     final fn = dbRunGroupInboxPageTransactionFn;
     if (fn == null) {
-      await apply(this);
-      return;
+      throw StateError(
+        'GroupMessageRepositoryImpl.runInboxPageTransaction requires '
+        'dbRunGroupInboxPageTransactionFn',
+      );
     }
     await fn(
       groupId: groupId,

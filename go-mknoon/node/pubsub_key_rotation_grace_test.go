@@ -1662,6 +1662,98 @@ func TestJoinGroupTopic_InitialKeyHasNoGraceState(t *testing.T) {
 	}
 }
 
+func TestGroupKeyGraceChurnJoinGroupTopicPreservesIncomingGraceMetadata(t *testing.T) {
+	currentKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate current group key: %v", err)
+	}
+	prevKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate previous group key: %v", err)
+	}
+	if currentKey == prevKey {
+		t.Fatal("generated current and previous group keys are identical; test requires distinct material")
+	}
+	graceDeadline := time.Now().Add(KeyRotationGracePeriod)
+
+	cases := []struct {
+		name     string
+		groupId  string
+		keyInfo  *GroupKeyInfo
+		validate func(t *testing.T, got *GroupKeyInfo)
+	}{
+		{
+			name:    "live incoming grace survives join clone",
+			groupId: "gkgc-join-preserves-live-grace",
+			keyInfo: &GroupKeyInfo{
+				Key:           currentKey,
+				KeyEpoch:      2,
+				PrevKey:       prevKey,
+				PrevKeyEpoch:  1,
+				GraceDeadline: graceDeadline,
+			},
+			validate: func(t *testing.T, got *GroupKeyInfo) {
+				t.Helper()
+				if got.Key != currentKey || got.KeyEpoch != 2 {
+					t.Fatalf("current key state = epoch %d key %q, want epoch 2 key %q", got.KeyEpoch, got.Key, currentKey)
+				}
+				if got.PrevKey != prevKey || got.PrevKeyEpoch != 1 {
+					t.Fatalf("previous key state = epoch %d key %q, want epoch 1 key %q", got.PrevKeyEpoch, got.PrevKey, prevKey)
+				}
+				if !got.GraceDeadline.Equal(graceDeadline) {
+					t.Fatalf("GraceDeadline = %v, want exact incoming deadline %v", got.GraceDeadline, graceDeadline)
+				}
+			},
+		},
+		{
+			name:    "no incoming grace stays empty",
+			groupId: "gkgc-join-no-grace-empty",
+			keyInfo: &GroupKeyInfo{Key: currentKey, KeyEpoch: 2},
+			validate: func(t *testing.T, got *GroupKeyInfo) {
+				t.Helper()
+				if got.Key != currentKey || got.KeyEpoch != 2 {
+					t.Fatalf("current key state = epoch %d key %q, want epoch 2 key %q", got.KeyEpoch, got.Key, currentKey)
+				}
+				if got.PrevKey != "" {
+					t.Fatalf("PrevKey = %q, want empty", got.PrevKey)
+				}
+				if got.PrevKeyEpoch != 0 {
+					t.Fatalf("PrevKeyEpoch = %d, want 0", got.PrevKeyEpoch)
+				}
+				if !got.GraceDeadline.IsZero() {
+					t.Fatalf("GraceDeadline = %v, want zero", got.GraceDeadline)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hexKey := generateTestKey(t)
+			n := NewNode()
+			_, err := n.Start(NodeConfig{
+				PrivateKeyHex:  hexKey,
+				RelayAddresses: []string{},
+				AutoRegister:   false,
+			})
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			defer n.Stop()
+
+			if err := n.JoinGroupTopic(tc.groupId, testGroupConfig(GroupTypeChat), tc.keyInfo); err != nil {
+				t.Fatalf("JoinGroupTopic: %v", err)
+			}
+
+			got := n.GetGroupKeyInfo(tc.groupId)
+			if got == nil {
+				t.Fatal("expected non-nil key info after join")
+			}
+			tc.validate(t, got)
+		})
+	}
+}
+
 func TestGK016HandleGroupSubscriptionDecryptsEpoch0PreviousKeyDuringFirstRotationGrace(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	_, receiverPubB64 := generateEd25519KeyPair(t)

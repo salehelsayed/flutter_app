@@ -5,7 +5,9 @@ typedef DrainOfflineInboxFn = Future<void> Function();
 typedef DrainGroupOfflineInboxForGroupFn =
     Future<void> Function(String groupId);
 
-Future<void> handleForegroundRemoteMessage({
+enum ForegroundRemoteMessageResult { drained, unroutable, notificationNeeded }
+
+Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
   required Map<String, dynamic> data,
   required String? messageId,
   required DrainOfflineInboxFn drainOfflineInbox,
@@ -13,21 +15,26 @@ Future<void> handleForegroundRemoteMessage({
 }) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
   if (routeTarget == null) {
+    if (NotificationRouteTarget.isGroupMessageLikeRemoteData(data) &&
+        NotificationRouteTarget.groupIdFromRemoteMessageData(data) == null) {
+      _emitMissingGroupId(data);
+      return ForegroundRemoteMessageResult.unroutable;
+    }
     _emitUnroutable(data);
-    return;
+    return ForegroundRemoteMessageResult.unroutable;
   }
 
   if (routeTarget.kind == NotificationRouteTargetKind.post ||
       routeTarget.kind == NotificationRouteTargetKind.postComment) {
     _emitUnroutable(data);
-    return;
+    return ForegroundRemoteMessageResult.unroutable;
   }
 
   if (routeTarget.kind == NotificationRouteTargetKind.group) {
     final groupId = routeTarget.groupId;
     if (groupId == null || groupId.isEmpty) {
-      _emitUnroutable(data);
-      return;
+      _emitMissingGroupId(data);
+      return ForegroundRemoteMessageResult.unroutable;
     }
   }
 
@@ -49,14 +56,14 @@ Future<void> handleForegroundRemoteMessage({
       case NotificationRouteTargetKind.contactRequest:
       case NotificationRouteTargetKind.intros:
         await drainOfflineInbox();
-        return;
+        return ForegroundRemoteMessageResult.drained;
       case NotificationRouteTargetKind.group:
         await drainGroupOfflineInboxForGroup(routeTarget.groupId!);
-        return;
+        return ForegroundRemoteMessageResult.drained;
       case NotificationRouteTargetKind.post:
       case NotificationRouteTargetKind.postComment:
         _emitUnroutable(data);
-        return;
+        return ForegroundRemoteMessageResult.unroutable;
     }
   } catch (e) {
     emitFlowEvent(
@@ -64,7 +71,19 @@ Future<void> handleForegroundRemoteMessage({
       event: 'PUSH_FOREGROUND_DRAIN_ERROR',
       details: {'kind': routeTarget.kind.name, 'error': e.toString()},
     );
+    if (routeTarget.kind == NotificationRouteTargetKind.group) {
+      return ForegroundRemoteMessageResult.notificationNeeded;
+    }
+    return ForegroundRemoteMessageResult.drained;
   }
+}
+
+void _emitMissingGroupId(Map<String, dynamic> data) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'PUSH_GROUP_ROUTE_MISSING_GROUP_ID',
+    details: NotificationRouteTarget.missingGroupIdTelemetryDetails(data),
+  );
 }
 
 void _emitUnroutable(Map<String, dynamic> data) {

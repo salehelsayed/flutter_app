@@ -21,6 +21,8 @@ class GroupListScreen extends StatelessWidget {
   final List<PendingGroupInvite> pendingInvites;
   final Set<String> processingInviteIds;
   final bool isLoading;
+  final String? loadErrorMessage;
+  final VoidCallback? onRetryLoad;
   final ValueChanged<GroupModel> onGroupTap;
   final ValueChanged<PendingGroupInvite>? onAcceptPendingInvite;
   final ValueChanged<PendingGroupInvite>? onDeclinePendingInvite;
@@ -35,6 +37,8 @@ class GroupListScreen extends StatelessWidget {
     this.pendingInvites = const [],
     this.processingInviteIds = const <String>{},
     this.isLoading = false,
+    this.loadErrorMessage,
+    this.onRetryLoad,
     required this.onGroupTap,
     this.onAcceptPendingInvite,
     this.onDeclinePendingInvite,
@@ -59,6 +63,8 @@ class GroupListScreen extends StatelessWidget {
                         ? _buildContent(context)
                         : isLoading
                         ? _buildLoadingState(context)
+                        : loadErrorMessage != null
+                        ? _buildLoadErrorState(context)
                         : _buildEmptyState(context),
                   ),
                 ],
@@ -118,6 +124,53 @@ class GroupListScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLoadErrorState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: readableColors.iconMuted,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              loadErrorMessage!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: readableColors.disabledForeground,
+              ),
+            ),
+            if (onRetryLoad != null) ...[
+              const SizedBox(height: 16),
+              TextButton.icon(
+                onPressed: onRetryLoad,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

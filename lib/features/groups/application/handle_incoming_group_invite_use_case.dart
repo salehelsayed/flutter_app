@@ -337,8 +337,7 @@ _resolveIncomingGroupInviteRevocation({
     return (HandleGroupInviteRevocationResult.invalidPayload, null);
   }
 
-  final effectiveNow =
-      (now ?? DateTime.tryParse(message.timestamp) ?? DateTime.now()).toUtc();
+  final effectiveNow = (now ?? DateTime.now()).toUtc();
   if (payload.isExpiredAt(effectiveNow)) {
     emitFlowEvent(
       layer: 'FL',

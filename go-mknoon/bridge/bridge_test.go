@@ -831,6 +831,19 @@ func generateTestIdentityMaterial(t *testing.T) testIdentityMaterial {
 	}
 }
 
+func generateBridgePeerIDStr(t *testing.T) string {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pid, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("peer ID from key: %v", err)
+	}
+	return pid.String()
+}
+
 // startNodeJSON builds a valid JSON input string for StartNode.
 func startNodeJSON(t *testing.T, keyHex string) string {
 	t.Helper()
@@ -1643,6 +1656,13 @@ func TestGroupPublish_NodeNotInitialized(t *testing.T) {
 	assertNotOk(t, m, "NOT_INITIALIZED")
 }
 
+func TestGroupSendReliable_NodeNotInitialized(t *testing.T) {
+	withNilSingleton(t)
+	result := GroupSendReliable(`{"groupId": "g1", "text": "hello", "senderPeerId": "p1", "senderPublicKey": "pk1", "senderPrivateKey": "sk1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
 func TestGroupUpdateConfig_NodeNotInitialized(t *testing.T) {
 	withNilSingleton(t)
 	result := GroupUpdateConfig(`{"groupId": "g1"}`)
@@ -2029,11 +2049,50 @@ func TestGroupJoinTopic_BB006RejectsLegacyTopicNameOnlyPayload(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestGroupJoinTopic_RejectsInvalidKeyState(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	shortKey := base64.StdEncoding.EncodeToString([]byte("short"))
+	validKeyBytes := make([]byte, 32)
+	validKey := base64.StdEncoding.EncodeToString(validKeyBytes)
+
+	cases := []struct {
+		name      string
+		groupKey  string
+		keyEpoch  int
+		errorCode string
+	}{
+		{name: "zero epoch", groupKey: validKey, keyEpoch: 0, errorCode: "INVALID_KEY_EPOCH"},
+		{name: "negative epoch", groupKey: validKey, keyEpoch: -1, errorCode: "INVALID_KEY_EPOCH"},
+		{name: "malformed base64", groupKey: "not-base64", keyEpoch: 1, errorCode: "INVALID_GROUP_KEY"},
+		{name: "wrong decoded length", groupKey: shortKey, keyEpoch: 1, errorCode: "INVALID_GROUP_KEY"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			groupId := "invalid-join-key-" + strings.ReplaceAll(tc.name, " ", "-")
+			input, _ := json.Marshal(map[string]interface{}{
+				"groupId":     groupId,
+				"groupConfig": map[string]interface{}{},
+				"groupKey":    tc.groupKey,
+				"keyEpoch":    tc.keyEpoch,
+			})
+			result := GroupJoinTopic(string(input))
+			m := parseJSON(t, result)
+			assertNotOk(t, m, tc.errorCode)
+			if keyInfo := singletonNode.GetGroupKeyInfo(groupId); keyInfo != nil {
+				t.Fatalf("stored invalid join key state = %#v", keyInfo)
+			}
+		})
+	}
+}
+
 func TestSV009GroupJoinAndUpdateConfigRejectMalformedMemberKeys(t *testing.T) {
 	withFreshSingletonNode(t)
 
 	startResult := StartNode(startNodeJSON(t, generateTestKeyHex(t)))
 	assertOk(t, parseJSON(t, startResult))
+	validGroupKey := base64.StdEncoding.EncodeToString(make([]byte, 32))
 
 	groupConfig := func(member map[string]interface{}) map[string]interface{} {
 		return map[string]interface{}{
@@ -2041,9 +2100,10 @@ func TestSV009GroupJoinAndUpdateConfigRejectMalformedMemberKeys(t *testing.T) {
 			"groupType": "chat",
 			"members": []map[string]interface{}{
 				{
-					"peerId":    "sv009-admin",
-					"role":      "admin",
-					"publicKey": "pk-sv009-admin",
+					"peerId":         "sv009-admin",
+					"role":           "admin",
+					"publicKey":      "pk-sv009-admin",
+					"mlKemPublicKey": "mlkem-sv009-admin",
 				},
 				member,
 			},
@@ -2098,7 +2158,7 @@ func TestSV009GroupJoinAndUpdateConfigRejectMalformedMemberKeys(t *testing.T) {
 		joinInput, _ := json.Marshal(map[string]interface{}{
 			"groupId":     "sv009-" + strings.ReplaceAll(tc.name, " ", "-"),
 			"groupConfig": config,
-			"groupKey":    "sv009-group-key",
+			"groupKey":    validGroupKey,
 			"keyEpoch":    1,
 		})
 		joinMap := parseJSON(t, GroupJoinTopic(string(joinInput)))
@@ -2117,6 +2177,401 @@ func TestSV009GroupJoinAndUpdateConfigRejectMalformedMemberKeys(t *testing.T) {
 			t.Fatalf("update errorMessage = %q, want invalid key material reason", message)
 		}
 	}
+}
+
+func TestGroupJoinTopic_RejectsIncompleteActiveMemberKeyMaterial(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	startResult := StartNode(startNodeJSON(t, generateTestKeyHex(t)))
+	assertOk(t, parseJSON(t, startResult))
+
+	keyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+
+	groupConfig := func(member map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{
+			"name":      "GAKM Join Guard",
+			"groupType": "chat",
+			"members": []map[string]interface{}{
+				{
+					"peerId":         "gakm-join-admin",
+					"role":           "admin",
+					"publicKey":      "pk-gakm-join-admin",
+					"mlKemPublicKey": "mlkem-gakm-join-admin",
+				},
+				member,
+			},
+			"createdBy": "gakm-join-admin",
+			"createdAt": "2026-05-23T22:45:00Z",
+		}
+	}
+
+	cases := []struct {
+		name   string
+		member map[string]interface{}
+	}{
+		{
+			name: "missing member mlkem",
+			member: map[string]interface{}{
+				"peerId":    "gakm-join-missing-mlkem",
+				"role":      "writer",
+				"publicKey": "pk-gakm-join-missing-mlkem",
+			},
+		},
+		{
+			name: "missing member public key",
+			member: map[string]interface{}{
+				"peerId":         "gakm-join-missing-public-key",
+				"role":           "writer",
+				"mlKemPublicKey": "mlkem-gakm-join-missing-public-key",
+			},
+		},
+		{
+			name: "active device missing mlkem",
+			member: map[string]interface{}{
+				"peerId": "gakm-join-active-device-missing-mlkem",
+				"role":   "writer",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":               "gakm-join-device",
+						"transportPeerId":        "gakm-join-transport",
+						"deviceSigningPublicKey": "pk-gakm-join-device",
+					},
+				},
+			},
+		},
+		{
+			name: "device key package without mlkem",
+			member: map[string]interface{}{
+				"peerId": "gakm-join-key-package-only",
+				"role":   "writer",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":                 "gakm-join-key-package-device",
+						"transportPeerId":          "gakm-join-key-package-transport",
+						"deviceSigningPublicKey":   "pk-gakm-join-key-package-device",
+						"keyPackageId":             "gakm-join-key-package-id",
+						"keyPackagePublicMaterial": "gakm-join-key-package-material",
+					},
+				},
+			},
+		},
+		{
+			name: "revoked device only",
+			member: map[string]interface{}{
+				"peerId": "gakm-join-revoked-device-only",
+				"role":   "writer",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":               "gakm-join-revoked-device",
+						"transportPeerId":        "gakm-join-revoked-transport",
+						"deviceSigningPublicKey": "pk-gakm-join-revoked-device",
+						"mlKemPublicKey":         "mlkem-gakm-join-revoked-device",
+						"status":                 "revoked",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			groupId := "gakm-join-" + strings.ReplaceAll(tc.name, " ", "-")
+			joinInput, _ := json.Marshal(map[string]interface{}{
+				"groupId":     groupId,
+				"groupConfig": groupConfig(tc.member),
+				"groupKey":    groupKey,
+				"keyEpoch":    1,
+			})
+			joinMap := parseJSON(t, GroupJoinTopic(string(joinInput)))
+			assertNotOk(t, joinMap, "INVALID_JOIN_MATERIAL")
+			if keyInfo := singletonNode.GetGroupKeyInfo(groupId); keyInfo != nil {
+				t.Fatalf("stored invalid join key state = %#v", keyInfo)
+			}
+		})
+	}
+
+	validDeviceConfig := groupConfig(map[string]interface{}{
+		"peerId": "gakm-join-device-backed",
+		"role":   "writer",
+		"devices": []map[string]interface{}{
+			{
+				"deviceId":               "gakm-join-valid-device",
+				"transportPeerId":        generateBridgePeerIDStr(t),
+				"deviceSigningPublicKey": "pk-gakm-join-valid-device",
+				"mlKemPublicKey":         "mlkem-gakm-join-valid-device",
+			},
+		},
+	})
+	validInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     "gakm-join-valid-device-backed",
+		"groupConfig": validDeviceConfig,
+		"groupKey":    groupKey,
+		"keyEpoch":    1,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(validInput))))
+}
+
+func TestGroupJoinTopic_RejectsMalformedActiveDeviceTransportPeerId(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	startResult := StartNode(startNodeJSON(t, generateTestKeyHex(t)))
+	assertOk(t, parseJSON(t, startResult))
+
+	keyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": "gadc-bridge-join-invalid-active-device",
+		"groupConfig": map[string]interface{}{
+			"name":      "GADC Bridge Join Guard",
+			"groupType": "chat",
+			"members": []map[string]interface{}{
+				{
+					"peerId":         "gadc-bridge-join-admin",
+					"role":           "admin",
+					"publicKey":      "pk-gadc-bridge-join-admin",
+					"mlKemPublicKey": "mlkem-gadc-bridge-join-admin",
+				},
+				{
+					"peerId": "gadc-bridge-join-device-backed",
+					"role":   "writer",
+					"devices": []map[string]interface{}{
+						{
+							"deviceId":               "gadc-bridge-join-device",
+							"transportPeerId":        "account-like-device-peer",
+							"deviceSigningPublicKey": "pk-gadc-bridge-join-device",
+							"mlKemPublicKey":         "mlkem-gadc-bridge-join-device",
+						},
+					},
+				},
+			},
+			"createdBy": "gadc-bridge-join-admin",
+			"createdAt": "2026-05-23T23:25:00Z",
+		},
+		"groupKey": groupKey,
+		"keyEpoch": 1,
+	})
+
+	joinMap := parseJSON(t, GroupJoinTopic(string(joinInput)))
+	assertNotOk(t, joinMap, "INVALID_JOIN_MATERIAL")
+	if keyInfo := singletonNode.GetGroupKeyInfo("gadc-bridge-join-invalid-active-device"); keyInfo != nil {
+		t.Fatalf("stored invalid join key state = %#v", keyInfo)
+	}
+}
+
+func TestGroupUpdateConfig_RejectsIncompleteActiveMemberKeyMaterial(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startResult := StartNode(startNodeJSON(t, identity.PrivateKeyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":                  "GAKM Update Guard",
+		"groupType":             "announcement",
+		"creatorPeerId":         identity.PeerId,
+		"creatorPublicKey":      identity.PublicKey,
+		"creatorMlKemPublicKey": "mlkem-gakm-update-admin",
+	})
+	createMap := parseJSON(t, GroupCreate(string(createInput)))
+	assertOk(t, createMap)
+	groupId := createMap["groupId"].(string)
+
+	groupConfig := func(member map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{
+			"name":      "GAKM Update Guard",
+			"groupType": "announcement",
+			"members":   []map[string]interface{}{member},
+			"createdBy": identity.PeerId,
+			"createdAt": "2026-05-23T22:46:00Z",
+		}
+	}
+
+	cases := []struct {
+		name   string
+		member map[string]interface{}
+	}{
+		{
+			name: "missing member mlkem",
+			member: map[string]interface{}{
+				"peerId":    identity.PeerId,
+				"role":      "reader",
+				"publicKey": identity.PublicKey,
+			},
+		},
+		{
+			name: "missing member public key",
+			member: map[string]interface{}{
+				"peerId":         identity.PeerId,
+				"role":           "reader",
+				"mlKemPublicKey": "mlkem-gakm-update-missing-public-key",
+			},
+		},
+		{
+			name: "active device missing mlkem",
+			member: map[string]interface{}{
+				"peerId": identity.PeerId,
+				"role":   "reader",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":               "gakm-update-device",
+						"transportPeerId":        "gakm-update-transport",
+						"deviceSigningPublicKey": identity.PublicKey,
+					},
+				},
+			},
+		},
+		{
+			name: "device key package without mlkem",
+			member: map[string]interface{}{
+				"peerId": identity.PeerId,
+				"role":   "reader",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":                 "gakm-update-key-package-device",
+						"transportPeerId":          "gakm-update-key-package-transport",
+						"deviceSigningPublicKey":   identity.PublicKey,
+						"keyPackageId":             "gakm-update-key-package-id",
+						"keyPackagePublicMaterial": "gakm-update-key-package-material",
+					},
+				},
+			},
+		},
+		{
+			name: "revoked device only",
+			member: map[string]interface{}{
+				"peerId": identity.PeerId,
+				"role":   "reader",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":               "gakm-update-revoked-device",
+						"transportPeerId":        "gakm-update-revoked-transport",
+						"deviceSigningPublicKey": identity.PublicKey,
+						"mlKemPublicKey":         "mlkem-gakm-update-revoked-device",
+						"status":                 "revoked",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			updateInput, _ := json.Marshal(map[string]interface{}{
+				"groupId":     groupId,
+				"groupConfig": groupConfig(tc.member),
+			})
+			updateMap := parseJSON(t, GroupUpdateConfig(string(updateInput)))
+			assertNotOk(t, updateMap, "INVALID_INPUT")
+
+			publishInput, _ := json.Marshal(map[string]interface{}{
+				"groupId":          groupId,
+				"text":             "GAKM invalid update must not replace admin config",
+				"senderPeerId":     identity.PeerId,
+				"senderPublicKey":  identity.PublicKey,
+				"senderPrivateKey": identity.PrivateKey,
+				"senderUsername":   "GAKM Admin",
+			})
+			assertOk(t, parseJSON(t, GroupPublish(string(publishInput))))
+		})
+	}
+
+	validDeviceConfig := map[string]interface{}{
+		"name":      "GAKM Update Guard",
+		"groupType": "announcement",
+		"members": []map[string]interface{}{
+			{
+				"peerId":         identity.PeerId,
+				"role":           "admin",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "mlkem-gakm-update-admin",
+			},
+			{
+				"peerId": "gakm-update-device-backed",
+				"role":   "writer",
+				"devices": []map[string]interface{}{
+					{
+						"deviceId":               "gakm-update-valid-device",
+						"transportPeerId":        generateBridgePeerIDStr(t),
+						"deviceSigningPublicKey": "pk-gakm-update-valid-device",
+						"mlKemPublicKey":         "mlkem-gakm-update-valid-device",
+					},
+				},
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-23T22:47:00Z",
+	}
+	validInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": validDeviceConfig,
+	})
+	assertOk(t, parseJSON(t, GroupUpdateConfig(string(validInput))))
+}
+
+func TestGroupUpdateConfig_RejectsMalformedActiveDeviceTransportPeerId(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startResult := StartNode(startNodeJSON(t, identity.PrivateKeyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":                  "GADC Bridge Update Guard",
+		"groupType":             "announcement",
+		"creatorPeerId":         identity.PeerId,
+		"creatorPublicKey":      identity.PublicKey,
+		"creatorMlKemPublicKey": "mlkem-gadc-bridge-update-admin",
+	})
+	createMap := parseJSON(t, GroupCreate(string(createInput)))
+	assertOk(t, createMap)
+	groupId := createMap["groupId"].(string)
+
+	updateInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": groupId,
+		"groupConfig": map[string]interface{}{
+			"name":      "GADC Bridge Update Invalid",
+			"groupType": "announcement",
+			"members": []map[string]interface{}{
+				{
+					"peerId":         identity.PeerId,
+					"role":           "admin",
+					"publicKey":      identity.PublicKey,
+					"mlKemPublicKey": "mlkem-gadc-bridge-update-admin",
+				},
+				{
+					"peerId": "gadc-bridge-update-device-backed",
+					"role":   "writer",
+					"devices": []map[string]interface{}{
+						{
+							"deviceId":               "gadc-bridge-update-device",
+							"transportPeerId":        "account-like-device-peer",
+							"deviceSigningPublicKey": "pk-gadc-bridge-update-device",
+							"mlKemPublicKey":         "mlkem-gadc-bridge-update-device",
+						},
+					},
+				},
+			},
+			"createdBy": identity.PeerId,
+			"createdAt": "2026-05-23T23:30:00Z",
+		},
+	})
+
+	updateMap := parseJSON(t, GroupUpdateConfig(string(updateInput)))
+	assertNotOk(t, updateMap, "INVALID_INPUT")
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "GADC invalid update must not replace current admin config",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "GADC Admin",
+	})
+	assertOk(t, parseJSON(t, GroupPublish(string(publishInput))))
 }
 
 func TestGroupLeaveTopic_InvalidJSON(t *testing.T) {
@@ -2145,6 +2600,51 @@ func TestGroupPublish_MissingFields(t *testing.T) {
 	result := GroupPublish(`{"groupId": "g1"}`)
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupSendReliable_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupSendReliable("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupSendReliable_MissingFields(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupSendReliable(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupSendReliable_EmptyTextAndNoMedia_Fails(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupSendReliable(`{
+		"groupId": "g1",
+		"text": "",
+		"senderPeerId": "peer1",
+		"senderPublicKey": "pk1",
+		"senderPrivateKey": "sk1",
+		"senderUsername": "Alice"
+	}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupSendReliable_MediaOnly_AcceptsEmptyText(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupSendReliable(`{
+		"groupId": "g1",
+		"text": "",
+		"senderPeerId": "peer1",
+		"senderPublicKey": "pk1",
+		"senderPrivateKey": "sk1",
+		"senderUsername": "Alice",
+		"media": [{"id": "m1", "mediaType": "image"}]
+	}`)
+	m := parseJSON(t, result)
+	if code, _ := m["errorCode"].(string); code == "INVALID_INPUT" {
+		t.Fatalf("expected media-only reliable send to pass validation, got INVALID_INPUT: %v", m["errorMessage"])
+	}
 }
 
 func TestGroupPublish_EmptyTextAndNoMedia_Fails(t *testing.T) {
@@ -2407,6 +2907,43 @@ func TestGroupUpdateKey_MissingFields(t *testing.T) {
 	result := GroupUpdateKey(`{"groupId": "g1"}`)
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupUpdateKey_RejectsInvalidKeyState(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	shortKey := base64.StdEncoding.EncodeToString([]byte("short"))
+	validKeyBytes := make([]byte, 32)
+	validKey := base64.StdEncoding.EncodeToString(validKeyBytes)
+
+	cases := []struct {
+		name      string
+		groupKey  string
+		keyEpoch  int
+		errorCode string
+	}{
+		{name: "zero epoch", groupKey: validKey, keyEpoch: 0, errorCode: "INVALID_KEY_EPOCH"},
+		{name: "negative epoch", groupKey: validKey, keyEpoch: -1, errorCode: "INVALID_KEY_EPOCH"},
+		{name: "malformed base64", groupKey: "not-base64", keyEpoch: 1, errorCode: "INVALID_GROUP_KEY"},
+		{name: "wrong decoded length", groupKey: shortKey, keyEpoch: 1, errorCode: "INVALID_GROUP_KEY"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			groupId := "invalid-update-key-" + strings.ReplaceAll(tc.name, " ", "-")
+			input, _ := json.Marshal(map[string]interface{}{
+				"groupId":  groupId,
+				"groupKey": tc.groupKey,
+				"keyEpoch": tc.keyEpoch,
+			})
+			result := GroupUpdateKey(string(input))
+			m := parseJSON(t, result)
+			assertNotOk(t, m, tc.errorCode)
+			if keyInfo := singletonNode.GetGroupKeyInfo(groupId); keyInfo != nil {
+				t.Fatalf("stored invalid update key state = %#v", keyInfo)
+			}
+		})
+	}
 }
 
 func TestGroupRotateKey_InvalidJSON(t *testing.T) {
@@ -2748,14 +3285,16 @@ func TestGroupUpdateConfig_WithNewMember(t *testing.T) {
 		"groupType": "chat",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    identity["peerId"].(string),
-				"role":      "admin",
-				"publicKey": identity["publicKey"].(string),
+				"peerId":         identity["peerId"].(string),
+				"role":           "admin",
+				"publicKey":      identity["publicKey"].(string),
+				"mlKemPublicKey": "mlkem-pk-creator",
 			},
 			{
-				"peerId":    "peer-new-member",
-				"role":      "writer",
-				"publicKey": "newMemberPubKey",
+				"peerId":         "peer-new-member",
+				"role":           "writer",
+				"publicKey":      "newMemberPubKey",
+				"mlKemPublicKey": "mlkem-peer-new-member",
 			},
 		},
 		"createdBy": identity["peerId"].(string),
@@ -2792,14 +3331,16 @@ func TestGroupJoinTopic_WithInviteData(t *testing.T) {
 		"groupType": "chat",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    "peer-admin",
-				"role":      "admin",
-				"publicKey": "adminPubKey",
+				"peerId":         "peer-admin",
+				"role":           "admin",
+				"publicKey":      "adminPubKey",
+				"mlKemPublicKey": "mlkem-peer-admin",
 			},
 			{
-				"peerId":    "peer-invitee",
-				"role":      "writer",
-				"publicKey": "inviteePubKey",
+				"peerId":         "peer-invitee",
+				"role":           "writer",
+				"publicKey":      "inviteePubKey",
+				"mlKemPublicKey": "mlkem-peer-invitee",
 			},
 		},
 		"createdBy": "peer-admin",
@@ -2975,14 +3516,16 @@ func TestGroupJoinTopic_AlreadyJoinedIsIdempotent(t *testing.T) {
 		"groupType": "chat",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    "peer-admin",
-				"role":      "admin",
-				"publicKey": "adminPubKey",
+				"peerId":         "peer-admin",
+				"role":           "admin",
+				"publicKey":      "adminPubKey",
+				"mlKemPublicKey": "mlkem-peer-admin",
 			},
 			{
-				"peerId":    "peer-invitee",
-				"role":      "writer",
-				"publicKey": "inviteePubKey",
+				"peerId":         "peer-invitee",
+				"role":           "writer",
+				"publicKey":      "inviteePubKey",
+				"mlKemPublicKey": "mlkem-peer-invitee",
 			},
 		},
 		"createdBy": "peer-admin",
@@ -3030,10 +3573,11 @@ func TestGroupJoinTopic_BB008AlreadyJoinedRefreshesNewerKeyAndConfig(t *testing.
 		"groupType": "announcement",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    identity.PeerId,
-				"username":  "BB-008 writer before refresh",
-				"role":      "writer",
-				"publicKey": identity.PublicKey,
+				"peerId":         identity.PeerId,
+				"username":       "BB-008 writer before refresh",
+				"role":           "writer",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb008-stale-mlkem",
 			},
 		},
 		"createdBy": identity.PeerId,
@@ -3052,10 +3596,11 @@ func TestGroupJoinTopic_BB008AlreadyJoinedRefreshesNewerKeyAndConfig(t *testing.
 		"groupType": "announcement",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    identity.PeerId,
-				"username":  "BB-008 admin after refresh",
-				"role":      "admin",
-				"publicKey": identity.PublicKey,
+				"peerId":         identity.PeerId,
+				"username":       "BB-008 admin after refresh",
+				"role":           "admin",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb008-refreshed-mlkem",
 			},
 		},
 		"createdBy": identity.PeerId,
@@ -3131,16 +3676,18 @@ func TestRA015GroupJoinTopicAlreadyJoinedReaddRefreshesConfigKeyAndDelivery(t *t
 		"groupType": "announcement",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    alice.PeerId,
-				"username":  "RA-015 Alice",
-				"role":      "writer",
-				"publicKey": alice.PublicKey,
+				"peerId":         alice.PeerId,
+				"username":       "RA-015 Alice",
+				"role":           "writer",
+				"publicKey":      alice.PublicKey,
+				"mlKemPublicKey": "ra015-alice-mlkem",
 			},
 			{
-				"peerId":    bob.PeerId,
-				"username":  "RA-015 Bob",
-				"role":      "writer",
-				"publicKey": bob.PublicKey,
+				"peerId":         bob.PeerId,
+				"username":       "RA-015 Bob",
+				"role":           "writer",
+				"publicKey":      bob.PublicKey,
+				"mlKemPublicKey": "ra015-bob-mlkem",
 			},
 		},
 		"createdBy": alice.PeerId,
@@ -3159,22 +3706,25 @@ func TestRA015GroupJoinTopicAlreadyJoinedReaddRefreshesConfigKeyAndDelivery(t *t
 		"groupType": "announcement",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    alice.PeerId,
-				"username":  "RA-015 Alice",
-				"role":      "admin",
-				"publicKey": alice.PublicKey,
+				"peerId":         alice.PeerId,
+				"username":       "RA-015 Alice",
+				"role":           "admin",
+				"publicKey":      alice.PublicKey,
+				"mlKemPublicKey": "ra015-alice-mlkem",
 			},
 			{
-				"peerId":    bob.PeerId,
-				"username":  "RA-015 Bob",
-				"role":      "writer",
-				"publicKey": bob.PublicKey,
+				"peerId":         bob.PeerId,
+				"username":       "RA-015 Bob",
+				"role":           "writer",
+				"publicKey":      bob.PublicKey,
+				"mlKemPublicKey": "ra015-bob-mlkem",
 			},
 			{
-				"peerId":    charlie.PeerId,
-				"username":  "RA-015 Charlie re-added",
-				"role":      "writer",
-				"publicKey": charlie.PublicKey,
+				"peerId":         charlie.PeerId,
+				"username":       "RA-015 Charlie re-added",
+				"role":           "writer",
+				"publicKey":      charlie.PublicKey,
+				"mlKemPublicKey": "ra015-charlie-mlkem",
 			},
 		},
 		"createdBy": alice.PeerId,
@@ -3248,10 +3798,11 @@ func TestGroupJoinTopic_BB008AlreadyJoinedSameOrOlderEpochDoesNotReplaceCurrentK
 		"groupType": "announcement",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    identity.PeerId,
-				"username":  "BB-008 writer before duplicate",
-				"role":      "writer",
-				"publicKey": identity.PublicKey,
+				"peerId":         identity.PeerId,
+				"username":       "BB-008 writer before duplicate",
+				"role":           "writer",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb008-original-mlkem",
 			},
 		},
 		"createdBy": identity.PeerId,
@@ -3270,10 +3821,11 @@ func TestGroupJoinTopic_BB008AlreadyJoinedSameOrOlderEpochDoesNotReplaceCurrentK
 		"groupType": "announcement",
 		"members": []map[string]interface{}{
 			{
-				"peerId":    identity.PeerId,
-				"username":  "BB-008 admin duplicate",
-				"role":      "admin",
-				"publicKey": identity.PublicKey,
+				"peerId":         identity.PeerId,
+				"username":       "BB-008 admin duplicate",
+				"role":           "admin",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb008-duplicate-mlkem",
 			},
 		},
 		"createdBy": identity.PeerId,
@@ -3330,6 +3882,105 @@ func TestGroupJoinTopic_BB008AlreadyJoinedSameOrOlderEpochDoesNotReplaceCurrentK
 	if message, _ := publishMap["errorMessage"].(string); !strings.Contains(message, "not allowed to write") {
 		t.Fatalf("publish error = %q, want writer still disallowed", message)
 	}
+}
+
+func TestGroupJoinTopic_BB008AlreadyJoinedSameEpochConfigRevisionUpdatesConfigOnly(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  identity.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+
+	initialKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, initialKeyMap)
+	initialGroupKey := initialKeyMap["groupKey"].(string)
+	conflictingKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, conflictingKeyMap)
+	conflictingGroupKey := conflictingKeyMap["groupKey"].(string)
+
+	groupId := "bb008-same-epoch-config-only-refresh"
+	initialConfig := map[string]interface{}{
+		"name":          "BB-008 same epoch config v1",
+		"groupType":     "announcement",
+		"configVersion": "2026-05-23T10:00:00Z",
+		"stateHash":     "bb008-config-v1",
+		"members": []map[string]interface{}{
+			{
+				"peerId":         identity.PeerId,
+				"username":       "BB-008 writer before config refresh",
+				"role":           "writer",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb008-config-v1-mlkem",
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-23T10:00:00Z",
+	}
+	firstJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": initialConfig,
+		"groupKey":    initialGroupKey,
+		"keyEpoch":    2,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(firstJoinInput))))
+
+	revisedConfig := map[string]interface{}{
+		"name":          "BB-008 same epoch config v2",
+		"groupType":     "announcement",
+		"configVersion": "2026-05-23T10:01:00Z",
+		"stateHash":     "bb008-config-v2",
+		"members": []map[string]interface{}{
+			{
+				"peerId":         identity.PeerId,
+				"username":       "BB-008 admin after config refresh",
+				"role":           "admin",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb008-config-v2-mlkem",
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-23T10:00:00Z",
+	}
+	secondJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": revisedConfig,
+		"groupKey":    conflictingGroupKey,
+		"keyEpoch":    2,
+	})
+	secondJoin := parseJSON(t, GroupJoinTopic(string(secondJoinInput)))
+	assertOk(t, secondJoin)
+	if note, _ := secondJoin["note"].(string); note != "ALREADY_JOINED" {
+		t.Fatalf("same-epoch config revision note = %v, want ALREADY_JOINED", secondJoin["note"])
+	}
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+	if n == nil {
+		t.Fatal("singleton node is nil after same-epoch config revision")
+	}
+	keyInfo := n.GetGroupKeyInfo(groupId)
+	if keyInfo == nil {
+		t.Fatal("GetGroupKeyInfo returned nil after same-epoch config revision")
+	}
+	if keyInfo.KeyEpoch != 2 || keyInfo.Key != initialGroupKey {
+		t.Fatalf("stored key = (%q,%d), want original (%q,2)", keyInfo.Key, keyInfo.KeyEpoch, initialGroupKey)
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "BB-008 same epoch config revision should promote admin",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "BB-008 Admin",
+	})
+	publishMap := parseJSON(t, GroupPublish(string(publishInput)))
+	assertOk(t, publishMap)
 }
 
 // ===========================================================================

@@ -51,6 +51,9 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   );
 
   final sanitizedText = sanitizeMessageText(text);
+  final stableMessageId = messageId != null && messageId.isNotEmpty
+      ? messageId
+      : null;
   final normalizedTransportPeerId = transportPeerId?.trim();
   final resolvedTransportPeerId =
       normalizedTransportPeerId != null && normalizedTransportPeerId.isNotEmpty
@@ -79,10 +82,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   // Prefer messageId-based dedupe before any group/member lookups when event-log
   // tamper gating is not installed. If DB-002 logging is installed, the log
   // checks replay/tamper before dedupe can silently ignore a changed duplicate.
-  if (appendGroupEventLogEntry == null &&
-      messageId != null &&
-      messageId.isNotEmpty) {
-    final existingById = await msgRepo.getMessage(messageId);
+  if (appendGroupEventLogEntry == null && stableMessageId != null) {
+    final existingById = await msgRepo.getMessage(stableMessageId);
     if (existingById != null &&
         _isConflictingDuplicateMessageId(
           existing: existingById,
@@ -90,7 +91,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           senderId: senderId,
         )) {
       _emitDuplicateMessageIdConflictRejected(
-        messageId: messageId,
+        messageId: stableMessageId,
         groupId: groupId,
         existing: existingById,
         senderId: senderId,
@@ -101,7 +102,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
         msgRepo: msgRepo,
         existing: existingById,
-        messageId: messageId,
+        messageId: stableMessageId,
         groupId: groupId,
         senderId: senderId,
         resolvedTransportPeerId: resolvedTransportPeerId,
@@ -116,7 +117,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       }
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
-        messageId: messageId,
+        messageId: stableMessageId,
         quotedMessageId: quotedMessageId,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
@@ -244,6 +245,37 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           },
         );
         return null;
+      }
+
+      if (isReaddedAfterRemoval &&
+          keyEpoch > 0 &&
+          !normalizedTimestamp.isBefore(localRejoinedAt)) {
+        final latestKey = await groupRepo.getLatestKey(groupId);
+        final latestEpoch = latestKey?.keyGeneration ?? 0;
+        if (latestEpoch > 0 && keyEpoch < latestEpoch) {
+          emitFlowEvent(
+            layer: 'FL',
+            event:
+                'GROUP_HANDLE_INCOMING_MSG_LOCAL_STALE_EPOCH_AFTER_READD_REJECTED',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'senderId': senderId.length > 8
+                  ? senderId.substring(0, 8)
+                  : senderId,
+              'selfPeerId': localRecipientPeerId.length > 8
+                  ? localRecipientPeerId.substring(0, 8)
+                  : localRecipientPeerId,
+              if (localRecipientAccountPeerId != localRecipientPeerId)
+                'memberPeerId': localRecipientAccountPeerId.length > 8
+                    ? localRecipientAccountPeerId.substring(0, 8)
+                    : localRecipientAccountPeerId,
+              'keyEpoch': keyEpoch,
+              'latestEpoch': latestEpoch,
+              'rejoinedAt': localRejoinedAt.toIso8601String(),
+            },
+          );
+          return null;
+        }
       }
     }
   }
@@ -400,9 +432,9 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   );
 
   if (appendGroupEventLogEntry != null) {
-    final sourceEventId = messageId != null && messageId.isNotEmpty
-        ? messageId
-        : 'message:$groupId:$senderId:${normalizedTimestamp.toIso8601String()}:$sanitizedText';
+    final sourceEventId =
+        stableMessageId ??
+        'message:$groupId:$senderId:${normalizedTimestamp.toIso8601String()}:$sanitizedText';
     await appendGroupEventLogEntry(
       groupId: groupId,
       eventType: 'message',
@@ -425,8 +457,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     );
   }
 
-  if (messageId != null && messageId.isNotEmpty) {
-    final existingById = await msgRepo.getMessage(messageId);
+  if (stableMessageId != null) {
+    final existingById = await msgRepo.getMessage(stableMessageId);
     if (existingById != null &&
         _isConflictingDuplicateMessageId(
           existing: existingById,
@@ -434,7 +466,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           senderId: senderId,
         )) {
       _emitDuplicateMessageIdConflictRejected(
-        messageId: messageId,
+        messageId: stableMessageId,
         groupId: groupId,
         existing: existingById,
         senderId: senderId,
@@ -445,7 +477,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
         msgRepo: msgRepo,
         existing: existingById,
-        messageId: messageId,
+        messageId: stableMessageId,
         groupId: groupId,
         senderId: senderId,
         resolvedTransportPeerId: resolvedTransportPeerId,
@@ -460,7 +492,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       }
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
-        messageId: messageId,
+        messageId: stableMessageId,
         quotedMessageId: quotedMessageId,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
@@ -488,29 +520,29 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   }
 
   // Fallback: content-based dedupe for messages without a messageId.
-  final isDuplicate = await msgRepo.existsByContent(
-    groupId,
-    senderId,
-    sanitizedText,
-    normalizedTimestamp,
-  );
-  if (isDuplicate) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-        'dedupeBy': 'content',
-      },
+  if (stableMessageId == null) {
+    final isDuplicate = await msgRepo.existsByContent(
+      groupId,
+      senderId,
+      sanitizedText,
+      normalizedTimestamp,
     );
-    return null;
+    if (isDuplicate) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'dedupeBy': 'content',
+        },
+      );
+      return null;
+    }
   }
 
   // 4. Use wire messageId if provided, otherwise generate one
-  final resolvedMessageId = (messageId != null && messageId.isNotEmpty)
-      ? messageId
-      : const Uuid().v4();
+  final resolvedMessageId = stableMessageId ?? const Uuid().v4();
   final isSelfDelivery = _isLocalSelfDelivery(
     senderId: senderId,
     senderTransportPeerId: resolvedTransportPeerId,

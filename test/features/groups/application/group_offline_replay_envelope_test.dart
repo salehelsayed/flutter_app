@@ -300,6 +300,38 @@ void main() {
     },
   );
 
+  test(
+    'storeGroupOfflineReplayEnvelope can preserve explicit recipients',
+    () async {
+      await storeGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'text': 'member removed',
+          'timestamp': '2026-05-02T07:20:00.000Z',
+          'messageId': 'msg-explicit-recipients',
+        }),
+        senderPeerId: 'peer-sender',
+        senderPublicKey: 'pk-sender',
+        senderPrivateKey: 'sk-sender',
+        messageId: 'msg-explicit-recipients',
+        recipientPeerIds: const ['peer-removed'],
+        preserveRecipientPeerIds: true,
+      );
+
+      final inboxStore = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .singleWhere((message) => message['cmd'] == 'group:inboxStore');
+      final payload = inboxStore['payload'] as Map<String, dynamic>;
+      expect(payload['recipientPeerIds'], ['peer-removed']);
+      expect(payload['preserveRecipientPeerIds'], isTrue);
+    },
+  );
+
   test('GK-028 decode rejects senderPublicKey tamper before decrypt', () async {
     final rawEnvelope = await buildGroupOfflineReplayEnvelope(
       bridge: bridge,

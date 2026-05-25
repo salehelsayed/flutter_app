@@ -6,17 +6,21 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
 
 void main() {
   late InMemoryGroupRepository groupRepo;
+  late InMemoryGroupMessageRepository msgRepo;
   late FakeReactionRepository reactionRepo;
 
   setUp(() async {
     groupRepo = InMemoryGroupRepository();
+    msgRepo = InMemoryGroupMessageRepository();
     reactionRepo = FakeReactionRepository();
 
     final testGroup = GroupModel(
@@ -35,6 +39,7 @@ void main() {
       peerId: 'peer-sender',
       username: 'Bob',
       role: MemberRole.writer,
+      publicKey: 'pk-sender',
       joinedAt: DateTime.now().toUtc(),
     );
     await groupRepo.saveMember(member);
@@ -382,6 +387,24 @@ void main() {
   });
 
   test(
+    'G3-013 returns parseError for unknown action without storing',
+    () async {
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(action: 'replace'),
+      );
+
+      expect(result, HandleGroupReactionResult.parseError);
+      expect(change, isNull);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      expect(reactionRepo.saveReactionCallCount, 0);
+    },
+  );
+
+  test(
     'rejects reaction from unknown sender without storing ghost reaction',
     () async {
       final (result, change) = await handleIncomingGroupReaction(
@@ -443,6 +466,82 @@ void main() {
     expect(stored, hasLength(1));
     expect(stored.single.senderPeerId, 'peer-sender');
   });
+
+  test(
+    'G3-011 rejects incoming reaction whose target message belongs to another group',
+    () async {
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'cross-group-target',
+          groupId: 'group-2',
+          senderPeerId: 'peer-other',
+          senderUsername: 'Other',
+          text: 'Wrong group',
+          timestamp: DateTime.utc(2026, 5, 24, 12),
+          keyGeneration: 0,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 5, 24, 12),
+        ),
+      );
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(messageId: 'cross-group-target'),
+      );
+
+      expect(result, HandleGroupReactionResult.messageGroupMismatch);
+      expect(change, isNull);
+      expect(
+        await reactionRepo.getReactionsForMessage('cross-group-target'),
+        isEmpty,
+      );
+      expect(reactionRepo.saveReactionCallCount, 0);
+    },
+  );
+
+  test(
+    'G3-012 rejects incoming reaction from unbound sender device key',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-legacy',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-1',
+              transportPeerId: 'transport-1',
+              deviceSigningPublicKey: 'pk-device-1',
+            ),
+          ],
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        transportPeerId: 'transport-1',
+        senderDeviceId: 'device-1',
+        senderPublicKey: 'pk-attacker',
+        reactionJson: makeReactionJson(),
+      );
+
+      expect(result, HandleGroupReactionResult.senderMismatch);
+      expect(change, isNull);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      expect(reactionRepo.saveReactionCallCount, 0);
+    },
+  );
 
   test('ignores add reactions at or after the dissolve cutoff', () async {
     await groupRepo.updateGroup(

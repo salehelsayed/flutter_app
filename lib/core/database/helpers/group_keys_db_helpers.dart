@@ -17,10 +17,53 @@ Future<void> dbInsertGroupKey(Database db, Map<String, Object?> row) async {
   );
 
   try {
+    final existing = await db.query(
+      'group_keys',
+      columns: ['encrypted_key'],
+      where: 'group_id = ? AND key_generation = ?',
+      whereArgs: [groupId, keyGen],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      final existingEncryptedKey = existing.first['encrypted_key'];
+      if (existingEncryptedKey == row['encrypted_key']) {
+        emitFlowEvent(
+          layer: 'DB',
+          event: 'GROUP_KEYS_DB_INSERT_IDEMPOTENT',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGen,
+          },
+        );
+        emitFlowEvent(
+          layer: 'DB',
+          event: 'GROUP_KEYS_DB_INSERT_SUCCESS',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGen,
+          },
+        );
+        return;
+      }
+
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'GROUP_KEYS_DB_INSERT_CONFLICT',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'keyGeneration': keyGen,
+          'reason': 'encrypted_key_mismatch',
+        },
+      );
+      throw StateError(
+        'Conflicting group key for group $groupId generation $keyGen',
+      );
+    }
+
     await db.insert(
       'group_keys',
       row,
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.abort,
     );
 
     emitFlowEvent(

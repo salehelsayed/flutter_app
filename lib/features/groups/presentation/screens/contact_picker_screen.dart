@@ -13,6 +13,9 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 /// and callbacks come from props.
 class ContactPickerScreen extends StatefulWidget {
   final List<ContactModel> contacts;
+  final bool isLoadingContacts;
+  final String? contactLoadErrorMessage;
+  final VoidCallback? onRetryLoadContacts;
   final bool isInviting;
   final ValueChanged<ContactModel> onToggle;
   final Set<String> selectedPeerIds;
@@ -23,6 +26,9 @@ class ContactPickerScreen extends StatefulWidget {
   const ContactPickerScreen({
     super.key,
     required this.contacts,
+    this.isLoadingContacts = false,
+    this.contactLoadErrorMessage,
+    this.onRetryLoadContacts,
     this.isInviting = false,
     required this.onToggle,
     this.selectedPeerIds = const {},
@@ -82,11 +88,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
                     children: [
                       _buildHeader(context),
                       _buildSearchField(context),
-                      Expanded(
-                        child: widget.contacts.isEmpty
-                            ? _buildEmptyState(context)
-                            : _buildContactList(),
-                      ),
+                      Expanded(child: _buildMainContent(context)),
                       if (widget.selectedPeerIds.isNotEmpty &&
                           widget.onConfirm != null)
                         _buildConfirmButton(context),
@@ -196,6 +198,81 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
             style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMainContent(BuildContext context) {
+    if (widget.contacts.isNotEmpty) {
+      return _buildContactList();
+    }
+    if (widget.isLoadingContacts) {
+      return _buildLoadingState(context);
+    }
+    if (widget.contactLoadErrorMessage != null) {
+      return _buildLoadErrorState(context);
+    }
+    return _buildEmptyState(context);
+  }
+
+  Widget _buildLoadingState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(color: readableColors.iconPrimary),
+          const SizedBox(height: 16),
+          Text(
+            'Loading contacts...',
+            style: TextStyle(fontSize: 16, color: readableColors.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadErrorState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 56,
+              color: readableColors.iconMuted,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              widget.contactLoadErrorMessage!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: readableColors.textMuted),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: widget.onRetryLoadContacts,
+              child: Text(
+                'Retry',
+                style: TextStyle(color: readableColors.textPrimary),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

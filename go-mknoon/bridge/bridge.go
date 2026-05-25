@@ -11,7 +11,9 @@
 package bridge
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1552,6 +1554,49 @@ func validateBridgeGroupConfigMemberKeyMaterial(config node.GroupConfig) error {
 				return fmt.Errorf("invalid key package public material for peer %s", member.PeerId)
 			}
 		}
+		if !bridgeGroupMemberHasLegacyDistributionMaterial(member) && !bridgeGroupMemberHasUsableActiveDevice(member) {
+			return fmt.Errorf("missing key-distribution material for peer %s", member.PeerId)
+		}
+	}
+	return nil
+}
+
+func bridgeGroupMemberHasLegacyDistributionMaterial(member node.GroupMember) bool {
+	return strings.TrimSpace(member.PublicKey) != "" &&
+		strings.TrimSpace(member.MlKemPublicKey) != ""
+}
+
+func bridgeGroupMemberHasUsableActiveDevice(member node.GroupMember) bool {
+	for _, device := range member.Devices {
+		if bridgeGroupMemberDeviceIsActive(device) && bridgeGroupMemberDeviceHasDistributionMaterial(device) {
+			return true
+		}
+	}
+	return false
+}
+
+func bridgeGroupMemberDeviceIsActive(device node.GroupMemberDevice) bool {
+	status := strings.TrimSpace(device.Status)
+	return (status == "" || status == "active") && strings.TrimSpace(device.RevokedAt) == ""
+}
+
+func bridgeGroupMemberDeviceHasDistributionMaterial(device node.GroupMemberDevice) bool {
+	return strings.TrimSpace(device.DeviceId) != "" &&
+		strings.TrimSpace(device.TransportPeerId) != "" &&
+		strings.TrimSpace(device.DeviceSigningPublicKey) != "" &&
+		strings.TrimSpace(device.MlKemPublicKey) != ""
+}
+
+func validateBridgeGroupKeyMaterial(groupKey string) error {
+	if strings.TrimSpace(groupKey) == "" || strings.IndexFunc(groupKey, unicode.IsSpace) >= 0 {
+		return fmt.Errorf("group key must be base64 AES-256 material")
+	}
+	keyBytes, err := base64.StdEncoding.DecodeString(groupKey)
+	if err != nil {
+		return fmt.Errorf("decode group key: %w", err)
+	}
+	if len(keyBytes) != 32 {
+		return fmt.Errorf("invalid group key length: got %d, want 32", len(keyBytes))
 	}
 	return nil
 }
@@ -1596,7 +1641,16 @@ func GroupJoinTopic(paramsJSON string) (result string) {
 	if params.GroupId == "" || params.GroupKey == "" {
 		return errJSON("INVALID_INPUT", "missing groupId or groupKey")
 	}
+	if params.KeyEpoch < 1 {
+		return errJSON("INVALID_KEY_EPOCH", "keyEpoch must be >= 1")
+	}
+	if err := validateBridgeGroupKeyMaterial(params.GroupKey); err != nil {
+		return errJSON("INVALID_GROUP_KEY", err.Error())
+	}
 	if err := validateBridgeGroupConfigMemberKeyMaterial(params.GroupConfig); err != nil {
+		return errJSON("INVALID_JOIN_MATERIAL", err.Error())
+	}
+	if err := node.ValidateGroupConfigAdmission(&params.GroupConfig); err != nil {
 		return errJSON("INVALID_JOIN_MATERIAL", err.Error())
 	}
 
@@ -1606,7 +1660,7 @@ func GroupJoinTopic(paramsJSON string) (result string) {
 	}
 
 	if err := n.JoinGroupTopic(params.GroupId, &params.GroupConfig, keyInfo); err != nil {
-		if strings.Contains(err.Error(), "already joined group topic:") {
+		if errors.Is(err, node.ErrGroupAlreadyJoined) {
 			if _, refreshErr := n.RefreshJoinedGroupStateIfNewer(params.GroupId, &params.GroupConfig, keyInfo); refreshErr != nil {
 				return errJSON("GROUP_ERROR", refreshErr.Error())
 			}
@@ -1748,6 +1802,98 @@ func GroupPublish(paramsJSON string) (result string) {
 	})
 }
 
+// GroupSendReliable builds one native group envelope, stores it in group inbox,
+// publishes it live, and returns both delivery outcomes.
+func GroupSendReliable(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		GroupId               string                   `json:"groupId"`
+		Text                  string                   `json:"text"`
+		SenderPeerId          string                   `json:"senderPeerId"`
+		SenderPublicKey       string                   `json:"senderPublicKey"`
+		SenderPrivateKey      string                   `json:"senderPrivateKey"`
+		SenderUsername        string                   `json:"senderUsername"`
+		SenderDeviceId        string                   `json:"senderDeviceId,omitempty"`
+		SenderTransportPeerId string                   `json:"senderTransportPeerId,omitempty"`
+		SenderDevicePublicKey string                   `json:"senderDevicePublicKey,omitempty"`
+		SenderKeyPackageId    string                   `json:"senderKeyPackageId,omitempty"`
+		MessageId             string                   `json:"messageId,omitempty"`
+		Timestamp             string                   `json:"timestamp,omitempty"`
+		QuotedMessageId       string                   `json:"quotedMessageId,omitempty"`
+		Media                 []map[string]interface{} `json:"media,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.GroupId == "" || params.SenderPeerId == "" ||
+		params.SenderPublicKey == "" || params.SenderPrivateKey == "" {
+		return errJSON("INVALID_INPUT", "missing groupId, senderPeerId, senderPublicKey, or senderPrivateKey")
+	}
+	if strings.TrimSpace(params.Text) == "" && len(params.Media) == 0 {
+		return errJSON("INVALID_INPUT", "either text or media is required")
+	}
+
+	opts := buildGroupPublishOpts(params.Media, params.QuotedMessageId)
+	if opts == nil {
+		opts = make(map[string]interface{}, 4)
+	}
+	if params.SenderDeviceId != "" {
+		opts["senderDeviceId"] = params.SenderDeviceId
+	}
+	if params.SenderTransportPeerId != "" {
+		opts["senderTransportPeerId"] = params.SenderTransportPeerId
+	}
+	if params.SenderDevicePublicKey != "" {
+		opts["senderDevicePublicKey"] = params.SenderDevicePublicKey
+	}
+	if params.SenderKeyPackageId != "" {
+		opts["senderKeyPackageId"] = params.SenderKeyPackageId
+	}
+	if params.Timestamp != "" {
+		opts["timestamp"] = params.Timestamp
+	}
+
+	sendResult, err := n.SendGroupMessageReliable(
+		params.GroupId,
+		params.SenderPrivateKey,
+		params.SenderPeerId,
+		params.SenderPublicKey,
+		params.SenderUsername,
+		params.Text,
+		params.MessageId,
+		opts,
+	)
+	if err != nil {
+		return errJSON("GROUP_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":                     true,
+		"messageId":              sendResult.MessageId,
+		"topicPeerCount":         sendResult.TopicPeerCount,
+		"topicPeers":             sendResult.TopicPeerCount,
+		"expectedRecipientCount": sendResult.ExpectedRecipientCount,
+		"recipientPeerIds":       sendResult.RecipientPeerIds,
+		"inboxStored":            sendResult.InboxStored,
+		"publishSucceeded":       sendResult.PublishSucceeded,
+		"deliveryMode":           sendResult.DeliveryMode,
+		"envelope":               sendResult.Envelope,
+	})
+}
+
 func buildGroupPublishOpts(media []map[string]interface{}, quotedMessageId string) map[string]interface{} {
 	if len(media) == 0 && quotedMessageId == "" {
 		return nil
@@ -1866,6 +2012,9 @@ func GroupUpdateConfig(paramsJSON string) (result string) {
 	if err := validateBridgeGroupConfigMemberKeyMaterial(params.GroupConfig); err != nil {
 		return errJSON("INVALID_INPUT", err.Error())
 	}
+	if err := node.ValidateGroupConfigAdmission(&params.GroupConfig); err != nil {
+		return errJSON("INVALID_INPUT", err.Error())
+	}
 
 	n.UpdateGroupConfig(params.GroupId, &params.GroupConfig)
 
@@ -1942,6 +2091,11 @@ func GroupGenerateNextKey(paramsJSON string) (result string) {
 	if currentKeyInfo == nil {
 		return errJSON("GROUP_KEY_NOT_FOUND", "current group key not found; restore or join the group before generating the next key")
 	}
+	if currentKeyInfo.PrevKey != "" &&
+		!currentKeyInfo.GraceDeadline.IsZero() &&
+		time.Now().Before(currentKeyInfo.GraceDeadline) {
+		return errJSON("GROUP_KEY_GRACE_ACTIVE", "previous group key grace is still active; wait for grace deadline before generating another key")
+	}
 
 	newKey, err := mcrypto.GenerateGroupKey()
 	if err != nil {
@@ -1986,6 +2140,12 @@ func GroupUpdateKey(paramsJSON string) (result string) {
 
 	if params.GroupId == "" || params.GroupKey == "" {
 		return errJSON("INVALID_INPUT", "missing groupId or groupKey")
+	}
+	if params.KeyEpoch < 1 {
+		return errJSON("INVALID_KEY_EPOCH", "keyEpoch must be >= 1")
+	}
+	if err := validateBridgeGroupKeyMaterial(params.GroupKey); err != nil {
+		return errJSON("INVALID_GROUP_KEY", err.Error())
 	}
 
 	n.UpdateGroupKey(params.GroupId, &node.GroupKeyInfo{
@@ -2091,9 +2251,10 @@ func GroupInboxStore(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId          string   `json:"groupId"`
-		Message          string   `json:"message"`
-		RecipientPeerIds []string `json:"recipientPeerIds"`
+		GroupId                  string   `json:"groupId"`
+		Message                  string   `json:"message"`
+		RecipientPeerIds         []string `json:"recipientPeerIds"`
+		PreserveRecipientPeerIds bool     `json:"preserveRecipientPeerIds"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -2103,12 +2264,15 @@ func GroupInboxStore(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing groupId or message")
 	}
 
-	if err := n.GroupInboxStore(
+	if err := n.GroupInboxStoreWithOptions(
 		params.GroupId,
 		params.Message,
 		params.RecipientPeerIds,
 		"",
 		"",
+		node.GroupInboxStoreOptions{
+			PreserveRecipientPeerIds: params.PreserveRecipientPeerIds,
+		},
 	); err != nil {
 		return errJSON("GROUP_INBOX_ERROR", err.Error())
 	}

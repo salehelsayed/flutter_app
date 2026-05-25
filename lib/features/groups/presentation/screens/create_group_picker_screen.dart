@@ -23,6 +23,9 @@ class CreateGroupPickerScreen extends StatefulWidget {
   final ValueChanged<String?> onStartGroup;
   final VoidCallback onBack;
   final bool isCreating;
+  final bool isLoadingContacts;
+  final String? loadErrorMessage;
+  final VoidCallback? onRetryLoadContacts;
   final BackgroundPreference backgroundPreference;
 
   const CreateGroupPickerScreen({
@@ -33,6 +36,9 @@ class CreateGroupPickerScreen extends StatefulWidget {
     required this.onStartGroup,
     required this.onBack,
     this.isCreating = false,
+    this.isLoadingContacts = false,
+    this.loadErrorMessage,
+    this.onRetryLoadContacts,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
@@ -98,9 +104,13 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
                       _buildHeader(context),
                       _buildSearchField(context),
                       Expanded(
-                        child: widget.contacts.isEmpty
-                            ? _buildEmptyState(context)
-                            : _buildContactList(),
+                        child: widget.contacts.isNotEmpty
+                            ? _buildContactList()
+                            : widget.isLoadingContacts
+                            ? _buildLoadingState(context)
+                            : widget.loadErrorMessage != null
+                            ? _buildLoadErrorState(context)
+                            : _buildEmptyState(context),
                       ),
                     ],
                   ),
@@ -180,6 +190,69 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
             borderSide: BorderSide.none,
           ),
           contentPadding: const EdgeInsets.symmetric(vertical: 10),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
+    return Center(
+      child: SizedBox(
+        key: const ValueKey('create-group-contact-loading'),
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: readableColors.iconMuted,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadErrorState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: readableColors.iconMuted,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              widget.loadErrorMessage!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: readableColors.disabledForeground,
+              ),
+            ),
+            if (widget.onRetryLoadContacts != null) ...[
+              const SizedBox(height: 16),
+              TextButton.icon(
+                onPressed: widget.onRetryLoadContacts,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              ),
+            ],
+          ],
         ),
       ),
     );

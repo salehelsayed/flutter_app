@@ -271,7 +271,9 @@ void main() {
         );
 
         const groupId = 'group-new-member-media';
+        const epoch = 1;
         await alice.createGroup(groupId: groupId, name: 'New Member Media');
+        await saveLatestKey(user: alice, groupId: groupId, epoch: epoch);
 
         alice.start();
         bob.start();
@@ -283,6 +285,7 @@ void main() {
         await pump();
 
         await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: epoch);
 
         final (textResult, _) = await alice.sendGroupMessageViaBridge(
           groupId: groupId,
@@ -788,6 +791,7 @@ void main() {
         });
 
         const groupId = 'group-new-member-current-state';
+        const epoch = 2;
         final createdAt = DateTime.utc(2026, 4, 29, 9);
         await alice.createGroup(
           groupId: groupId,
@@ -795,11 +799,13 @@ void main() {
           description: 'Draft state',
           createdAt: createdAt,
         );
+        await saveLatestKey(user: alice, groupId: groupId, epoch: epoch);
         await alice.addMember(
           groupId: groupId,
           invitee: charlie,
           joinedAt: DateTime.utc(2026, 4, 29, 9, 1),
         );
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: epoch);
 
         alice.start();
         charlie.start();
@@ -853,6 +859,7 @@ void main() {
           invitee: bob,
           joinedAt: DateTime.utc(2026, 4, 29, 9, 4),
         );
+        await saveLatestKey(user: bob, groupId: groupId, epoch: epoch);
 
         final bobGroup = await bob.groupRepo.getGroup(groupId);
         expect(bobGroup, isNotNull);
@@ -1062,8 +1069,11 @@ void main() {
         });
 
         const groupId = 'group-new-member-reactions';
+        const epoch = 4;
         await alice.createGroup(groupId: groupId, name: 'New Member Reactions');
+        await saveLatestKey(user: alice, groupId: groupId, epoch: epoch);
         await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: epoch);
 
         alice.start();
         charlie.start();
@@ -1077,6 +1087,7 @@ void main() {
         await pump();
 
         await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: epoch);
 
         final (postJoinResult, postJoin) = await alice
             .sendGroupMessageViaBridge(
@@ -1144,7 +1155,9 @@ void main() {
         });
 
         const groupId = 'group-new-member-quoted-reply';
+        const epoch = 5;
         await alice.createGroup(groupId: groupId, name: 'New Member Quotes');
+        await saveLatestKey(user: alice, groupId: groupId, epoch: epoch);
 
         alice.start();
         bob.start();
@@ -1157,6 +1170,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
 
         await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: epoch);
 
         final (replyResult, reply) = await alice.sendGroupMessageViaBridge(
           groupId: groupId,

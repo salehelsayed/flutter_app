@@ -414,6 +414,126 @@ Map<String, dynamic> _decodedGroupReplayPayload(String message) {
   return envelope;
 }
 
+class _Gca008RemovalFailureCase {
+  const _Gca008RemovalFailureCase({
+    required this.name,
+    required this.responses,
+    required this.expectInboxStore,
+    required this.expectGenerateNextKey,
+  });
+
+  final String name;
+  final Map<String, Map<String, dynamic>> responses;
+  final bool expectInboxStore;
+  final bool expectGenerateNextKey;
+}
+
+Future<
+  ({
+    InMemoryGroupRepository groupRepo,
+    InMemoryGroupMessageRepository msgRepo,
+    FakeBridge bridge,
+  })
+>
+_pumpGca008RemovalFailureFixture(
+  WidgetTester tester, {
+  required DateTime preRemovalWatermark,
+  required Map<String, Map<String, dynamic>> bridgeResponses,
+}) async {
+  final groupRepo = InMemoryGroupRepository();
+  final msgRepo = InMemoryGroupMessageRepository();
+  final group = makeAdminGroup().copyWith(
+    lastMembershipEventAt: preRemovalWatermark,
+  );
+  await groupRepo.saveGroup(group);
+  await _saveGroupReplayKey(groupRepo);
+
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-admin',
+      username: 'Admin',
+      role: MemberRole.admin,
+      publicKey: 'pk-admin',
+      mlKemPublicKey: 'mlkem-pk-admin',
+    ),
+  );
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-alice',
+      username: 'Alice',
+      publicKey: 'pk-alice',
+      mlKemPublicKey: 'mlkem-pk-alice',
+    ),
+  );
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-bob',
+      username: 'Bob',
+      publicKey: 'pk-bob',
+      mlKemPublicKey: 'mlkem-pk-bob',
+    ),
+  );
+
+  final bridge = FakeBridge(
+    initialResponses: {
+      'group:publish': {'ok': true, 'messageId': 'msg-1'},
+      'group:inboxStore': {'ok': true},
+      'group:generateNextKey': {
+        'ok': true,
+        'groupKey': 'fake-rotated-key',
+        'keyEpoch': 2,
+      },
+      ...bridgeResponses,
+    },
+  );
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: GroupInfoWired(
+        group: group,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        contactRepo: InMemoryContactRepository(),
+        bridge: bridge,
+        identityRepo: FakeIdentityRepository(identity: testIdentity),
+        p2pService: FakeP2PService(),
+      ),
+    ),
+  );
+  await pumpFrames(tester);
+
+  return (groupRepo: groupRepo, msgRepo: msgRepo, bridge: bridge);
+}
+
+Future<void> _removeAliceFromGroupInfo(WidgetTester tester) async {
+  final removeButton = find.byKey(
+    const ValueKey('group-member-remove-peer-alice'),
+  );
+  await tester.ensureVisible(removeButton);
+  await pumpFrames(tester, count: 5);
+  await tester.tap(removeButton, warnIfMissed: false);
+  await pumpFrames(tester);
+  await confirmRemoveMemberDialog(tester);
+}
+
+List<String> _lastUpdateConfigMemberPeerIds(FakeBridge bridge) {
+  final updateConfigMessages = bridge.sentMessages
+      .where((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      })
+      .toList(growable: false);
+  expect(updateConfigMessages, isNotEmpty);
+
+  final parsed = jsonDecode(updateConfigMessages.last) as Map<String, dynamic>;
+  final payload = parsed['payload'] as Map<String, dynamic>;
+  final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+  final members = groupConfig['members'] as List<dynamic>;
+  return members
+      .map((member) => (member as Map<String, dynamic>)['peerId'] as String)
+      .toList(growable: false);
+}
+
 void main() {
   group('GroupInfoWired', () {
     testWidgets('loads and displays group members on init', (tester) async {
@@ -2701,62 +2821,97 @@ void main() {
       },
     );
 
-    testWidgets('leave group calls bridge and pops to first route', (
-      tester,
-    ) async {
-      final groupRepo = InMemoryGroupRepository();
-      final group = makeAdminGroup();
-      await groupRepo.saveGroup(group);
-      await _saveGroupReplayKey(groupRepo);
+    testWidgets(
+      'GCA-009 leave group deletes local messages and pops to first route',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-left-group',
+            groupId: group.id,
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'local history to remove',
+            timestamp: DateTime.utc(2026, 5, 23, 10),
+            createdAt: DateTime.utc(2026, 5, 23, 10),
+            isIncoming: false,
+            status: 'sent',
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-other-group',
+            groupId: 'group-other',
+            senderPeerId: 'peer-other',
+            senderUsername: 'Other',
+            text: 'local history to keep',
+            timestamp: DateTime.utc(2026, 5, 23, 11),
+            createdAt: DateTime.utc(2026, 5, 23, 11),
+            isIncoming: true,
+            status: 'delivered',
+          ),
+        );
 
-      final bridge = FakeBridge();
+        final bridge = FakeBridge();
 
-      // Use a Navigator stack to verify popUntil(isFirst)
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => Scaffold(
-              body: ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => GroupInfoWired(
-                        group: group,
-                        groupRepo: groupRepo,
-                        contactRepo: InMemoryContactRepository(),
-                        bridge: bridge,
-                        identityRepo: FakeIdentityRepository(
-                          identity: testIdentity,
+        // Use a Navigator stack to verify popUntil(isFirst)
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: testIdentity,
+                          ),
+                          p2pService: FakeP2PService(),
                         ),
-                        p2pService: FakeP2PService(),
                       ),
-                    ),
-                  );
-                },
-                child: const Text('Open Info'),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
               ),
             ),
           ),
-        ),
-      );
+        );
 
-      // Navigate to group info
-      await tester.tap(find.text('Open Info'));
-      await pumpFrames(tester, count: 20);
+        // Navigate to group info
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 20);
 
-      // Verify info screen is showing
-      expect(find.byType(GroupInfoScreen), findsOneWidget);
+        // Verify info screen is showing
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
 
-      // Tap Leave Group
-      await tapLeaveGroupButton(tester);
+        // Tap Leave Group
+        await tapLeaveGroupButton(tester);
 
-      // Verify bridge received group:leave command
-      expect(bridge.commandLog, contains('group:leave'));
+        // Verify bridge received group:leave command
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(await msgRepo.getMessage('msg-left-group'), isNull);
+        expect(await msgRepo.getMessage('msg-other-group'), isNotNull);
+        expect(await groupRepo.getGroup(group.id), isNull);
 
-      // Verify popped back to first route
-      expect(find.byType(GroupInfoScreen), findsNothing);
-      expect(find.text('Open Info'), findsOneWidget);
-    });
+        // Verify popped back to first route
+        expect(find.byType(GroupInfoScreen), findsNothing);
+        expect(find.text('Open Info'), findsOneWidget);
+      },
+    );
 
     testWidgets('sole admin leave stays on screen and shows an error', (
       tester,
@@ -2876,6 +3031,134 @@ void main() {
         expect(find.text('Failed to leave group'), findsOneWidget);
         expect(await groupRepo.getGroup(group.id), isNotNull);
         expect(await groupRepo.getLatestKey(group.id), isNotNull);
+      },
+    );
+
+    testWidgets(
+      'GCA-010 native leave failure rolls back local artifacts after pre-leave broadcast',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await _saveGroupReplayKey(groupRepo, generation: 2);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.admin,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            mlKemPublicKey: 'mlkem-pk-charlie',
+          ),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        bridge.responses['group:leave'] = {
+          'ok': false,
+          'errorCode': 'GROUP_ERROR',
+          'errorMessage': 'forced leave failure',
+        };
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-self-removal',
+        };
+        bridge.responses['group:inboxStore'] = {'ok': true};
+        bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'failed-leave-rotated-key',
+          'keyEpoch': 3,
+        };
+        final p2pService = FakeP2PService();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: testIdentity,
+                          ),
+                          p2pService: p2pService,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 30);
+
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+        await tapLeaveGroupButton(tester, settleFrameCount: 30);
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        final publishIndex = bridge.commandLog.indexOf('group:publish');
+        final inboxStoreIndex = bridge.commandLog.indexOf('group:inboxStore');
+        final generateKeyIndex = bridge.commandLog.indexOf(
+          'group:generateNextKey',
+        );
+        final leaveIndex = bridge.commandLog.indexOf('group:leave');
+        expect(publishIndex, isNonNegative);
+        expect(inboxStoreIndex, isNonNegative);
+        expect(generateKeyIndex, isNonNegative);
+        expect(publishIndex, lessThan(leaveIndex));
+        expect(inboxStoreIndex, lessThan(leaveIndex));
+        expect(generateKeyIndex, lessThan(leaveIndex));
+        expect(p2pService.sentMessageLog.length, 2);
+        expect(await msgRepo.getMessageCount('group-1'), 0);
+        expect(await groupRepo.getGroup('group-1'), isNotNull);
+        final members = await groupRepo.getMembers('group-1');
+        expect(members.map((member) => member.peerId), [
+          'peer-admin',
+          'peer-bob',
+          'peer-charlie',
+        ]);
+        final latestKey = await groupRepo.getLatestKey('group-1');
+        expect(latestKey, isNotNull);
+        expect(latestKey!.keyGeneration, 2);
+        expect(latestKey.encryptedKey, 'test-group-key-2');
+        expect(await groupRepo.getKeyByGeneration('group-1', 1), isNotNull);
+        expect(await groupRepo.getKeyByGeneration('group-1', 3), isNull);
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+        expect(find.text('Open Info'), findsNothing);
+        expect(find.text('Failed to leave group'), findsOneWidget);
       },
     );
 
@@ -3159,8 +3442,16 @@ void main() {
         expect(bridge.commandLog, contains('group:generateNextKey'));
         expect(bridge.commandLog, contains('group:leave'));
         expect(
-          bridge.commandLog.indexOf('group:leave'),
-          greaterThan(bridge.commandLog.indexOf('group:generateNextKey')),
+          bridge.commandLog.indexOf('group:publish'),
+          lessThan(bridge.commandLog.indexOf('group:leave')),
+        );
+        expect(
+          bridge.commandLog.indexOf('group:inboxStore'),
+          lessThan(bridge.commandLog.indexOf('group:leave')),
+        );
+        expect(
+          bridge.commandLog.indexOf('group:generateNextKey'),
+          lessThan(bridge.commandLog.indexOf('group:leave')),
         );
         expect(p2pService.sentMessageLog.length, 2);
 
@@ -3179,12 +3470,7 @@ void main() {
         expect(sysText['member']['peerId'], 'peer-admin');
         expect(sysText['member']['username'], 'Admin');
 
-        final latestTimeline = await msgRepo.getLatestMessage('group-1');
-        expect(latestTimeline, isNotNull);
-        expect(
-          latestTimeline!.text,
-          buildMemberRemovedTimelineText('Admin', 'Admin'),
-        );
+        expect(await msgRepo.getMessageCount('group-1'), 0);
 
         expect(await groupRepo.getGroup('group-1'), isNull);
         expect(find.byType(GroupInfoScreen), findsNothing);
@@ -3197,7 +3483,7 @@ void main() {
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final msgRepo = InMemoryGroupMessageRepository();
-        final group = makeMemberGroup();
+        final group = makeMemberGroup().copyWith(createdBy: 'peer-bob');
         await groupRepo.saveGroup(group);
         await _saveGroupReplayKey(groupRepo);
 
@@ -3296,17 +3582,146 @@ void main() {
         expect(bridge.commandLog, contains('group:inboxStore'));
         expect(bridge.commandLog, contains('group:generateNextKey'));
         expect(bridge.commandLog, contains('group:leave'));
+        expect(
+          bridge.commandLog.indexOf('group:publish'),
+          lessThan(bridge.commandLog.indexOf('group:leave')),
+        );
+        expect(
+          bridge.commandLog.indexOf('group:inboxStore'),
+          lessThan(bridge.commandLog.indexOf('group:leave')),
+        );
+        expect(
+          bridge.commandLog.indexOf('group:generateNextKey'),
+          lessThan(bridge.commandLog.indexOf('group:leave')),
+        );
         expect(p2pService.sentMessageLog.length, 2);
 
-        final latestTimeline = await msgRepo.getLatestMessage('group-1');
-        expect(latestTimeline, isNotNull);
-        expect(
-          latestTimeline!.text,
-          buildMemberRemovedTimelineText('Bob', 'Bob'),
-        );
+        expect(await msgRepo.getMessageCount('group-1'), 0);
 
         expect(await groupRepo.getGroup('group-1'), isNull);
         expect(find.byType(GroupInfoScreen), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'GCA-008 failed post-remove steps roll back local removal state',
+      (tester) async {
+        final preRemovalWatermark = DateTime.utc(2026, 5, 11, 10);
+        const cases = [
+          _Gca008RemovalFailureCase(
+            name: 'publish ok false',
+            responses: {
+              'group:publish': {
+                'ok': false,
+                'errorMessage': 'forced publish failure',
+              },
+            },
+            expectInboxStore: false,
+            expectGenerateNextKey: false,
+          ),
+          _Gca008RemovalFailureCase(
+            name: 'inbox store ok false',
+            responses: {
+              'group:inboxStore': {
+                'ok': false,
+                'errorCode': 'INBOX_FAILED',
+                'errorMessage': 'forced inbox failure',
+              },
+            },
+            expectInboxStore: true,
+            expectGenerateNextKey: false,
+          ),
+          _Gca008RemovalFailureCase(
+            name: 'key rotation returns null',
+            responses: {
+              'group:generateNextKey': {
+                'ok': false,
+                'errorCode': 'ROTATION_FAILED',
+                'errorMessage': 'forced rotation failure',
+              },
+            },
+            expectInboxStore: true,
+            expectGenerateNextKey: true,
+          ),
+        ];
+
+        for (final failureCase in cases) {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await pumpFrames(tester, count: 2);
+
+          final fixture = await _pumpGca008RemovalFailureFixture(
+            tester,
+            preRemovalWatermark: preRemovalWatermark,
+            bridgeResponses: failureCase.responses,
+          );
+
+          expect(find.text('Alice'), findsOneWidget);
+
+          await _removeAliceFromGroupInfo(tester);
+
+          final restoredAlice = await fixture.groupRepo.getMember(
+            'group-1',
+            'peer-alice',
+          );
+          expect(
+            restoredAlice,
+            isNotNull,
+            reason: '${failureCase.name} should restore Alice locally',
+          );
+          expect(restoredAlice!.username, 'Alice');
+
+          final restoredGroup = await fixture.groupRepo.getGroup('group-1');
+          expect(
+            restoredGroup?.lastMembershipEventAt?.toUtc(),
+            preRemovalWatermark,
+            reason:
+                '${failureCase.name} should restore the membership watermark',
+          );
+          expect(
+            await fixture.msgRepo.getLatestSystemEventTimestampForTarget(
+              'group-1',
+              eventType: 'member_removed',
+              targetId: 'peer-alice',
+            ),
+            isNull,
+            reason:
+                '${failureCase.name} should delete the failed removal timeline',
+          );
+          expect(await fixture.msgRepo.getMessageCount('group-1'), 0);
+
+          expect(find.text('Alice'), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('group-member-remove-peer-alice')),
+            findsOneWidget,
+          );
+
+          final restoredConfigPeerIds = _lastUpdateConfigMemberPeerIds(
+            fixture.bridge,
+          );
+          expect(restoredConfigPeerIds, contains('peer-admin'));
+          expect(restoredConfigPeerIds, contains('peer-alice'));
+          expect(restoredConfigPeerIds, contains('peer-bob'));
+
+          if (failureCase.expectInboxStore) {
+            expect(fixture.bridge.commandLog, contains('group:inboxStore'));
+          } else {
+            expect(
+              fixture.bridge.commandLog,
+              isNot(contains('group:inboxStore')),
+            );
+          }
+          if (failureCase.expectGenerateNextKey) {
+            expect(
+              fixture.bridge.commandLog,
+              contains('group:generateNextKey'),
+            );
+          } else {
+            expect(
+              fixture.bridge.commandLog,
+              isNot(contains('group:generateNextKey')),
+            );
+          }
+        }
       },
     );
 
@@ -3546,21 +3961,34 @@ void main() {
 
         // Verify the durable removal replay is encrypted before inbox store,
         // and that key rotation starts only after the replay is persisted.
-        final distinctCommands = <String>[];
-        for (final cmd in bridge.commandLog) {
-          if (!distinctCommands.contains(cmd)) {
-            distinctCommands.add(cmd);
-          }
-          if (distinctCommands.length == 6) break;
-        }
-        expect(distinctCommands, [
+        expect(bridge.commandLog, contains('group:updateConfig'));
+        expect(bridge.commandLog, contains('payload.sign'));
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group.encrypt'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(bridge.commandLog, contains('group:updateKey'));
+        expect(bridge.commandLog, contains('group:generateNextKey'));
+
+        final updateConfigIndex = bridge.commandLog.indexOf(
           'group:updateConfig',
-          'payload.sign',
-          'group:publish',
-          'group.encrypt',
-          'group:inboxStore',
+        );
+        final signIndex = bridge.commandLog.indexOf('payload.sign');
+        final publishIndex = bridge.commandLog.indexOf('group:publish');
+        final encryptIndex = bridge.commandLog.indexOf('group.encrypt');
+        final inboxStoreIndex = bridge.commandLog.indexOf('group:inboxStore');
+        final currentKeyResyncIndex = bridge.commandLog.indexOf(
+          'group:updateKey',
+        );
+        final generateNextKeyIndex = bridge.commandLog.indexOf(
           'group:generateNextKey',
-        ]);
+        );
+
+        expect(updateConfigIndex, lessThan(signIndex));
+        expect(signIndex, lessThan(publishIndex));
+        expect(publishIndex, lessThan(encryptIndex));
+        expect(encryptIndex, lessThan(inboxStoreIndex));
+        expect(inboxStoreIndex, lessThan(currentKeyResyncIndex));
+        expect(currentKeyResyncIndex, lessThan(generateNextKeyIndex));
       },
     );
 
@@ -3806,7 +4234,7 @@ void main() {
         expect(replayEnvelope['kind'], 'group_offline_replay');
         expect(replayEnvelope['payloadType'], 'group_message');
         expect(replayEnvelope['keyEpoch'], 1);
-        expect(replayEnvelope['messageId'], timelineMessage.id);
+        expect(replayEnvelope['messageId'], isNull);
         expect(replayEnvelope['senderPeerId'], testIdentity.peerId);
         expect(replayEnvelope['senderPublicKey'], testIdentity.publicKey);
         expect(replayEnvelope['signatureAlgorithm'], 'ed25519');

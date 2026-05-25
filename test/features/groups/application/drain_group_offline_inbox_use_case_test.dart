@@ -12,7 +12,10 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart'
+    hide drainGroupOfflineInbox;
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart'
+    as drain_use_case;
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
@@ -45,6 +48,44 @@ const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 final _fixedDateFixtureRetentionNow = DateTime.utc(2026, 5, 8, 12);
+
+Future<drain_use_case.GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
+  required dynamic bridge,
+  required dynamic groupRepo,
+  required dynamic msgRepo,
+  dynamic mediaAttachmentRepo,
+  dynamic reactionRepo,
+  GroupMessageListener? groupMessageListener,
+  dynamic pendingKeyRepairRepo,
+  dynamic historyGapRepairRepo,
+  RequestGroupKeyRepair? requestGroupKeyRepair,
+  RequestGroupHistoryRepairRange? requestHistoryRepairRange,
+  String? selfPeerId,
+  DateTime? retentionNowUtc,
+  bool drainAllPages = true,
+  int pageSize = 50,
+  int maxPages = defaultGroupInboxDrainMaxPages,
+  int maxConcurrentGroupDrains = defaultMaxConcurrentGroupInboxDrains,
+}) {
+  return drain_use_case.drainGroupOfflineInbox(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    groupMessageListener: groupMessageListener,
+    pendingKeyRepairRepo: pendingKeyRepairRepo,
+    historyGapRepairRepo: historyGapRepairRepo,
+    requestGroupKeyRepair: requestGroupKeyRepair,
+    requestHistoryRepairRange: requestHistoryRepairRange,
+    selfPeerId: selfPeerId,
+    retentionNowUtc: retentionNowUtc ?? _fixedDateFixtureRetentionNow,
+    drainAllPages: drainAllPages,
+    pageSize: pageSize,
+    maxPages: maxPages,
+    maxConcurrentGroupDrains: maxConcurrentGroupDrains,
+  );
+}
 
 /// Bridge that simulates cursor-based group inbox retrieval.
 ///
@@ -573,6 +614,33 @@ class _DelayedCursorInboxBridge extends _CursorInboxBridge {
   }
 }
 
+class _ConcurrencyTrackingCursorInboxBridge extends _CursorInboxBridge {
+  _ConcurrencyTrackingCursorInboxBridge({
+    this.delay = const Duration(milliseconds: 30),
+  });
+
+  final Duration delay;
+  int activeRetrieves = 0;
+  int maxActiveRetrieves = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:inboxRetrieveCursor') {
+      activeRetrieves++;
+      maxActiveRetrieves = max(maxActiveRetrieves, activeRetrieves);
+      try {
+        await Future<void>.delayed(delay);
+        return super.send(message);
+      } finally {
+        activeRetrieves--;
+      }
+    }
+    return super.send(message);
+  }
+}
+
 void main() {
   late _CursorInboxBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -746,6 +814,16 @@ void main() {
         joinedAt: DateTime.now().toUtc(),
       ),
     );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-local',
+        username: 'Local',
+        role: MemberRole.writer,
+        publicKey: 'pk-local',
+        joinedAt: DateTime.utc(2026, 5, 1),
+      ),
+    );
   });
 
   Map<String, dynamic> repairMessage({
@@ -772,6 +850,8 @@ void main() {
     String senderPeerId = 'peer-sender',
     String senderPublicKey = 'pk-sender',
     String senderPrivateKey = 'sk-sender',
+    String? senderDeviceId,
+    String? senderTransportPeerId,
     int keyGeneration = 1,
     List<String>? recipientPeerIds,
   }) {
@@ -786,6 +866,8 @@ void main() {
       senderPublicKey: senderPublicKey,
       senderPrivateKey: senderPrivateKey,
       recipientPeerIds: recipientPeerIds,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
       keyInfo: GroupKeyInfo(
         groupId: 'group-1',
         keyGeneration: keyGeneration,
@@ -1093,6 +1175,16 @@ void main() {
             joinedAt: DateTime.utc(2026, 5, 2),
           ),
         );
+        await repository.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-local',
+            username: 'Local',
+            role: MemberRole.writer,
+            publicKey: 'pk-local',
+            joinedAt: DateTime.utc(2026, 5, 1, 11),
+          ),
+        );
         await saveDefaultReplayKey(repository: repository);
       }
 
@@ -1118,7 +1210,7 @@ void main() {
               {
                 'messageId': messageId,
                 'receiptType': groupMessageReceiptTypeRead,
-                'memberPeerId': 'peer-local',
+                'memberPeerId': 'peer-sender',
                 'receiptAt': '2026-05-13T18:40:01.000Z',
               },
             ],
@@ -1868,7 +1960,10 @@ void main() {
           .firstWhere((cmd) => cmd['cmd'] == 'group:inboxRetrieveCursor');
       expect(cursorCmd['payload']['cursor'], 'cursor-2');
       expect(await msgRepo.getMessage('sync-cursor-msg'), isNotNull);
-      expect(await msgRepo.getInboxCursor('group-1'), '');
+      expect(
+        await msgRepo.getInboxCursor('group-1'),
+        startsWith(groupInboxSyntheticSinceCursorPrefix),
+      );
       expect(
         await msgRepo.getReceiptsForMessage('group-1', 'sync-cursor-msg'),
         hasLength(1),
@@ -2026,7 +2121,7 @@ void main() {
             {
               'messageId': messageId,
               'receiptType': groupMessageReceiptTypeRead,
-              'memberPeerId': 'peer-local',
+              'memberPeerId': 'peer-sender',
               'receiptAt': '2026-05-01T12:02:00.000Z',
             },
           ],
@@ -2070,7 +2165,7 @@ void main() {
       final recovered = await msgRepo.getMessage(messageId);
       expect(recovered, isNotNull);
       expect(recovered!.text, 'IR-009 persisted after retry');
-      expect(recovered.readAt, isNotNull);
+      expect(recovered.readAt, isNull);
       final messages = await msgRepo.getMessagesPage('group-1');
       expect(
         messages.where((message) => message.id == messageId),
@@ -2547,20 +2642,35 @@ void main() {
   );
 
   test(
-    'PREREQ-GROUP-SYNC-RECEIPTS duplicate receipt replay is idempotent',
+    'PGC-002 replay receipts are dropped when memberPeerId differs from signed sender',
     () async {
       await saveDefaultReplayKey();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-local',
+          username: 'Local',
+          role: MemberRole.writer,
+          joinedAt: DateTime.utc(2026, 5, 1, 11),
+        ),
+      );
       bridge.addPage('group-1', '', [
         await signedRelayMessage(
-          id: 'sync-receipt-msg',
-          text: 'read me',
+          id: 'pgc002-forged-receipt-msg',
+          text: 'forged receipt should not mark local read',
           timestamp: DateTime.utc(2026, 5, 1, 12),
           receipts: [
             {
-              'messageId': 'sync-receipt-msg',
+              'messageId': 'pgc002-forged-receipt-msg',
               'receiptType': groupMessageReceiptTypeRead,
               'memberPeerId': 'peer-local',
               'receiptAt': '2026-05-01T12:02:00.000Z',
+            },
+            {
+              'messageId': 'pgc002-forged-receipt-msg',
+              'receiptType': groupMessageReceiptTypeRead,
+              'memberPeerId': 'peer-third-party',
+              'receiptAt': '2026-05-01T12:03:00.000Z',
             },
           ],
         ),
@@ -2573,23 +2683,79 @@ void main() {
         selfPeerId: 'peer-local',
         retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
-      await drainGroupOfflineInbox(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        selfPeerId: 'peer-local',
-        retentionNowUtc: _fixedDateFixtureRetentionNow,
-      );
 
       final receipts = await msgRepo.getReceiptsForMessage(
         'group-1',
-        'sync-receipt-msg',
+        'pgc002-forged-receipt-msg',
         receiptType: groupMessageReceiptTypeRead,
       );
-      expect(receipts, hasLength(1));
-      expect((await msgRepo.getMessage('sync-receipt-msg'))!.readAt, isNotNull);
+      expect(receipts, isEmpty);
+      final deliveredReceipts = await msgRepo.getReceiptsForMessage(
+        'group-1',
+        'pgc002-forged-receipt-msg',
+        receiptType: groupMessageReceiptTypeDelivered,
+      );
+      expect(deliveredReceipts, hasLength(1));
+      expect(deliveredReceipts.single.memberPeerId, 'peer-local');
+      expect(
+        (await msgRepo.getMessage('pgc002-forged-receipt-msg'))!.readAt,
+        isNull,
+      );
     },
   );
+
+  test('PGC-002 sender-bound replay receipt remains idempotent', () async {
+    await saveDefaultReplayKey();
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-local',
+        username: 'Local',
+        role: MemberRole.writer,
+        joinedAt: DateTime.utc(2026, 5, 1, 11),
+      ),
+    );
+    bridge.addPage('group-1', '', [
+      await signedRelayMessage(
+        id: 'sync-receipt-msg',
+        text: 'read me',
+        timestamp: DateTime.utc(2026, 5, 1, 12),
+        receipts: [
+          {
+            'messageId': 'sync-receipt-msg',
+            'receiptType': groupMessageReceiptTypeRead,
+            'memberPeerId': 'peer-sender',
+            'receiptAt': '2026-05-01T12:02:00.000Z',
+            'senderDeviceId': 'peer-sender',
+          },
+        ],
+      ),
+    ], '');
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      selfPeerId: 'peer-local',
+      retentionNowUtc: _fixedDateFixtureRetentionNow,
+    );
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      selfPeerId: 'peer-local',
+      retentionNowUtc: _fixedDateFixtureRetentionNow,
+    );
+
+    final receipts = await msgRepo.getReceiptsForMessage(
+      'group-1',
+      'sync-receipt-msg',
+      receiptType: groupMessageReceiptTypeRead,
+    );
+    expect(receipts, hasLength(1));
+    expect(receipts.single.memberPeerId, 'peer-sender');
+    expect((await msgRepo.getMessage('sync-receipt-msg'))!.readAt, isNull);
+  });
 
   test(
     'IR-002 cursor drain resumes after restart and delivers every page exactly once',
@@ -4487,6 +4653,66 @@ void main() {
   );
 
   test(
+    'PGC-014 drainGroupOfflineInbox limits concurrent group drains',
+    () async {
+      final trackingBridge = _ConcurrencyTrackingCursorInboxBridge();
+      configureLegacyReplaySigning(trackingBridge);
+      bridge = trackingBridge;
+
+      final groupIds = ['group-1', 'group-2', 'group-3', 'group-4', 'group-5'];
+      for (final groupId in groupIds.skip(1)) {
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Bounded $groupId',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdAt: DateTime.now().toUtc(),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-sender',
+            username: 'Sender',
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+      }
+
+      final timestamp = DateTime.now().toUtc().toIso8601String();
+      for (final groupId in groupIds) {
+        trackingBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'peer-sender',
+            'senderUsername': 'Sender',
+            'keyEpoch': 1,
+            'text': 'Bounded drain $groupId',
+            'timestamp': timestamp,
+            'messageId': 'msg-bounded-$groupId',
+          },
+        ], '');
+      }
+
+      final result = await drainGroupOfflineInbox(
+        bridge: trackingBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        maxConcurrentGroupDrains: 2,
+      );
+
+      expect(result.isSuccessful, isTrue);
+      expect(msgRepo.count, groupIds.length);
+      expect(trackingBridge.maxActiveRetrieves, lessThanOrEqualTo(2));
+      expect(trackingBridge.maxActiveRetrieves, greaterThan(1));
+    },
+  );
+
+  test(
     'replayed member_removed routes through listener cleanup instead of saving a chat row',
     () async {
       await groupRepo.saveMember(
@@ -4555,6 +4781,8 @@ void main() {
       );
 
       expect(await groupRepo.getGroup('group-1'), isNull);
+      expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+      expect(await groupRepo.getLatestKey('group-1'), isNull);
       expect(bridge.commandLog, contains('group:leave'));
       expect(removedGroups, ['group-1']);
       expect(msgRepo.count, 0);
@@ -4834,6 +5062,7 @@ void main() {
 
       expect(result.isSuccessful, isTrue);
       expect(await groupRepo.getGroup(groupId), isNull);
+      expect(await groupRepo.getMember(groupId, charliePeerId), isNull);
       expect(await groupRepo.getLatestKey(groupId), isNull);
       expect(bridge.commandLog, contains('group:leave'));
       expect(removedGroups, [groupId]);
@@ -5019,7 +5248,9 @@ void main() {
       expect(beforeMessage.timestamp, beforeRemovalAt);
       expect(await msgRepo.getMessage(samePagePostRemovalMessageId), isNull);
       expect(await msgRepo.getMessage(nextPagePostRemovalMessageId), isNull);
-      expect(await groupRepo.getGroup('group-1'), isNull);
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+      expect(await groupRepo.getLatestKey('group-1'), isNull);
       expect(bridge.commandLog, contains('group:leave'));
       expect(removedGroups, ['group-1']);
 
@@ -5711,7 +5942,9 @@ void main() {
         'messageId': 'gm033-remove-charlie',
       }, rethrowOnError: true);
 
-      expect(await groupRepo.getGroup(groupId), isNull);
+      expect(await groupRepo.getGroup(groupId), isNotNull);
+      expect(await groupRepo.getMember(groupId, charliePeerId), isNull);
+      expect(await groupRepo.getLatestKey(groupId), isNull);
       expect(
         await msgRepo.getLatestRemovalTimestampForSender(
           groupId,
@@ -5773,7 +6006,10 @@ void main() {
             .text,
         postReaddText,
       );
-      expect(await msgRepo.getInboxCursor(groupId), '');
+      expect(
+        await msgRepo.getInboxCursor(groupId),
+        startsWith(groupInboxSyntheticSinceCursorPrefix),
+      );
       expect(
         pendingRepo.repairs.values.where(
           (repair) => repair.messageId == removedWindowMessageId,
@@ -6006,7 +6242,9 @@ void main() {
         'messageId': 'gk023-remove-charlie',
       }, rethrowOnError: true);
 
-      expect(await groupRepo.getGroup(groupId), isNull);
+      expect(await groupRepo.getGroup(groupId), isNotNull);
+      expect(await groupRepo.getMember(groupId, charliePeerId), isNull);
+      expect(await groupRepo.getLatestKey(groupId), isNull);
       expect(
         await msgRepo.getLatestRemovalTimestampForSender(
           groupId,
@@ -6068,7 +6306,10 @@ void main() {
             .text,
         postReaddText,
       );
-      expect(await msgRepo.getInboxCursor(groupId), '');
+      expect(
+        await msgRepo.getInboxCursor(groupId),
+        startsWith(groupInboxSyntheticSinceCursorPrefix),
+      );
       expect(
         pendingRepo.repairs.values.where(
           (repair) => repair.messageId == removedWindowMessageId,
@@ -6301,7 +6542,9 @@ void main() {
         'messageId': 'gi019-remove-charlie',
       }, rethrowOnError: true);
 
-      expect(await groupRepo.getGroup(groupId), isNull);
+      expect(await groupRepo.getGroup(groupId), isNotNull);
+      expect(await groupRepo.getMember(groupId, charliePeerId), isNull);
+      expect(await groupRepo.getLatestKey(groupId), isNull);
       expect(
         await msgRepo.getLatestRemovalTimestampForSender(
           groupId,
@@ -6367,7 +6610,10 @@ void main() {
             .text,
         postReaddText,
       );
-      expect(await msgRepo.getInboxCursor(groupId), '');
+      expect(
+        await msgRepo.getInboxCursor(groupId),
+        startsWith(groupInboxSyntheticSinceCursorPrefix),
+      );
       expect(
         pendingRepo.repairs.values.where(
           (repair) => repair.messageId == removedWindowMessageId,
@@ -6474,17 +6720,11 @@ void main() {
       expect(
         flowEvents,
         contains(
-          isA<Map<String, dynamic>>()
-              .having(
-                (event) => event['event'],
-                'event',
-                'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_SIGNATURE_REJECTED',
-              )
-              .having(
-                (event) => (event['details'] as Map<String, dynamic>)['error'],
-                'error',
-                'unknown_sender',
-              ),
+          isA<Map<String, dynamic>>().having(
+            (event) => event['event'],
+            'event',
+            'GROUP_DRAIN_OFFLINE_INBOX_UNKNOWN_SENDER_REPLAY_SKIPPED',
+          ),
         ),
       );
     },
@@ -6644,7 +6884,10 @@ void main() {
         messages.where((message) => message.id == activeMessageId),
         hasLength(1),
       );
-      expect(await msgRepo.getInboxCursor(groupId), '');
+      expect(
+        await msgRepo.getInboxCursor(groupId),
+        startsWith(groupInboxSyntheticSinceCursorPrefix),
+      );
       final uniqueCommands = bridge.sentMessages
           .toSet()
           .map((message) => jsonDecode(message) as Map<String, dynamic>)
@@ -6861,7 +7104,10 @@ void main() {
         postJoinText,
       );
       expect(messages, hasLength(1));
-      expect(await msgRepo.getInboxCursor(groupId), '');
+      expect(
+        await msgRepo.getInboxCursor(groupId),
+        startsWith(groupInboxSyntheticSinceCursorPrefix),
+      );
       expect(
         pendingRepo.repairs.values.where(
           (repair) =>
@@ -7058,7 +7304,7 @@ void main() {
     'within-window backlog is retained and records the retained timestamp',
     () async {
       final retainedAt = groupBacklogRetentionCutoff(
-        DateTime.now().toUtc(),
+        _fixedDateFixtureRetentionNow,
       ).add(const Duration(hours: 1));
 
       bridge.addPage('group-1', '', [
@@ -7094,7 +7340,7 @@ void main() {
     'beyond-window backlog is skipped and records the expired timestamp',
     () async {
       final expiredAt = groupBacklogRetentionCutoff(
-        DateTime.now().toUtc(),
+        _fixedDateFixtureRetentionNow,
       ).subtract(const Duration(hours: 1));
 
       bridge.addPage('group-1', '', [
@@ -7127,7 +7373,7 @@ void main() {
   test(
     'mixed old and new cursor pages keep retained backlog and record both boundaries',
     () async {
-      final cutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
+      final cutoff = groupBacklogRetentionCutoff(_fixedDateFixtureRetentionNow);
       final expiredAt = cutoff.subtract(const Duration(hours: 1));
       final retainedAt = cutoff.add(const Duration(hours: 1));
 
@@ -7182,7 +7428,7 @@ void main() {
   );
 
   test('repeated drains do not resurrect expired backlog', () async {
-    final cutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
+    final cutoff = groupBacklogRetentionCutoff(_fixedDateFixtureRetentionNow);
     final expiredAt = cutoff.subtract(const Duration(hours: 1));
     final retainedAt = cutoff.add(const Duration(hours: 1));
 
@@ -7624,6 +7870,7 @@ void main() {
         testGroup.copyWith(createdAt: createdAt, createdBy: alicePeerId),
       );
       await groupRepo.removeMember(groupId, 'peer-sender');
+      await groupRepo.removeMember(groupId, 'peer-local');
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: groupId,
@@ -7845,6 +8092,7 @@ void main() {
         ),
       );
       await groupRepo.removeMember(groupId, 'peer-sender');
+      await groupRepo.removeMember(groupId, 'peer-local');
       for (final member in <GroupMember>[
         GroupMember(
           groupId: groupId,
@@ -8200,7 +8448,7 @@ void main() {
           {
             'messageId': messageId,
             'receiptType': groupMessageReceiptTypeRead,
-            'memberPeerId': 'peer-local',
+            'memberPeerId': 'peer-sender',
             'receiptAt': '2026-05-01T12:04:00.000Z',
             'sourceEventId': 'de004-replay-read',
           },
@@ -8240,7 +8488,7 @@ void main() {
       expect(saved.keyGeneration, 1);
       expect(saved.status, 'delivered');
       expect(saved.quotedMessageId, 'de004-parent-message');
-      expect(saved.readAt, isNotNull);
+      expect(saved.readAt, isNull);
       expect(await msgRepo.getInboxCursor('group-1'), 'cursor-de004');
 
       final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
@@ -8253,7 +8501,7 @@ void main() {
         receiptType: groupMessageReceiptTypeRead,
       );
       expect(readReceipts, hasLength(1));
-      expect(readReceipts.single.memberPeerId, 'peer-local');
+      expect(readReceipts.single.memberPeerId, 'peer-sender');
       expect(readReceipts.single.sourceEventId, 'de004-replay-read');
 
       final deliveredReceipts = await msgRepo.getReceiptsForMessage(
@@ -9282,7 +9530,7 @@ void main() {
   );
 
   test(
-    'IR-015 replay rehydrates text quote image video file GIF and voice after live duplicate',
+    'IR-015 replay rehydrates text quote image video GIF and voice after live duplicate',
     () async {
       final mediaRepo = InMemoryMediaAttachmentRepository();
       const messageId = 'ir015-variant-replay';
@@ -9331,18 +9579,6 @@ void main() {
           'contentHash': _validContentHash,
           'encryptionKeyBase64': 'key-ir015-video',
           'encryptionNonce': 'nonce-ir015-video',
-          'encryptionScheme': 'blob_aes_256_gcm_v1',
-          'createdAt': ts,
-        },
-        {
-          'id': 'ir015-file',
-          'mime': 'application/octet-stream',
-          'size': 34567,
-          'mediaType': 'file',
-          'downloadStatus': 'pending',
-          'contentHash': _validContentHash,
-          'encryptionKeyBase64': 'key-ir015-file',
-          'encryptionNonce': 'nonce-ir015-file',
           'encryptionScheme': 'blob_aes_256_gcm_v1',
           'createdAt': ts,
         },
@@ -9409,7 +9645,7 @@ void main() {
       expect(saved.keyGeneration, 1);
 
       final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
-      expect(attachments, hasLength(5));
+      expect(attachments, hasLength(4));
       final byId = {
         for (final attachment in attachments) attachment.id: attachment,
       };
@@ -9418,8 +9654,6 @@ void main() {
       expect(byId['ir015-video']!.mime, 'video/mp4');
       expect(byId['ir015-video']!.mediaType, 'video');
       expect(byId['ir015-video']!.durationMs, 4200);
-      expect(byId['ir015-file']!.mime, 'application/octet-stream');
-      expect(byId['ir015-file']!.mediaType, 'file');
       expect(byId['ir015-gif']!.mime, 'image/gif');
       expect(byId['ir015-gif']!.mediaType, 'image');
       expect(byId['ir015-voice']!.mime, 'audio/mp4');
@@ -9682,44 +9916,24 @@ void main() {
   );
 
   test(
-    'GI-023 replay uses previous-epoch grace but skips expired replay epoch',
+    'PGC-013 offline replay decrypts retained historical epochs and skips only outside key retention window',
     () async {
-      final epoch1Key = GroupKeyInfo(
-        groupId: 'group-1',
-        keyGeneration: 1,
-        encryptedKey: 'replay-key-1',
-        createdAt: DateTime.utc(2026, 5, 1),
-      );
-      final epoch2Key = GroupKeyInfo(
-        groupId: 'group-1',
-        keyGeneration: 2,
-        encryptedKey: 'replay-key-2',
-        createdAt: DateTime.utc(2026, 5, 2),
-      );
-      final epoch3Key = GroupKeyInfo(
-        groupId: 'group-1',
-        keyGeneration: 3,
-        encryptedKey: 'replay-key-3',
-        createdAt: DateTime.utc(2026, 5, 3),
-      );
-      await groupRepo.saveKey(epoch1Key);
-      await groupRepo.saveKey(epoch2Key);
+      for (var generation = 1; generation <= 9; generation++) {
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: generation,
+            encryptedKey: 'replay-key-$generation',
+            createdAt: DateTime.utc(2026, 5, generation),
+          ),
+        );
+      }
 
-      final gracePreviousReplay = await signedReplayEnvelope(
-        payloadType: groupOfflineReplayPayloadTypeMessage,
-        keyGeneration: 1,
-        plaintext: jsonEncode({
-          'groupId': 'group-1',
-          'senderId': 'peer-sender',
-          'senderUsername': 'Sender',
-          'keyEpoch': 1,
-          'text': 'GI-023 previous epoch during grace',
-          'timestamp': '2026-05-12T12:00:00.000Z',
-          'messageId': 'msg-gi023-grace-epoch-1',
-        }),
-        messageId: 'msg-gi023-grace-epoch-1',
-      );
-      final graceCurrentReplay = await signedReplayEnvelope(
+      expect(await groupRepo.getKeyByGeneration('group-1', 1), isNull);
+      expect(await groupRepo.getKeyByGeneration('group-1', 2), isNotNull);
+      expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 9);
+
+      final retainedReplay = await signedReplayEnvelope(
         payloadType: groupOfflineReplayPayloadTypeMessage,
         keyGeneration: 2,
         plaintext: jsonEncode({
@@ -9727,39 +9941,13 @@ void main() {
           'senderId': 'peer-sender',
           'senderUsername': 'Sender',
           'keyEpoch': 2,
-          'text': 'GI-023 current epoch during grace',
-          'timestamp': '2026-05-12T12:01:00.000Z',
-          'messageId': 'msg-gi023-grace-epoch-2',
+          'text': 'PGC-013 retained historical replay',
+          'timestamp': '2026-05-12T12:00:00.000Z',
+          'messageId': 'msg-pgc013-retained-epoch-2',
         }),
-        messageId: 'msg-gi023-grace-epoch-2',
+        messageId: 'msg-pgc013-retained-epoch-2',
       );
-
-      bridge.addPage('group-1', '', [
-        {'from': 'peer-sender', 'message': gracePreviousReplay, 'timestamp': 1},
-        {'from': 'peer-sender', 'message': graceCurrentReplay, 'timestamp': 2},
-      ], '');
-
-      await drainGroupOfflineInbox(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-      );
-
-      final gracePrevious = await msgRepo.getMessage('msg-gi023-grace-epoch-1');
-      final graceCurrent = await msgRepo.getMessage('msg-gi023-grace-epoch-2');
-      expect(gracePrevious, isNotNull);
-      expect(gracePrevious!.text, 'GI-023 previous epoch during grace');
-      expect(gracePrevious.keyGeneration, 1);
-      expect(graceCurrent, isNotNull);
-      expect(graceCurrent!.text, 'GI-023 current epoch during grace');
-      expect(graceCurrent.keyGeneration, 2);
-
-      await groupRepo.saveKey(epoch3Key);
-      expect(await groupRepo.getKeyByGeneration('group-1', 1), isNull);
-      expect(await groupRepo.getKeyByGeneration('group-1', 2), isNotNull);
-      expect(await groupRepo.getKeyByGeneration('group-1', 3), isNotNull);
-
-      final expiredReplay = await signedReplayEnvelope(
+      final staleReplay = await signedReplayEnvelope(
         payloadType: groupOfflineReplayPayloadTypeMessage,
         keyGeneration: 1,
         plaintext: jsonEncode({
@@ -9767,29 +9955,15 @@ void main() {
           'senderId': 'peer-sender',
           'senderUsername': 'Sender',
           'keyEpoch': 1,
-          'text': 'GI-023 expired old epoch must not render',
-          'timestamp': '2026-05-12T12:02:00.000Z',
-          'messageId': 'msg-gi023-expired-epoch-1',
+          'text': 'PGC-013 stale replay must not render',
+          'timestamp': '2026-05-12T12:01:00.000Z',
+          'messageId': 'msg-pgc013-stale-epoch-1',
         }),
-        messageId: 'msg-gi023-expired-epoch-1',
-      );
-      final latestReplay = await signedReplayEnvelope(
-        payloadType: groupOfflineReplayPayloadTypeMessage,
-        keyGeneration: 3,
-        plaintext: jsonEncode({
-          'groupId': 'group-1',
-          'senderId': 'peer-sender',
-          'senderUsername': 'Sender',
-          'keyEpoch': 3,
-          'text': 'GI-023 latest epoch after grace',
-          'timestamp': '2026-05-12T12:03:00.000Z',
-          'messageId': 'msg-gi023-latest-epoch-3',
-        }),
-        messageId: 'msg-gi023-latest-epoch-3',
+        messageId: 'msg-pgc013-stale-epoch-1',
       );
       bridge.addPage('group-1', '', [
-        {'from': 'peer-sender', 'message': expiredReplay, 'timestamp': 3},
-        {'from': 'peer-sender', 'message': latestReplay, 'timestamp': 4},
+        {'from': 'peer-sender', 'message': staleReplay, 'timestamp': 1},
+        {'from': 'peer-sender', 'message': retainedReplay, 'timestamp': 2},
       ], '');
       bridge.commandLog.clear();
       bridge.sentMessages.clear();
@@ -9816,13 +9990,14 @@ void main() {
         requestGroupKeyRepair: repairRequests.add,
       );
 
-      expect(await msgRepo.getMessage('msg-gi023-expired-epoch-1'), isNull);
-      final latest = await msgRepo.getMessage('msg-gi023-latest-epoch-3');
-      expect(latest, isNotNull);
-      expect(latest!.text, 'GI-023 latest epoch after grace');
-      expect(latest.keyGeneration, 3);
+      final retained = await msgRepo.getMessage('msg-pgc013-retained-epoch-2');
+      expect(retained, isNotNull);
+      expect(retained!.text, 'PGC-013 retained historical replay');
+      expect(retained.keyGeneration, 2);
+      expect(await msgRepo.getMessage('msg-pgc013-stale-epoch-1'), isNull);
       expect(pendingRepo.repairs, isEmpty);
       expect(repairRequests, isEmpty);
+
       final uniqueDecryptCommands = bridge.sentMessages.toSet().where((
         message,
       ) {
@@ -9834,7 +10009,7 @@ void main() {
       final visibleMessages = await msgRepo.getMessagesPage('group-1');
       expect(
         visibleMessages.where(
-          (message) => message.text.contains('expired old epoch'),
+          (message) => message.text.contains('stale replay'),
         ),
         isEmpty,
       );
@@ -9853,7 +10028,7 @@ void main() {
             'GROUP_DRAIN_OFFLINE_INBOX_STALE_REPLAY_EPOCH_SKIPPED',
       );
       expect(staleEvent['details']['keyEpoch'], 1);
-      expect(staleEvent['details']['latestKeyGeneration'], 3);
+      expect(staleEvent['details']['latestKeyGeneration'], 9);
       expect(staleEvent['details']['minAcceptedKeyGeneration'], 2);
     },
   );
@@ -9939,7 +10114,9 @@ void main() {
       final readAt = readMessage!.readAt;
       expect(readAt, isNotNull);
 
-      bridge.addPage('group-1', '', [
+      final duplicateReplayCursor = await msgRepo.getInboxCursor('group-1');
+      expect(duplicateReplayCursor, isNotNull);
+      bridge.addPage('group-1', duplicateReplayCursor!, [
         {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 3},
         {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 4},
       ], '');
@@ -10153,6 +10330,9 @@ void main() {
       final readdedAt = removedAt.add(const Duration(minutes: 4));
       final postReaddAt = readdedAt.add(const Duration(minutes: 1));
 
+      await groupRepo.updateGroup(
+        testGroup.copyWith(createdAt: joinedAt, createdBy: senderPeerId),
+      );
       await groupRepo.saveMember(
         GroupMember(
           groupId: 'group-1',
@@ -10695,10 +10875,10 @@ void main() {
 
       expect(await groupRepo.getMember(groupId, newPeerId), isNull);
       expect(await msgRepo.getMessage(newMessageId), isNull);
-      expect(await msgRepo.getInboxCursor(groupId), isNull);
+      final skippedCursor = await msgRepo.getInboxCursor(groupId);
+      expect(skippedCursor, startsWith(groupInboxSyntheticSinceCursorPrefix));
 
-      bridge.addPage(groupId, '', [
-        {'from': newDeviceId, 'message': durableReplay, 'timestamp': 1},
+      bridge.addPage(groupId, skippedCursor!, [
         {'from': adminPeerId, 'message': memberAddedReplay, 'timestamp': 2},
         {'from': newDeviceId, 'message': durableReplay, 'timestamp': 3},
       ], '');
@@ -12185,7 +12365,10 @@ void main() {
         }
 
         expect(await msgRepo.getMessageCount('group-1'), 120);
-        expect(await msgRepo.getInboxCursor('group-1'), '');
+        expect(
+          await msgRepo.getInboxCursor('group-1'),
+          startsWith(groupInboxSyntheticSinceCursorPrefix),
+        );
 
         final stored = await msgRepo.getMessagesPage('group-1', limit: 200);
         expect(stored, hasLength(120));
@@ -12311,6 +12494,17 @@ void main() {
   // ---------------------------------------------------------------------------
   test('drains group_reaction items when reactionRepo is provided', () async {
     final reactionRepo = FakeReactionRepository();
+    await msgRepo.saveMessage(
+      GroupMessage(
+        id: 'msg-1',
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        senderUsername: 'Sender',
+        text: 'Reactable target',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
 
     final innerReaction = jsonEncode({
       'id': 'rxn-1',
@@ -12340,8 +12534,8 @@ void main() {
 
     // Reaction should be persisted.
     expect(reactionRepo.saveReactionCallCount, 1);
-    // Should NOT be saved as a regular message.
-    expect(msgRepo.count, 0);
+    // Should NOT be saved as an additional regular message.
+    expect(msgRepo.count, 1);
   });
 
   test(
@@ -12385,37 +12579,106 @@ void main() {
   );
 
   test(
-    'replayed system messages trust the outer sender over payload sender',
+    'PGC-016 group_reaction without reactionRepo does not persist a message',
     () async {
+      await saveDefaultReplayKey();
+      final innerReaction = jsonEncode({
+        'id': 'pgc016-rxn-1',
+        'messageId': 'pgc016-message-1',
+        'emoji': '\u{1F44D}',
+        'action': 'add',
+        'senderPeerId': 'peer-sender',
+        'timestamp': DateTime.utc(2026, 5, 1, 12).toIso8601String(),
+      });
+
+      bridge.addPage('group-1', '', [
+        {
+          'from': 'peer-sender',
+          'message': await signedReplayEnvelope(
+            payloadType: groupOfflineReplayPayloadTypeReaction,
+            plaintext: innerReaction,
+            messageId: 'pgc016-rxn-1',
+          ),
+          'timestamp': 123,
+        },
+      ], 'cursor-after-pgc016');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        drainAllPages: false,
+      );
+
+      expect(msgRepo.count, 0);
+      expect(await msgRepo.getInboxCursor('group-1'), 'cursor-after-pgc016');
+    },
+  );
+
+  test(
+    'PGC-001 system replay keeps logical sender and transport peer separate',
+    () async {
+      await saveDefaultReplayKey();
+      const adminPeerId = 'peer-admin';
+      const adminDeviceId = 'admin-device-1';
+      const adminTransportPeerId = 'peer-admin-device-1';
+      const adminDevicePublicKey = 'pk-admin-device-1';
+      final eventAt = DateTime.now().toUtc().add(const Duration(minutes: 1));
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: adminPeerId,
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: adminDeviceId,
+              transportPeerId: adminTransportPeerId,
+              deviceSigningPublicKey: adminDevicePublicKey,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 4, 1),
+        ),
+      );
       final listener = GroupMessageListener(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         bridge: bridge,
       );
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: 'group-1',
-          peerId: 'peer-admin',
-          username: 'Admin',
-          role: MemberRole.admin,
-          joinedAt: DateTime.now().toUtc(),
-        ),
+      addTearDown(listener.dispose);
+
+      final inboxMessage = await signedReplayEnvelope(
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': adminPeerId,
+          'senderDeviceId': adminDeviceId,
+          'transportPeerId': adminTransportPeerId,
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'group_dissolved',
+            'dissolvedAt': eventAt.toIso8601String(),
+            'dissolvedBy': adminPeerId,
+          }),
+          'timestamp': eventAt.toIso8601String(),
+          'messageId': 'pgc001-system-replay',
+        }),
+        messageId: 'pgc001-system-replay',
+        senderPeerId: adminPeerId,
+        senderPublicKey: adminDevicePublicKey,
+        senderPrivateKey: 'sk-admin',
+        senderDeviceId: adminDeviceId,
+        senderTransportPeerId: adminTransportPeerId,
       );
 
-      final inboxMessage = jsonEncode({
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': jsonEncode({
-          '__sys': 'group_dissolved',
-          'dissolvedAt': '2026-04-05T12:00:00.000Z',
-          'dissolvedBy': 'peer-admin',
-        }),
-        'timestamp': '2026-04-05T12:00:00.000Z',
-      });
-
       bridge.addPage('group-1', '', [
-        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+        {
+          'from': adminTransportPeerId,
+          'message': inboxMessage,
+          'timestamp': eventAt.millisecondsSinceEpoch,
+        },
       ], '');
 
       await drainGroupOfflineInbox(
@@ -12427,9 +12690,205 @@ void main() {
 
       final group = await groupRepo.getGroup('group-1');
       expect(group, isNotNull);
+      expect(group!.isDissolved, isTrue);
+      expect(group.dissolvedBy, adminPeerId);
+      final timeline = await msgRepo.getLatestMessage('group-1');
+      expect(timeline, isNotNull);
+      expect(timeline!.senderPeerId, adminPeerId);
+    },
+  );
+
+  test(
+    'PGC-001 history repair system replay keeps logical sender and transport peer separate',
+    () async {
+      await saveDefaultReplayKey();
+      const adminPeerId = 'peer-admin';
+      const adminDeviceId = 'admin-device-1';
+      const adminTransportPeerId = 'peer-admin-device-1';
+      const adminDevicePublicKey = 'pk-admin-device-1';
+      final eventAt = DateTime.now().toUtc().add(const Duration(minutes: 1));
+      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: adminPeerId,
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: adminDeviceId,
+              transportPeerId: adminTransportPeerId,
+              deviceSigningPublicKey: adminDevicePublicKey,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 4, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-good',
+          username: 'Good Source',
+          role: MemberRole.reader,
+          joinedAt: DateTime.utc(2026, 4, 1),
+        ),
+      );
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+      );
+      addTearDown(listener.dispose);
+
+      final repairedSystemMessage = {
+        'from': adminTransportPeerId,
+        'message': await signedReplayEnvelope(
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: jsonEncode({
+            'groupId': 'group-1',
+            'senderId': adminPeerId,
+            'senderDeviceId': adminDeviceId,
+            'transportPeerId': adminTransportPeerId,
+            'senderUsername': 'Admin',
+            'keyEpoch': 1,
+            'text': jsonEncode({
+              '__sys': 'group_dissolved',
+              'dissolvedAt': eventAt.toIso8601String(),
+              'dissolvedBy': adminPeerId,
+            }),
+            'timestamp': eventAt.toIso8601String(),
+            'messageId': 'pgc001-history-system-replay',
+          }),
+          messageId: 'pgc001-history-system-replay',
+          senderPeerId: adminPeerId,
+          senderPublicKey: adminDevicePublicKey,
+          senderPrivateKey: 'sk-admin',
+          senderDeviceId: adminDeviceId,
+          senderTransportPeerId: adminTransportPeerId,
+        ),
+        'timestamp': eventAt.millisecondsSinceEpoch,
+      };
+      final rangeHash = computeGroupHistoryRangeHash([repairedSystemMessage]);
+      bridge.addPage(
+        'group-1',
+        '',
+        [],
+        '',
+        historyGaps: [historyGap(expectedRangeHash: rangeHash)],
+      );
+      bridge.addRepairResponse(
+        groupId: 'group-1',
+        gapId: 'gap-1',
+        sourcePeerId: 'peer-good',
+        response: {
+          'ok': true,
+          'groupId': 'group-1',
+          'gapId': 'gap-1',
+          'sourcePeerId': 'peer-good',
+          'rangeHash': rangeHash,
+          'headMessageId': 'msg-after',
+          'messages': [repairedSystemMessage],
+        },
+      );
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+        historyGapRepairRepo: historyRepo,
+      );
+
+      final group = await groupRepo.getGroup('group-1');
+      expect(group, isNotNull);
+      expect(group!.isDissolved, isTrue);
+      expect(group.dissolvedBy, adminPeerId);
+      final timeline = await msgRepo.getLatestMessage('group-1');
+      expect(timeline, isNotNull);
+      expect(timeline!.senderPeerId, adminPeerId);
+    },
+  );
+
+  test(
+    'PGC-001 system replay rejects transport that is not bound to the signed logical sender',
+    () async {
+      await saveDefaultReplayKey();
+      const adminPeerId = 'peer-admin';
+      const adminDeviceId = 'admin-device-1';
+      const adminTransportPeerId = 'peer-admin-device-1';
+      const adminDevicePublicKey = 'pk-admin-device-1';
+      final eventAt = DateTime.now().toUtc().add(const Duration(minutes: 1));
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: adminPeerId,
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: adminDeviceId,
+              transportPeerId: adminTransportPeerId,
+              deviceSigningPublicKey: adminDevicePublicKey,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 4, 1),
+        ),
+      );
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+      );
+      addTearDown(listener.dispose);
+
+      final inboxMessage = await signedReplayEnvelope(
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': adminPeerId,
+          'senderDeviceId': adminDeviceId,
+          'transportPeerId': adminTransportPeerId,
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'group_dissolved',
+            'dissolvedAt': eventAt.toIso8601String(),
+            'dissolvedBy': adminPeerId,
+          }),
+          'timestamp': eventAt.toIso8601String(),
+          'messageId': 'pgc001-reject-unbound-transport',
+        }),
+        messageId: 'pgc001-reject-unbound-transport',
+        senderPeerId: adminPeerId,
+        senderPublicKey: adminDevicePublicKey,
+        senderPrivateKey: 'sk-admin',
+        senderDeviceId: adminDeviceId,
+        senderTransportPeerId: adminTransportPeerId,
+      );
+
+      bridge.addPage('group-1', '', [
+        {
+          'from': 'peer-evil-transport',
+          'message': inboxMessage,
+          'timestamp': eventAt.millisecondsSinceEpoch,
+        },
+      ], '');
+
+      final result = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      final group = await groupRepo.getGroup('group-1');
+      expect(result.isSuccessful, isFalse);
+      expect(group, isNotNull);
       expect(group!.isDissolved, isFalse);
       expect(await msgRepo.getLatestMessage('group-1'), isNull);
-      expect(bridge.commandLog, isNot(contains('group:leave')));
+      expect(await msgRepo.getInboxCursor('group-1'), isNull);
     },
   );
 }

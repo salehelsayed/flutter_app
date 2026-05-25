@@ -3402,7 +3402,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   @override
   void dispose() {
-    widget.conversationTracker?.clear();
+    widget.conversationTracker?.clearIfActive(widget.contact.peerId);
     widget.appShellController?.removeListener(_onAppShellChanged);
     _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();

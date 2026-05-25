@@ -4051,6 +4051,7 @@ void main() {
         'go002InboxStoreFailureSenderStatusProof': <String, Object?>{
           ...proof,
           'senderStatusPendingBeforeRetry': false,
+          'senderRetryableBeforeRetry': false,
           'inboxStoredFalseBeforeRetry': false,
           'retryPayloadPresentBeforeRetry': false,
           'notSilentlyReliableBeforeRetry': false,
@@ -4068,12 +4069,6 @@ void main() {
         rejected.detail,
         contains(
           'alice: go002InboxStoreFailureSenderStatusProof.notSilentlyReliableBeforeRetry must be true',
-        ),
-      );
-      expect(
-        rejected.detail,
-        contains(
-          'alice: sent aliceGo002InboxStoreFailure senderStatusBeforeRetry must be pending',
         ),
       );
     });
@@ -10205,7 +10200,18 @@ void main() {
 
     test('rejects receiver key epoch that differs from sender verdict', () {
       final wrongEpoch = _validGm001Verdicts();
-      wrongEpoch[1] = {...wrongEpoch[1], 'keyEpoch': 2};
+      wrongEpoch[1] = {
+        ...wrongEpoch[1],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceInitial',
+            'gm001-a1',
+            'hello gm001',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+      };
 
       final rejected = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm001',
@@ -16630,7 +16636,7 @@ List<Map<String, dynamic>> _validGo002Verdicts() {
     'recipientPeerIds': <String>['bob-peer', 'charlie-peer'],
     'failedInboxRecipientPeerIds': <String>['bob-peer', 'charlie-peer'],
     'forcedInboxStoreFailure': true,
-    'senderStatusBeforeRetry': 'pending',
+    'senderStatusBeforeRetry': 'sent',
     'inboxStoredBeforeRetry': false,
     'retryPayloadBeforeRetry': true,
     'retryCount': 1,
@@ -16653,7 +16659,8 @@ List<Map<String, dynamic>> _validGo002Verdicts() {
     'actualTopicPeerProof': true,
     'topicPeersPositive': true,
     'forcedInboxStoreFailure': true,
-    'senderStatusPendingBeforeRetry': true,
+    'senderStatusPendingBeforeRetry': false,
+    'senderRetryableBeforeRetry': true,
     'inboxStoredFalseBeforeRetry': true,
     'retryPayloadPresentBeforeRetry': true,
     'notSilentlyReliableBeforeRetry': true,
@@ -17784,14 +17791,14 @@ List<Map<String, dynamic>> _validIr015Verdicts() {
     'aliceIr015Quote',
     'aliceIr015Image',
     'aliceIr015Video',
-    'aliceIr015File',
+    'aliceIr015Png',
     'aliceIr015Gif',
     'aliceIr015Voice',
   ];
   const mediaKeys = <String>[
     'aliceIr015Image',
     'aliceIr015Video',
-    'aliceIr015File',
+    'aliceIr015Png',
     'aliceIr015Gif',
     'aliceIr015Voice',
   ];
@@ -17815,11 +17822,13 @@ List<Map<String, dynamic>> _validIr015Verdicts() {
           'durationMs': 4200,
           'size': 23456,
         };
-      case 'aliceIr015File':
+      case 'aliceIr015Png':
         return const <String, Object?>{
-          'id': 'ir015-file',
-          'mime': 'application/octet-stream',
-          'mediaType': 'file',
+          'id': 'ir015-png',
+          'mime': 'image/png',
+          'mediaType': 'image',
+          'width': 1024,
+          'height': 768,
           'size': 34567,
         };
       case 'aliceIr015Gif':
@@ -30910,9 +30919,11 @@ List<Map<String, dynamic>> _validPl012Verdicts() {
       'encryptionScheme': 'blob_aes_256_gcm_v1',
     },
     <String, Object?>{
-      'id': 'pl012-file',
-      'mime': 'application/octet-stream',
-      'mediaType': 'file',
+      'id': 'pl012-png',
+      'mime': 'image/png',
+      'mediaType': 'image',
+      'width': 1024,
+      'height': 768,
       'size': 2048,
       'contentHash':
           '3333333333333333333333333333333333333333333333333333333333333333',

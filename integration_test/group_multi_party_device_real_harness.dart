@@ -19,7 +19,8 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
-import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart'
+    hide staleGroupMembershipEventMessage;
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
@@ -354,10 +355,49 @@ class _InboxStoreFailureBridge implements Bridge {
 
   final Bridge _delegate;
   final List<String> failedInboxStoreMessages = <String>[];
+  final List<Map<String, dynamic>> forcedReliableInboxFailures =
+      <Map<String, dynamic>>[];
 
   @override
   Future<String> send(String message) async {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:sendReliable') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final publishRequest = jsonEncode(<String, dynamic>{
+        'cmd': 'group:publish',
+        'payload': payload,
+      });
+      final publishResponseJson = await _delegate.send(publishRequest);
+      final publishResponse =
+          jsonDecode(publishResponseJson) as Map<String, dynamic>;
+      final messageId =
+          publishResponse['messageId']?.toString() ??
+          payload['messageId']?.toString();
+      final topicPeers =
+          _intFromBridgeValue(publishResponse['topicPeers']) ??
+          _intFromBridgeValue(publishResponse['topicPeerCount']);
+      final response = <String, dynamic>{
+        'ok': publishResponse['ok'] == true,
+        if (messageId != null && messageId.isNotEmpty) 'messageId': messageId,
+        'topicPeerCount': topicPeers ?? 0,
+        'topicPeers': topicPeers ?? 0,
+        'expectedRecipientCount': topicPeers ?? 0,
+        'recipientPeerIds': const <String>[],
+        'inboxStored': false,
+        'publishSucceeded': publishResponse['ok'] == true,
+        'deliveryMode': publishResponse['ok'] == true ? 'live_only' : 'failed',
+        if (publishResponse['errorCode'] != null)
+          'errorCode': publishResponse['errorCode'],
+        if (publishResponse['errorMessage'] != null)
+          'errorMessage': publishResponse['errorMessage'],
+      };
+      forcedReliableInboxFailures.add(<String, dynamic>{
+        'request': parsed,
+        'publishResponse': publishResponse,
+        'response': response,
+      });
+      return jsonEncode(response);
+    }
     if (parsed['cmd'] == 'group:inboxStore') {
       failedInboxStoreMessages.add(message);
       throw Exception('GO-002 forced GroupInboxStore failure');
@@ -943,6 +983,10 @@ Future<Map<String, dynamic>> _sendProofMessage({
     mediaAttachmentRepo: stack.mediaAttachmentRepo,
   );
   stopwatch.stop();
+  if (result.$1 != SendGroupMessageResult.success &&
+      result.$1 != SendGroupMessageResult.successNoPeers) {
+    throw StateError('$_role failed to send $key: ${result.$1.name}');
+  }
   final publishPayload = _groupPublishPayloadForMessage(
     stack: stack,
     messageId: result.$2?.id ?? messageId,
@@ -951,7 +995,21 @@ Future<Map<String, dynamic>> _sendProofMessage({
     stack: stack,
     messageId: result.$2?.id ?? messageId,
   );
-  final actualTopicPeers = _intFromBridgeValue(publishResponse?['topicPeers']);
+  final reliableExchange = _groupSendReliableExchangeForMessage(
+    stack: stack,
+    messageId: result.$2?.id ?? messageId,
+  );
+  final senderKeyPackageId =
+      (publishPayload?['senderKeyPackageId'] as String?) ??
+      (reliableExchange?.requestPayload['senderKeyPackageId'] as String?);
+  final reliableResponse = reliableExchange?.response;
+  final actualTopicPeers =
+      _intFromBridgeValue(publishResponse?['topicPeers']) ??
+      _intFromBridgeValue(reliableResponse?['topicPeerCount']) ??
+      _intFromBridgeValue(reliableResponse?['topicPeers']);
+  final actualExpectedRecipientCount =
+      _intFromBridgeValue(reliableResponse?['expectedRecipientCount']) ??
+      _intFromBridgeValue(publishResponse?['expectedRecipientCount']);
   final recipientPeerIds = _actualDurableRecipientPeerIdsForMessage(
     stack: stack,
     messageId: result.$2?.id ?? messageId,
@@ -964,6 +1022,14 @@ Future<Map<String, dynamic>> _sendProofMessage({
       (publishPayload?['media'] as List<dynamic>? ?? const <dynamic>[])
           .whereType<Map>()
           .toList(growable: false);
+  final reliableRequestMedia =
+      (reliableExchange?.requestPayload['media'] as List<dynamic>? ??
+              const <dynamic>[])
+          .whereType<Map>()
+          .toList(growable: false);
+  final wireMediaCount = publishMedia.isNotEmpty
+      ? publishMedia.length
+      : reliableRequestMedia.length;
   final durableMedia = mediaAttachments == null || mediaAttachments.isEmpty
       ? const <Map<String, dynamic>>[]
       : await _actualDurableMediaForMessage(
@@ -980,8 +1046,8 @@ Future<Map<String, dynamic>> _sendProofMessage({
     'senderUsername': stack.identity.username,
     'senderDeviceId': stack.p2pService.currentState.peerId,
     'transportPeerId': stack.p2pService.currentState.peerId,
-    if (publishPayload?['senderKeyPackageId'] is String)
-      'senderKeyPackageId': publishPayload!['senderKeyPackageId'] as String,
+    if (senderKeyPackageId != null && senderKeyPackageId.isNotEmpty)
+      'senderKeyPackageId': senderKeyPackageId,
     'timestamp':
         (result.$2?.timestamp.toUtc() ??
                 normalizedTimestamp ??
@@ -993,8 +1059,16 @@ Future<Map<String, dynamic>> _sendProofMessage({
     'recipientPeerIds': recipientPeerIds,
     'actualDurablePayloadProof': true,
     'topicPeers': ?actualTopicPeers,
+    'expectedRecipientCount': ?actualExpectedRecipientCount,
+    if (reliableResponse?['deliveryMode'] != null)
+      'deliveryMode': reliableResponse!['deliveryMode'],
+    if (reliableResponse?['inboxStored'] != null)
+      'inboxStored': reliableResponse!['inboxStored'],
+    if (reliableResponse?['publishSucceeded'] != null)
+      'publishSucceeded': reliableResponse!['publishSucceeded'],
     'actualTopicPeerProof':
-        publishResponse?['ok'] == true && actualTopicPeers != null,
+        (publishResponse?['ok'] == true || reliableResponse?['ok'] == true) &&
+        actualTopicPeers != null,
     'sendMs': stopwatch.elapsedMilliseconds,
     if (persistedMedia.isNotEmpty) 'mediaAttachments': persistedMedia,
     if (persistedMedia.isNotEmpty)
@@ -1009,19 +1083,24 @@ Future<Map<String, dynamic>> _sendProofMessage({
     if (persistedMedia.isNotEmpty)
       'mediaAttachmentCount': persistedMedia.length,
     if (mediaAttachments != null && mediaAttachments.isNotEmpty)
-      'wireMediaCount': publishMedia.length,
+      'wireMediaCount': wireMediaCount,
     if (mediaAttachments != null && mediaAttachments.isNotEmpty)
       'durableMediaCount': durableMedia.length,
     'accepted':
         result.$1 == SendGroupMessageResult.success ||
         result.$1 == SendGroupMessageResult.successNoPeers,
   };
-  if (result.$1 != SendGroupMessageResult.success &&
-      result.$1 != SendGroupMessageResult.successNoPeers) {
-    throw StateError('$_role failed to send $key: ${result.$1.name}');
-  }
   writeSharedJson(_signalName('${_role}_sent_$key.json'), sent);
   return sent;
+}
+
+List<int> _pngFixtureBytes(List<int> suffix) {
+  return <int>[
+    ...base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+    ),
+    ...suffix,
+  ];
 }
 
 Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl006PostRemovalMedia({
@@ -1036,13 +1115,15 @@ Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl006PostRemovalMedia({
   final tempDir = await Directory.systemTemp.createTemp(
     'pl006_post_removal_media_',
   );
-  final localFile = File('${tempDir.path}/pl006-post-removal.bin');
-  await localFile.writeAsBytes(<int>[6, 0, 0, 6, 42, 43, 44, 45]);
+  final localFile = File('${tempDir.path}/pl006-post-removal.png');
+  await localFile.writeAsBytes(
+    _pngFixtureBytes(<int>[6, 0, 0, 6, 42, 43, 44, 45]),
+  );
   final blobId = 'pl006-post-removal-media-$_runId';
   final uploaded = await uploadMedia(
     bridge: stack.bridge,
     localFilePath: localFile.path,
-    mime: 'application/octet-stream',
+    mime: 'image/png',
     recipientPeerId: groupId,
     allowedPeers: allowedPeers,
     blobId: blobId,
@@ -1076,13 +1157,13 @@ Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl007ReaddMedia({
   final tempDir = await Directory.systemTemp.createTemp(
     'pl007_${window}_media_',
   );
-  final localFile = File('${tempDir.path}/pl007-$window.bin');
-  await localFile.writeAsBytes(bytes);
+  final localFile = File('${tempDir.path}/pl007-$window.png');
+  await localFile.writeAsBytes(_pngFixtureBytes(bytes));
   final blobId = 'pl007-$window-media-$_runId';
   final uploaded = await uploadMedia(
     bridge: stack.bridge,
     localFilePath: localFile.path,
-    mime: 'application/octet-stream',
+    mime: 'image/png',
     recipientPeerId: groupId,
     allowedPeers: allowedPeers,
     blobId: blobId,
@@ -1686,21 +1767,25 @@ Future<Map<String, dynamic>> _sendGo002InboxFailureProofMessage({
     throw StateError('GO-002 Alice publish must succeed: ${result.$1.name}');
   }
   final beforeRetry = await stack.groupMsgRepo.getMessage(messageId);
-  if (beforeRetry?.status != 'pending' ||
+  final retryableStatus =
+      beforeRetry?.status == 'pending' || beforeRetry?.status == 'sent';
+  if (!retryableStatus ||
       beforeRetry?.inboxStored != false ||
       beforeRetry?.inboxRetryPayload == null) {
     throw StateError(
-      'GO-002 Alice row must be pending and retryable before retry; '
+      'GO-002 Alice row must be retryable before retry; '
       'status=${beforeRetry?.status} '
       'inboxStored=${beforeRetry?.inboxStored} '
       'retryPayload=${beforeRetry?.inboxRetryPayload != null}',
     );
   }
 
-  final failedRecipientPeerIds = _failedInboxStoreRecipientPeerIdsForMessage(
-    bridge: failureBridge,
-    messageId: messageId,
-  );
+  final failedRecipientPeerIds = failureBridge.failedInboxStoreMessages.isEmpty
+      ? _recipientPeerIdsFromInboxRetryPayload(beforeRetry!.inboxRetryPayload)
+      : _failedInboxStoreRecipientPeerIdsForMessage(
+          bridge: failureBridge,
+          messageId: messageId,
+        );
   final publishResponse = _groupPublishResponseForMessage(
     stack: stack,
     messageId: messageId,
@@ -1792,6 +1877,28 @@ List<String> _actualDurableRecipientPeerIdsForMessage({
         .where((value) => value.isNotEmpty)
         .toList(growable: false);
   }
+  final reliableExchange = _groupSendReliableExchangeForMessage(
+    stack: stack,
+    messageId: messageId,
+  );
+  if (reliableExchange != null &&
+      reliableExchange.response['inboxStored'] == true) {
+    final envelope = reliableExchange.response['envelope'];
+    if (envelope is! String || envelope.trim().isEmpty) {
+      throw StateError(
+        'Missing group:sendReliable durable envelope for $messageId',
+      );
+    }
+    final replayEnvelope = jsonDecode(envelope) as Map<String, dynamic>;
+    if (replayEnvelope['messageId'] != messageId) {
+      throw StateError(
+        'Mismatched group:sendReliable durable envelope for $messageId',
+      );
+    }
+    return _stringListFromBridgeValue(
+      reliableExchange.response['recipientPeerIds'],
+    );
+  }
   throw StateError('Missing actual group:inboxStore payload for $messageId');
 }
 
@@ -1812,6 +1919,14 @@ List<String> _failedInboxStoreRecipientPeerIdsForMessage({
         .toList(growable: false);
   }
   throw StateError('Missing forced failed group:inboxStore for $messageId');
+}
+
+List<String> _recipientPeerIdsFromInboxRetryPayload(String? retryPayload) {
+  if (retryPayload == null || retryPayload.trim().isEmpty) {
+    throw StateError('Missing inbox retry payload for forced inbox failure');
+  }
+  final payload = jsonDecode(retryPayload) as Map<String, dynamic>;
+  return _stringListFromBridgeValue(payload['recipientPeerIds']);
 }
 
 Map<String, dynamic>? _groupPublishPayloadForMessage({
@@ -1846,6 +1961,25 @@ Map<String, dynamic>? _groupPublishResponseForMessage({
   return null;
 }
 
+({Map<String, dynamic> requestPayload, Map<String, dynamic> response})?
+_groupSendReliableExchangeForMessage({
+  required GroupMultiDeviceTestStack stack,
+  required String messageId,
+}) {
+  final bridge = stack.bridge;
+  if (bridge is! RecordingGoBridgeClient) return null;
+  for (final exchange in bridge.bridgeExchanges.reversed) {
+    final request = jsonDecode(exchange['request']!) as Map<String, dynamic>;
+    if (request['cmd'] != 'group:sendReliable') continue;
+    final payload = request['payload'] as Map<String, dynamic>;
+    if (payload['messageId'] != messageId) continue;
+    final response = jsonDecode(exchange['response']!) as Map<String, dynamic>;
+    if (response['messageId'] != messageId) continue;
+    return (requestPayload: payload, response: response);
+  }
+  return null;
+}
+
 Future<List<Map<String, dynamic>>> _actualDurableMediaForMessage({
   required GroupMultiDeviceTestStack stack,
   required String messageId,
@@ -1870,6 +2004,41 @@ Future<List<Map<String, dynamic>>> _actualDurableMediaForMessage({
       stack.bridge,
       stack.groupRepo,
       <String, dynamic>{'message': message},
+      groupId,
+    );
+    return (durablePayload['media'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList(growable: false);
+  }
+  final reliableExchange = _groupSendReliableExchangeForMessage(
+    stack: stack,
+    messageId: messageId,
+  );
+  if (reliableExchange != null &&
+      reliableExchange.response['inboxStored'] == true) {
+    final envelope = reliableExchange.response['envelope'];
+    if (envelope is! String || envelope.trim().isEmpty) {
+      throw StateError(
+        'Missing group:sendReliable durable envelope for $messageId',
+      );
+    }
+    final replayEnvelope = jsonDecode(envelope) as Map<String, dynamic>;
+    if (replayEnvelope['messageId'] != messageId) {
+      throw StateError(
+        'Mismatched group:sendReliable durable envelope for $messageId',
+      );
+    }
+    final groupId =
+        reliableExchange.requestPayload['groupId'] as String? ??
+        replayEnvelope['groupId'] as String?;
+    if (groupId == null || groupId.isEmpty) {
+      throw StateError('Missing groupId for actual inbox payload $messageId');
+    }
+    final durablePayload = await decodeInboxMessage(
+      stack.bridge,
+      stack.groupRepo,
+      <String, dynamic>{'message': envelope},
       groupId,
     );
     return (durablePayload['media'] as List<dynamic>? ?? const <dynamic>[])
@@ -1922,6 +2091,15 @@ int? _intFromBridgeValue(Object? value) {
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value);
   return null;
+}
+
+List<String> _stringListFromBridgeValue(Object? value) {
+  if (value is! List) return const <String>[];
+  return value
+      .map((entry) => entry.toString().trim())
+      .where((entry) => entry.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
 }
 
 Future<Map<String, dynamic>> _sendLiveOnlyProofMessage({
@@ -2976,10 +3154,16 @@ Future<void> _waitForRetainedSelfRemoval({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
   Duration timeout = const Duration(seconds: 120),
+  bool allowDeletedGroup = false,
 }) async {
   var nextDrainAt = DateTime.fromMillisecondsSinceEpoch(0);
   await waitForCondition(() async {
     final group = await stack.groupRepo.getGroup(groupId);
+    // GE005 allows the removed device to delete the local group entirely;
+    // other retained-history scenarios keep the stricter group+no-member+no-key proof.
+    if (group == null && allowDeletedGroup) {
+      return true;
+    }
     final selfMember = await stack.groupRepo.getMember(
       groupId,
       stack.identity.peerId,
@@ -3006,6 +3190,9 @@ Future<void> _waitForRetainedSelfRemoval({
       }
     }
     final refreshedGroup = await stack.groupRepo.getGroup(groupId);
+    if (refreshedGroup == null && allowDeletedGroup) {
+      return true;
+    }
     final refreshedSelfMember = await stack.groupRepo.getMember(
       groupId,
       stack.identity.peerId,
@@ -7465,23 +7652,39 @@ Future<GroupKeyInfo> _nw012RotateKeySkippingOfflineCharlie({
   final charliePeerId = identities['charlie']!['peerId'] as String;
   final charlieTransportPeerId =
       identities['charlie']!['transportPeerId'] as String? ?? charliePeerId;
-  final key = await rotateAndDistributeGroupKey(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    groupId: groupId,
-    selfPeerId: stack.identity.peerId,
-    senderPublicKey: stack.identity.publicKey,
-    senderPrivateKey: stack.identity.privateKey,
-    senderUsername: stack.identity.username,
-    sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      if (peerId == charliePeerId || peerId == charlieTransportPeerId) {
+  Future<GroupKeyInfo?> rotate() {
+    return rotateAndDistributeGroupKey(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      selfPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      sourceDeviceId: stack.p2pService.currentState.peerId,
+      sendP2PMessage: (peerId, message) async {
+        if (peerId == charliePeerId || peerId == charlieTransportPeerId) {
+          return true;
+        }
+        await stack.p2pService.sendMessage(peerId, message);
         return true;
-      }
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
-  );
+      },
+    );
+  }
+
+  var key = await rotate();
+  if (key == null && _lastGenerateNextKeyFailedWithActiveGrace(stack.bridge)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NW012_KEY_GRACE_RETRY_WAIT',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'delayMs': _ge005NativeGraceRetryDelay.inMilliseconds,
+      },
+    );
+    await Future<void>.delayed(_ge005NativeGraceRetryDelay);
+    key = await rotate();
+  }
   if (key == null) {
     throw StateError('NW-012 $_role key rotation failed');
   }
@@ -8235,6 +8438,7 @@ Future<void> _publishPreparedMemberRemovedSystemPayload({
     groupId,
     replayEnvelope,
     recipientPeerIds: <String>[memberPeerId],
+    preserveRecipientPeerIds: true,
   );
   await sendGroupMembershipUpdateDirect(
     sendP2PMessage: (peerId, message) async {
@@ -8331,6 +8535,7 @@ Future<DateTime> _removeCharlieAndPublish({
     groupId,
     removalReplayEnvelope,
     recipientPeerIds: replayRecipientPeerIds,
+    preserveRecipientPeerIds: true,
   );
   if (removalProofKey != null) {
     writeSharedJson(_signalName('alice_sent_$removalProofKey.json'), {
@@ -9461,6 +9666,7 @@ Future<void> _runGe004Charlie(
 
 const _ge005CycleCount = 20;
 const _ge005PropagationTimeout = Duration(seconds: 300);
+const _ge005NativeGraceRetryDelay = Duration(seconds: 31);
 
 String _ge005CycleTag(int cycle) => cycle.toString().padLeft(2, '0');
 
@@ -9468,6 +9674,110 @@ String _ge005RemovedKey(int cycle) =>
     'aliceGe005Removed${_ge005CycleTag(cycle)}';
 
 String _ge005ReaddKey(int cycle) => 'bobGe005Readd${_ge005CycleTag(cycle)}';
+
+bool _lastGenerateNextKeyFailedWithActiveGrace(Bridge bridge) {
+  if (bridge is! RecordingGoBridgeClient) return false;
+  for (final exchange in bridge.bridgeExchanges.reversed) {
+    try {
+      final request = jsonDecode(exchange['request']!) as Map<String, dynamic>;
+      if (request['cmd'] != 'group:generateNextKey') continue;
+      final response =
+          jsonDecode(exchange['response']!) as Map<String, dynamic>;
+      return response['ok'] != true &&
+          response['errorCode'] == 'GROUP_KEY_GRACE_ACTIVE';
+    } catch (_) {
+      return false;
+    }
+  }
+  return false;
+}
+
+Future<GroupKeyInfo?> _rotateGroupKeyWithNativeGraceRetry({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String cycleTag,
+  Future<bool> Function(String peerId, String message)? sendP2PMessage,
+}) async {
+  Future<GroupKeyInfo?> rotate() {
+    return rotateAndDistributeGroupKey(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      selfPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      sourceDeviceId: stack.p2pService.currentState.peerId,
+      sendP2PMessage:
+          sendP2PMessage ??
+          (peerId, message) async {
+            return stack.p2pService.sendMessage(peerId, message);
+          },
+    );
+  }
+
+  final rotatedKey = await rotate();
+  if (rotatedKey != null) return rotatedKey;
+  if (!_lastGenerateNextKeyFailedWithActiveGrace(stack.bridge)) return null;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GE005_KEY_GRACE_RETRY_WAIT',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'cycle': cycleTag,
+      'delayMs': _ge005NativeGraceRetryDelay.inMilliseconds,
+    },
+  );
+  await Future<void>.delayed(_ge005NativeGraceRetryDelay);
+  return rotate();
+}
+
+int _groupUpdateConfigExchangeCount({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required int minMemberCount,
+}) {
+  final bridge = stack.bridge;
+  if (bridge is! RecordingGoBridgeClient) return 0;
+  var count = 0;
+  for (final exchange in bridge.bridgeExchanges) {
+    try {
+      final request = jsonDecode(exchange['request']!) as Map<String, dynamic>;
+      if (request['cmd'] != 'group:updateConfig') continue;
+      final payload = request['payload'] as Map<String, dynamic>;
+      if (payload['groupId'] != groupId) continue;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      final members = groupConfig['members'] as List<dynamic>? ?? const [];
+      if (members.length < minMemberCount) continue;
+      final response =
+          jsonDecode(exchange['response']!) as Map<String, dynamic>;
+      if (response['ok'] != true) continue;
+      count += 1;
+    } catch (_) {
+      continue;
+    }
+  }
+  return count;
+}
+
+Future<void> _waitForGroupUpdateConfigExchange({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required int previousCount,
+  required int minMemberCount,
+  required Duration timeout,
+}) async {
+  if (stack.bridge is! RecordingGoBridgeClient) return;
+  await waitForCondition(() async {
+    final count = _groupUpdateConfigExchangeCount(
+      stack: stack,
+      groupId: groupId,
+      minMemberCount: minMemberCount,
+    );
+    return count > previousCount;
+  }, timeout: timeout);
+}
 
 bool _sentKeyStartsWith(Map<String, dynamic> sent, String prefix) {
   return (sent['key'] as String? ?? '').startsWith(prefix);
@@ -9590,18 +9900,10 @@ Future<void> _runGe005Alice(
       timeout: _ge005PropagationTimeout,
     );
 
-    final rejoinKey = await rotateAndDistributeGroupKey(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
+    final rejoinKey = await _rotateGroupKeyWithNativeGraceRetry(
+      stack: stack,
       groupId: groupId,
-      selfPeerId: stack.identity.peerId,
-      senderPublicKey: stack.identity.publicKey,
-      senderPrivateKey: stack.identity.privateKey,
-      senderUsername: stack.identity.username,
-      sourceDeviceId: stack.p2pService.currentState.peerId,
-      sendP2PMessage: (peerId, message) async {
-        return stack.p2pService.sendMessage(peerId, message);
-      },
+      cycleTag: tag,
     );
     if (rejoinKey == null) {
       throw StateError('GE-005 Alice key rotation failed at cycle $tag');
@@ -9682,6 +9984,10 @@ Future<void> _runGe005Alice(
     );
     receivedMessages.add(bobReceived);
     writeSharedJson(_signalName('alice_received_$readdKey.json'), bobReceived);
+    await waitForSharedSignal(
+      _signalName('charlie_received_$readdKey.json'),
+      timeout: _ge005PropagationTimeout,
+    );
   }
 
   final finalMemberPeerIds = await _memberPeerIds(stack, groupId);
@@ -9756,12 +10062,24 @@ Future<void> _runGe005Bob(
       keyEpoch: rejoinKey['keyEpoch'] as int,
       timeout: _ge005PropagationTimeout,
     );
+    final readdConfigUpdateCount = _groupUpdateConfigExchangeCount(
+      stack: stack,
+      groupId: groupId,
+      minMemberCount: 3,
+    );
     writeSharedText(_signalName('bob_ge005_rotated_key_$tag'), 'ok');
 
     await _waitForMemberInclusion(
       stack: stack,
       groupId: groupId,
       memberPeerId: charliePeerId,
+      timeout: _ge005PropagationTimeout,
+    );
+    await _waitForGroupUpdateConfigExchange(
+      stack: stack,
+      groupId: groupId,
+      previousCount: readdConfigUpdateCount,
+      minMemberCount: 3,
       timeout: _ge005PropagationTimeout,
     );
     writeSharedText(_signalName('bob_ge005_readded_$tag'), 'ok');
@@ -9828,6 +10146,8 @@ Future<void> _runGe005Charlie(
         stack: stack,
         groupId: groupId,
         timeout: _ge005PropagationTimeout,
+        // GE005 proves exclusion during the removed window, not history retention.
+        allowDeletedGroup: true,
       );
     }
     writeSharedText(_signalName('charlie_ge005_self_removed_$tag'), 'ok');
@@ -11942,11 +12262,15 @@ Future<void> _runGo002Alice(
         'forcedInboxStoreFailure': sent['forcedInboxStoreFailure'] == true,
         'senderStatusPendingBeforeRetry':
             sent['senderStatusBeforeRetry'] == 'pending',
+        'senderRetryableBeforeRetry':
+            (sent['senderStatusBeforeRetry'] == 'pending' ||
+                sent['senderStatusBeforeRetry'] == 'sent') &&
+            sent['inboxStoredBeforeRetry'] == false &&
+            sent['retryPayloadBeforeRetry'] == true,
         'inboxStoredFalseBeforeRetry': sent['inboxStoredBeforeRetry'] == false,
         'retryPayloadPresentBeforeRetry':
             sent['retryPayloadBeforeRetry'] == true,
         'notSilentlyReliableBeforeRetry':
-            sent['senderStatusBeforeRetry'] == 'pending' &&
             sent['inboxStoredBeforeRetry'] == false &&
             sent['retryPayloadBeforeRetry'] == true,
         'retryCount': sent['retryCount'],
@@ -13063,7 +13387,7 @@ Future<void> _runDe002Alice(
 
   final expectedKeys = _de002ExpectedKeys();
   final expectedTexts = _de002ExpectedTexts();
-  final baseTimestamp = DateTime.utc(2026, 5, 12, 2);
+  final baseTimestamp = DateTime.now().toUtc();
   final sentMessages = <Map<String, dynamic>>[];
   for (var index = 0; index < expectedKeys.length; index += 1) {
     final sent = await _sendProofMessage(
@@ -13153,12 +13477,13 @@ Future<void> _runDe003Alice(
   await waitForSharedSignal(_signalName('charlie_group_joined'));
   await Future<void>.delayed(const Duration(seconds: 5));
 
+  final sendTimestamp = DateTime.now().toUtc();
   final sent = await _sendProofMessage(
     stack: stack,
     groupId: groupId,
     key: 'aliceExplicit',
     text: 'DE-003 explicit id $_runId',
-    timestamp: DateTime.utc(2026, 5, 12, 3),
+    timestamp: sendTimestamp,
   );
   await waitForSharedSignal(_signalName('bob_received_aliceExplicit.json'));
   await waitForSharedSignal(_signalName('charlie_received_aliceExplicit.json'));
@@ -13253,7 +13578,7 @@ Future<void> _runDe007Alice(
     groupId: groupId,
     key: 'aliceZeroPeer',
     text: 'DE-007 zero-peer durable fallback $_runId',
-    timestamp: DateTime.utc(2026, 5, 12, 4),
+    timestamp: DateTime.now().toUtc(),
   );
   final saved = await stack.groupMsgRepo.getMessage(
     sent['messageId'] as String,
@@ -13662,6 +13987,9 @@ Future<void> _runIr001Alice(
   await waitForSharedSignal(_signalName('bob_ir001_offline'));
 
   final missedSent = <Map<String, dynamic>>[];
+  final baseTimestamp = DateTime.now().toUtc().subtract(
+    const Duration(minutes: 20),
+  );
   for (var index = 1; index <= 3; index++) {
     missedSent.add(
       await _sendProofMessage(
@@ -13669,7 +13997,7 @@ Future<void> _runIr001Alice(
         groupId: groupId,
         key: _ir001MissedKey(index),
         text: _ir001MissedText(index),
-        timestamp: DateTime.utc(2026, 5, 12, 6, index),
+        timestamp: baseTimestamp.add(Duration(minutes: index)),
       ),
     );
   }
@@ -13686,7 +14014,7 @@ Future<void> _runIr001Alice(
     groupId: groupId,
     key: _ir001LiveKey,
     text: _ir001LiveText(),
-    timestamp: DateTime.utc(2026, 5, 12, 6, 10),
+    timestamp: baseTimestamp.add(const Duration(minutes: 10)),
   );
   await waitForSharedSignal(_signalName('bob_received_$_ir001LiveKey.json'));
   await waitForSharedSignal(
@@ -13894,7 +14222,7 @@ const _ir015TextKey = 'aliceIr015Text';
 const _ir015QuoteKey = 'aliceIr015Quote';
 const _ir015ImageKey = 'aliceIr015Image';
 const _ir015VideoKey = 'aliceIr015Video';
-const _ir015FileKey = 'aliceIr015File';
+const _ir015PngKey = 'aliceIr015Png';
 const _ir015GifKey = 'aliceIr015Gif';
 const _ir015VoiceKey = 'aliceIr015Voice';
 const _ir015VariantKeys = <String>[
@@ -13902,14 +14230,14 @@ const _ir015VariantKeys = <String>[
   _ir015QuoteKey,
   _ir015ImageKey,
   _ir015VideoKey,
-  _ir015FileKey,
+  _ir015PngKey,
   _ir015GifKey,
   _ir015VoiceKey,
 ];
 const _ir015MediaKeys = <String>[
   _ir015ImageKey,
   _ir015VideoKey,
-  _ir015FileKey,
+  _ir015PngKey,
   _ir015GifKey,
   _ir015VoiceKey,
 ];
@@ -13928,8 +14256,8 @@ String _ir015VariantType(String key) {
       return 'image';
     case _ir015VideoKey:
       return 'video';
-    case _ir015FileKey:
-      return 'file';
+    case _ir015PngKey:
+      return 'png';
     case _ir015GifKey:
       return 'gif';
     case _ir015VoiceKey:
@@ -13943,7 +14271,7 @@ MediaAttachment? _ir015MediaAttachment({
   required String key,
   required String messageId,
 }) {
-  final now = DateTime.utc(2026, 5, 12, 7).toIso8601String();
+  final now = DateTime.now().toUtc().toIso8601String();
   switch (key) {
     case _ir015ImageKey:
       return MediaAttachment(
@@ -13980,18 +14308,20 @@ MediaAttachment? _ir015MediaAttachment({
         encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         createdAt: now,
       );
-    case _ir015FileKey:
+    case _ir015PngKey:
       return MediaAttachment(
-        id: 'ir015-file-$_runId',
+        id: 'ir015-png-$_runId',
         messageId: messageId,
-        mime: 'application/octet-stream',
+        mime: 'image/png',
         size: 34567,
-        mediaType: 'file',
-        localPath: '/tmp/ir015-file.bin',
+        mediaType: 'image',
+        width: 1024,
+        height: 768,
+        localPath: '/tmp/ir015-png.png',
         downloadStatus: 'done',
         contentHash: _ir015ContentHash,
-        encryptionKeyBase64: 'key-ir015-file',
-        encryptionNonce: 'nonce-ir015-file',
+        encryptionKeyBase64: 'key-ir015-png',
+        encryptionNonce: 'nonce-ir015-png',
         encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         createdAt: now,
       );
@@ -14046,9 +14376,9 @@ bool _ir015ReceivedMediaOk(Map<String, dynamic> received, String key) {
       return attachment['mime'] == 'video/mp4' &&
           attachment['mediaType'] == 'video' &&
           attachment['durationMs'] == 4200;
-    case _ir015FileKey:
-      return attachment['mime'] == 'application/octet-stream' &&
-          attachment['mediaType'] == 'file';
+    case _ir015PngKey:
+      return attachment['mime'] == 'image/png' &&
+          attachment['mediaType'] == 'image';
     case _ir015GifKey:
       return attachment['mime'] == 'image/gif' &&
           attachment['mediaType'] == 'image';
@@ -14079,6 +14409,9 @@ Future<void> _runIr015Alice(
   await waitForSharedSignal(_signalName('bob_ir015_offline'));
 
   final sentByKey = <String, Map<String, dynamic>>{};
+  final baseTimestamp = DateTime.now().toUtc().subtract(
+    const Duration(minutes: 20),
+  );
   for (var index = 0; index < _ir015VariantKeys.length; index++) {
     final key = _ir015VariantKeys[index];
     final messageId = 'gmp_${_runId}_${_scenario}_${key}_$_role';
@@ -14088,7 +14421,7 @@ Future<void> _runIr015Alice(
       groupId: groupId,
       key: key,
       text: _ir015VariantText(key),
-      timestamp: DateTime.utc(2026, 5, 12, 7, index + 1),
+      timestamp: baseTimestamp.add(Duration(minutes: index + 1)),
       quotedMessageId: key == _ir015QuoteKey
           ? sentByKey[_ir015TextKey]!['messageId'] as String
           : null,
@@ -17491,6 +17824,10 @@ Future<void> _runGm003BobOrCharlie(
       );
     }
 
+    await waitForSharedSignal(
+      _signalName('dana_received_aliceLiveAfterDanaDrain.json'),
+    );
+
     await _writeVerdict(
       stack: stack,
       groupId: groupId,
@@ -18648,6 +18985,7 @@ Future<void> _runGm005CharlieSeed(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
 ) async {
+  final isMl006 = _scenario == 'private_offline_remove';
   final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
   final groupId = await _importGm004JoinedGroupFixture(
     stack: stack,
@@ -18667,6 +19005,26 @@ Future<void> _runGm005CharlieSeed(
       'hadOldKeyBeforeOffline': true,
     },
   );
+  if (!isMl006) return;
+
+  final stopped = await stack.p2pService.stopNode();
+  if (!stopped) {
+    throw StateError('ML-006 Charlie failed to stop node for offline removal');
+  }
+  writeSharedText(_signalName('charlie_offline_before_removal'), 'ok');
+
+  await waitForSharedSignal(_signalName('charlie_relaunch_ready'));
+  final restarted = await stack.p2pService.startNode(
+    stack.identity.privateKey,
+    stack.identity.peerId,
+  );
+  if (!restarted) {
+    throw StateError('ML-006 Charlie failed to restart node for catch-up');
+  }
+  await _waitForOnline(stack.p2pService);
+  await rejoinGroupTopics(bridge: stack.bridge, groupRepo: stack.groupRepo);
+
+  await _runGm005Charlie(stack, identities);
 }
 
 Future<void> _runGm005Charlie(
@@ -18712,16 +19070,12 @@ Future<void> _runGm005Charlie(
         )
       : null;
 
-  var retrievedInboxAfterReconnect = false;
-  await drainGroupOfflineInboxForGroup(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    msgRepo: stack.groupMsgRepo,
+  final drainCatchUpProof = await _drainOfflineRemovalUntilSelfRemoved(
+    stack: stack,
     groupId: groupId,
-    groupMessageListener: stack.groupListener,
-    selfPeerId: stack.identity.peerId,
   );
-  retrievedInboxAfterReconnect = true;
+  final retrievedInboxAfterReconnect =
+      (drainCatchUpProof['completedDrainCount'] as int? ?? 0) > 0;
 
   final groupAfterDrain = await stack.groupRepo.getGroup(groupId);
   final keyEpochAfterDrain = await _keyEpoch(stack, groupId);
@@ -18775,6 +19129,7 @@ Future<void> _runGm005Charlie(
         'restoredStaleStateFromFixture': restoredStaleStateFromFixture,
         'staleKeyEpochBeforeDrain': staleKeyBeforeDrain.keyGeneration,
         'retrievedInboxAfterReconnect': retrievedInboxAfterReconnect,
+        ...drainCatchUpProof,
         'convergedRemoved': groupAfterDrain == null,
         'groupPresentAfterCatchUp': groupAfterDrain != null,
         'hasRotatedEpoch': keyEpochAfterDrain >= 2,
@@ -18793,6 +19148,7 @@ Future<void> _runGm005Charlie(
           'restoredStaleStateFromFixture': restoredStaleStateFromFixture,
           'staleKeyEpochBeforeDrain': staleKeyBeforeDrain.keyGeneration,
           'retrievedInboxAfterReconnect': retrievedInboxAfterReconnect,
+          ...drainCatchUpProof,
           'convergedRemoved': groupAfterDrain == null,
           'groupPresentAfterCatchUp': groupAfterDrain != null,
           'hasRotatedEpoch': keyEpochAfterDrain >= 2,
@@ -18818,6 +19174,7 @@ Future<void> _runGm005Charlie(
           'restoredStaleStateFromFixture': restoredStaleStateFromFixture,
           'staleKeyEpochBeforeDrain': staleKeyBeforeDrain.keyGeneration,
           'retrievedInboxAfterReconnect': retrievedInboxAfterReconnect,
+          ...drainCatchUpProof,
           'convergedRemoved': groupAfterDrain == null,
           'groupPresentAfterCatchUp': groupAfterDrain != null,
           'retainedRotatedEpoch': keyEpochAfterDrain >= 2,
@@ -18835,6 +19192,104 @@ Future<void> _runGm005Charlie(
         },
     },
   );
+}
+
+Future<Map<String, dynamic>> _drainOfflineRemovalUntilSelfRemoved({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  Duration timeout = const Duration(seconds: 45),
+  Duration retryDelay = const Duration(seconds: 1),
+}) async {
+  final flowEvents = <Map<String, dynamic>>[];
+  final deadline = DateTime.now().add(timeout);
+  var attempts = 0;
+  var completedDrains = 0;
+  final errors = <String>[];
+
+  debugSetFlowEventSink((payload) {
+    flowEvents.add(Map<String, dynamic>.from(payload));
+  });
+  try {
+    while (true) {
+      attempts++;
+      stdout.writeln(
+        '[GMP][$_role] offline removal drain attempt $attempts begin',
+      );
+      try {
+        await drainGroupOfflineInboxForGroup(
+          bridge: stack.bridge,
+          groupRepo: stack.groupRepo,
+          msgRepo: stack.groupMsgRepo,
+          groupId: groupId,
+          groupMessageListener: stack.groupListener,
+          selfPeerId: stack.identity.peerId,
+        );
+        completedDrains++;
+      } catch (error) {
+        errors.add(error.toString());
+        stdout.writeln(
+          '[GMP][$_role] offline removal drain attempt $attempts error: '
+          '$error',
+        );
+      }
+
+      final groupRemoved = await stack.groupRepo.getGroup(groupId) == null;
+      final latestEpoch = await _keyEpoch(stack, groupId);
+      stdout.writeln(
+        '[GMP][$_role] offline removal drain attempt $attempts '
+        'removed=$groupRemoved latestEpoch=$latestEpoch',
+      );
+      if (groupRemoved || !DateTime.now().isBefore(deadline)) break;
+      await Future<void>.delayed(retryDelay);
+    }
+  } finally {
+    debugSetFlowEventSink(null);
+  }
+
+  final retrieveCounts = <int>[];
+  final groupDoneCounts = <int>[];
+  var sawRemovalStop = false;
+  var recipientSkippedCount = 0;
+  var signatureRejectedCount = 0;
+  var decodeSkippedCount = 0;
+  for (final event in flowEvents) {
+    final eventName = event['event']?.toString();
+    final details = event['details'] is Map
+        ? Map<String, dynamic>.from(event['details'] as Map)
+        : const <String, dynamic>{};
+    if (eventName == 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE') {
+      retrieveCounts.add(_intFromBridgeValue(details['count']) ?? 0);
+    } else if (eventName == 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_DONE') {
+      groupDoneCounts.add(_intFromBridgeValue(details['messageCount']) ?? 0);
+    } else if (eventName == 'GROUP_DRAIN_OFFLINE_INBOX_STOP_GROUP_REMOVED') {
+      sawRemovalStop = true;
+    } else if (eventName ==
+        'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_RECIPIENT_SKIPPED') {
+      recipientSkippedCount++;
+    } else if (eventName ==
+        'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_SIGNATURE_REJECTED') {
+      signatureRejectedCount++;
+    } else if (eventName == 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED') {
+      decodeSkippedCount++;
+    }
+  }
+
+  return <String, dynamic>{
+    'drainAttemptCount': attempts,
+    'completedDrainCount': completedDrains,
+    'drainErrorCount': errors.length,
+    if (errors.isNotEmpty) 'drainErrors': errors.take(5).toList(),
+    'drainRetrieveCounts': retrieveCounts,
+    'drainRetrievedMessageCount': retrieveCounts.fold<int>(
+      0,
+      (sum, count) => sum + count,
+    ),
+    'drainGroupDoneMessageCounts': groupDoneCounts,
+    'drainSawRemovalStop': sawRemovalStop,
+    'drainRecipientSkippedCount': recipientSkippedCount,
+    'drainSignatureRejectedCount': signatureRejectedCount,
+    'drainDecodeSkippedCount': decodeSkippedCount,
+  };
 }
 
 Future<void> _runGm006Alice(
@@ -22128,18 +22583,10 @@ Future<void> _runGe015Alice(
     'ok',
   );
 
-  final repairedRemoveKey = await rotateAndDistributeGroupKey(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
+  final repairedRemoveKey = await _rotateGroupKeyWithNativeGraceRetry(
+    stack: stack,
     groupId: groupId,
-    selfPeerId: alicePeerId,
-    senderPublicKey: stack.identity.publicKey,
-    senderPrivateKey: stack.identity.privateKey,
-    senderUsername: stack.identity.username,
-    sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      return stack.p2pService.sendMessage(peerId, message);
-    },
+    cycleTag: 'ge015_remove_repair',
   );
   if (repairedRemoveKey == null) {
     throw StateError('GE-015 Alice remove fanout repair failed after restart');
@@ -22214,18 +22661,10 @@ Future<void> _runGe015Alice(
     eventAt: readdedCharlie.joinedAt,
   );
 
-  final readdKey = await rotateAndDistributeGroupKey(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
+  final readdKey = await _rotateGroupKeyWithNativeGraceRetry(
+    stack: stack,
     groupId: groupId,
-    selfPeerId: alicePeerId,
-    senderPublicKey: stack.identity.publicKey,
-    senderPrivateKey: stack.identity.privateKey,
-    senderUsername: stack.identity.username,
-    sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      return stack.p2pService.sendMessage(peerId, message);
-    },
+    cycleTag: 'ge015_readd_repair',
   );
   if (readdKey == null) {
     throw StateError('GE-015 Alice re-add fanout repair failed after restart');
@@ -22903,19 +23342,10 @@ Future<void> _runMl008Alice(
       _signalName(_ml008Signal('charlie_self_removed', cycle)),
     );
 
-    final rejoinKey = await rotateAndDistributeGroupKey(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
+    final rejoinKey = await _rotateGroupKeyWithNativeGraceRetry(
+      stack: stack,
       groupId: groupId,
-      selfPeerId: stack.identity.peerId,
-      senderPublicKey: stack.identity.publicKey,
-      senderPrivateKey: stack.identity.privateKey,
-      senderUsername: stack.identity.username,
-      sourceDeviceId: stack.p2pService.currentState.peerId,
-      sendP2PMessage: (peerId, message) async {
-        await stack.p2pService.sendMessage(peerId, message);
-        return true;
-      },
+      cycleTag: 'ml008-$cycle',
     );
     if (rejoinKey == null) {
       throw StateError('ML-008 Alice key rotation failed at cycle $cycle');
@@ -23223,7 +23653,10 @@ Future<void> _runMl008Charlie(
   var restartMarkersPerformed = 0;
 
   for (var cycle = 1; cycle <= _ml008CycleCount; cycle++) {
-    await _waitForSelfRemoval(stack: stack, groupId: groupId);
+    await _waitForSelfRemovalOrRetainedExclusion(
+      stack: stack,
+      groupId: groupId,
+    );
     selfRemovalCount++;
     writeSharedText(
       _signalName(_ml008Signal('charlie_self_removed', cycle)),
@@ -23390,19 +23823,10 @@ Future<void> _runRa017Alice(
     await waitForSharedSignal(_signalName('dana_ra017_removed_c$cycle'));
     await waitForSharedSignal(_signalName('charlie_ra017_removed_c$cycle'));
 
-    final removedKey = await rotateAndDistributeGroupKey(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
+    final removedKey = await _rotateGroupKeyWithNativeGraceRetry(
+      stack: stack,
       groupId: groupId,
-      selfPeerId: stack.identity.peerId,
-      senderPublicKey: stack.identity.publicKey,
-      senderPrivateKey: stack.identity.privateKey,
-      senderUsername: stack.identity.username,
-      sourceDeviceId: stack.p2pService.currentState.peerId,
-      sendP2PMessage: (peerId, message) async {
-        await stack.p2pService.sendMessage(peerId, message);
-        return true;
-      },
+      cycleTag: 'ra017-removed-c$cycle',
     );
     if (removedKey == null) {
       throw StateError('RA-017 removed-window key rotation failed');
@@ -23484,19 +23908,10 @@ Future<void> _runRa017Alice(
       groupId: groupId,
       danaMember: charlieMember,
     );
-    final readdKey = await rotateAndDistributeGroupKey(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
+    final readdKey = await _rotateGroupKeyWithNativeGraceRetry(
+      stack: stack,
       groupId: groupId,
-      selfPeerId: stack.identity.peerId,
-      senderPublicKey: stack.identity.publicKey,
-      senderPrivateKey: stack.identity.privateKey,
-      senderUsername: stack.identity.username,
-      sourceDeviceId: stack.p2pService.currentState.peerId,
-      sendP2PMessage: (peerId, message) async {
-        await stack.p2pService.sendMessage(peerId, message);
-        return true;
-      },
+      cycleTag: 'ra017-readd-c$cycle',
     );
     if (readdKey == null) {
       throw StateError('RA-017 post-readd key rotation failed');
@@ -24202,6 +24617,7 @@ Future<DateTime> _removeRoleAndPublishForRa018({
             )
             .toList()
           ..sort(),
+    preserveRecipientPeerIds: true,
   );
 
   return removedAt;
@@ -24210,14 +24626,17 @@ Future<DateTime> _removeRoleAndPublishForRa018({
 Future<GroupKeyInfo> _rotateRa018Key({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
-}) {
-  return _rotateAndSendKeyUpdate(
+  required String cycleTag,
+}) async {
+  final rotated = await _rotateGroupKeyWithNativeGraceRetry(
     stack: stack,
     groupId: groupId,
-    sendP2PMessage: (peerId, message) async {
-      return stack.p2pService.sendMessage(peerId, message);
-    },
+    cycleTag: 'ra018-$cycleTag',
   );
+  if (rotated == null) {
+    throw StateError('$_scenario $_role key rotation failed');
+  }
+  return rotated;
 }
 
 Future<void> _readdRoleAndRotateForRa018({
@@ -24245,7 +24664,11 @@ Future<void> _readdRoleAndRotateForRa018({
     groupId: groupId,
     danaMember: member,
   );
-  final readdKey = await _rotateRa018Key(stack: stack, groupId: groupId);
+  final readdKey = await _rotateRa018Key(
+    stack: stack,
+    groupId: groupId,
+    cycleTag: '$role-readd-c$cycle',
+  );
   final updatedGroup = await stack.groupRepo.getGroup(groupId);
   final updatedMembers = await stack.groupRepo.getMembers(groupId);
   writeSharedJson(
@@ -24294,6 +24717,7 @@ Future<void> _runRa018Alice(
     final charlieRemovedKey = await _rotateRa018Key(
       stack: stack,
       groupId: groupId,
+      cycleTag: 'charlie-removed-c$cycle',
     );
     writeSharedJson(_signalName('ra018_charlie_removed_key_c$cycle.json'), {
       'keyEpoch': charlieRemovedKey.keyGeneration,
@@ -24363,6 +24787,7 @@ Future<void> _runRa018Alice(
     final danaRemovedKey = await _rotateRa018Key(
       stack: stack,
       groupId: groupId,
+      cycleTag: 'dana-removed-c$cycle',
     );
     writeSharedJson(_signalName('ra018_dana_removed_key_c$cycle.json'), {
       'keyEpoch': danaRemovedKey.keyGeneration,
@@ -25413,14 +25838,25 @@ Future<void> _runGm009Alice(
   await waitForSharedSignal(_signalName('bob_removed_charlie'));
   await waitForSharedSignal(_signalName('charlie_self_removed'));
 
-  await removeGroupMember(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    groupId: groupId,
-    memberPeerId: identities['charlie']!['peerId'] as String,
-    selfPeerId: stack.identity.peerId,
-    eventAt: removedAt,
-  );
+  var duplicateRemoveIgnored = false;
+  try {
+    await removeGroupMember(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      memberPeerId: identities['charlie']!['peerId'] as String,
+      selfPeerId: stack.identity.peerId,
+      eventAt: removedAt,
+    );
+    duplicateRemoveIgnored = true;
+  } on StateError catch (error) {
+    final message = error.toString();
+    if (!message.contains(staleGroupMembershipEventMessage) &&
+        !message.contains('Member not found')) {
+      rethrow;
+    }
+    duplicateRemoveIgnored = true;
+  }
 
   final keyDistributionTargets = <String>[];
   final rotatedKey = await rotateAndDistributeGroupKey(
@@ -25480,7 +25916,7 @@ Future<void> _runGm009Alice(
     extra: <String, dynamic>{
       'gm009DuplicateRemovalProof': <String, dynamic>{
         'removedCharlieOnce': true,
-        'duplicateRemoveIgnored': true,
+        'duplicateRemoveIgnored': duplicateRemoveIgnored,
         'removedPeerId': charliePeerId,
         'memberListExcludesCharlie': !(await _memberPeerIds(
           stack,
@@ -26951,7 +27387,7 @@ const _pl012ImageContentHash =
     '1111111111111111111111111111111111111111111111111111111111111111';
 const _pl012GifContentHash =
     '2222222222222222222222222222222222222222222222222222222222222222';
-const _pl012FileContentHash =
+const _pl012PngContentHash =
     '3333333333333333333333333333333333333333333333333333333333333333';
 const _pl012VideoContentHash =
     '4444444444444444444444444444444444444444444444444444444444444444';
@@ -26996,16 +27432,18 @@ List<MediaAttachment> _pl012MediaAttachments({required String messageId}) {
       createdAt: createdAt,
     ),
     MediaAttachment(
-      id: 'pl012-file-$_runId',
+      id: 'pl012-png-$_runId',
       messageId: messageId,
-      mime: 'application/octet-stream',
+      mime: 'image/png',
       size: 2048,
-      mediaType: 'file',
-      localPath: '/tmp/pl012-file.bin',
+      mediaType: 'image',
+      width: 1024,
+      height: 768,
+      localPath: '/tmp/pl012-png.png',
       downloadStatus: 'done',
-      contentHash: _pl012FileContentHash,
-      encryptionKeyBase64: 'key-pl012-file',
-      encryptionNonce: 'nonce-pl012-file',
+      contentHash: _pl012PngContentHash,
+      encryptionKeyBase64: 'key-pl012-png',
+      encryptionNonce: 'nonce-pl012-png',
       encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       createdAt: createdAt,
     ),
@@ -27103,7 +27541,12 @@ bool _pl012ReceivedMediaOk(Map<String, dynamic> entry) {
         width: 320,
         height: 240,
       ) &&
-      hasVariant(mime: 'application/octet-stream', mediaType: 'file') &&
+      hasVariant(
+        mime: 'image/png',
+        mediaType: 'image',
+        width: 1024,
+        height: 768,
+      ) &&
       hasVariant(
         mime: 'video/mp4',
         mediaType: 'video',
@@ -31148,6 +31591,21 @@ String? _validationRejectReason(List<Map<String, dynamic>> events) {
   return null;
 }
 
+String? _senderBindingRejectReason(Map<String, dynamic> publishResponse) {
+  if (publishResponse['ok'] == true) return null;
+  final errorMessage =
+      (publishResponse['errorMessage'] as String?) ??
+      (publishResponse['error'] as String?) ??
+      '';
+  final normalized = errorMessage.toLowerCase();
+  if (normalized.contains('sender key package id mismatch') ||
+      normalized.contains('not an active member device') ||
+      normalized.contains('sender device not registered')) {
+    return 'unbound_device';
+  }
+  return null;
+}
+
 Future<Map<String, dynamic>> _waitForGm021StaleAttemptAndProveNoPlaintext({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
@@ -31575,7 +32033,9 @@ Future<void> _runGm021Charlie(
     );
     await Future<void>.delayed(const Duration(milliseconds: 500));
   });
-  final localRejectionReason = _validationRejectReason(stalePublishEvents);
+  final localRejectionReason =
+      _validationRejectReason(stalePublishEvents) ??
+      _senderBindingRejectReason(stalePublish);
   writeSharedJson(
     _signalName('charlie_gm021_stale_same_active_attempt.json'),
     <String, dynamic>{
@@ -31586,6 +32046,8 @@ Future<void> _runGm021Charlie(
       'oldKeyPackageId': oldKeyPackageId,
       'freshKeyPackageId': freshKeyPackageId,
       'senderDeviceId': charlieDeviceId,
+      'publishErrorCode': stalePublish['errorCode'],
+      'publishErrorMessage': stalePublish['errorMessage'],
       'validationRejectReason': localRejectionReason,
     },
   );
@@ -33402,15 +33864,11 @@ Future<GroupKeyInfo> _rotateAndSendKeyUpdate({
   required String groupId,
   required Future<bool> Function(String peerId, String message) sendP2PMessage,
 }) async {
-  final rotated = await rotateAndDistributeGroupKey(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
+  final nextEpoch = (await _keyEpoch(stack, groupId)) + 1;
+  final rotated = await _rotateGroupKeyWithNativeGraceRetry(
+    stack: stack,
     groupId: groupId,
-    selfPeerId: stack.identity.peerId,
-    senderPublicKey: stack.identity.publicKey,
-    senderPrivateKey: stack.identity.privateKey,
-    senderUsername: stack.identity.username,
-    sourceDeviceId: stack.p2pService.currentState.peerId,
+    cycleTag: '$_scenario-$_role-e$nextEpoch',
     sendP2PMessage: sendP2PMessage,
   );
   if (rotated == null) {
@@ -35806,14 +36264,14 @@ Future<void> _runGe020Charlie(
 }
 
 const _ge021SyntheticStableMemberCount = 8;
+final Set<String> _ge021SyntheticTransportPeerIds = <String>{};
 
 String _ge021SyntheticPeerId(int index) {
   return 'ge021-stable-${index.toString().padLeft(2, '0')}-peer-$_runId';
 }
 
 bool _isGe021SyntheticTransportPeerId(String peerId) {
-  return peerId.startsWith('ge021-stable-') &&
-      peerId.contains('-transport-$_runId');
+  return _ge021SyntheticTransportPeerIds.contains(peerId);
 }
 
 Future<List<GroupMember>> _ge021SyntheticMembers({
@@ -35833,6 +36291,14 @@ Future<List<GroupMember>> _ge021SyntheticMembers({
     final identity = Map<String, dynamic>.from(
       identityResult['identity'] as Map,
     );
+    final syntheticTransportPeerId = identity['peerId'] as String?;
+    if (syntheticTransportPeerId == null ||
+        syntheticTransportPeerId.trim().isEmpty) {
+      throw StateError(
+        'GE-021 synthetic identity missing transport peer id: $identity',
+      );
+    }
+    _ge021SyntheticTransportPeerIds.add(syntheticTransportPeerId);
     final mlKemResult = await callMlKemKeygen(bridge);
     if (mlKemResult['ok'] != true) {
       throw StateError('GE-021 synthetic ML-KEM keygen failed: $mlKemResult');
@@ -35849,11 +36315,13 @@ Future<List<GroupMember>> _ge021SyntheticMembers({
         mlKemPublicKey: mlKemPublicKey,
         devices: <GroupMemberDeviceIdentity>[
           GroupMemberDeviceIdentity(
-            deviceId: 'ge021-stable-$label-device-$_runId',
-            transportPeerId: 'ge021-stable-$label-transport-$_runId',
+            deviceId: syntheticTransportPeerId,
+            transportPeerId: syntheticTransportPeerId,
             deviceSigningPublicKey: publicKey,
             mlKemPublicKey: mlKemPublicKey,
-            keyPackageId: 'ge021-stable-$label-key-package-$_runId',
+            keyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+              syntheticTransportPeerId,
+            ),
             keyPackagePublicMaterial: mlKemPublicKey,
           ),
         ],
@@ -37785,28 +38253,44 @@ GroupMember _st009MemberFromIdentity({
   );
 }
 
-GroupMember _st009SyntheticMember({
+Future<GroupMember> _st009SyntheticMember({
+  required Bridge bridge,
   required String groupId,
   required int index,
   required DateTime joinedAt,
-}) {
+}) async {
   final suffix = index.toString().padLeft(2, '0');
   final peerId = 'st009-synthetic-peer-$suffix-$_runId';
+  final identityResult = await callIdentityGenerate(bridge);
+  if (identityResult['ok'] != true) {
+    throw StateError('ST-009 synthetic identity generation failed');
+  }
+  final identity = Map<String, dynamic>.from(identityResult['identity'] as Map);
+  final transportPeerId = identity['peerId'] as String?;
+  if (transportPeerId == null || transportPeerId.trim().isEmpty) {
+    throw StateError('ST-009 synthetic identity missing transport peer id');
+  }
+  final mlKemResult = await callMlKemKeygen(bridge);
+  if (mlKemResult['ok'] != true) {
+    throw StateError('ST-009 synthetic ML-KEM keygen failed: $mlKemResult');
+  }
+  final publicKey = identity['publicKey'] as String;
+  final mlKemPublicKey = mlKemResult['publicKey'] as String;
   return GroupMember(
     groupId: groupId,
     peerId: peerId,
     username: 'ST-009 Synthetic $suffix',
     role: MemberRole.writer,
-    publicKey: 'pk-$peerId',
-    mlKemPublicKey: null,
+    publicKey: publicKey,
+    mlKemPublicKey: mlKemPublicKey,
     devices: <GroupMemberDeviceIdentity>[
       GroupMemberDeviceIdentity(
-        deviceId: '$peerId-device',
-        transportPeerId: '$peerId-device',
-        deviceSigningPublicKey: 'pk-$peerId',
-        mlKemPublicKey: null,
-        keyPackageId: null,
-        keyPackagePublicMaterial: null,
+        deviceId: transportPeerId,
+        transportPeerId: transportPeerId,
+        deviceSigningPublicKey: publicKey,
+        mlKemPublicKey: mlKemPublicKey,
+        keyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(transportPeerId),
+        keyPackagePublicMaterial: mlKemPublicKey,
       ),
     ],
     joinedAt: joinedAt.toUtc(),
@@ -37823,7 +38307,8 @@ Future<void> _st009SeedSyntheticMembers({
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
       groupId: groupId,
-      newMember: _st009SyntheticMember(
+      newMember: await _st009SyntheticMember(
+        bridge: stack.bridge,
         groupId: groupId,
         index: index,
         joinedAt: joinedAt.add(Duration(minutes: index)),
@@ -37854,19 +38339,36 @@ Future<GroupKeyInfo> _st009RotateKeyForProof({
   required String groupId,
   required String phase,
 }) async {
-  final key = await rotateAndDistributeGroupKey(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    groupId: groupId,
-    selfPeerId: stack.identity.peerId,
-    senderPublicKey: stack.identity.publicKey,
-    senderPrivateKey: stack.identity.privateKey,
-    senderUsername: stack.identity.username,
-    sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (_, _) async => true,
-    perRecipientTimeout: const Duration(milliseconds: 250),
-    distributionTimeout: const Duration(seconds: 5),
-  );
+  Future<GroupKeyInfo?> rotate() {
+    return rotateAndDistributeGroupKey(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      selfPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      sourceDeviceId: stack.p2pService.currentState.peerId,
+      sendP2PMessage: (_, _) async => true,
+      perRecipientTimeout: const Duration(milliseconds: 250),
+      distributionTimeout: const Duration(seconds: 5),
+    );
+  }
+
+  var key = await rotate();
+  if (key == null && _lastGenerateNextKeyFailedWithActiveGrace(stack.bridge)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ST009_KEY_GRACE_RETRY_WAIT',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'phase': phase,
+        'delayMs': _ge005NativeGraceRetryDelay.inMilliseconds,
+      },
+    );
+    await Future<void>.delayed(_ge005NativeGraceRetryDelay);
+    key = await rotate();
+  }
   if (key == null) {
     throw StateError('ST-009 $phase key rotation failed');
   }
@@ -37941,7 +38443,8 @@ Future<void> _runSt009Alice(
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
       groupId: groupId,
-      newMember: _st009SyntheticMember(
+      newMember: await _st009SyntheticMember(
+        bridge: stack.bridge,
         groupId: groupId,
         index: 99,
         joinedAt: seededAt.add(const Duration(hours: 1)),

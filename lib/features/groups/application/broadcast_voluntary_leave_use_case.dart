@@ -59,6 +59,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
   required IdentityRepository identityRepo,
   GroupMessageRepository? msgRepo,
   Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  Future<bool> Function(String peerId, String message)? storeP2PMessageInInbox,
 }) async {
   final identity = await identityRepo.loadIdentity();
   if (identity == null) {
@@ -172,6 +173,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
       senderPrivateKey: identity.privateKey,
       senderUsername: senderUsername,
       sendP2PMessage: sendP2PMessage,
+      storeP2PMessageInInbox: storeP2PMessageInInbox,
     );
 
     if (rotatedKey == null) {
