@@ -29,11 +29,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   IdentityModel? cachedIdentity,
 }) async {
   // Step 1: Emit start event
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'QR_FL_BUILD_PAYLOAD_START',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_START', details: {});
 
   // Step 2: Use cached identity or load from repository
   final identity = cachedIdentity ?? await repo.loadIdentity();
@@ -52,7 +48,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   emitFlowEvent(
     layer: 'FL',
     event: 'QR_FL_BUILD_PAYLOAD_IDENTITY_LOADED',
-    details: {'peerId': identity.peerId.substring(0, 12)},
+    details: {'peerId': _redactedPeerId(identity.peerId)},
   );
 
   // Step 5: Build unsigned payload with sorted keys
@@ -71,11 +67,7 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   final dataToSign = jsonEncode(unsignedPayload);
 
   // Step 7: Emit signing event
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'QR_FL_BUILD_PAYLOAD_SIGNING',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_SIGNING', details: {});
 
   // Step 8: Call bridge to sign
   final signResponse = await callSign(dataToSign, identity.privateKey);
@@ -93,22 +85,30 @@ Future<(BuildQRPayloadResult, String?)> buildQRPayload({
   }
 
   // Step 10: Add signature to payload (maintaining sorted keys)
-  final signature = signResponse['signature'] as String;
+  final signature = signResponse['signature'];
+  if (signature is! String || signature.trim().isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_FL_BUILD_PAYLOAD_ERROR',
+      details: {'errorCode': 'MISSING_SIGNATURE', 'errorMessage': ''},
+    );
+    return (BuildQRPayloadResult.signingError, null);
+  }
   final signedPayload = SplayTreeMap<String, dynamic>.from({
     ...unsignedPayload,
-    'sig': signature,
+    'sig': signature.trim(),
   });
 
   // Step 11: Serialize final signed payload
   final finalJson = jsonEncode(signedPayload);
 
   // Step 12: Emit success event
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'QR_FL_BUILD_PAYLOAD_SUCCESS',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'QR_FL_BUILD_PAYLOAD_SUCCESS', details: {});
 
   // Step 13: Return success with JSON string
   return (BuildQRPayloadResult.success, finalJson);
+}
+
+String _redactedPeerId(String peerId) {
+  return peerId.length <= 12 ? peerId : peerId.substring(0, 12);
 }

@@ -248,6 +248,7 @@ void main() {
     expect(payload.containsKey('pushTitle'), isFalse);
     expect(payload.containsKey('pushBody'), isFalse);
     expect(payload['recipientPeerIds'], equals(['peer-2']));
+    expect(payload['preserveRecipientPeerIds'], isTrue);
 
     final begin = events.firstWhere(
       (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORES_BEGIN',

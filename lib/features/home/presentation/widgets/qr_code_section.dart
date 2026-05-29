@@ -28,6 +28,7 @@ class QRCodeSection extends StatelessWidget {
     final qrImageSize = qrContainerSize - 24; // 12px padding on each side
     final textSize = lerpDouble(12.5, 14, t)!;
     final spacing = lerpDouble(8, 16, t)!;
+    final qrCode = qrData == null ? null : _buildRenderableQrCode(qrData!);
 
     return Column(
       children: [
@@ -62,21 +63,25 @@ class QRCodeSection extends StatelessWidget {
             ),
             child: Center(
               child: qrData != null
-                  ? QrImageView(
-                      data: qrData!,
-                      version: QrVersions.auto,
-                      size: qrImageSize,
-                      errorCorrectionLevel: QrErrorCorrectLevel.M,
-                      backgroundColor: Colors.white,
-                      eyeStyle: const QrEyeStyle(
-                        eyeShape: QrEyeShape.square,
-                        color: Colors.black,
-                      ),
-                      dataModuleStyle: const QrDataModuleStyle(
-                        dataModuleShape: QrDataModuleShape.square,
-                        color: Colors.black,
-                      ),
-                    )
+                  ? qrCode == null
+                        ? _buildQRRenderError(context, qrImageSize)
+                        : QrImageView.withQr(
+                            qr: qrCode,
+                            version: QrVersions.auto,
+                            size: qrImageSize,
+                            errorCorrectionLevel: QrErrorCorrectLevel.M,
+                            backgroundColor: Colors.white,
+                            eyeStyle: const QrEyeStyle(
+                              eyeShape: QrEyeShape.square,
+                              color: Colors.black,
+                            ),
+                            dataModuleStyle: const QrDataModuleStyle(
+                              dataModuleShape: QrDataModuleShape.square,
+                              color: Colors.black,
+                            ),
+                            errorStateBuilder: (context, error) =>
+                                _buildQRRenderError(context, qrImageSize),
+                          )
                   : _buildLoadingShimmer(qrImageSize),
             ),
           ),
@@ -91,6 +96,43 @@ class QRCodeSection extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+
+  QrCode? _buildRenderableQrCode(String data) {
+    final validation = QrValidator.validate(
+      data: data,
+      version: QrVersions.auto,
+      errorCorrectionLevel: QrErrorCorrectLevel.M,
+    );
+    final qrCode = validation.qrCode;
+    if (!validation.isValid || qrCode == null) return null;
+
+    try {
+      QrImage(qrCode);
+      return qrCode;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildQRRenderError(BuildContext context, double size) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Center(
+        child: Semantics(
+          label: AppLocalizations.of(context)?.qr_error ?? 'QR error',
+          child: Icon(
+            Icons.error_outline,
+            key: const ValueKey('qr-render-error'),
+            color: theme.colorScheme.error,
+            size: 32,
+          ),
+        ),
+      ),
     );
   }
 

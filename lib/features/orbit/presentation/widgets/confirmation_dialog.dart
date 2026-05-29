@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Shows a confirmation dialog with a title, description, and danger action.
 ///
@@ -121,10 +122,10 @@ class _ConfirmationDialog extends StatelessWidget {
                                   ),
                                 ),
                               ),
-                              child: const Center(
+                              child: Center(
                                 child: Text(
-                                  'Cancel',
-                                  style: TextStyle(
+                                  AppLocalizations.of(context)!.btn_cancel,
+                                  style: const TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
                                     color: Color.fromRGBO(255, 255, 255, 0.7),

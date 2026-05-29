@@ -27,7 +27,8 @@ final _testIdentity = IdentityModel(
   peerId: '12D3KooWTestPeerIdForQR',
   publicKey: 'testPublicKeyBase64',
   privateKey: 'testPrivateKeyBase64',
-  mnemonic12: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+  mnemonic12:
+      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
   mlKemPublicKey: 'mlkemPubKey',
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
@@ -77,7 +78,7 @@ void main() {
 
     final (result, jsonString) = await buildQRPayload(
       repo: repo,
-      callSign: (_, __) async => {'ok': true, 'signature': 'sig'},
+      callSign: (_, _) async => {'ok': true, 'signature': 'sig'},
       cachedIdentity: _testIdentity,
     );
 
@@ -90,7 +91,7 @@ void main() {
 
     final (result, jsonString) = await buildQRPayload(
       repo: repo,
-      callSign: (_, __) async => {'ok': true, 'signature': 'sig'},
+      callSign: (_, _) async => {'ok': true, 'signature': 'sig'},
     );
 
     expect(result, equals(BuildQRPayloadResult.noIdentity));
@@ -100,7 +101,7 @@ void main() {
   test('signingError: returns error when signing fails', () async {
     final (result, jsonString) = await buildQRPayload(
       repo: repo,
-      callSign: (_, __) async => {
+      callSign: (_, _) async => {
         'ok': false,
         'errorCode': 'SIGN_FAILED',
         'errorMessage': 'Key error',
@@ -111,10 +112,20 @@ void main() {
     expect(jsonString, isNull);
   });
 
+  test('signingError: returns error when signature is missing', () async {
+    final (result, jsonString) = await buildQRPayload(
+      repo: repo,
+      callSign: (_, _) async => {'ok': true},
+    );
+
+    expect(result, equals(BuildQRPayloadResult.signingError));
+    expect(jsonString, isNull);
+  });
+
   test('payload keys are sorted alphabetically', () async {
     final (_, jsonString) = await buildQRPayload(
       repo: repo,
-      callSign: (_, __) async => {'ok': true, 'signature': 'sig'},
+      callSign: (_, _) async => {'ok': true, 'signature': 'sig'},
     );
 
     final payload = jsonDecode(jsonString!) as Map<String, dynamic>;

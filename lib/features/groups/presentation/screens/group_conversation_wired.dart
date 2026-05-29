@@ -63,6 +63,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
@@ -509,7 +510,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     await _restoreComposerSnapshot(
       activeUpload.composerSnapshot,
       activeUpload.messageId,
-      snackText: 'Upload cancelled.',
+      snackText: AppLocalizations.of(context)!.upload_cancelled,
       showSnackBar: true,
     );
     return true;
@@ -519,24 +520,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_isTrackingRelayUpload || !mounted) return true;
     final shouldLeave = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Leave conversation?'),
-        content: const Text(
-          'An upload is in progress. Leaving may interrupt it. Are you sure?',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('upload-leave-stay'),
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Stay'),
-          ),
-          FilledButton(
-            key: const ValueKey('upload-leave-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Leave'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        return AlertDialog(
+          title: Text(l10n.upload_leave_title),
+          content: Text(l10n.upload_leave_body),
+          actions: [
+            TextButton(
+              key: const ValueKey('upload-leave-stay'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.upload_leave_stay),
+            ),
+            FilledButton(
+              key: const ValueKey('upload-leave-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.upload_leave_confirm),
+            ),
+          ],
+        );
+      },
     );
     return shouldLeave ?? false;
   }
@@ -731,32 +733,35 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
     return showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Media Too Large'),
-        content: Text(
-          'The attached media is $formattedTotal and exceeds the '
-          '$formattedLimit limit. Would you like to compress and send, '
-          'or cancel?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        return AlertDialog(
+          title: Text(l10n.media_too_large_title),
+          content: Text(
+            l10n.media_too_large_prompt(formattedTotal, formattedLimit),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Compress'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.btn_cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.media_compress),
+            ),
+          ],
+        );
+      },
     );
   }
 
   void _showAttachmentTooLargeMessage() {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.showSnackBar(
-      const SnackBar(
-        content: Text('The media is too large even after compression.'),
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(context)!.media_too_large_after_compress,
+        ),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -816,8 +821,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   void _showGifTooLargeMessage() {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.showSnackBar(
-      const SnackBar(
-        content: Text('GIF files larger than 25 MB cannot be added.'),
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!.media_gif_too_large),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -1053,8 +1058,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
     messenger?.showSnackBar(
-      const SnackBar(
-        content: Text('You were removed from this group.'),
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!.group_removed_snackbar),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -1676,14 +1681,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (result == SendGroupMessageResult.groupDissolved) {
           await _refreshVisibleGroup();
           if (mounted) {
-            _showFloatingSnackBar('This group has been dissolved');
+            _showFloatingSnackBar(
+              AppLocalizations.of(context)!.group_dissolved_snackbar,
+            );
           }
         } else if (mounted && result == SendGroupMessageResult.unauthorized) {
           _showFloatingSnackBar(
-            'You no longer have permission to send messages in this group.',
+            AppLocalizations.of(context)!.group_send_permission_lost,
           );
         } else if (mounted && result == SendGroupMessageResult.groupNotFound) {
-          _showFloatingSnackBar('This group is no longer available.');
+          _showFloatingSnackBar(
+            AppLocalizations.of(context)!.group_unavailable_snackbar,
+          );
         }
       } else if (message == null) {
         await _restoreComposerSnapshotWithoutFailure(
@@ -1722,7 +1731,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final mediaFileManager = widget.mediaFileManager;
     if (mediaAttachmentRepo == null || mediaFileManager == null) {
       _showFloatingSnackBar(
-        'Retry unavailable right now.',
+        AppLocalizations.of(context)!.media_retry_unavailable_now,
         backgroundColor: Colors.red[700],
       );
       return;
@@ -1737,7 +1746,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         .firstOrNull;
     if (target == null) {
       _showFloatingSnackBar(
-        'Media unavailable right now.',
+        AppLocalizations.of(context)!.media_unavailable_now,
         backgroundColor: Colors.red[700],
       );
       return;
@@ -1796,7 +1805,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           refreshedTarget,
         )) {
       _showFloatingSnackBar(
-        'Media is still unavailable.',
+        AppLocalizations.of(context)!.media_still_unavailable,
         backgroundColor: Colors.red[700],
       );
     }
@@ -1839,7 +1848,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final mediaFileManager = widget.mediaFileManager;
     if (mediaAttachmentRepo == null || mediaFileManager == null) {
       _showFloatingSnackBar(
-        'Retry unavailable right now.',
+        AppLocalizations.of(context)!.media_retry_unavailable_now,
         backgroundColor: Colors.red[700],
       );
       return;
@@ -1867,7 +1876,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     if (retried == 0) {
       _showFloatingSnackBar(
-        'Could not retry media message.',
+        AppLocalizations.of(context)!.failed_media_retry_failed,
         backgroundColor: Colors.red[700],
       );
     }
@@ -1878,7 +1887,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final mediaFileManager = widget.mediaFileManager;
     if (mediaAttachmentRepo == null || mediaFileManager == null) {
       _showFloatingSnackBar(
-        'Delete unavailable right now.',
+        AppLocalizations.of(context)!.failed_media_delete_unavailable,
         backgroundColor: Colors.red[700],
       );
       return;
@@ -2227,6 +2236,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       previousOffset: previousOffset,
     );
 
+    if (media.any(_shouldRecoverVisibleAttachment)) {
+      unawaited(_downloadPendingMedia({latestMessage.id: media}));
+    }
+
     if (markAsRead) {
       await _markVisibleReadIfAllowed();
     }
@@ -2268,7 +2281,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   color: sheetColors.iconPrimary,
                 ),
                 title: Text(
-                  'Media Library',
+                  AppLocalizations.of(context)!.picker_media_library,
                   style: TextStyle(color: sheetColors.textPrimary),
                 ),
                 onTap: () {
@@ -2279,7 +2292,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               ListTile(
                 leading: Icon(Icons.camera_alt, color: sheetColors.iconPrimary),
                 title: Text(
-                  'Take Photo',
+                  AppLocalizations.of(context)!.picker_take_photo,
                   style: TextStyle(color: sheetColors.textPrimary),
                 ),
                 onTap: () {
@@ -2290,7 +2303,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               ListTile(
                 leading: Icon(Icons.videocam, color: sheetColors.iconPrimary),
                 title: Text(
-                  'Record Video',
+                  AppLocalizations.of(context)!.picker_record_video,
                   style: TextStyle(color: sheetColors.textPrimary),
                 ),
                 onTap: () {
@@ -2583,9 +2596,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text(
-              'Microphone permission is required to record voice messages.',
-            ),
+            content: Text(AppLocalizations.of(context)!.perm_microphone_record),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           ),
@@ -2941,16 +2952,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             if (result == SendGroupMessageResult.groupDissolved) {
               await _refreshVisibleGroup();
               if (mounted) {
-                _showFloatingSnackBar('This group has been dissolved');
+                _showFloatingSnackBar(
+                  AppLocalizations.of(context)!.group_dissolved_snackbar,
+                );
               }
             } else if (mounted &&
                 result == SendGroupMessageResult.unauthorized) {
               _showFloatingSnackBar(
-                'You no longer have permission to send messages in this group.',
+                AppLocalizations.of(context)!.group_send_permission_lost,
               );
             } else if (mounted &&
                 result == SendGroupMessageResult.groupNotFound) {
-              _showFloatingSnackBar('This group is no longer available.');
+              _showFloatingSnackBar(
+                AppLocalizations.of(context)!.group_unavailable_snackbar,
+              );
             }
           } else {
             _updateLocalMessageStatus(messageId, 'failed');
@@ -3173,7 +3188,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               p2pService: widget.p2pService,
               imageProcessor: widget.imageProcessor,
               mediaPicker: widget.mediaPicker,
-              uploadMediaFn: widget.uploadMediaFn,
               backgroundPreference: widget.backgroundPreference,
             ),
           ),
@@ -3204,19 +3218,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   String get _readOnlyBannerText {
+    final l10n = AppLocalizations.of(context)!;
     if (_group.isDissolved) {
-      return 'This group has been dissolved. History stays available, but new messages are disabled.';
+      return l10n.group_read_only_dissolved;
     }
     if (!_isCurrentUserActiveMember) {
-      return "You can read this group's history, but you are not an active member.";
+      return l10n.group_read_only_not_active;
     }
     if (!_hasCurrentSendKey) {
-      return 'Waiting for the current group key before you can send.';
+      return l10n.group_read_only_waiting_key;
     }
     if (!_hasCompleteSenderIdentity) {
-      return 'Waiting for your identity before you can send.';
+      return l10n.group_read_only_waiting_identity;
     }
-    return 'Only admins can send messages in this group';
+    return l10n.group_read_only_admin_only;
   }
 
   bool _canWriteForSnapshot({
@@ -3394,7 +3409,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         event: 'GROUP_CONV_FL_MEDIA_REJECTED_INVALID_MIME',
         details: {'mime': mime, 'reason': validation.reason},
       );
-      _showFloatingSnackBar('This media type is not supported in groups.');
+      _showFloatingSnackBar(
+        AppLocalizations.of(context)!.group_media_unsupported,
+      );
       return false;
     }
     final sizeValidation = GroupMediaSizePolicy.validateAttachments(
@@ -3594,7 +3611,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       });
     }
     await _refreshVisibleGroup();
-    _showFloatingSnackBar('This group has been dissolved');
+    _showFloatingSnackBar(
+      AppLocalizations.of(context)!.group_dissolved_snackbar,
+    );
   }
 
   Future<void> _onReactionTap(String messageId, String emoji) async {
@@ -3616,6 +3635,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       members: members,
       usernameHintsByPeerId: usernameHintsByPeerId,
       ownPeerId: _ownPeerId,
+      selfLabel: AppLocalizations.of(context)!.feed_you,
     );
     if (participants.isEmpty) return;
 
@@ -3739,9 +3759,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             activeQuoteText: activeQuoteText,
             isActiveQuoteUnavailable: isActiveQuoteUnavailable,
             onClearQuote: _canWrite ? _onClearQuote : null,
-            backlogRetentionNotice: groupBacklogRetentionNoticeFor(_group),
+            backlogRetentionNotice: groupBacklogRetentionNoticeFor(
+              _group,
+              AppLocalizations.of(context)!,
+            ),
             historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
               _historyGapRepair,
+              AppLocalizations.of(context)!,
             ),
             backgroundPreference: widget.backgroundPreference,
           ),

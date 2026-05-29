@@ -137,7 +137,7 @@ class _IntroductionConnectionCardState extends State<IntroductionConnectionCard>
                 },
               ),
             ),
-            if (widget.isBlocked) _buildBlockedOverlay(),
+            if (widget.isBlocked) _buildBlockedOverlay(context),
           ],
         ),
       ),
@@ -365,26 +365,26 @@ class _IntroductionConnectionCardState extends State<IntroductionConnectionCard>
     );
   }
 
-  Widget _buildBlockedOverlay() {
+  Widget _buildBlockedOverlay(BuildContext context) {
     return Positioned.fill(
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(34),
           color: const Color.fromRGBO(0, 0, 0, 0.45),
         ),
-        child: const Center(
+        child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              const Icon(
                 Icons.block,
                 size: 28,
                 color: Color.fromRGBO(255, 255, 255, 0.60),
               ),
-              SizedBox(height: 8),
+              const SizedBox(height: 8),
               Text(
-                'Blocked',
-                style: TextStyle(
+                AppLocalizations.of(context)!.feed_blocked,
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: Color.fromRGBO(255, 255, 255, 0.60),

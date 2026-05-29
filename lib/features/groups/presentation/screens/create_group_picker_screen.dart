@@ -152,7 +152,7 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
           ),
           const SizedBox(width: 4),
           Text(
-            'New Group',
+            AppLocalizations.of(context)!.orbit_new_group,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
@@ -237,7 +237,7 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Check your connection and try again.',
+              AppLocalizations.of(context)!.load_retry_hint,
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -249,7 +249,7 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
               TextButton.icon(
                 onPressed: widget.onRetryLoadContacts,
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Retry'),
+                label: Text(AppLocalizations.of(context)!.btn_retry),
               ),
             ],
           ],
@@ -260,6 +260,7 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
 
   Widget _buildEmptyState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Center(
       child: Column(
@@ -272,7 +273,7 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No contacts available',
+            l10n.group_no_contacts_available,
             style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
         ],

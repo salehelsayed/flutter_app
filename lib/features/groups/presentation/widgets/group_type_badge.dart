@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Small badge showing group type with color coding.
 class GroupTypeBadge extends StatelessWidget {
@@ -26,7 +27,7 @@ class GroupTypeBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        _labelForType(type),
+        _labelForType(type, AppLocalizations.of(context)!),
         style: TextStyle(
           fontSize: 9,
           fontWeight: FontWeight.w600,
@@ -59,14 +60,14 @@ class GroupTypeBadge extends StatelessWidget {
     }
   }
 
-  static String _labelForType(GroupType type) {
+  static String _labelForType(GroupType type, AppLocalizations l10n) {
     switch (type) {
       case GroupType.chat:
-        return 'Discussion';
+        return l10n.group_type_discussion;
       case GroupType.announcement:
-        return 'Announce';
+        return l10n.group_type_announce;
       case GroupType.qa:
-        return 'Q&A';
+        return l10n.group_type_qa;
     }
   }
 }

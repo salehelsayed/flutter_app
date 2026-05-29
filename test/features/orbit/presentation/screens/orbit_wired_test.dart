@@ -41,6 +41,7 @@ import 'package:flutter_app/features/introduction/application/introduction_liste
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
@@ -2226,7 +2227,7 @@ void main() {
     );
 
     testWidgets(
-      'friend tap pushes conversation route before read marking completes',
+      'friend tap pushes one conversation route before read marking completes',
       (tester) async {
         setLargeTestSurface(tester);
         suppressOverflowErrors();
@@ -2250,6 +2251,7 @@ void main() {
         observer.reset();
 
         await tester.tap(find.text('Bob').first);
+        await tester.tap(find.text('Bob').first, warnIfMissed: false);
         await tester.pump();
 
         expect(observer.pushCount, 1);
@@ -2257,6 +2259,185 @@ void main() {
 
         delayedMessageRepo.markConversationAsReadGate!.complete();
         await pumpOrbitFrames(tester);
+      },
+    );
+
+    testWidgets(
+      'orbital avatar tap pushes exact conversation route and loading shell',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final alice = testContact.copyWith(
+          peerId: 'alice-contact-peer-id',
+          username: 'Alice Friend',
+          publicKey: 'alice-contact-pk',
+          signature: 'alice-sig',
+          mlKemPublicKey: 'mlkem-alice-contact-peer-id',
+        );
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([testContact, alice]);
+        final delayedMessageRepo = _DelayedSpyMessageRepository()
+          ..markConversationAsReadGate = Completer<void>()
+          ..getMessagesPageGate = Completer<void>();
+        final observer = _RecordingNavigatorObserver();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            contactRepository: delayedContactRepo,
+            messageRepository: delayedMessageRepo,
+            navigatorObservers: [observer],
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 10);
+
+        observer.reset();
+
+        await tester.tap(find.bySemanticsLabel('Open chat with Bob'));
+        await tester.pump();
+        await pumpOrbitFrames(tester, count: 2);
+
+        expect(observer.pushCount, 1);
+        expect(
+          find.byKey(const ValueKey('conversation-loading-shell')),
+          findsOneWidget,
+        );
+        expect(find.byType(ConversationHeader), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(ConversationHeader),
+            matching: find.text('Bob'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byType(ConversationHeader),
+            matching: find.text('Alice Friend'),
+          ),
+          findsNothing,
+        );
+
+        delayedMessageRepo.markConversationAsReadGate!.complete();
+        delayedMessageRepo.getMessagesPageGate!.complete();
+        await pumpOrbitFrames(tester, count: 6);
+      },
+    );
+
+    testWidgets(
+      'rapid repeated orbital avatar taps push one conversation route',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final delayedContactRepo = _DelayedSpyContactRepository()
+          ..seed([testContact]);
+        final observer = _RecordingNavigatorObserver();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            contactRepository: delayedContactRepo,
+            navigatorObservers: [observer],
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 10);
+
+        observer.reset();
+
+        final avatar = find.bySemanticsLabel('Open chat with Bob');
+        await tester.tap(avatar);
+        await tester.tap(avatar, warnIfMissed: false);
+        await tester.pump();
+
+        expect(observer.pushCount, 1);
+
+        tester.state<NavigatorState>(find.byType(Navigator)).pop();
+        await pumpOrbitFrames(tester, count: 6);
+      },
+    );
+
+    testWidgets(
+      'avatar-opened unread friend refreshes unread state after return',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'unread-bob-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Unread hello from Bob',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 10);
+
+        Finder unreadBadgeInRow() => find.descendant(
+          of: find.byType(FriendRow),
+          matching: find.text('1'),
+        );
+        expect(unreadBadgeInRow(), findsOneWidget);
+
+        await tester.tap(find.bySemanticsLabel('Open chat with Bob'));
+        await tester.pump();
+        await pumpOrbitFrames(tester, count: 4);
+
+        tester.state<NavigatorState>(find.byType(Navigator)).pop();
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(unreadBadgeInRow(), findsNothing);
+        expect(find.byType(OrbitSearchTrigger), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'blocked and archived contacts do not expose orbital chat actions',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final blocked = testContact.copyWith(
+          peerId: 'blocked-peer-id',
+          username: 'Blocked Bob',
+          publicKey: 'blocked-pk',
+          signature: 'blocked-sig',
+          mlKemPublicKey: 'mlkem-blocked-peer-id',
+          isBlocked: true,
+        );
+        final archived = testContact.copyWith(
+          peerId: 'archived-peer-id',
+          username: 'Archived Ann',
+          publicKey: 'archived-pk',
+          signature: 'archived-sig',
+          mlKemPublicKey: 'mlkem-archived-peer-id',
+          isArchived: true,
+          archivedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        contactRepo.seed([testContact, blocked, archived]);
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(find.bySemanticsLabel('Open chat with Bob'), findsOneWidget);
+        expect(
+          find.bySemanticsLabel('Open chat with Blocked Bob'),
+          findsNothing,
+        );
+        expect(
+          find.bySemanticsLabel('Open chat with Archived Ann'),
+          findsNothing,
+        );
       },
     );
 

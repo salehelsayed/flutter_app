@@ -281,6 +281,20 @@ class _DownloadingBlobBridge extends FakeBridge {
   }
 }
 
+class _ControlledGroupMessageListener extends GroupMessageListener {
+  _ControlledGroupMessageListener({
+    required InMemoryGroupRepository groupRepo,
+    required InMemoryGroupMessageRepository msgRepo,
+    required Stream<GroupMessage> stream,
+  }) : _stream = stream,
+       super(groupRepo: groupRepo, msgRepo: msgRepo);
+
+  final Stream<GroupMessage> _stream;
+
+  @override
+  Stream<GroupMessage> get groupMessageStream => _stream;
+}
+
 ContactModel _makeContact({required String peerId, required String username}) {
   return ContactModel(
     peerId: peerId,
@@ -1276,6 +1290,162 @@ void main() {
             matching: find.byIcon(Icons.broken_image_outlined),
           ),
           findsNothing,
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'group recipient open route refreshes downloaded image without reopen on simulator',
+      (tester) async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'group_open_route_media_refresh_',
+        );
+        addTearDown(() async {
+          if (await tempDir.exists()) {
+            await tempDir.delete(recursive: true);
+          }
+        });
+
+        final identity = _makeIdentity(
+          peerId: 'group-open-refresh-self',
+          username: 'Group Open Refresh Self',
+        );
+        final identityRepo = FakeIdentityRepository()..seed(identity);
+        final groupRepo = InMemoryGroupRepository();
+        final messageRepo = InMemoryGroupMessageRepository();
+        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+        final mediaFileManager = _TrackingDurableMediaFileManager(tempDir);
+        final bridge = _DownloadWritingBridge(
+          downloadedBytes: _minimalPngBytes(),
+        );
+        final streamController = StreamController<GroupMessage>.broadcast(
+          sync: true,
+        );
+        addTearDown(streamController.close);
+
+        final group = GroupModel(
+          id: 'group-open-route-refresh',
+          name: 'Open Route Refresh Group',
+          type: GroupType.chat,
+          topicName: 'topic-open-route-refresh',
+          description: 'Smoke',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: identity.peerId,
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: group.id,
+            keyGeneration: 1,
+            encryptedKey: 'group-open-route-refresh-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final listener = _ControlledGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: messageRepo,
+          stream: streamController.stream,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: GroupConversationWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: messageRepo,
+              groupMessageListener: listener,
+              bridge: bridge,
+              identityRepo: identityRepo,
+              contactRepo: InMemoryContactRepository(),
+              p2pService: core_fake_p2p.FakeP2PService(
+                initialState: NodeState(
+                  isStarted: true,
+                  peerId: identity.peerId,
+                ),
+              ),
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+            ),
+          ),
+        );
+        await _pumpFrames(tester);
+
+        const messageId = 'group-open-route-refresh-message';
+        const blobId = 'group-open-route-refresh-blob';
+        final timestamp = DateTime.now().toUtc();
+        final incomingMessage = GroupMessage(
+          id: messageId,
+          groupId: group.id,
+          senderPeerId: 'peer-sender-open-refresh',
+          senderUsername: 'Open Refresh Sender',
+          text: '',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+        );
+        await messageRepo.saveMessage(incomingMessage);
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: blobId,
+            messageId: messageId,
+            mime: 'image/png',
+            size: _minimalPngBytes().length,
+            mediaType: 'image',
+            width: 16,
+            height: 16,
+            downloadStatus: 'pending',
+            createdAt: timestamp.toIso8601String(),
+            contentHash: _minimalPngContentHash(),
+            encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+            encryptionNonce: _fixtureEncryptionNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+
+        streamController.add(incomingMessage);
+        await _pumpUntilAsync(tester, () async {
+          final attachments = await mediaAttachmentRepo
+              .getAttachmentsForMessage(messageId);
+          if (attachments.length != 1 ||
+              attachments.single.downloadStatus != 'done' ||
+              attachments.single.localPath == null) {
+            return false;
+          }
+          final resolvedPath = await mediaFileManager.resolveStoredPath(
+            attachments.single.localPath!,
+          );
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final media = screen.mediaMap[messageId];
+          return bridge.commandLog.contains('media:download') &&
+              File(resolvedPath).existsSync() &&
+              media != null &&
+              media.length == 1 &&
+              media.single.downloadStatus == 'done';
+        }, maxPumps: 120);
+
+        expect(find.byType(MediaGrid), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byIcon(Icons.broken_image_outlined),
+          ),
+          findsNothing,
+        );
+        expect(find.text('Media unavailable'), findsNothing);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
         );
 
         await tester.pumpWidget(const SizedBox.shrink());

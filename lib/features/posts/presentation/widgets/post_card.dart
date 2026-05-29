@@ -47,6 +47,7 @@ class PostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final mutedActionColor = readableColors.iconMuted;
     final disabledActionColor = readableColors.disabledForeground;
     final now = (nowProvider ?? DateTime.now).call();
@@ -94,7 +95,7 @@ class PostCard extends StatelessWidget {
             children: [
               if (isPassedAlong) ...[
                 Text(
-                  '${post.passedByUsername!} passed this along',
+                  l10n.post_passed_along_by(post.passedByUsername!),
                   style: TextStyle(
                     color: readableColors.textMuted,
                     fontSize: 10,
@@ -169,6 +170,7 @@ class PostCard extends StatelessWidget {
                               _formatRelativeTimestamp(
                                 isPassedAlong ? post.visibleAt : post.createdAt,
                                 now,
+                                context,
                               ),
                               style: TextStyle(
                                 color: readableColors.textMuted,
@@ -291,7 +293,7 @@ class PostCard extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
                       child: Text(
-                        _expiryCopy(post.expiresAt, now).toLowerCase(),
+                        _expiryCopy(post.expiresAt, now, context).toLowerCase(),
                         style: TextStyle(
                           color: readableColors.textMuted,
                           fontSize: 10,
@@ -396,28 +398,38 @@ class PostCard extends StatelessWidget {
     };
   }
 
-  static String _formatRelativeTimestamp(String rawTimestamp, DateTime now) {
+  static String _formatRelativeTimestamp(
+    String rawTimestamp,
+    DateTime now,
+    BuildContext context,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
     final timestamp = DateTime.tryParse(rawTimestamp)?.toUtc();
     if (timestamp == null) {
       return rawTimestamp;
     }
     final diff = now.toUtc().difference(timestamp);
     if (diff.inMinutes < 1) {
-      return 'just now';
+      return l10n.time_just_now;
     }
     if (diff.inMinutes < 60) {
-      return '${diff.inMinutes} min ago';
+      return l10n.time_min_ago(diff.inMinutes);
     }
     if (diff.inHours < 24) {
-      return '${diff.inHours}h ago';
+      return l10n.time_hour_ago(diff.inHours);
     }
     if (diff.inDays < 7) {
-      return '${diff.inDays}d ago';
+      return l10n.time_day_ago(diff.inDays);
     }
-    return '${(diff.inDays / 7).floor()}w ago';
+    return l10n.time_week_ago((diff.inDays / 7).floor());
   }
 
-  static String _expiryCopy(String rawTimestamp, DateTime now) {
+  static String _expiryCopy(
+    String rawTimestamp,
+    DateTime now,
+    BuildContext context,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
     final expiry = DateTime.tryParse(rawTimestamp)?.toUtc();
     final current = now.toUtc();
     if (expiry == null) {
@@ -425,22 +437,22 @@ class PostCard extends StatelessWidget {
     }
     final diff = expiry.difference(current);
     if (diff.inSeconds <= 0) {
-      return 'Expired';
+      return l10n.post_expired;
     }
     if (diff.inDays >= 1) {
       final remainingHours = diff.inHours - (diff.inDays * 24);
       if (remainingHours > 0) {
-        return 'Expires in ${diff.inDays}d ${remainingHours}h';
+        return l10n.post_expires_days_hours(diff.inDays, remainingHours);
       }
-      return 'Expires in ${diff.inDays}d';
+      return l10n.post_expires_days(diff.inDays);
     }
     if (diff.inHours >= 1) {
-      return 'Expires in ${diff.inHours}h';
+      return l10n.post_expires_hours(diff.inHours);
     }
     if (diff.inMinutes >= 1) {
-      return 'Expires in ${diff.inMinutes}m';
+      return l10n.post_expires_minutes(diff.inMinutes);
     }
-    return 'Expires soon';
+    return l10n.post_expires_soon;
   }
 }
 
@@ -452,7 +464,7 @@ class _PostMediaSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
-    final copy = _copyFor(post);
+    final copy = _copyFor(post, AppLocalizations.of(context)!);
     return Container(
       key: const ValueKey<String>('post-media-skeleton-placeholder'),
       width: double.infinity,
@@ -498,23 +510,37 @@ class _PostMediaSkeleton extends StatelessWidget {
     );
   }
 
-  static _PostMediaSkeletonCopy _copyFor(PostModel post) {
+  static _PostMediaSkeletonCopy _copyFor(
+    PostModel post,
+    AppLocalizations l10n,
+  ) {
     final isUploadFailed =
         post.deliveryStatus == 'failed' && PostCard._hasMediaSkeleton(post);
     final title = switch (post.mediaKind) {
       'image' =>
-        isUploadFailed ? 'Photo upload failed' : 'Photo pending upload',
+        isUploadFailed
+            ? l10n.post_photo_upload_failed
+            : l10n.post_photo_pending_upload,
       'image_carousel' =>
-        isUploadFailed ? 'Photo upload failed' : 'Photos pending upload',
+        isUploadFailed
+            ? l10n.post_photo_upload_failed
+            : l10n.post_photos_pending_upload,
       'video' =>
-        isUploadFailed ? 'Video upload failed' : 'Video pending upload',
+        isUploadFailed
+            ? l10n.post_video_upload_failed
+            : l10n.post_video_pending_upload,
       'voice' =>
-        isUploadFailed ? 'Voice upload failed' : 'Voice note pending upload',
-      _ => isUploadFailed ? 'Media upload failed' : 'Media pending upload',
+        isUploadFailed
+            ? l10n.post_voice_upload_failed
+            : l10n.post_voice_pending_upload,
+      _ =>
+        isUploadFailed
+            ? l10n.post_media_upload_failed
+            : l10n.post_media_pending_upload,
     };
     final subtitle = isUploadFailed
-        ? 'This post stayed local because the media upload did not finish.'
-        : 'Recipients will receive this after the upload finishes.';
+        ? l10n.post_media_upload_failed_desc
+        : l10n.post_media_pending_upload_desc;
     final icon = switch (post.mediaKind) {
       'image' || 'image_carousel' => Icons.photo_outlined,
       'video' => Icons.videocam_outlined,

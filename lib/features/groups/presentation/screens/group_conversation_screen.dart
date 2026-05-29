@@ -172,8 +172,6 @@ class GroupConversationScreen extends StatelessWidget {
             return Column(
               children: [
                 _buildHeader(context),
-                if (securityStatus != null)
-                  _buildSecurityStrip(context, securityStatus!),
                 if (backlogRetentionNotice != null)
                   _buildBacklogRetentionBanner(
                     context,
@@ -184,7 +182,6 @@ class GroupConversationScreen extends StatelessWidget {
                     context,
                     historyGapRepairNotice!,
                   ),
-                if (isRecovering) _buildRecoveryBanner(context),
                 if (uploadProgress != null)
                   UploadProgressBanner(
                     state: uploadProgress!,
@@ -337,6 +334,7 @@ class GroupConversationScreen extends StatelessWidget {
     final accent = readableColors.isLightSurface
         ? const Color(0xFFB91C1C)
         : const Color(0xFFFCA5A5);
+    final l10n = AppLocalizations.of(context)!;
 
     return Center(
       child: Padding(
@@ -357,7 +355,7 @@ class GroupConversationScreen extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Check your connection and try again.',
+              l10n.load_retry_hint,
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
@@ -369,7 +367,7 @@ class GroupConversationScreen extends StatelessWidget {
               key: const ValueKey('group-conversation-load-retry'),
               onPressed: onRetryMessageLoad,
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Retry'),
+              label: Text(l10n.btn_retry),
               style: TextButton.styleFrom(foregroundColor: accent),
             ),
           ],
@@ -378,62 +376,21 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildRecoveryBanner(BuildContext context) {
-    final readableColors = context.backgroundReadableColors;
-    final accent = readableColors.isLightSurface
-        ? const Color(0xFF0F766E)
-        : const Color(0xFF5EEAD4);
-
-    return Container(
-      key: const ValueKey('group-recovery-banner'),
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: accent.withValues(
-          alpha: readableColors.isLightSurface ? 0.08 : 0.12,
-        ),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: accent.withValues(
-            alpha: readableColors.isLightSurface ? 0.24 : 0.20,
-          ),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.sync_rounded, size: 18, color: accent),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Catching up missed messages. New messages will still appear here.',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.35,
-                color: readableColors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildEmptyState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final notice = backlogRetentionNotice;
     final repairNotice = historyGapRepairNotice;
     final emptyTitle = group.isDissolved
-        ? 'No messages yet'
-        : (repairNotice?.emptyTitle ?? notice?.emptyTitle ?? 'No messages yet');
+        ? l10n.group_no_messages
+        : (repairNotice?.emptyTitle ??
+              notice?.emptyTitle ??
+              l10n.group_no_messages);
     final emptySubtitle = group.isDissolved
-        ? 'This group has been dissolved. New messages are disabled.'
+        ? l10n.group_empty_dissolved_desc
         : (repairNotice?.emptySubtitle ??
               notice?.emptySubtitle ??
-              (canWrite
-                  ? 'Send a message to start the conversation'
-                  : 'Waiting for messages'));
+              (canWrite ? l10n.group_empty_start : l10n.group_empty_waiting));
 
     return Center(
       child: Column(
@@ -569,78 +526,6 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSecurityStrip(
-    BuildContext context,
-    GroupSecurityStatusViewState status,
-  ) {
-    final readableColors = context.backgroundReadableColors;
-    final secureAccent = readableColors.isLightSurface
-        ? const Color(0xFF116A3A)
-        : const Color(0xFF7BD88F);
-    final warningAccent = readableColors.isLightSurface
-        ? const Color(0xFF8A4A00)
-        : const Color(0xFFFFC857);
-    final accent = status.hasIdentityWarnings || !status.hasCurrentKey
-        ? warningAccent
-        : secureAccent;
-
-    return Container(
-      key: const ValueKey('group-conversation-security-strip'),
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: accent.withOpacity(readableColors.isLightSurface ? 0.08 : 0.12),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: accent.withOpacity(
-            readableColors.isLightSurface ? 0.24 : 0.20,
-          ),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            status.hasIdentityWarnings
-                ? Icons.warning_amber_rounded
-                : Icons.lock_outline,
-            size: 18,
-            color: accent,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  status.compactEncryptionLabel,
-                  key: const ValueKey('group-conversation-security-encryption'),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: readableColors.textPrimary,
-                    height: 1.25,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  status.compactReviewLabel,
-                  key: const ValueKey('group-conversation-security-review'),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: readableColors.textSecondary,
-                    height: 1.3,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildMessageList() {
     return ListView.builder(
       key: const ValueKey('group-messages'),
@@ -670,7 +555,7 @@ class GroupConversationScreen extends StatelessWidget {
         LetterCard buildLetterCard({VoidCallback? onLongPress}) => LetterCard(
           senderPeerId: message.senderPeerId,
           senderName: isSent
-              ? 'You'
+              ? AppLocalizations.of(context)!.feed_you
               : resolveGroupSenderDisplayName(
                   senderPeerId: message.senderPeerId,
                   wireSenderUsername: message.senderUsername,
@@ -796,8 +681,8 @@ class GroupConversationScreen extends StatelessWidget {
       child: Text(
         readOnlyBannerText ??
             (group.isDissolved
-                ? 'This group has been dissolved. History stays available, but new messages are disabled.'
-                : 'Only admins can send messages in this group'),
+                ? AppLocalizations.of(context)!.group_read_only_dissolved
+                : AppLocalizations.of(context)!.group_read_only_admin_only),
         textAlign: TextAlign.center,
         style: TextStyle(fontSize: 13, color: readableColors.textMuted),
       ),

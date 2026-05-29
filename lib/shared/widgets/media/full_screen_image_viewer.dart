@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:video_player/video_player.dart';
 
 typedef FullScreenVideoPageBuilder =
@@ -288,19 +289,19 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
   }
 
   Widget _buildErrorState() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
+          const Icon(
             Icons.error_outline_rounded,
             size: 42,
             color: Color.fromRGBO(255, 255, 255, 0.55),
           ),
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
           Text(
-            'Could not load video',
-            style: TextStyle(
+            AppLocalizations.of(context)!.media_video_load_failed,
+            style: const TextStyle(
               color: Color.fromRGBO(255, 255, 255, 0.7),
               fontSize: 14,
             ),

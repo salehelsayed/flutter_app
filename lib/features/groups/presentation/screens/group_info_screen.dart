@@ -12,6 +12,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_member_ro
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Pure UI screen for group info.
 ///
@@ -129,6 +130,7 @@ class GroupInfoScreen extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
@@ -141,7 +143,7 @@ class GroupInfoScreen extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            'Group Info',
+            l10n.group_info_title,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
@@ -156,6 +158,7 @@ class GroupInfoScreen extends StatelessWidget {
   Widget _buildGroupInfo(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final actionBlue = _blueAccent(readableColors);
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -180,7 +183,7 @@ class GroupInfoScreen extends StatelessWidget {
                 key: const ValueKey('group-edit-details-button'),
                 onPressed: onEditDetails,
                 icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('Edit Details'),
+                label: Text(l10n.group_edit_details),
                 style: TextButton.styleFrom(foregroundColor: actionBlue),
               ),
             ),
@@ -219,7 +222,7 @@ class GroupInfoScreen extends StatelessWidget {
           ],
           const SizedBox(height: 4),
           Text(
-            '${members.length} member${members.length == 1 ? '' : 's'}',
+            l10n.group_member_count(members.length),
             style: TextStyle(fontSize: 12, color: readableColors.textMuted),
           ),
           if (group.isDissolved) ...[
@@ -244,6 +247,7 @@ class GroupInfoScreen extends StatelessWidget {
     final reviewAccent = status.hasIdentityWarnings
         ? warningAccent
         : secureAccent;
+    final l10n = AppLocalizations.of(context)!;
 
     return Container(
       key: const ValueKey('group-security-status-card'),
@@ -276,7 +280,7 @@ class GroupInfoScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Security',
+                      l10n.group_security_title,
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
@@ -285,7 +289,7 @@ class GroupInfoScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      status.encryptionLabel,
+                      status.compactEncryptionLabel(l10n),
                       key: const ValueKey('group-security-encryption-state'),
                       style: TextStyle(
                         fontSize: 13,
@@ -304,7 +308,7 @@ class GroupInfoScreen extends StatelessWidget {
             icon: status.hasCurrentKey
                 ? Icons.lock_outline
                 : Icons.lock_open_outlined,
-            title: status.keyEpochLabel,
+            title: status.keyEpochLabel(l10n),
             color: status.hasCurrentKey ? secureAccent : danger,
           ),
           if (status.hasKeyChangeWarning) ...[
@@ -312,8 +316,8 @@ class GroupInfoScreen extends StatelessWidget {
             _SecurityStatusLine(
               key: const ValueKey('group-security-key-change-warning'),
               icon: Icons.sync_lock_outlined,
-              title: 'Key change visible',
-              subtitle: status.keyEpochLabel,
+              title: l10n.group_security_key_change_visible,
+              subtitle: status.keyEpochLabel(l10n),
               color: warningAccent,
             ),
           ],
@@ -323,8 +327,8 @@ class GroupInfoScreen extends StatelessWidget {
             icon: status.hasIdentityWarnings
                 ? Icons.warning_amber_rounded
                 : Icons.verified_user_outlined,
-            title: status.verificationLabel,
-            subtitle: status.verificationDetailLabel,
+            title: status.verificationLabel(l10n),
+            subtitle: status.verificationDetailLabel(l10n),
             color: reviewAccent,
           ),
           if (status.hasIdentityWarnings) ...[
@@ -332,9 +336,10 @@ class GroupInfoScreen extends StatelessWidget {
             _SecurityStatusLine(
               key: const ValueKey('group-security-identity-warning'),
               icon: Icons.report_problem_outlined,
-              title: 'Verification warning',
-              subtitle:
-                  '${status.identityWarningCount} ${status.identityWarningCount == 1 ? 'identity has' : 'identities have'} changed. Review safety numbers below.',
+              title: l10n.group_security_verification_warning,
+              subtitle: l10n.group_security_identity_warning_detail(
+                status.identityWarningCount,
+              ),
               color: warningAccent,
             ),
           ],
@@ -346,6 +351,7 @@ class GroupInfoScreen extends StatelessWidget {
   Widget _buildDissolvedStatusCard(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final danger = _dangerColor(readableColors);
+    final l10n = AppLocalizations.of(context)!;
 
     return Container(
       width: double.infinity,
@@ -380,7 +386,7 @@ class GroupInfoScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Group dissolved',
+                  l10n.group_dissolved,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
@@ -389,7 +395,7 @@ class GroupInfoScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'This conversation is now read-only. Previous messages stay available for reference.',
+                  l10n.group_dissolved_read_only_desc,
                   style: TextStyle(
                     fontSize: 13,
                     color: readableColors.textSecondary,
@@ -407,6 +413,7 @@ class GroupInfoScreen extends StatelessWidget {
   Widget _buildMutePreferenceCard(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final muteAccent = _amberAccent(readableColors);
+    final l10n = AppLocalizations.of(context)!;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -437,7 +444,7 @@ class GroupInfoScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Mute Notifications',
+                  l10n.group_mute_notifications,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -446,9 +453,7 @@ class GroupInfoScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  isMuted
-                      ? 'New messages still arrive, but this group stays quiet.'
-                      : 'Get notified when new messages arrive in this group.',
+                  isMuted ? l10n.group_mute_on_desc : l10n.group_mute_off_desc,
                   key: const ValueKey('group-mute-subtitle'),
                   style: TextStyle(
                     fontSize: 13,
@@ -473,6 +478,7 @@ class GroupInfoScreen extends StatelessWidget {
 
   Widget _buildMembersSection(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -480,7 +486,7 @@ class GroupInfoScreen extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Text(
-            'Members',
+            l10n.group_members_title,
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -537,6 +543,7 @@ class GroupInfoScreen extends StatelessWidget {
   Widget _buildAddMemberButton(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final actionBlue = _blueAccent(readableColors);
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -562,7 +569,7 @@ class GroupInfoScreen extends StatelessWidget {
               Icon(Icons.person_add_outlined, size: 20, color: actionBlue),
               const SizedBox(width: 8),
               Text(
-                'Add Member',
+                l10n.group_add_member,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -579,6 +586,7 @@ class GroupInfoScreen extends StatelessWidget {
   Widget _buildLeaveButton(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final danger = _dangerColor(readableColors);
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -601,7 +609,7 @@ class GroupInfoScreen extends StatelessWidget {
             ),
           ),
           child: Text(
-            'Leave Group',
+            l10n.group_leave,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 15,
@@ -617,6 +625,7 @@ class GroupInfoScreen extends StatelessWidget {
   Widget _buildDissolveButton(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final danger = _dangerColor(readableColors);
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -639,7 +648,7 @@ class GroupInfoScreen extends StatelessWidget {
             ),
           ),
           child: Text(
-            'Dissolve Group',
+            l10n.group_dissolve,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 15,
@@ -655,6 +664,7 @@ class GroupInfoScreen extends StatelessWidget {
   Widget _buildDeleteLocallyCard(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final danger = _dangerColor(readableColors);
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -670,7 +680,7 @@ class GroupInfoScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Delete from this device',
+              l10n.group_delete_from_device,
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
@@ -679,7 +689,7 @@ class GroupInfoScreen extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Keep this dissolved history as long as you want, or remove it from this device only. This will not affect anyone else.',
+              l10n.group_delete_local_desc,
               style: TextStyle(
                 fontSize: 13,
                 color: readableColors.textSecondary,
@@ -706,7 +716,7 @@ class GroupInfoScreen extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  'Delete Group Locally',
+                  l10n.group_delete_locally,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15,

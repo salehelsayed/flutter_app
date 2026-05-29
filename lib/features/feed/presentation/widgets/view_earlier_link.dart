@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Tappable "View earlier messages" link for feed cards.
 class ViewEarlierLink extends StatelessWidget {
@@ -22,7 +23,7 @@ class ViewEarlierLink extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Text(
-            'View earlier messages',
+            AppLocalizations.of(context)!.feed_view_earlier_messages,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w500,

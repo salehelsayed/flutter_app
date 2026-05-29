@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Glass card displaying the user's peer ID with a copy button.
 class SettingsPeerIdCard extends StatelessWidget {
@@ -19,6 +20,7 @@ class SettingsPeerIdCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final copiedColor = readableColors.isLightSurface
         ? const Color(0xFF0F766E)
         : const Color(0xFF14B8A6);
@@ -32,7 +34,7 @@ class SettingsPeerIdCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
-              'PEER ID',
+              l10n.settings_peer_id_title,
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -118,7 +120,7 @@ class SettingsPeerIdCard extends StatelessWidget {
                     const SizedBox(height: 10),
                     // Helper text
                     Text(
-                      'Your unique identifier on the network',
+                      l10n.settings_peer_id_desc,
                       style: TextStyle(
                         fontSize: 12,
                         color: readableColors.textMuted,

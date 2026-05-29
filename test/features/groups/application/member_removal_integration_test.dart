@@ -557,6 +557,137 @@ void main() {
     },
   );
 
+  test('direct membership update rejects relay sender mismatch', () async {
+    final receiverBridge = PassthroughCryptoBridge();
+    final receiverGroupRepo = InMemoryGroupRepository();
+    final receiverMsgRepo = InMemoryGroupMessageRepository();
+    final controller = StreamController<ChatMessage>.broadcast();
+    final createdAt = DateTime.utc(2026, 5, 13, 8);
+
+    await receiverGroupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'Test Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$groupId',
+        createdAt: createdAt,
+        createdBy: adminPeerId,
+        myRole: GroupRole.member,
+      ),
+    );
+    await receiverGroupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: adminPeerId,
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        mlKemPublicKey: 'mlkem-pk-admin',
+        joinedAt: createdAt,
+      ),
+    );
+    await receiverGroupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-alice',
+        username: 'Alice',
+        role: MemberRole.writer,
+        publicKey: 'pk-alice',
+        mlKemPublicKey: 'mlkem-pk-alice',
+        joinedAt: createdAt,
+      ),
+    );
+    await receiverGroupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'initial-key',
+        createdAt: createdAt,
+      ),
+    );
+
+    final removedAt = createdAt.add(const Duration(minutes: 1));
+    final sourceEventId =
+        'member_removed:$groupId:$adminPeerId:${removedAt.microsecondsSinceEpoch}';
+    final remainingMembers = (await groupRepo.getMembers(
+      groupId,
+    )).where((member) => member.peerId != 'peer-alice').toList(growable: false);
+    final replayPlaintext = jsonEncode(<String, dynamic>{
+      'groupId': groupId,
+      'senderId': adminPeerId,
+      'senderUsername': 'Admin',
+      'text': jsonEncode(<String, dynamic>{
+        '__sys': 'member_removed',
+        'member': <String, dynamic>{
+          'peerId': 'peer-alice',
+          'username': 'Alice',
+        },
+        'removedAt': removedAt.toIso8601String(),
+        'groupConfig': buildGroupConfigPayload(
+          (await groupRepo.getGroup(
+            groupId,
+          ))!.copyWith(lastMembershipEventAt: removedAt),
+          remainingMembers,
+        ),
+      }),
+      'timestamp': removedAt.toIso8601String(),
+      'messageId': sourceEventId,
+    });
+    final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      payloadType: groupOfflineReplayPayloadTypeMessage,
+      plaintext: replayPlaintext,
+      senderPeerId: adminPeerId,
+      senderPublicKey: 'pk-admin',
+      senderPrivateKey: 'sk-admin',
+      messageId: sourceEventId,
+      recipientPeerIds: const <String>['peer-alice'],
+    );
+
+    final groupListener = GroupMessageListener(
+      groupRepo: receiverGroupRepo,
+      msgRepo: receiverMsgRepo,
+      bridge: receiverBridge,
+      getSelfPeerId: () async => 'peer-alice',
+    );
+    final membershipListener = GroupMembershipUpdateListener(
+      groupMembershipUpdateStream: controller.stream,
+      groupRepo: receiverGroupRepo,
+      bridge: receiverBridge,
+      groupMessageListener: groupListener,
+    );
+    membershipListener.start();
+
+    final removed = groupListener.groupRemovedStream.first;
+    controller.add(
+      ChatMessage(
+        from: 'peer-impostor',
+        to: 'peer-alice',
+        content: buildGroupMembershipUpdateDirectEnvelope(
+          groupId: groupId,
+          senderPeerId: 'peer-impostor',
+          replayEnvelope: replayEnvelope,
+          timestamp: removedAt,
+          messageId: sourceEventId,
+        ),
+        timestamp: removedAt.toIso8601String(),
+        isIncoming: true,
+      ),
+    );
+
+    await expectLater(
+      removed.timeout(const Duration(milliseconds: 200)),
+      throwsA(isA<TimeoutException>()),
+    );
+    expect(await receiverGroupRepo.getGroup(groupId), isNotNull);
+
+    membershipListener.dispose();
+    groupListener.dispose();
+    await controller.close();
+  });
+
   test('first post-removal send uses the rotated epoch', () async {
     final msgRepo = InMemoryGroupMessageRepository();
     await groupRepo.saveKey(

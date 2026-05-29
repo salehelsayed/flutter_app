@@ -60,8 +60,10 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
   bool _showPreviewImage = false;
 
   bool get _showsCaptionField => widget.captionController != null;
-  String get _draftFieldLabel =>
-      widget.sharedFilePaths.isNotEmpty ? 'Caption' : 'Message';
+  String _draftFieldLabel(BuildContext context) =>
+      widget.sharedFilePaths.isNotEmpty
+      ? AppLocalizations.of(context)!.share_caption
+      : AppLocalizations.of(context)!.group_message_hint;
 
   int get _selectionCount =>
       widget.selectedContactPeerIds.length + widget.selectedGroupIds.length;
@@ -161,9 +163,10 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
 
   Widget _buildHeader(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final title = _selectionCount > 0
-        ? 'Share with ($_selectionCount)'
-        : 'Share with...';
+        ? l10n.share_title_count(_selectionCount)
+        : l10n.share_title_empty;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
@@ -271,6 +274,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
 
   Widget _buildCaptionField(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final label = _draftFieldLabel(context);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -278,7 +282,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _draftFieldLabel,
+            label,
             key: const ValueKey('share-caption-label'),
             style: TextStyle(
               color: readableColors.textSecondary,
@@ -296,7 +300,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
             maxLines: 4,
             style: TextStyle(color: readableColors.textPrimary, fontSize: 14),
             decoration: InputDecoration(
-              hintText: _draftFieldLabel,
+              hintText: label,
               hintStyle: TextStyle(
                 color: readableColors.placeholderText,
                 fontSize: 14,
@@ -356,6 +360,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
 
   Widget _buildTargetList(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final contacts = _filteredContacts;
     final groups = _filteredGroups;
 
@@ -370,9 +375,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
     if (contacts.isEmpty && groups.isEmpty) {
       return Center(
         child: Text(
-          _searchQuery.isEmpty
-              ? 'No contacts or groups yet'
-              : 'No matches found',
+          _searchQuery.isEmpty ? l10n.share_no_targets : l10n.share_no_matches,
           style: TextStyle(color: readableColors.textMuted, fontSize: 14),
         ),
       );
@@ -380,11 +383,11 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
 
     final entries = <_TargetListEntry>[
       if (contacts.isNotEmpty) ...[
-        const _SectionHeaderEntry('Contacts'),
+        _SectionHeaderEntry(l10n.share_contacts_section),
         ...contacts.map(_ContactEntry.new),
       ],
       if (groups.isNotEmpty) ...[
-        const _SectionHeaderEntry('Groups'),
+        _SectionHeaderEntry(l10n.share_groups_section),
         ...groups.map(_GroupEntry.new),
       ],
     ];
@@ -445,6 +448,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
 
   Widget _buildGroupRow(BuildContext context, GroupModel group) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final groupAccent = readableColors.isLightSurface
         ? const Color(0xFF16756F)
         : const Color(0xFF4ECDC4);
@@ -463,7 +467,9 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
         style: TextStyle(color: readableColors.textPrimary, fontSize: 15),
       ),
       subtitle: Text(
-        group.type == GroupType.announcement ? 'Announcement' : 'Chat',
+        group.type == GroupType.announcement
+            ? l10n.share_group_type_announcement
+            : l10n.share_group_type_chat,
         style: TextStyle(color: readableColors.textMuted, fontSize: 12),
       ),
       trailing: _buildSelectionIcon(context, isSelected),
@@ -482,6 +488,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
 
   Widget _buildSendButton(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final start = _blueAccent(readableColors);
     final end = readableColors.isLightSurface
         ? const Color(0xFF0B4D82)
@@ -499,7 +506,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
-            widget.isSending ? 'Sending...' : 'Send',
+            widget.isSending ? l10n.share_sending : l10n.share_send,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 15,

@@ -7,6 +7,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Feed card that auto-selects open or collapsed mode based on state.
 ///
@@ -140,7 +141,7 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
             ),
             child: _showOpen ? _buildOpenBody() : _buildCollapsedBody(),
           ),
-          if (isBlocked) _buildBlockedOverlay(),
+          if (isBlocked) _buildBlockedOverlay(context),
         ],
       ),
     );
@@ -253,26 +254,26 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildBlockedOverlay() {
+  Widget _buildBlockedOverlay(BuildContext context) {
     return Positioned.fill(
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
           color: const Color.fromRGBO(0, 0, 0, 0.45),
         ),
-        child: const Center(
+        child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              const Icon(
                 Icons.block,
                 size: 28,
                 color: Color.fromRGBO(255, 255, 255, 0.60),
               ),
-              SizedBox(height: 8),
+              const SizedBox(height: 8),
               Text(
-                'Blocked',
-                style: TextStyle(
+                AppLocalizations.of(context)!.feed_blocked,
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: Color.fromRGBO(255, 255, 255, 0.60),

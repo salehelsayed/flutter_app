@@ -210,6 +210,12 @@ const _rolesByScenario = <String, List<String>>{
     'bob',
     'charlie',
   ],
+  'private_admin_demotion_enforcement': <String>[
+    'alice',
+    'bob',
+    'charlie',
+    'dana',
+  ],
   'private_history_retention': <String>['alice', 'bob', 'charlie'],
   'private_invite_terminal_states': <String>['alice', 'bob', 'charlie'],
   'private_stale_invite_readd': <String>['alice', 'bob', 'charlie'],
@@ -8479,8 +8485,10 @@ Future<void> _updateMemberRoleAndPublish({
   required String memberPeerId,
   required MemberRole role,
   required DateTime eventAt,
+  bool saveLocalTimeline = false,
 }) async {
   final normalizedEventAt = eventAt.toUtc();
+  final previousMember = await stack.groupRepo.getMember(groupId, memberPeerId);
   final preTransitionStateHash = await buildGroupTransitionStateHash(
     stack.groupRepo,
     groupId,
@@ -8508,6 +8516,20 @@ Future<void> _updateMemberRoleAndPublish({
   final updatedMember = await stack.groupRepo.getMember(groupId, memberPeerId);
   if (updatedGroup == null || updatedMember == null) {
     throw StateError('Missing updated role state for $memberPeerId');
+  }
+  if (saveLocalTimeline) {
+    await stack.groupMsgRepo.saveMessage(
+      buildMemberRoleUpdatedTimelineMessage(
+        groupId: groupId,
+        updatedPeerId: updatedMember.peerId,
+        updatedUsername: updatedMember.username,
+        previousRole: previousMember?.role,
+        newRole: updatedMember.role,
+        senderId: stack.identity.peerId,
+        senderUsername: stack.identity.username,
+        eventAt: normalizedEventAt,
+      ),
+    );
   }
 
   final messageId =
@@ -8731,15 +8753,19 @@ Future<GroupModel> _publishGroupMetadataUpdate({
 Future<Map<String, dynamic>> _uploadPromptGroupAvatar({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
+  String? blobIdSuffix,
 }) async {
   final members = await stack.groupRepo.getMembers(groupId);
   final allowedPeers = groupMediaAllowedPeersForMembers(members);
-  final tempDir = await Directory.systemTemp.createTemp('prompt_group_avatar_');
-  final localFile = File('${tempDir.path}/prompt-avatar.png');
+  final localPath = await groupAvatarCanonicalPath(groupId);
+  final localFile = File(localPath);
+  await localFile.parent.create(recursive: true);
   await localFile.writeAsBytes(
     _pngFixtureBytes(<int>[25, 5, 25, 1, 2, 3, 4, 5]),
   );
-  final blobId = 'prompt-group-avatar-$_runId';
+  final blobId = blobIdSuffix == null
+      ? 'prompt-group-avatar-$_runId'
+      : 'prompt-group-avatar-$_runId-$blobIdSuffix';
   final uploaded = await uploadGroupAvatar(
     bridge: stack.bridge,
     localFilePath: localFile.path,
@@ -8755,6 +8781,71 @@ Future<Map<String, dynamic>> _uploadPromptGroupAvatar({
     'blobId': uploaded.id,
     'mime': uploaded.mime,
     'path': groupAvatarRelativePath(groupId),
+    'allowedPeers': allowedPeers,
+  };
+}
+
+Future<String?> _resolvePromptGroupAvatarUploadPath(GroupModel group) async {
+  final storedPath = group.avatarPath?.trim();
+  if (storedPath != null && storedPath.isNotEmpty) {
+    final storedFile = File(storedPath);
+    if (storedFile.isAbsolute && await storedFile.exists()) {
+      return storedPath;
+    }
+  }
+
+  final canonicalPath = await groupAvatarCanonicalPath(group.id);
+  if (await File(canonicalPath).exists()) {
+    return canonicalPath;
+  }
+  return null;
+}
+
+Future<Map<String, dynamic>> _regrantPromptGroupAvatarForMembers({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required List<GroupMember> members,
+  required String blobIdSuffix,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  if (group == null) {
+    throw StateError('Missing group $groupId before avatar regrant');
+  }
+  if (group.avatarBlobId == null || group.avatarMime == null) {
+    throw StateError('Prompt avatar regrant requires an existing avatar');
+  }
+
+  final uploadPath = await _resolvePromptGroupAvatarUploadPath(group);
+  if (uploadPath == null) {
+    throw StateError('Prompt avatar regrant missing local avatar file');
+  }
+
+  final allowedPeers = groupMediaAllowedPeersForMembers(members);
+  final uploaded = await uploadGroupAvatar(
+    bridge: stack.bridge,
+    localFilePath: uploadPath,
+    groupId: groupId,
+    mime: group.avatarMime ?? 'image/png',
+    allowedPeers: allowedPeers,
+    blobId: 'prompt-group-avatar-$_runId-$blobIdSuffix',
+  );
+  if (uploaded == null) {
+    throw StateError('Prompt group avatar regrant failed');
+  }
+
+  final avatarPath = group.avatarPath ?? groupAvatarRelativePath(groupId);
+  await stack.groupRepo.updateGroup(
+    group.copyWith(
+      avatarBlobId: uploaded.id,
+      avatarMime: uploaded.mime,
+      avatarPath: avatarPath,
+    ),
+  );
+
+  return <String, dynamic>{
+    'blobId': uploaded.id,
+    'mime': uploaded.mime,
+    'path': avatarPath,
     'allowedPeers': allowedPeers,
   };
 }
@@ -17199,6 +17290,230 @@ Future<GroupMember> _ml020CharlieMember({
   );
 }
 
+const _scenario4FinalName = 'test me';
+const _scenario4FinalDescription = 'do you see me?';
+
+String _scenario4DemotionTimelineText() =>
+    '${_usernameForRole('alice')} removed admin from ${_usernameForRole('bob')}';
+
+Future<void> _waitForTimelineText({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String text,
+  Duration timeout = const Duration(seconds: 120),
+}) async {
+  var nextDrainAt = DateTime.fromMillisecondsSinceEpoch(0);
+  await waitForCondition(() async {
+    if (DateTime.now().isAfter(nextDrainAt)) {
+      nextDrainAt = DateTime.now().add(const Duration(seconds: 2));
+      try {
+        await drainGroupOfflineInboxForGroup(
+          bridge: stack.bridge,
+          groupRepo: stack.groupRepo,
+          msgRepo: stack.groupMsgRepo,
+          groupId: groupId,
+          groupMessageListener: stack.groupListener,
+          selfPeerId: stack.identity.peerId,
+        );
+      } catch (error) {
+        stdout.writeln(
+          '[GMP][$_role] drain while waiting for timeline failed: $error',
+        );
+      }
+    }
+    return _hasTimelineText(stack: stack, groupId: groupId, text: text);
+  }, timeout: timeout);
+}
+
+Future<void> _waitForLocalMemberAndGroupRole({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String memberPeerId,
+  required MemberRole memberRole,
+  required GroupRole groupRole,
+  Duration timeout = const Duration(seconds: 120),
+}) async {
+  var nextDrainAt = DateTime.fromMillisecondsSinceEpoch(0);
+  await waitForCondition(() async {
+    if (DateTime.now().isAfter(nextDrainAt)) {
+      nextDrainAt = DateTime.now().add(const Duration(seconds: 2));
+      try {
+        await drainGroupOfflineInboxForGroup(
+          bridge: stack.bridge,
+          groupRepo: stack.groupRepo,
+          msgRepo: stack.groupMsgRepo,
+          groupId: groupId,
+          groupMessageListener: stack.groupListener,
+          selfPeerId: stack.identity.peerId,
+        );
+      } catch (error) {
+        stdout.writeln(
+          '[GMP][$_role] drain while waiting for local role failed: $error',
+        );
+      }
+    }
+    final group = await stack.groupRepo.getGroup(groupId);
+    final member = await stack.groupRepo.getMember(groupId, memberPeerId);
+    return group?.myRole == groupRole && member?.role == memberRole;
+  }, timeout: timeout);
+}
+
+Future<Map<String, String>> _scenario4FinalRoleNames({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  final roles = <String, String>{};
+  for (final roleName in const <String>['alice', 'bob', 'charlie']) {
+    final peerId = identities[roleName]!['peerId'] as String;
+    final member = await stack.groupRepo.getMember(groupId, peerId);
+    if (member != null) {
+      roles[roleName] = member.role.toValue();
+    }
+  }
+  return roles;
+}
+
+Future<Map<String, dynamic>> _scenario4ActiveProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required String role,
+  required Map<String, dynamic> finalAvatar,
+  String bobMetadataAttemptOutcome = 'not_attempted',
+  String bobMemberAddAttemptOutcome = 'not_attempted',
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final active = memberPeerIds.toSet();
+  final finalRoles = await _scenario4FinalRoleNames(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+  );
+  final alicePeerId = identities['alice']!['peerId'] as String;
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  final danaPeerId = identities['dana']!['peerId'] as String;
+  final expectedPeers = <String>{alicePeerId, bobPeerId, charliePeerId};
+  final finalAvatarBlobId = finalAvatar['blobId'] as String? ?? '';
+  final finalAvatarMime = finalAvatar['mime'] as String? ?? '';
+  final finalAvatarPath = finalAvatar['path'] as String? ?? '';
+  final metadataRetained =
+      group?.name == _scenario4FinalName &&
+      group?.description == _scenario4FinalDescription &&
+      group?.avatarBlobId == finalAvatarBlobId &&
+      group?.avatarMime == finalAvatarMime &&
+      group?.avatarPath == finalAvatarPath;
+  final bobMember = await stack.groupRepo.getMember(groupId, bobPeerId);
+  final finalEpoch = await _keyEpoch(stack, groupId);
+
+  return <String, dynamic>{
+    'rowId': 'SCENARIO-4',
+    'scenario': 'private_admin_demotion_enforcement',
+    'proofRole': role,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'demotionTimelineVisible': await _hasTimelineText(
+      stack: stack,
+      groupId: groupId,
+      text: _scenario4DemotionTimelineText(),
+    ),
+    'aliceRoleStillAdmin': finalRoles['alice'] == MemberRole.admin.toValue(),
+    'bobRoleConvergedToWriter':
+        finalRoles['bob'] == MemberRole.writer.toValue(),
+    'charlieRoleStillWriter':
+        finalRoles['charlie'] == MemberRole.writer.toValue(),
+    'bobLocalRoleDemoted': bobMember?.role == MemberRole.writer,
+    'bobMyRoleDemoted': role == 'bob'
+        ? group?.myRole == GroupRole.member
+        : false,
+    'bobMetadataAttemptBlocked': bobMetadataAttemptOutcome != 'accepted',
+    'bobMetadataAttemptOutcome': bobMetadataAttemptOutcome,
+    'bobMemberAddAttemptBlocked': bobMemberAddAttemptOutcome != 'accepted',
+    'bobMemberAddAttemptOutcome': bobMemberAddAttemptOutcome,
+    'finalMetadataName': group?.name ?? '',
+    'finalMetadataDescription': group?.description ?? '',
+    'finalAvatarBlobId': group?.avatarBlobId ?? '',
+    'finalAvatarMime': group?.avatarMime ?? '',
+    'finalAvatarPath': group?.avatarPath ?? '',
+    'metadataAvatarRetained': metadataRetained,
+    'danaAbsentFromMembers': !active.contains(danaPeerId),
+    'memberStateConverged':
+        active.length == expectedPeers.length &&
+        active.containsAll(expectedPeers),
+    'finalKeyConverged': finalEpoch > 0,
+    'finalEpoch': finalEpoch,
+    'finalMemberPeerIds': memberPeerIds,
+    'finalMemberRoles': finalRoles,
+  };
+}
+
+Future<Map<String, dynamic>> _scenario4DanaProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  final memberPeerIds = group == null
+      ? const <String>[]
+      : await _memberPeerIds(stack, groupId);
+  return <String, dynamic>{
+    'rowId': 'SCENARIO-4',
+    'scenario': 'private_admin_demotion_enforcement',
+    'proofRole': 'dana',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'danaLocalGroupAbsent': group == null,
+    'danaUninvited': group == null,
+    'danaAbsentFromMembers': !memberPeerIds.contains(stack.identity.peerId),
+    'finalMemberPeerIds': memberPeerIds,
+  };
+}
+
+Future<String> _scenario4BobMetadataAttemptOutcome({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+}) async {
+  try {
+    await _publishGroupMetadataUpdate(
+      stack: stack,
+      groupId: groupId,
+      name: 'bob local should fail',
+      description: 'demoted local metadata edit',
+      changedAt: DateTime.now().toUtc(),
+    );
+    return 'accepted';
+  } on StateError catch (error) {
+    return 'blocked:${error.message}';
+  } catch (error) {
+    return 'rejected:${error.runtimeType}';
+  }
+}
+
+Future<String> _scenario4BobMemberAddAttemptOutcome({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  final danaMember = _groupMemberForIdentityRole(
+    groupId: groupId,
+    identities: identities,
+    role: 'dana',
+  );
+  try {
+    await addGroupMember(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      newMember: danaMember,
+      selfPeerId: stack.identity.peerId,
+    );
+    return 'accepted';
+  } on StateError catch (error) {
+    return 'blocked:${error.message}';
+  } catch (error) {
+    return 'rejected:${error.runtimeType}';
+  }
+}
+
 Future<(String, Map<String, dynamic>)> _createPromptAliceBobGroup({
   required GroupMultiDeviceTestStack stack,
   required Map<String, Map<String, dynamic>> identities,
@@ -17403,8 +17718,9 @@ _acceptPromptPendingInvite({
 
 Future<void> _runPromptAlice(
   GroupMultiDeviceTestStack stack,
-  Map<String, Map<String, dynamic>> identities,
-) async {
+  Map<String, Map<String, dynamic>> identities, {
+  bool includeDemotion = false,
+}) async {
   final initialAliceCharlieAbsent = !await _hasContactForRole(
     stack: stack,
     identities: identities,
@@ -17438,14 +17754,6 @@ Future<void> _runPromptAlice(
   );
   writeSharedText(_signalName('alice_received_bobInitialAfterBobAccept'), 'ok');
 
-  await _publishGroupMetadataUpdate(
-    stack: stack,
-    groupId: groupId,
-    name: 'test me',
-    description: 'do you see me?',
-  );
-  await waitForSharedSignal(_signalName('bob_prompt_metadata_seen'));
-
   await _updateMemberRoleAndPublish(
     stack: stack,
     groupId: groupId,
@@ -17454,6 +17762,20 @@ Future<void> _runPromptAlice(
     eventAt: DateTime.now().toUtc(),
   );
   await waitForSharedSignal(_signalName('bob_prompt_promoted_admin'));
+
+  final bobAvatar = await waitForSharedJson(
+    _signalName('bob_prompt_avatar_upload.json'),
+  );
+  await _waitForGroupMetadata(
+    stack: stack,
+    groupId: groupId,
+    name: 'test me',
+    description: 'do you see me?',
+    avatarBlobId: bobAvatar['blobId'] as String,
+    avatarMime: bobAvatar['mime'] as String,
+    avatarPath: bobAvatar['path'] as String,
+  );
+  writeSharedText(_signalName('alice_prompt_metadata_seen'), 'ok');
 
   await waitForSharedSignal(_signalName('bob_prompt_introduced_charlie'));
   await _addPeerContactsForRoles(stack, identities, const <String>['charlie']);
@@ -17465,36 +17787,13 @@ Future<void> _runPromptAlice(
     _signalName('charlie_prompt_alice_contact_established'),
   );
 
-  final preAddHash = await buildGroupTransitionStateHash(
-    stack.groupRepo,
-    groupId,
-  );
-  final charlieMember = _groupMemberForIdentityRole(
-    groupId: groupId,
-    identities: identities,
-    role: 'charlie',
-  );
-  await addGroupMember(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    groupId: groupId,
-    newMember: charlieMember,
-    selfPeerId: stack.identity.peerId,
-  );
-  await _publishMembersAddedSystemPayload(
-    stack: stack,
-    groupId: groupId,
-    danaMember: charlieMember,
-    eventAt: charlieMember.joinedAt,
-    saveLocalTimeline: true,
-    preTransitionStateHash: preAddHash,
-  );
-  await _sendPromptInviteToCharlie(
-    stack: stack,
-    identities: identities,
-    groupId: groupId,
-  );
   await waitForSharedSignal(_signalName('charlie_prompt_invite_accepted'));
+  await _waitForMemberInclusion(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['charlie']!['peerId'] as String,
+  );
+  writeSharedText(_signalName('alice_prompt_charlie_membership_seen'), 'ok');
   await waitForSharedSignal(_signalName('bob_prompt_charlie_membership_seen'));
 
   final aliceAfterSent = await _sendProofMessage(
@@ -17537,8 +17836,12 @@ Future<void> _runPromptAlice(
     'ok',
   );
 
-  final avatar = await _uploadPromptGroupAvatar(stack: stack, groupId: groupId);
-  writeSharedJson(_signalName('alice_prompt_avatar_upload.json'), avatar);
+  final avatar = await _uploadPromptGroupAvatar(
+    stack: stack,
+    groupId: groupId,
+    blobIdSuffix: 'alice-final',
+  );
+  writeSharedJson(_signalName('alice_prompt_final_avatar_upload.json'), avatar);
   await _publishGroupMetadataUpdate(
     stack: stack,
     groupId: groupId,
@@ -17551,7 +17854,64 @@ Future<void> _runPromptAlice(
   await waitForSharedSignal(_signalName('bob_prompt_avatar_seen'));
   await waitForSharedSignal(_signalName('charlie_prompt_avatar_seen'));
 
+  if (includeDemotion) {
+    await _updateMemberRoleAndPublish(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: identities['bob']!['peerId'] as String,
+      role: MemberRole.writer,
+      eventAt: DateTime.now().toUtc(),
+      saveLocalTimeline: true,
+    );
+    await _waitForMemberRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: identities['bob']!['peerId'] as String,
+      role: MemberRole.writer,
+    );
+    await _waitForTimelineText(
+      stack: stack,
+      groupId: groupId,
+      text: _scenario4DemotionTimelineText(),
+    );
+    writeSharedText(_signalName('alice_scenario4_demoted_bob'), 'ok');
+    await waitForSharedSignal(_signalName('bob_scenario4_saw_demotion'));
+    await waitForSharedSignal(_signalName('charlie_scenario4_saw_demotion'));
+    await waitForSharedSignal(_signalName('bob_scenario4_attempts_done'));
+  }
+
   final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final extra = <String, dynamic>{'activeMemberPeerIds': memberPeerIds};
+  if (includeDemotion) {
+    extra['privateAdminDemotionEnforcementProof'] = await _scenario4ActiveProof(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      role: 'alice',
+      finalAvatar: avatar,
+    );
+  } else {
+    extra['promptGroupMessagingProof'] = await _promptGroupMessagingProof(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      role: 'alice',
+      initialAliceCharlieContactAbsent: initialAliceCharlieAbsent,
+      introContactEstablished: await _hasContactForRole(
+        stack: stack,
+        identities: identities,
+        role: 'charlie',
+      ),
+      bobAcceptedInitialInvite: createProof['bobInitialInviteSent'] == true,
+      bobSawNameDescriptionUpdate: true,
+      charlieAcceptedInvite: true,
+      charlieSawNameDescriptionOnJoin: true,
+      fullFanoutAfterCharlieJoin: true,
+      avatarBlobId: avatar['blobId'] as String,
+      avatarMime: avatar['mime'] as String,
+      avatarPath: avatar['path'] as String,
+    );
+  }
   await _writeVerdict(
     stack: stack,
     groupId: groupId,
@@ -17561,36 +17921,15 @@ Future<void> _runPromptAlice(
       bobAfterReceived,
       charlieAfterReceived,
     ],
-    extra: <String, dynamic>{
-      'activeMemberPeerIds': memberPeerIds,
-      'promptGroupMessagingProof': await _promptGroupMessagingProof(
-        stack: stack,
-        groupId: groupId,
-        identities: identities,
-        role: 'alice',
-        initialAliceCharlieContactAbsent: initialAliceCharlieAbsent,
-        introContactEstablished: await _hasContactForRole(
-          stack: stack,
-          identities: identities,
-          role: 'charlie',
-        ),
-        bobAcceptedInitialInvite: createProof['bobInitialInviteSent'] == true,
-        bobSawNameDescriptionUpdate: true,
-        charlieAcceptedInvite: true,
-        charlieSawNameDescriptionOnJoin: true,
-        fullFanoutAfterCharlieJoin: true,
-        avatarBlobId: avatar['blobId'] as String,
-        avatarMime: avatar['mime'] as String,
-        avatarPath: avatar['path'] as String,
-      ),
-    },
+    extra: extra,
   );
 }
 
 Future<void> _runPromptBob(
   GroupMultiDeviceTestStack stack,
-  Map<String, Map<String, dynamic>> identities,
-) async {
+  Map<String, Map<String, dynamic>> identities, {
+  bool includeDemotion = false,
+}) async {
   final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
   final inviteListener = _buildGroupInviteListener(
     stack: stack,
@@ -17630,14 +17969,6 @@ Future<void> _runPromptBob(
       _signalName('alice_received_bobInitialAfterBobAccept'),
     );
 
-    final metadataGroup = await _waitForGroupMetadata(
-      stack: stack,
-      groupId: groupId,
-      name: 'test me',
-      description: 'do you see me?',
-    );
-    writeSharedText(_signalName('bob_prompt_metadata_seen'), 'ok');
-
     await _waitForMemberRole(
       stack: stack,
       groupId: groupId,
@@ -17645,6 +17976,22 @@ Future<void> _runPromptBob(
       role: MemberRole.admin,
     );
     writeSharedText(_signalName('bob_prompt_promoted_admin'), 'ok');
+
+    var bobAvatar = await _uploadPromptGroupAvatar(
+      stack: stack,
+      groupId: groupId,
+    );
+    writeSharedJson(_signalName('bob_prompt_avatar_upload.json'), bobAvatar);
+    final metadataGroup = await _publishGroupMetadataUpdate(
+      stack: stack,
+      groupId: groupId,
+      name: 'test me',
+      description: 'do you see me?',
+      avatarBlobId: bobAvatar['blobId'] as String,
+      avatarMime: bobAvatar['mime'] as String,
+      avatarPath: bobAvatar['path'] as String,
+    );
+    await waitForSharedSignal(_signalName('alice_prompt_metadata_seen'));
 
     writeSharedText(_signalName('bob_prompt_introduced_charlie'), 'ok');
     await waitForSharedSignal(
@@ -17654,6 +18001,47 @@ Future<void> _runPromptBob(
       _signalName('charlie_prompt_alice_contact_established'),
     );
 
+    final preAddHash = await buildGroupTransitionStateHash(
+      stack.groupRepo,
+      groupId,
+    );
+    final charlieMember = _groupMemberForIdentityRole(
+      groupId: groupId,
+      identities: identities,
+      role: 'charlie',
+    );
+    await addGroupMember(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      newMember: charlieMember,
+      selfPeerId: stack.identity.peerId,
+    );
+    final expandedMembers = await stack.groupRepo.getMembers(groupId);
+    bobAvatar = await _regrantPromptGroupAvatarForMembers(
+      stack: stack,
+      groupId: groupId,
+      members: expandedMembers,
+      blobIdSuffix: 'charlie',
+    );
+    writeSharedJson(_signalName('bob_prompt_avatar_upload.json'), bobAvatar);
+    await _publishMembersAddedSystemPayload(
+      stack: stack,
+      groupId: groupId,
+      danaMember: charlieMember,
+      eventAt: charlieMember.joinedAt,
+      saveLocalTimeline: true,
+      preTransitionStateHash: preAddHash,
+    );
+    await _sendPromptInviteToCharlie(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+    );
+    await waitForSharedSignal(_signalName('charlie_prompt_invite_accepted'));
+    await waitForSharedSignal(
+      _signalName('alice_prompt_charlie_membership_seen'),
+    );
     await _waitForMemberInclusion(
       stack: stack,
       groupId: groupId,
@@ -17702,7 +18090,7 @@ Future<void> _runPromptBob(
     );
 
     final avatarProof = await waitForSharedJson(
-      _signalName('alice_prompt_avatar_upload.json'),
+      _signalName('alice_prompt_final_avatar_upload.json'),
     );
     final avatarBlobId = avatarProof['blobId'] as String;
     final avatarMime = avatarProof['mime'] as String;
@@ -17718,7 +18106,79 @@ Future<void> _runPromptBob(
     );
     writeSharedText(_signalName('bob_prompt_avatar_seen'), 'ok');
 
+    String? metadataAttemptOutcome;
+    String? memberAddAttemptOutcome;
+    if (includeDemotion) {
+      await waitForSharedSignal(_signalName('alice_scenario4_demoted_bob'));
+      await _waitForLocalMemberAndGroupRole(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: stack.identity.peerId,
+        memberRole: MemberRole.writer,
+        groupRole: GroupRole.member,
+      );
+      await _waitForTimelineText(
+        stack: stack,
+        groupId: groupId,
+        text: _scenario4DemotionTimelineText(),
+      );
+      writeSharedText(_signalName('bob_scenario4_saw_demotion'), 'ok');
+      metadataAttemptOutcome = await _scenario4BobMetadataAttemptOutcome(
+        stack: stack,
+        groupId: groupId,
+      );
+      memberAddAttemptOutcome = await _scenario4BobMemberAddAttemptOutcome(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+      );
+      writeSharedJson(
+        _signalName('bob_scenario4_attempts.json'),
+        <String, dynamic>{
+          'groupId': groupId,
+          'metadataAttemptOutcome': metadataAttemptOutcome,
+          'memberAddAttemptOutcome': memberAddAttemptOutcome,
+        },
+      );
+      writeSharedText(_signalName('bob_scenario4_attempts_done'), 'ok');
+    }
+
     final memberPeerIds = await _memberPeerIds(stack, groupId);
+    final extra = <String, dynamic>{'activeMemberPeerIds': memberPeerIds};
+    if (includeDemotion) {
+      extra['privateAdminDemotionEnforcementProof'] =
+          await _scenario4ActiveProof(
+            stack: stack,
+            groupId: groupId,
+            identities: identities,
+            role: 'bob',
+            finalAvatar: avatarProof,
+            bobMetadataAttemptOutcome:
+                metadataAttemptOutcome ?? 'not_attempted',
+            bobMemberAddAttemptOutcome:
+                memberAddAttemptOutcome ?? 'not_attempted',
+          );
+    } else {
+      extra['promptGroupMessagingProof'] = await _promptGroupMessagingProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'bob',
+        initialAliceCharlieContactAbsent: true,
+        introContactEstablished: true,
+        bobAcceptedInitialInvite:
+            accepted.storedPendingInvite && accepted.acceptedInvite,
+        bobSawNameDescriptionUpdate:
+            metadataGroup.name == 'test me' &&
+            metadataGroup.description == 'do you see me?',
+        charlieAcceptedInvite: true,
+        charlieSawNameDescriptionOnJoin: true,
+        fullFanoutAfterCharlieJoin: true,
+        avatarBlobId: avatarBlobId,
+        avatarMime: avatarMime,
+        avatarPath: avatarPath,
+      );
+    }
     await _writeVerdict(
       stack: stack,
       groupId: groupId,
@@ -17728,28 +18188,7 @@ Future<void> _runPromptBob(
         aliceAfterReceived,
         charlieAfterReceived,
       ],
-      extra: <String, dynamic>{
-        'activeMemberPeerIds': memberPeerIds,
-        'promptGroupMessagingProof': await _promptGroupMessagingProof(
-          stack: stack,
-          groupId: groupId,
-          identities: identities,
-          role: 'bob',
-          initialAliceCharlieContactAbsent: true,
-          introContactEstablished: true,
-          bobAcceptedInitialInvite:
-              accepted.storedPendingInvite && accepted.acceptedInvite,
-          bobSawNameDescriptionUpdate:
-              metadataGroup.name == 'test me' &&
-              metadataGroup.description == 'do you see me?',
-          charlieAcceptedInvite: true,
-          charlieSawNameDescriptionOnJoin: true,
-          fullFanoutAfterCharlieJoin: true,
-          avatarBlobId: avatarBlobId,
-          avatarMime: avatarMime,
-          avatarPath: avatarPath,
-        ),
-      },
+      extra: extra,
     );
   } finally {
     inviteListener.dispose();
@@ -17758,8 +18197,9 @@ Future<void> _runPromptBob(
 
 Future<void> _runPromptCharlie(
   GroupMultiDeviceTestStack stack,
-  Map<String, Map<String, dynamic>> identities,
-) async {
+  Map<String, Map<String, dynamic>> identities, {
+  bool includeDemotion = false,
+}) async {
   final initialAliceCharlieAbsent = !await _hasContactForRole(
     stack: stack,
     identities: identities,
@@ -17784,11 +18224,17 @@ Future<void> _runPromptCharlie(
       pendingInviteRepo: pendingInviteRepo,
     );
     final groupId = accepted.groupId;
+    final bobAvatar = await waitForSharedJson(
+      _signalName('bob_prompt_avatar_upload.json'),
+    );
     final joinedGroup = await _waitForGroupMetadata(
       stack: stack,
       groupId: groupId,
       name: 'test me',
       description: 'do you see me?',
+      avatarBlobId: bobAvatar['blobId'] as String,
+      avatarMime: bobAvatar['mime'] as String,
+      avatarPath: bobAvatar['path'] as String,
     );
     writeSharedText(_signalName('charlie_prompt_invite_accepted'), 'ok');
 
@@ -17836,7 +18282,7 @@ Future<void> _runPromptCharlie(
     );
 
     final avatarProof = await waitForSharedJson(
-      _signalName('alice_prompt_avatar_upload.json'),
+      _signalName('alice_prompt_final_avatar_upload.json'),
     );
     final avatarBlobId = avatarProof['blobId'] as String;
     final avatarMime = avatarProof['mime'] as String;
@@ -17852,7 +18298,59 @@ Future<void> _runPromptCharlie(
     );
     writeSharedText(_signalName('charlie_prompt_avatar_seen'), 'ok');
 
+    if (includeDemotion) {
+      await waitForSharedSignal(_signalName('alice_scenario4_demoted_bob'));
+      await _waitForMemberRole(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['bob']!['peerId'] as String,
+        role: MemberRole.writer,
+      );
+      await _waitForTimelineText(
+        stack: stack,
+        groupId: groupId,
+        text: _scenario4DemotionTimelineText(),
+      );
+      writeSharedText(_signalName('charlie_scenario4_saw_demotion'), 'ok');
+      await waitForSharedSignal(_signalName('bob_scenario4_attempts_done'));
+    }
+
     final memberPeerIds = await _memberPeerIds(stack, groupId);
+    final extra = <String, dynamic>{'activeMemberPeerIds': memberPeerIds};
+    if (includeDemotion) {
+      extra['privateAdminDemotionEnforcementProof'] =
+          await _scenario4ActiveProof(
+            stack: stack,
+            groupId: groupId,
+            identities: identities,
+            role: 'charlie',
+            finalAvatar: avatarProof,
+          );
+    } else {
+      extra['promptGroupMessagingProof'] = await _promptGroupMessagingProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'charlie',
+        initialAliceCharlieContactAbsent: initialAliceCharlieAbsent,
+        introContactEstablished: await _hasContactForRole(
+          stack: stack,
+          identities: identities,
+          role: 'alice',
+        ),
+        bobAcceptedInitialInvite: true,
+        bobSawNameDescriptionUpdate: true,
+        charlieAcceptedInvite:
+            accepted.storedPendingInvite && accepted.acceptedInvite,
+        charlieSawNameDescriptionOnJoin:
+            joinedGroup.name == 'test me' &&
+            joinedGroup.description == 'do you see me?',
+        fullFanoutAfterCharlieJoin: true,
+        avatarBlobId: avatarBlobId,
+        avatarMime: avatarMime,
+        avatarPath: avatarPath,
+      );
+    }
     await _writeVerdict(
       stack: stack,
       groupId: groupId,
@@ -17861,32 +18359,7 @@ Future<void> _runPromptCharlie(
         aliceAfterReceived,
         bobAfterReceived,
       ],
-      extra: <String, dynamic>{
-        'activeMemberPeerIds': memberPeerIds,
-        'promptGroupMessagingProof': await _promptGroupMessagingProof(
-          stack: stack,
-          groupId: groupId,
-          identities: identities,
-          role: 'charlie',
-          initialAliceCharlieContactAbsent: initialAliceCharlieAbsent,
-          introContactEstablished: await _hasContactForRole(
-            stack: stack,
-            identities: identities,
-            role: 'alice',
-          ),
-          bobAcceptedInitialInvite: true,
-          bobSawNameDescriptionUpdate: true,
-          charlieAcceptedInvite:
-              accepted.storedPendingInvite && accepted.acceptedInvite,
-          charlieSawNameDescriptionOnJoin:
-              joinedGroup.name == 'test me' &&
-              joinedGroup.description == 'do you see me?',
-          fullFanoutAfterCharlieJoin: true,
-          avatarBlobId: avatarBlobId,
-          avatarMime: avatarMime,
-          avatarPath: avatarPath,
-        ),
-      },
+      extra: extra,
     );
   } finally {
     inviteListener.dispose();
@@ -18319,6 +18792,341 @@ Future<void> _runMl020Charlie(
         identities: identities,
         role: 'charlie',
         removedWindowPlaintextCount: removedWindowPlaintextCount,
+      ),
+    },
+  );
+}
+
+// Retained for comparing the old fixture-based proof path while the active
+// Scenario 4 runner uses the prompt invite-acceptance journey.
+// ignore: unused_element
+Future<void> _runPrivateAdminDemotionAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'Scenario 4 Admin Demotion',
+  );
+  writeSharedJson(_signalName('scenario4_group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+  final bobPeerId = identities['bob']!['peerId'] as String;
+
+  await waitForSharedSignal(_signalName('bob_scenario4_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_scenario4_group_joined'));
+
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: bobPeerId,
+    role: MemberRole.admin,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  writeSharedText(_signalName('alice_scenario4_promoted_bob'), 'ok');
+  await waitForSharedSignal(_signalName('bob_scenario4_became_admin'));
+  await waitForSharedSignal(_signalName('charlie_scenario4_saw_bob_admin'));
+
+  final bobAvatar = await waitForSharedJson(
+    _signalName('bob_scenario4_avatar.json'),
+  );
+  await waitForSharedSignal(_signalName('bob_scenario4_metadata_updated'));
+  await _waitForGroupMetadata(
+    stack: stack,
+    groupId: groupId,
+    name: _scenario4FinalName,
+    description: _scenario4FinalDescription,
+    avatarBlobId: bobAvatar['blobId'] as String,
+    avatarMime: bobAvatar['mime'] as String,
+    avatarPath: bobAvatar['path'] as String,
+  );
+
+  final finalAvatar = await _uploadPromptGroupAvatar(
+    stack: stack,
+    groupId: groupId,
+    blobIdSuffix: 'scenario4-alice',
+  );
+  await _publishGroupMetadataUpdate(
+    stack: stack,
+    groupId: groupId,
+    name: _scenario4FinalName,
+    description: _scenario4FinalDescription,
+    avatarBlobId: finalAvatar['blobId'] as String,
+    avatarMime: finalAvatar['mime'] as String,
+    avatarPath: finalAvatar['path'] as String,
+    changedAt: DateTime.now().toUtc(),
+  );
+  writeSharedJson(
+    _signalName('alice_scenario4_final_avatar.json'),
+    finalAvatar,
+  );
+  writeSharedText(_signalName('alice_scenario4_metadata_updated'), 'ok');
+  await waitForSharedSignal(_signalName('bob_scenario4_saw_final_metadata'));
+  await waitForSharedSignal(
+    _signalName('charlie_scenario4_saw_final_metadata'),
+  );
+
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: bobPeerId,
+    role: MemberRole.writer,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  await _waitForMemberRole(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: bobPeerId,
+    role: MemberRole.writer,
+  );
+  await _waitForTimelineText(
+    stack: stack,
+    groupId: groupId,
+    text: _scenario4DemotionTimelineText(),
+  );
+  writeSharedText(_signalName('alice_scenario4_demoted_bob'), 'ok');
+  await waitForSharedSignal(_signalName('bob_scenario4_saw_demotion'));
+  await waitForSharedSignal(_signalName('charlie_scenario4_saw_demotion'));
+  await waitForSharedSignal(_signalName('bob_scenario4_attempts_done'));
+
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'activeMemberPeerIds': memberPeerIds,
+      'privateAdminDemotionEnforcementProof': await _scenario4ActiveProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'alice',
+        finalAvatar: finalAvatar,
+      ),
+    },
+  );
+}
+
+// ignore: unused_element
+Future<void> _runPrivateAdminDemotionBob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(
+    _signalName('scenario4_group_fixture.json'),
+  );
+  final groupId = await _importGm004JoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  writeSharedText(_signalName('bob_scenario4_group_joined'), 'ok');
+
+  await waitForSharedSignal(_signalName('alice_scenario4_promoted_bob'));
+  await _waitForLocalMemberAndGroupRole(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: bobPeerId,
+    memberRole: MemberRole.admin,
+    groupRole: GroupRole.admin,
+  );
+  writeSharedText(_signalName('bob_scenario4_became_admin'), 'ok');
+
+  final bobAvatar = await _uploadPromptGroupAvatar(
+    stack: stack,
+    groupId: groupId,
+    blobIdSuffix: 'scenario4-bob',
+  );
+  await _publishGroupMetadataUpdate(
+    stack: stack,
+    groupId: groupId,
+    name: _scenario4FinalName,
+    description: _scenario4FinalDescription,
+    avatarBlobId: bobAvatar['blobId'] as String,
+    avatarMime: bobAvatar['mime'] as String,
+    avatarPath: bobAvatar['path'] as String,
+    changedAt: DateTime.now().toUtc(),
+  );
+  writeSharedJson(_signalName('bob_scenario4_avatar.json'), bobAvatar);
+  writeSharedText(_signalName('bob_scenario4_metadata_updated'), 'ok');
+
+  final finalAvatar = await waitForSharedJson(
+    _signalName('alice_scenario4_final_avatar.json'),
+  );
+  await waitForSharedSignal(_signalName('alice_scenario4_metadata_updated'));
+  await _waitForGroupMetadata(
+    stack: stack,
+    groupId: groupId,
+    name: _scenario4FinalName,
+    description: _scenario4FinalDescription,
+    avatarBlobId: finalAvatar['blobId'] as String,
+    avatarMime: finalAvatar['mime'] as String,
+    avatarPath: finalAvatar['path'] as String,
+  );
+  writeSharedText(_signalName('bob_scenario4_saw_final_metadata'), 'ok');
+
+  await waitForSharedSignal(_signalName('alice_scenario4_demoted_bob'));
+  await _waitForLocalMemberAndGroupRole(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: bobPeerId,
+    memberRole: MemberRole.writer,
+    groupRole: GroupRole.member,
+  );
+  await _waitForTimelineText(
+    stack: stack,
+    groupId: groupId,
+    text: _scenario4DemotionTimelineText(),
+  );
+  writeSharedText(_signalName('bob_scenario4_saw_demotion'), 'ok');
+
+  final metadataAttemptOutcome = await _scenario4BobMetadataAttemptOutcome(
+    stack: stack,
+    groupId: groupId,
+  );
+  final memberAddAttemptOutcome = await _scenario4BobMemberAddAttemptOutcome(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+  );
+  writeSharedJson(_signalName('bob_scenario4_attempts.json'), <String, dynamic>{
+    'metadataAttemptOutcome': metadataAttemptOutcome,
+    'memberAddAttemptOutcome': memberAddAttemptOutcome,
+  });
+  writeSharedText(_signalName('bob_scenario4_attempts_done'), 'ok');
+
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'activeMemberPeerIds': memberPeerIds,
+      'privateAdminDemotionEnforcementProof': await _scenario4ActiveProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'bob',
+        finalAvatar: finalAvatar,
+        bobMetadataAttemptOutcome: metadataAttemptOutcome,
+        bobMemberAddAttemptOutcome: memberAddAttemptOutcome,
+      ),
+    },
+  );
+}
+
+// ignore: unused_element
+Future<void> _runPrivateAdminDemotionCharlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(
+    _signalName('scenario4_group_fixture.json'),
+  );
+  final groupId = await _importGm004JoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  writeSharedText(_signalName('charlie_scenario4_group_joined'), 'ok');
+
+  await waitForSharedSignal(_signalName('alice_scenario4_promoted_bob'));
+  await _waitForMemberRole(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: bobPeerId,
+    role: MemberRole.admin,
+  );
+  writeSharedText(_signalName('charlie_scenario4_saw_bob_admin'), 'ok');
+
+  final bobAvatar = await waitForSharedJson(
+    _signalName('bob_scenario4_avatar.json'),
+  );
+  await waitForSharedSignal(_signalName('bob_scenario4_metadata_updated'));
+  await _waitForGroupMetadata(
+    stack: stack,
+    groupId: groupId,
+    name: _scenario4FinalName,
+    description: _scenario4FinalDescription,
+    avatarBlobId: bobAvatar['blobId'] as String,
+    avatarMime: bobAvatar['mime'] as String,
+    avatarPath: bobAvatar['path'] as String,
+  );
+
+  final finalAvatar = await waitForSharedJson(
+    _signalName('alice_scenario4_final_avatar.json'),
+  );
+  await waitForSharedSignal(_signalName('alice_scenario4_metadata_updated'));
+  await _waitForGroupMetadata(
+    stack: stack,
+    groupId: groupId,
+    name: _scenario4FinalName,
+    description: _scenario4FinalDescription,
+    avatarBlobId: finalAvatar['blobId'] as String,
+    avatarMime: finalAvatar['mime'] as String,
+    avatarPath: finalAvatar['path'] as String,
+  );
+  writeSharedText(_signalName('charlie_scenario4_saw_final_metadata'), 'ok');
+
+  await waitForSharedSignal(_signalName('alice_scenario4_demoted_bob'));
+  await _waitForMemberRole(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: bobPeerId,
+    role: MemberRole.writer,
+  );
+  await _waitForTimelineText(
+    stack: stack,
+    groupId: groupId,
+    text: _scenario4DemotionTimelineText(),
+  );
+  writeSharedText(_signalName('charlie_scenario4_saw_demotion'), 'ok');
+  await waitForSharedSignal(_signalName('bob_scenario4_attempts_done'));
+
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'activeMemberPeerIds': memberPeerIds,
+      'privateAdminDemotionEnforcementProof': await _scenario4ActiveProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        role: 'charlie',
+        finalAvatar: finalAvatar,
+      ),
+    },
+  );
+}
+
+Future<void> _runPrivateAdminDemotionDana(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  await waitForSharedSignal(_signalName('bob_scenario4_attempts_done'));
+  final attempts = await waitForSharedJson(
+    _signalName('bob_scenario4_attempts.json'),
+  );
+  final groupId = attempts['groupId'] as String;
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'activeMemberPeerIds': const <String>[],
+      'privateAdminDemotionEnforcementProof': await _scenario4DanaProof(
+        stack: stack,
+        groupId: groupId,
       ),
     },
   );
@@ -41823,6 +42631,19 @@ Future<void> _runScenarioRole() async {
         await _runMl020Bob(stack, identities);
       } else {
         await _runMl020Charlie(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_admin_demotion_enforcement') {
+      if (_role == 'alice') {
+        await _runPromptAlice(stack, identities, includeDemotion: true);
+      } else if (_role == 'bob') {
+        await _runPromptBob(stack, identities, includeDemotion: true);
+      } else if (_role == 'charlie') {
+        await _runPromptCharlie(stack, identities, includeDemotion: true);
+      } else {
+        await _runPrivateAdminDemotionDana(stack, identities);
       }
       return;
     }

@@ -3,6 +3,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// A single introduction row displayed in the Intros tab.
 ///
@@ -41,6 +42,7 @@ class IntroRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final successColor = readableColors.isLightSurface
         ? const Color(0xFF157A39)
         : const Color(0xFF1DB954);
@@ -91,7 +93,7 @@ class IntroRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Row(
                   children: [
-                    Text('Introduced by', style: attributionStyle),
+                    Text(l10n.introduced_by_label, style: attributionStyle),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
@@ -117,7 +119,7 @@ class IntroRow extends StatelessWidget {
                 // Pass button
                 _ActionButton(
                   buttonKey: ValueKey('intro-pass-${introduction.id}'),
-                  label: 'Pass',
+                  label: l10n.intro_pass,
                   onTap: isProcessing ? null : onPass,
                   isPrimary: false,
                 ),
@@ -125,7 +127,9 @@ class IntroRow extends StatelessWidget {
                 // Accept button
                 _ActionButton(
                   buttonKey: ValueKey('intro-accept-${introduction.id}'),
-                  label: isProcessing ? 'Accepting...' : 'Accept',
+                  label: isProcessing
+                      ? l10n.intro_accepting
+                      : l10n.intro_accept,
                   onTap: isProcessing ? null : onAccept,
                   isPrimary: true,
                   isProcessing: isProcessing,
@@ -134,7 +138,7 @@ class IntroRow extends StatelessWidget {
             )
           else if (showActions && isOtherBlocked)
             Text(
-              'Unavailable',
+              l10n.intro_unavailable,
               style: TextStyle(fontSize: 11, color: readableColors.textMuted),
             )
           else if (introduction.status ==
@@ -157,7 +161,7 @@ class IntroRow extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                        'Message',
+                        l10n.group_message_hint,
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
@@ -172,7 +176,9 @@ class IntroRow extends StatelessWidget {
           else if (ownPartyStatus == IntroductionStatus.accepted &&
               introduction.status == IntroductionOverallStatus.pending)
             Text(
-              'Waiting for ${waitingForUsername ?? 'them'}',
+              waitingForUsername != null
+                  ? l10n.intro_waiting_for(waitingForUsername!)
+                  : l10n.intro_waiting_for_them,
               style: TextStyle(fontSize: 11, color: readableColors.textMuted),
             )
           else

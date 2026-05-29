@@ -75,7 +75,7 @@ Files:
 
 When to run:
 
-- Run when group send, receive, retry, resume, invite, or announcement behavior changes.
+- Run when group send, receive, retry, resume, invite, metadata/photo authority, or announcement behavior changes.
 - If invite or contact-entry flows are touched, also run `test/features/contact_request/integration/contact_request_flow_test.dart`.
 
 Command:
@@ -87,6 +87,7 @@ Command:
 Files:
 
 - `test/features/groups/integration/group_messaging_smoke_test.dart`
+- `test/features/groups/integration/group_admin_metadata_convergence_test.dart`
 - `test/features/groups/integration/group_resume_recovery_test.dart`
 - `test/features/groups/integration/group_edge_cases_smoke_test.dart`
 - `test/features/groups/integration/invite_round_trip_test.dart`
@@ -147,9 +148,9 @@ flutter test -d <device-id> \
   integration_test/media_stable_id_smoke_test.dart
 ```
 
-## Known Failures As Of Session 1
+## Known Failures And Notes
 
-- Completeness check passed via `./scripts/run_test_gates.sh completeness-check` with `564/564` test files classified.
+- Current completeness-check note: latest attempted on 2026-05-28 via `./scripts/run_test_gates.sh completeness-check` and failed with `747/750` test files classified because `test/l10n/l10n_integrity_test.dart`, `test/shared/fakes/fake_group_pubsub_network_test.dart`, and `test/shared/fakes/seeded_group_reproduction_log_test.dart` were unmatched. The worker reported those as pre-existing and unrelated to the promoted-admin regression task.
 - Baseline Gate is red because `integration_test/loading_states_smoke_test.dart` fails to build: `StartupRouter` now requires `postRepository`.
 - `integration_test/posts_phase1_fake_test.dart` still ran successfully in the Baseline integration invocation, but the Baseline Gate remains red because the loading-states build failed first.
 - 1:1 Reliability Gate passed.

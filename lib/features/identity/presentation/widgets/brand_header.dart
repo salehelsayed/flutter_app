@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Brand header section with glowing icon, title, and tagline.
 class BrandHeader extends StatelessWidget {
@@ -9,6 +10,7 @@ class BrandHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -54,7 +56,7 @@ class BrandHeader extends StatelessWidget {
         const SizedBox(height: 8),
         // Tagline
         Text(
-          'Your identity, your control',
+          l10n.identity_tagline,
           style: TextStyle(color: readableColors.textSecondary, fontSize: 16),
         ),
       ],

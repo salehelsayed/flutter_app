@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Banner shown at the top of a conversation to prompt introductions.
 ///
@@ -20,6 +21,7 @@ class IntroBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final accentColor = readableColors.isLightSurface
         ? const Color(0xFF157A39)
         : const Color(0xFF1DB954);
@@ -45,7 +47,7 @@ class IntroBanner extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Help $contactUsername meet your circle',
+            l10n.intro_banner_title(contactUsername),
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
@@ -54,7 +56,7 @@ class IntroBanner extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Introduce them to friends who might click',
+            l10n.intro_banner_desc,
             style: TextStyle(fontSize: 13, color: readableColors.textMuted),
           ),
           const SizedBox(height: 12),
@@ -75,9 +77,9 @@ class IntroBanner extends StatelessWidget {
                       ),
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                     ),
-                    child: const Text(
-                      'Make introductions',
-                      style: TextStyle(
+                    child: Text(
+                      l10n.intro_make_introductions,
+                      style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
@@ -90,7 +92,7 @@ class IntroBanner extends StatelessWidget {
               TextButton(
                 onPressed: onMaybeLater,
                 child: Text(
-                  'Maybe later',
+                  l10n.intro_maybe_later,
                   style: TextStyle(
                     fontSize: 13,
                     color: readableColors.textMuted,

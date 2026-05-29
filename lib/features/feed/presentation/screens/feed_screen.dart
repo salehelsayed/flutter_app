@@ -1160,7 +1160,7 @@ class _EmptyFeedStateCard extends StatelessWidget {
         border: Border.all(color: readableColors.border),
       ),
       child: Text(
-        'Your feed is ready, @$username. New connections will appear here.',
+        AppLocalizations.of(context)!.feed_ready_for_user(username),
         textAlign: TextAlign.center,
         style: TextStyle(
           color: readableColors.textSecondary,
@@ -1237,7 +1237,7 @@ class _FeedLoadingStatusCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Loading Feed...',
+                  AppLocalizations.of(context)!.feed_loading,
                   style: TextStyle(
                     color: readableColors.textPrimary,
                     fontSize: 14,
@@ -1247,7 +1247,7 @@ class _FeedLoadingStatusCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Your recent threads are still syncing.',
+                  AppLocalizations.of(context)!.feed_syncing_threads,
                   style: TextStyle(
                     color: readableColors.textSecondary,
                     fontSize: 12,

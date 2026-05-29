@@ -219,7 +219,11 @@ Accepted ambiguities for the later implementation pass:
 Before this feature is exposed to users, acceptance evidence must prove these dangerous paths are covered:
 
 - Migration export includes the encrypted database, DB encryption key, identity private key, mnemonic, ML-KEM secret, group keys, media encryption keys, app-owned media files, and app-owned local files required for promised history rendering.
+- Full export/import restores database rows, secure-storage values, app-owned media files, and app-owned local files into a fresh app state that can open and render the migrated account.
+- Migrated images, voice messages, videos, and other app-owned attachments remain decryptable and renderable because their media files, metadata, and media encryption keys match after import.
 - Imported secure-storage values are staged first and do not overwrite active secure-storage keys before commit.
+- Database export uses a consistent SQLCipher/SQLite snapshot and import rejects torn, stale, or incomplete snapshots.
+- Durable cutover records prove final migration success only after the new phone is active-ready and the old phone is durably migrated out or network-blocked.
 - The new phone cannot enter normal app UI or start normal account services until import is fully verified and cutover is durable.
 - The old phone shuts down account networking at cutover, including P2P, inbound/outbound streams, inbox draining, push/rendezvous registration, send queues, retry queues, upload queues, and local discovery for the migrated-out account.
 - Exactly one device becomes active after migration recovery settles; interruption paths must never leave both phones able to start normal P2P for the same account.
@@ -267,6 +271,7 @@ Before release, simulator or device-context acceptance must cover these iOS jour
 - Missing acceptance evidence: no current test proves secure-storage staging uses non-active staged keys and does not overwrite active secure-storage keys before commit.
 - Missing acceptance evidence: no current test proves imported secure-storage secrets match the imported account identity and database references before commit.
 - Missing acceptance evidence: no current test proves app-owned media files are copied, verified, and displayed after migration.
+- Missing acceptance evidence: no current test proves migrated image, voice-message, video, and attachment rows still match their migrated files and media encryption keys after import.
 - Missing acceptance evidence: no current test proves a partially imported migration cannot become the active account.
 - Missing acceptance evidence: no current test proves the canonical new-phone and old-phone migration states drive startup, networking, queues, and UI consistently.
 - Missing acceptance evidence: no current test proves final cutover ordering requires durable old-phone network-blocked or migrated-out state before new-phone normal startup.

@@ -8,6 +8,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/presentation/group_invite_status_presentation.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Shows a member's name, role badge, and optional action buttons.
 class GroupMemberRow extends StatelessWidget {
@@ -39,6 +40,7 @@ class GroupMemberRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -53,7 +55,7 @@ class GroupMemberRow extends StatelessWidget {
               children: [
                 Text(
                   isSelf
-                      ? 'You'
+                      ? l10n.feed_you
                       : (member.username ??
                             (member.peerId.length > 12
                                 ? '${member.peerId.substring(0, 12)}...'
@@ -65,13 +67,14 @@ class GroupMemberRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                _RoleBadge(role: member.role),
+                _RoleBadge(role: member.role, l10n: l10n),
                 if (!isSelf) ...[
                   const SizedBox(height: 6),
                   _InviteStatusBadge(
                     peerId: member.peerId,
                     status: inviteStatus,
                     lastError: inviteAttempt?.lastError,
+                    l10n: l10n,
                   ),
                 ],
                 if (identitySafety?.identityChanged == true) ...[
@@ -79,6 +82,7 @@ class GroupMemberRow extends StatelessWidget {
                   _IdentityChangedWarning(
                     peerId: member.peerId,
                     safety: identitySafety!,
+                    l10n: l10n,
                   ),
                 ],
               ],
@@ -98,12 +102,16 @@ class GroupMemberRow extends StatelessWidget {
                       'group-member-resend-invite-${member.peerId}',
                     ),
                     onPressed: isResendingInvite ? null : onResendInvite,
-                    child: Text(isResendingInvite ? 'Sending...' : 'Resend'),
+                    child: Text(
+                      isResendingInvite
+                          ? l10n.group_member_sending
+                          : l10n.group_member_resend,
+                    ),
                   ),
                 if (onToggleAdminRole != null)
                   PopupMenuButton<_GroupMemberAction>(
                     key: ValueKey('group-member-actions-${member.peerId}'),
-                    tooltip: 'Manage role',
+                    tooltip: l10n.group_member_manage_role,
                     color: readableColors.surfaceRaised,
                     onSelected: (action) {
                       if (action == _GroupMemberAction.toggleAdminRole) {
@@ -118,8 +126,8 @@ class GroupMemberRow extends StatelessWidget {
                         value: _GroupMemberAction.toggleAdminRole,
                         child: Text(
                           member.role == MemberRole.admin
-                              ? 'Remove Admin'
-                              : 'Make Admin',
+                              ? l10n.group_info_remove_admin_action
+                              : l10n.group_info_make_admin_action,
                           style: TextStyle(color: readableColors.textPrimary),
                         ),
                       ),
@@ -154,11 +162,13 @@ class _InviteStatusBadge extends StatelessWidget {
   final String peerId;
   final GroupInviteDeliveryStatus status;
   final String? lastError;
+  final AppLocalizations l10n;
 
   const _InviteStatusBadge({
     required this.peerId,
     required this.status,
     this.lastError,
+    required this.l10n,
   });
 
   @override
@@ -166,6 +176,7 @@ class _InviteStatusBadge extends StatelessWidget {
     final readableColors = context.backgroundReadableColors;
     final color = _color(readableColors);
     final detail = groupInviteStatusDetail(
+      l10n: l10n,
       status: status,
       lastError: lastError,
     );
@@ -189,7 +200,7 @@ class _InviteStatusBadge extends StatelessWidget {
             ),
           ),
           child: Text(
-            groupInviteStatusLabel(status),
+            groupInviteStatusLabel(l10n, status),
             style: TextStyle(
               color: color,
               fontSize: 11,
@@ -241,8 +252,13 @@ class _InviteStatusBadge extends StatelessWidget {
 class _IdentityChangedWarning extends StatelessWidget {
   final String peerId;
   final GroupMemberIdentitySafety safety;
+  final AppLocalizations l10n;
 
-  const _IdentityChangedWarning({required this.peerId, required this.safety});
+  const _IdentityChangedWarning({
+    required this.peerId,
+    required this.safety,
+    required this.l10n,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -276,7 +292,7 @@ class _IdentityChangedWarning extends StatelessWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Identity changed',
+                  l10n.group_identity_changed,
                   style: TextStyle(
                     color: warningColor,
                     fontSize: 12,
@@ -288,11 +304,11 @@ class _IdentityChangedWarning extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           _SafetyNumberLine(
-            label: 'Current safety',
+            label: l10n.group_current_safety,
             value: safety.currentSafetyNumber,
           ),
           _SafetyNumberLine(
-            label: 'Saved safety',
+            label: l10n.group_saved_safety,
             value: safety.savedSafetyNumber,
           ),
         ],
@@ -325,21 +341,33 @@ class _SafetyNumberLine extends StatelessWidget {
 
 class _RoleBadge extends StatelessWidget {
   final MemberRole role;
+  final AppLocalizations l10n;
 
-  const _RoleBadge({required this.role});
+  const _RoleBadge({required this.role, required this.l10n});
 
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
 
     return Text(
-      role.toValue(),
+      _roleLabel(role),
       style: TextStyle(
         fontSize: 11,
         color: _colorForRole(role, readableColors),
         fontWeight: FontWeight.w500,
       ),
     );
+  }
+
+  String _roleLabel(MemberRole role) {
+    switch (role) {
+      case MemberRole.admin:
+        return l10n.group_role_admin;
+      case MemberRole.writer:
+        return l10n.group_role_writer;
+      case MemberRole.reader:
+        return l10n.group_role_reader;
+    }
   }
 
   Color _colorForRole(

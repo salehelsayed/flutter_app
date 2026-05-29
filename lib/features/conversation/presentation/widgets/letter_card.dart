@@ -77,7 +77,7 @@ class LetterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
+    final l10n = AppLocalizations.of(context)!;
     final readableColors = context.backgroundReadableColors;
 
     return GestureDetector(
@@ -278,8 +278,7 @@ class LetterCard extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                         child: Text(
-                          l10n?.conversation_message_deleted ??
-                              'This message was deleted',
+                          l10n.conversation_message_deleted,
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w400,
@@ -307,8 +306,9 @@ class LetterCard extends StatelessWidget {
                                   'failed-message-retry-${failedMessageActionKeySuffix ?? 'message'}',
                                 ),
                                 icon: Icons.refresh_rounded,
-                                label: 'Retry',
-                                semanticLabel: 'Retry failed message',
+                                label: l10n.btn_retry,
+                                semanticLabel:
+                                    l10n.failed_message_retry_semantics,
                                 color: const Color(0xFF4ECDC4),
                                 onTap: onRetryFailedMessage!,
                               ),
@@ -318,8 +318,9 @@ class LetterCard extends StatelessWidget {
                                   'failed-media-retry-${failedMediaActionKeySuffix ?? 'message'}',
                                 ),
                                 icon: Icons.refresh_rounded,
-                                label: 'Retry',
-                                semanticLabel: 'Retry failed media message',
+                                label: l10n.btn_retry,
+                                semanticLabel:
+                                    l10n.failed_media_retry_semantics,
                                 color: const Color(0xFF4ECDC4),
                                 onTap: onRetryFailedMedia!,
                               ),
@@ -329,8 +330,9 @@ class LetterCard extends StatelessWidget {
                                   'failed-media-delete-${failedMediaActionKeySuffix ?? 'message'}',
                                 ),
                                 icon: Icons.delete_outline_rounded,
-                                label: 'Delete',
-                                semanticLabel: 'Delete failed media message',
+                                label: l10n.conversation_context_delete,
+                                semanticLabel:
+                                    l10n.failed_media_delete_semantics,
                                 color: const Color(0xFFFF8A80),
                                 onTap: onDeleteFailedMedia!,
                               ),
@@ -378,8 +380,9 @@ class LetterCard extends StatelessWidget {
                           if (!isIncoming && status != null) ...[
                             const SizedBox(width: 4),
                             Semantics(
-                              label:
-                                  'Message status: ${_statusSemantic(status!)}',
+                              label: l10n.message_status_semantics(
+                                _statusSemantic(context, status!),
+                              ),
                               child: Icon(
                                 _statusIcon(status!),
                                 size: 14,
@@ -553,14 +556,15 @@ class LetterCard extends StatelessWidget {
         : const Color.fromRGBO(255, 255, 255, 0.25);
   }
 
-  static String _statusSemantic(String status) {
+  static String _statusSemantic(BuildContext context, String status) {
+    final l10n = AppLocalizations.of(context)!;
     if (status == 'delivered' || status == 'queued') {
-      return 'delivered';
+      return l10n.message_status_delivered;
     }
-    if (status == 'failed') return 'failed';
-    if (status == 'sending') return 'sending';
-    if (status == 'sent') return 'sent';
-    if (status == 'pending') return 'pending delivery via inbox';
+    if (status == 'failed') return l10n.message_status_failed;
+    if (status == 'sending') return l10n.message_status_sending;
+    if (status == 'sent') return l10n.message_status_sent;
+    if (status == 'pending') return l10n.message_status_pending_inbox;
     return status;
   }
 }

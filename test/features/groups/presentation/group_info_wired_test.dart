@@ -1867,7 +1867,7 @@ void main() {
         find.byKey(const ValueKey('group-security-status-card')),
         findsOneWidget,
       );
-      expect(find.text('End-to-end encrypted'), findsOneWidget);
+      expect(find.text('Encrypted - key epoch 2'), findsOneWidget);
       expect(find.text('Group key changed to epoch 2'), findsNWidgets(2));
       expect(find.text('1 of 2 members verified'), findsOneWidget);
       expect(find.text('1 member needs verification review'), findsOneWidget);
@@ -1945,6 +1945,8 @@ void main() {
       );
       await pumpFrames(tester, count: 2);
 
+      expect(find.text('Encrypted - key epoch 1'), findsOneWidget);
+      expect(find.text('Current key epoch 1'), findsOneWidget);
       expect(find.text('All 3 members verified'), findsOneWidget);
       expect(find.text('2 of 3 members verified'), findsNothing);
       expect(
@@ -2304,11 +2306,19 @@ void main() {
             username: 'Bob',
             role: MemberRole.writer,
             publicKey: 'pk-bob',
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-bob',
+                transportPeerId: 'peer-bob-device',
+                deviceSigningPublicKey: 'pk-bob',
+              ),
+            ],
             joinedAt: DateTime.now().toUtc(),
           ),
         );
 
         final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
         bridge.responses['payload.sign'] = {
           'ok': true,
           'signature': 'sig-metadata',
@@ -2323,7 +2333,7 @@ void main() {
               contactRepo: InMemoryContactRepository(),
               bridge: bridge,
               identityRepo: FakeIdentityRepository(identity: testIdentity),
-              p2pService: FakeP2PService(),
+              p2pService: p2pService,
             ),
           ),
         );
@@ -2495,6 +2505,18 @@ void main() {
             (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
         expect(inboxStorePayload['recipientPeerIds'], ['peer-bob']);
+        expect(inboxStorePayload['preserveRecipientPeerIds'], isTrue);
+        final directUpdate = p2pService.sentMessageLog.singleWhere(
+          (entry) => entry.peerId == 'peer-bob-device',
+        );
+        final directEnvelope =
+            jsonDecode(directUpdate.content) as Map<String, dynamic>;
+        expect(directEnvelope['type'], groupMembershipUpdateMessageType);
+        expect(directEnvelope['groupId'], 'group-1');
+        expect(
+          (directEnvelope['relayEnvelope'] as Map<String, dynamic>)['message'],
+          inboxStorePayload['message'],
+        );
         final replayEnvelope = _storedGroupReplayEnvelope(
           inboxStorePayload['message'] as String,
         );
@@ -2555,6 +2577,7 @@ void main() {
         );
 
         final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
         bridge.responses['payload.sign'] = {'ok': false};
 
         await tester.pumpWidget(
@@ -2566,7 +2589,7 @@ void main() {
               contactRepo: InMemoryContactRepository(),
               bridge: bridge,
               identityRepo: FakeIdentityRepository(identity: testIdentity),
-              p2pService: FakeP2PService(),
+              p2pService: p2pService,
             ),
           ),
         );
@@ -2635,6 +2658,7 @@ void main() {
         );
 
         final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
 
         await tester.pumpWidget(
           _localizedMaterialApp(
@@ -2645,7 +2669,7 @@ void main() {
               contactRepo: InMemoryContactRepository(),
               bridge: bridge,
               identityRepo: FakeIdentityRepository(identity: testIdentity),
-              p2pService: FakeP2PService(),
+              p2pService: p2pService,
             ),
           ),
         );
@@ -2714,6 +2738,7 @@ void main() {
             (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
         expect(inboxStorePayload['recipientPeerIds'], ['peer-alice']);
+        expect(inboxStorePayload['preserveRecipientPeerIds'], isTrue);
         final replayEnvelope = _storedGroupReplayEnvelope(
           inboxStorePayload['message'] as String,
         );
@@ -2724,6 +2749,18 @@ void main() {
         expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
         expect(replayEnvelope['signedPayload'], isA<String>());
         expect(replayEnvelope['signature'], isA<String>());
+
+        expect(p2pService.sentMessageLog, hasLength(1));
+        final directUpdate = p2pService.sentMessageLog.single;
+        expect(directUpdate.peerId, 'peer-alice');
+        final directEnvelope =
+            jsonDecode(directUpdate.content) as Map<String, dynamic>;
+        expect(directEnvelope['type'], groupMembershipUpdateMessageType);
+        expect(directEnvelope['groupId'], 'group-1');
+        final directRelayEnvelope =
+            directEnvelope['relayEnvelope'] as Map<String, dynamic>;
+        expect(directRelayEnvelope['from'], testIdentity.peerId);
+        expect(directRelayEnvelope['message'], inboxStorePayload['message']);
 
         final latestTimeline = await msgRepo.getLatestMessage('group-1');
         expect(latestTimeline, isNotNull);

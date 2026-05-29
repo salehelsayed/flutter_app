@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class GroupDissolvedBadge extends StatelessWidget {
   final bool dense;
@@ -29,7 +30,7 @@ class GroupDissolvedBadge extends StatelessWidget {
         ),
       ),
       child: Text(
-        'Dissolved',
+        AppLocalizations.of(context)!.group_dissolved_badge,
         style: TextStyle(
           fontSize: dense ? 10 : 11,
           fontWeight: FontWeight.w700,

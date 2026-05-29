@@ -3,6 +3,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
 import 'media_thumbnail_image.dart';
 import 'video_thumbnail_overlay.dart';
@@ -37,7 +38,7 @@ class MediaGridCell extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            _buildContent(),
+            _buildContent(context),
             if (_canShowVideoOverlay)
               VideoThumbnailOverlay(durationMs: attachment.durationMs),
             if (_showsGifBadge) _buildGifBadge(),
@@ -88,18 +89,18 @@ class MediaGridCell extends StatelessWidget {
       onRetryUnavailableMedia != null &&
       GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
 
-  Widget _buildContent() {
+  Widget _buildContent(BuildContext context) {
     final isImage = attachment.mediaType == 'image';
     final isVideo = attachment.mediaType == 'video';
     final isDone = attachment.downloadStatus == 'done';
     final hasPath = attachment.localPath != null;
     if (_showsUnavailableMedia) {
-      return _buildUnavailablePlaceholder();
+      return _buildUnavailablePlaceholder(context);
     }
 
     if ((isImage || isVideo) && isDone && hasPath) {
       if (!_isDisplayableDoneMedia) {
-        return _buildUnavailablePlaceholder();
+        return _buildUnavailablePlaceholder(context);
       }
       return MediaThumbnailImage(
         mediaPath: attachment.localPath!,
@@ -109,7 +110,7 @@ class MediaGridCell extends StatelessWidget {
         placeholder: isVideo
             ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
             : _buildLoadingPlaceholder(),
-        error: _buildUnavailablePlaceholder(),
+        error: _buildUnavailablePlaceholder(context),
       );
     }
 
@@ -138,7 +139,8 @@ class MediaGridCell extends StatelessWidget {
     );
   }
 
-  Widget _buildUnavailablePlaceholder() {
+  Widget _buildUnavailablePlaceholder(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       color: const Color.fromRGBO(255, 255, 255, 0.03),
       child: Center(
@@ -153,12 +155,12 @@ class MediaGridCell extends StatelessWidget {
                 color: Color.fromRGBO(255, 255, 255, 0.34),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Media unavailable',
+              Text(
+                l10n.media_unavailable,
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
+                style: const TextStyle(
                   color: Color.fromRGBO(255, 255, 255, 0.66),
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -168,7 +170,7 @@ class MediaGridCell extends StatelessWidget {
                 const SizedBox(height: 8),
                 Semantics(
                   container: true,
-                  label: 'Retry unavailable media',
+                  label: l10n.media_retry_unavailable,
                   button: true,
                   child: IconButton(
                     key: ValueKey(
@@ -183,7 +185,7 @@ class MediaGridCell extends StatelessWidget {
                     ),
                     color: const Color(0xFF4ecdc4),
                     onPressed: onRetryUnavailableMedia,
-                    tooltip: 'Retry unavailable media',
+                    tooltip: l10n.media_retry_unavailable,
                     icon: const Icon(Icons.refresh_rounded),
                   ),
                 ),

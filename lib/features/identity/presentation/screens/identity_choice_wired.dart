@@ -107,9 +107,10 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
       if (!mounted) return;
       setState(() => _isGeneratingIdentity = false);
 
+      final l10n = AppLocalizations.of(context)!;
       final errorMessage = result == GenerateIdentityResult.coreLibError
-          ? 'Failed to generate identity'
-          : 'Failed to save identity';
+          ? l10n.identity_generate_failed
+          : l10n.identity_save_failed;
       emitFlowEvent(
         layer: 'FL',
         event: 'ID_GENERATE_ERROR_SHOWN',

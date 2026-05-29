@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Compose preview bar shown above the expanded input when quoting a message.
 ///
@@ -43,7 +44,7 @@ class QuotePreviewBar extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Replying to',
+                  AppLocalizations.of(context)!.feed_replying_to,
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,

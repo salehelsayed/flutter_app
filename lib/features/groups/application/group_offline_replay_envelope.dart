@@ -257,6 +257,8 @@ Future<void> storeGroupOfflineReplayFromRetryPayload({
     groupId,
     message,
     recipientPeerIds: recipientPeerIds,
+    preserveRecipientPeerIds:
+        recipientPeerIds != null && recipientPeerIds.isNotEmpty,
   );
 }
 
@@ -553,18 +555,33 @@ GroupMemberDeviceIdentity? _resolveSigningDevice({
   bool activeOnly = true,
 }) {
   if (member == null) return null;
+  GroupMemberDeviceIdentity? device;
   if (senderDeviceId != null) {
-    return member.findDeviceById(
+    device = member.findDeviceById(
       senderDeviceId,
       activeOnly: activeOnly,
       allowLegacyFallback: true,
     );
+    if (device != null) return device;
+    return _accountSignedUnboundTransportDevice(
+      member: member,
+      senderPublicKey: senderPublicKey,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+    );
   }
   if (senderTransportPeerId != null) {
-    return member.findDeviceByTransportPeerId(
+    device = member.findDeviceByTransportPeerId(
       senderTransportPeerId,
       activeOnly: activeOnly,
       allowLegacyFallback: true,
+    );
+    if (device != null) return device;
+    return _accountSignedUnboundTransportDevice(
+      member: member,
+      senderPublicKey: senderPublicKey,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
     );
   }
   return _firstDeviceForSigningKey(
@@ -572,6 +589,44 @@ GroupMemberDeviceIdentity? _resolveSigningDevice({
     senderPublicKey,
     activeOnly: activeOnly,
     allowLegacyFallback: true,
+  );
+}
+
+GroupMemberDeviceIdentity? _accountSignedUnboundTransportDevice({
+  required GroupMember member,
+  required String senderPublicKey,
+  required String? senderDeviceId,
+  required String? senderTransportPeerId,
+}) {
+  final trustedMemberPublicKey = member.publicKey?.trim();
+  if (trustedMemberPublicKey == null ||
+      trustedMemberPublicKey.isEmpty ||
+      trustedMemberPublicKey != senderPublicKey.trim()) {
+    return null;
+  }
+
+  final normalizedDeviceId = _trimToNull(senderDeviceId);
+  final normalizedTransportPeerId = _trimToNull(senderTransportPeerId);
+  final resolvedDeviceId = normalizedDeviceId ?? normalizedTransportPeerId;
+  if (resolvedDeviceId == null || resolvedDeviceId.isEmpty) {
+    return null;
+  }
+  final existingById = member.findDeviceById(
+    resolvedDeviceId,
+    activeOnly: false,
+  );
+  final existingByTransport = member.findDeviceByTransportPeerId(
+    normalizedTransportPeerId,
+    activeOnly: false,
+  );
+  if (existingById != null || existingByTransport != null) {
+    return null;
+  }
+  return GroupMemberDeviceIdentity(
+    deviceId: resolvedDeviceId,
+    transportPeerId: normalizedTransportPeerId ?? resolvedDeviceId,
+    deviceSigningPublicKey: trustedMemberPublicKey,
+    mlKemPublicKey: member.mlKemPublicKey,
   );
 }
 

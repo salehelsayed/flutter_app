@@ -11,6 +11,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_scre
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/helpers/readability_test_helpers.dart';
 
@@ -66,6 +67,8 @@ void main() {
     GroupSecurityStatusViewState? securityStatus,
   }) {
     return MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: GroupInfoScreen(
         group: group ?? testGroup,
         members: members,
@@ -279,7 +282,7 @@ void main() {
       find.byKey(const ValueKey('group-security-status-card')),
       findsOneWidget,
     );
-    expect(find.text('End-to-end encrypted'), findsOneWidget);
+    expect(find.text('Encrypted - key epoch 2'), findsOneWidget);
     expect(find.text('Key change visible'), findsOneWidget);
     expect(find.text('Group key changed to epoch 2'), findsNWidgets(2));
     expect(find.text('1 of 2 members verified'), findsOneWidget);

@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Dialog shown when receiving a contact request.
 ///
@@ -43,6 +44,7 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return AlertDialog(
       backgroundColor: readableColors.surfaceBase,
@@ -75,11 +77,8 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
           const SizedBox(height: 8),
           // Connection request message
           Text(
-            'wants to connect with you',
-            style: TextStyle(
-              color: readableColors.textSecondary,
-              fontSize: 14,
-            ),
+            l10n.contact_request_message,
+            style: TextStyle(color: readableColors.textSecondary, fontSize: 14),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
@@ -99,9 +98,9 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
-                    'Decline',
-                    style: TextStyle(
+                  child: Text(
+                    l10n.contact_request_decline,
+                    style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
@@ -123,9 +122,9 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
-                    'Accept',
-                    style: TextStyle(
+                  child: Text(
+                    l10n.intro_accept,
+                    style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),

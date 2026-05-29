@@ -37,6 +37,8 @@ const _validEncryptionKey = 'test-encryption-key';
 const _validEncryptionNonce = 'test-encryption-nonce';
 
 void main() {
+  final l10n = lookupAppLocalizations(const Locale('en'));
+
   final testGroup = GroupModel(
     id: 'group-1',
     name: 'Test Group',
@@ -333,15 +335,60 @@ void main() {
     },
   );
 
+  testWidgets('does not render group security status in the chat header', (
+    tester,
+  ) async {
+    const securityStatus = GroupSecurityStatusViewState(
+      hasCurrentKey: true,
+      keyEpoch: 2,
+      memberCount: 2,
+      verifiedMemberCount: 1,
+      identityWarningCount: 1,
+      unverifiedMemberCount: 0,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(securityStatus: securityStatus, initialLoadDone: true),
+    );
+
+    expect(
+      find.byKey(const ValueKey('group-conversation-security-strip')),
+      findsNothing,
+    );
+    expect(find.text('Encrypted - key epoch 2'), findsNothing);
+    expect(find.text('1 member needs verification review'), findsNothing);
+  });
+
+  testWidgets('hides healthy initial security status strip', (tester) async {
+    const securityStatus = GroupSecurityStatusViewState(
+      hasCurrentKey: true,
+      keyEpoch: 1,
+      memberCount: 2,
+      verifiedMemberCount: 2,
+      identityWarningCount: 0,
+      unverifiedMemberCount: 0,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(securityStatus: securityStatus, initialLoadDone: true),
+    );
+
+    expect(
+      find.byKey(const ValueKey('group-conversation-security-strip')),
+      findsNothing,
+    );
+    expect(find.text('Encrypted - key epoch 1'), findsNothing);
+  });
+
   testWidgets(
-    'shows security status strip for encryption and review warnings',
+    'internal_encryption_epoch_status_is_not_rendered_as_user_visible_error',
     (tester) async {
       const securityStatus = GroupSecurityStatusViewState(
         hasCurrentKey: true,
-        keyEpoch: 2,
+        keyEpoch: 1,
         memberCount: 2,
-        verifiedMemberCount: 1,
-        identityWarningCount: 1,
+        verifiedMemberCount: 2,
+        identityWarningCount: 0,
         unverifiedMemberCount: 0,
       );
 
@@ -349,12 +396,9 @@ void main() {
         buildTestWidget(securityStatus: securityStatus, initialLoadDone: true),
       );
 
-      expect(
-        find.byKey(const ValueKey('group-conversation-security-strip')),
-        findsOneWidget,
-      );
-      expect(find.text('Encrypted - key epoch 2'), findsOneWidget);
-      expect(find.text('1 member needs verification review'), findsOneWidget);
+      expect(find.text('Encrypted - key epoch 1'), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
     },
   );
 
@@ -911,17 +955,14 @@ void main() {
       );
       await tester.pump();
 
-      expect(
-        find.byKey(const ValueKey('group-recovery-banner')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('group-recovery-banner')), findsNothing);
       expect(find.byKey(const ValueKey('group-loading-shell')), findsOneWidget);
       expect(find.text('No messages yet'), findsNothing);
       expect(
         find.text(
           'Catching up missed messages. New messages will still appear here.',
         ),
-        findsOneWidget,
+        findsNothing,
       );
     },
   );
@@ -938,10 +979,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(
-        find.byKey(const ValueKey('group-recovery-banner')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('group-recovery-banner')), findsNothing);
       expect(find.text('Hello everyone!'), findsOneWidget);
     },
   );
@@ -1014,7 +1052,10 @@ void main() {
         buildTestWidget(
           group: expiredGroup,
           initialLoadDone: true,
-          backlogRetentionNotice: groupBacklogRetentionNoticeFor(expiredGroup),
+          backlogRetentionNotice: groupBacklogRetentionNoticeFor(
+            expiredGroup,
+            l10n,
+          ),
         ),
       );
       await tester.pump();
@@ -1047,7 +1088,10 @@ void main() {
           group: mixedGroup,
           messages: testMessages,
           initialLoadDone: true,
-          backlogRetentionNotice: groupBacklogRetentionNoticeFor(mixedGroup),
+          backlogRetentionNotice: groupBacklogRetentionNoticeFor(
+            mixedGroup,
+            l10n,
+          ),
         ),
       );
       await tester.pump();
@@ -1092,9 +1136,11 @@ void main() {
           initialLoadDone: true,
           backlogRetentionNotice: groupBacklogRetentionNoticeFor(
             retentionGroup,
+            l10n,
           ),
           historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
             repair(groupHistoryGapRepairStatusRepairing),
+            l10n,
           ),
         ),
       );
@@ -1121,6 +1167,7 @@ void main() {
           initialLoadDone: true,
           historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
             repair(groupHistoryGapRepairStatusFailed),
+            l10n,
           ),
         ),
       );
@@ -1138,6 +1185,7 @@ void main() {
           initialLoadDone: true,
           historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
             repair(groupHistoryGapRepairStatusRepaired),
+            l10n,
           ),
         ),
       );

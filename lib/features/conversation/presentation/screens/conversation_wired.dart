@@ -594,24 +594,25 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (!_isTrackingRelayUpload || !mounted) return true;
     final shouldLeave = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Leave conversation?'),
-        content: const Text(
-          'An upload is in progress. Leaving may interrupt it. Are you sure?',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('upload-leave-stay'),
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Stay'),
-          ),
-          FilledButton(
-            key: const ValueKey('upload-leave-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Leave'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        return AlertDialog(
+          title: Text(l10n.upload_leave_title),
+          content: Text(l10n.upload_leave_body),
+          actions: [
+            TextButton(
+              key: const ValueKey('upload-leave-stay'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.upload_leave_stay),
+            ),
+            FilledButton(
+              key: const ValueKey('upload-leave-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.upload_leave_confirm),
+            ),
+          ],
+        );
+      },
     );
     return shouldLeave ?? false;
   }
@@ -676,7 +677,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       activeUpload.composerSnapshot,
       optimisticMessageId: activeUpload.messageId,
       messenger: messenger,
-      snackText: 'Upload cancelled.',
+      snackText: AppLocalizations.of(context)!.upload_cancelled,
     );
     return true;
   }
@@ -824,32 +825,35 @@ class _ConversationWiredState extends State<ConversationWired> {
     );
     return showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Media Too Large'),
-        content: Text(
-          'The attached media is $formattedTotal and exceeds the '
-          '$formattedLimit limit. Would you like to compress and send, '
-          'or cancel?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        return AlertDialog(
+          title: Text(l10n.media_too_large_title),
+          content: Text(
+            l10n.media_too_large_prompt(formattedTotal, formattedLimit),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Compress'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.btn_cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.media_compress),
+            ),
+          ],
+        );
+      },
     );
   }
 
   void _showAttachmentTooLargeMessage() {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.showSnackBar(
-      const SnackBar(
-        content: Text('The media is too large even after compression.'),
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(context)!.media_too_large_after_compress,
+        ),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -909,8 +913,8 @@ class _ConversationWiredState extends State<ConversationWired> {
   void _showGifTooLargeMessage() {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.showSnackBar(
-      const SnackBar(
-        content: Text('GIF files larger than 25 MB cannot be added.'),
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!.media_gif_too_large),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -1565,8 +1569,8 @@ class _ConversationWiredState extends State<ConversationWired> {
           messenger
             ?..hideCurrentSnackBar()
             ..showSnackBar(
-              const SnackBar(
-                content: Text('Failed to save edit.'),
+              SnackBar(
+                content: Text(AppLocalizations.of(context)!.edit_save_failed),
                 behavior: SnackBarBehavior.floating,
               ),
             );
@@ -2252,7 +2256,7 @@ class _ConversationWiredState extends State<ConversationWired> {
                   color: sheetColors.iconPrimary,
                 ),
                 title: Text(
-                  'Media Library',
+                  AppLocalizations.of(context)!.picker_media_library,
                   style: TextStyle(color: sheetColors.textPrimary),
                 ),
                 onTap: () {
@@ -2263,7 +2267,7 @@ class _ConversationWiredState extends State<ConversationWired> {
               ListTile(
                 leading: Icon(Icons.camera_alt, color: sheetColors.iconPrimary),
                 title: Text(
-                  'Take Photo',
+                  AppLocalizations.of(context)!.picker_take_photo,
                   style: TextStyle(color: sheetColors.textPrimary),
                 ),
                 onTap: () {
@@ -2274,7 +2278,7 @@ class _ConversationWiredState extends State<ConversationWired> {
               ListTile(
                 leading: Icon(Icons.videocam, color: sheetColors.iconPrimary),
                 title: Text(
-                  'Record Video',
+                  AppLocalizations.of(context)!.picker_record_video,
                   style: TextStyle(color: sheetColors.textPrimary),
                 ),
                 onTap: () {
@@ -2421,9 +2425,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text(
-              'Microphone permission is required to record voice messages.',
-            ),
+            content: Text(AppLocalizations.of(context)!.perm_microphone_record),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           ),
@@ -3200,6 +3202,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       16,
       0,
     );
+    final l10n = AppLocalizations.of(context)!;
 
     showMenu<String>(
       context: context,
@@ -3211,15 +3214,19 @@ class _ConversationWiredState extends State<ConversationWired> {
       ),
       items: [
         if (!_contact.isBlocked && _hasOtherFriends)
-          const PopupMenuItem<String>(
+          PopupMenuItem<String>(
             value: 'introduce',
             child: Row(
               children: [
-                Icon(Icons.people_outline, size: 18, color: Color(0xFF10B981)),
-                SizedBox(width: 10),
+                const Icon(
+                  Icons.people_outline,
+                  size: 18,
+                  color: Color(0xFF10B981),
+                ),
+                const SizedBox(width: 10),
                 Text(
-                  'Introduce to your circle',
-                  style: TextStyle(
+                  l10n.conversation_introduce_to_circle,
+                  style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                     color: Color(0xFF10B981),
@@ -3242,8 +3249,8 @@ class _ConversationWiredState extends State<ConversationWired> {
               const SizedBox(width: 10),
               Text(
                 _contact.isBlocked
-                    ? 'Unblock ${_contact.username}'
-                    : 'Block ${_contact.username}',
+                    ? l10n.conversation_unblock_contact(_contact.username)
+                    : l10n.conversation_block_contact(_contact.username),
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -3257,13 +3264,17 @@ class _ConversationWiredState extends State<ConversationWired> {
         ),
         PopupMenuItem<String>(
           value: 'delete',
-          child: const Row(
+          child: Row(
             children: [
-              Icon(Icons.delete_outline, size: 18, color: Color(0xFFEF4444)),
-              SizedBox(width: 10),
+              const Icon(
+                Icons.delete_outline,
+                size: 18,
+                color: Color(0xFFEF4444),
+              ),
+              const SizedBox(width: 10),
               Text(
-                'Delete chat',
-                style: TextStyle(
+                l10n.conversation_delete_chat_action,
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                   color: Color(0xFFEF4444),

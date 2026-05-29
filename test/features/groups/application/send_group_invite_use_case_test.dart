@@ -332,6 +332,140 @@ void main() {
     );
 
     test(
+      'promoted admin invite includes the full current membership snapshot',
+      () async {
+        const promotedAdminConfig = {
+          'name': 'test me',
+          'groupType': 'chat',
+          'description': 'do you see me?',
+          'members': [
+            {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+              'devices': [
+                {
+                  'deviceId': 'alice-device-1',
+                  'transportPeerId': 'alice-device-1',
+                  'deviceSigningPublicKey': 'alicePubKey64',
+                  'mlKemPublicKey': 'aliceMlKem64',
+                  'keyPackageId': 'alice-kp-1',
+                  'keyPackagePublicMaterial': 'alice-kpm-material',
+                  'status': 'active',
+                },
+              ],
+            },
+            {
+              'peerId': '12D3KooWBob',
+              'username': 'Bob',
+              'role': 'admin',
+              'publicKey': 'bobPubKey64',
+              'mlKemPublicKey': 'bobMlKem64',
+              'devices': [
+                {
+                  'deviceId': 'bob-device-1',
+                  'transportPeerId': 'bob-device-1',
+                  'deviceSigningPublicKey': 'bobPubKey64',
+                  'mlKemPublicKey': 'bobMlKem64',
+                  'keyPackageId': 'bob-kp-1',
+                  'keyPackagePublicMaterial': 'bob-kpm-material',
+                  'status': 'active',
+                },
+              ],
+            },
+            {
+              'peerId': '12D3KooWCharlie',
+              'username': 'Charlie',
+              'role': 'writer',
+              'publicKey': 'charliePubKey64',
+              'mlKemPublicKey': 'charlieMlKem64',
+              'devices': [
+                {
+                  'deviceId': 'charlie-device-1',
+                  'transportPeerId': 'charlie-device-1',
+                  'deviceSigningPublicKey': 'charliePubKey64',
+                  'mlKemPublicKey': 'charlieMlKem64',
+                  'keyPackageId': 'charlie-kp-1',
+                  'keyPackagePublicMaterial': 'charlie-kpm-material',
+                  'status': 'active',
+                },
+              ],
+            },
+          ],
+          'createdBy': '12D3KooWAlice',
+          'createdAt': '2026-03-02T00:00:00.000Z',
+        };
+        final staleArgumentConfig =
+            Map<String, dynamic>.from(promotedAdminConfig)
+              ..['members'] = [
+                {
+                  'peerId': '12D3KooWBob',
+                  'username': 'Bob',
+                  'role': 'admin',
+                  'publicKey': 'bobPubKey64',
+                  'mlKemPublicKey': 'bobMlKem64',
+                },
+                {
+                  'peerId': '12D3KooWCharlie',
+                  'username': 'Charlie',
+                  'role': 'writer',
+                  'publicKey': 'charliePubKey64',
+                  'mlKemPublicKey': 'charlieMlKem64',
+                },
+              ];
+
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(promotedAdminConfig),
+          recipientPeerId: '12D3KooWCharlie',
+          recipientMlKemPublicKey: 'charlieMlKem64',
+          recipientDeviceId: 'charlie-device-1',
+          senderDeviceId: 'bob-device-1',
+          senderPeerId: '12D3KooWBob',
+          senderPublicKey: 'bobPubKey64',
+          senderPrivateKey: 'bobPrivateKey64',
+          senderUsername: 'Bob',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: staleArgumentConfig,
+        );
+
+        expect(result, SendGroupInviteResult.success);
+        expect(p2pService.lastSendMessagePeerId, 'charlie-device-1');
+
+        final envelope = GroupInvitePayload.parseEncryptedEnvelope(
+          p2pService.lastSendMessageContent!,
+        )!;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final payload = GroupInvitePayload.fromInnerJson(
+          encrypted['ciphertext'] as String,
+        )!;
+        final members = payload.groupConfig['members'] as List<dynamic>;
+        final memberPeerIds = members
+            .map((member) => (member as Map<String, dynamic>)['peerId'])
+            .toList();
+
+        expect(memberPeerIds, [
+          '12D3KooWAlice',
+          '12D3KooWBob',
+          '12D3KooWCharlie',
+        ]);
+        expect(payload.groupConfig['name'], 'test me');
+        expect(payload.groupConfig['description'], 'do you see me?');
+        expect(payload.senderPeerId, '12D3KooWBob');
+        expect(payload.senderDeviceId, 'bob-device-1');
+        expect(
+          payload.membershipFreshnessProof?.inviterMemberSnapshot['role'],
+          'admin',
+        );
+      },
+    );
+
+    test(
       'RA-013 sends separate device-bound re-add invites for same user devices',
       () async {
         final multiDeviceConfig = {

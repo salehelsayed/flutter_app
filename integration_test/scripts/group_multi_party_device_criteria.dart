@@ -244,6 +244,11 @@ const _privateAdminMetadataIntroPhotoConvergenceRequirement =
       scenario: 'private_admin_metadata_intro_photo_convergence',
       roles: <String>['alice', 'bob', 'charlie'],
     );
+const _privateAdminDemotionEnforcementRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_admin_demotion_enforcement',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
 const _ge001Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'ge001',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -535,6 +540,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
       _privateAdminRoleTransferDeliveryRequirement,
   'private_admin_metadata_intro_photo_convergence':
       _privateAdminMetadataIntroPhotoConvergenceRequirement,
+  'private_admin_demotion_enforcement':
+      _privateAdminDemotionEnforcementRequirement,
   'gm002': _gm002Requirement,
   'gm003': _gm003Requirement,
   'gm004': _gm004Requirement,
@@ -756,6 +763,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
             requirement.scenario ==
                 'private_background_resume_group_delivery' ||
             requirement.scenario == 'private_removed_reaction_rejected' ||
+            requirement.scenario == 'private_admin_demotion_enforcement' ||
             requirement.scenario == 'gm009' ||
             requirement.scenario == 'gm011' ||
             requirement.scenario == 'gm013' ||
@@ -767,7 +775,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
             requirement.scenario ==
                 'private_removed_old_key_publish_rejected' ||
             requirement.scenario == 'de017') &&
-        role == 'charlie') {
+        (role == 'charlie' || role == 'dana')) {
       if (keyEpoch == null || keyEpoch < 0) {
         failures.add('$role: keyEpoch must be zero or a positive integer');
       }
@@ -846,6 +854,33 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
         if (members.contains(removedPeerId)) {
           failures.add('$role: SV-002 membership still includes charlie');
         }
+      }
+    } else if (requirement.scenario == 'private_admin_demotion_enforcement') {
+      final activePeerIds = <String>{
+        peerIdByRole['alice']!,
+        peerIdByRole['bob']!,
+        peerIdByRole['charlie']!,
+      };
+      final absentPeerId = peerIdByRole['dana']!;
+      for (final role in const <String>['alice', 'bob', 'charlie']) {
+        final verdict = byRole[role];
+        if (verdict == null) continue;
+        final members = _activeMemberPeerIds(verdict).toSet();
+        final missingMembers = activePeerIds.difference(members);
+        if (missingMembers.isNotEmpty) {
+          failures.add(
+            '$role: incomplete Scenario 4 membership, missing '
+            '${missingMembers.join(', ')}',
+          );
+        }
+        if (members.contains(absentPeerId)) {
+          failures.add('$role: Scenario 4 membership includes Dana');
+        }
+      }
+      final danaVerdict = byRole['dana'];
+      if (danaVerdict != null &&
+          _activeMemberPeerIds(danaVerdict).contains(absentPeerId)) {
+        failures.add('dana: Scenario 4 must remain absent from membership');
       }
     } else if (requirement.scenario == 'ge002' ||
         requirement.scenario == 'ge003' ||
@@ -2229,6 +2264,7 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
         ),
       ];
     case 'private_admin_metadata_intro_photo_convergence':
+    case 'private_admin_demotion_enforcement':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceInitialAfterBobAccept',
@@ -3255,6 +3291,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_admin_role_transfer_delivery') {
     _validateMl020AdminRoleDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'private_admin_demotion_enforcement') {
+    _validatePrivateAdminDemotionEnforcementProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -7908,6 +7952,175 @@ void _validateMl020AdminRoleDeliveryProof({
   ]) {
     if (charlieReceived.contains(removedWindowKey)) {
       failures.add('charlie: ML-020 must not receive $removedWindowKey');
+    }
+  }
+}
+
+void _validatePrivateAdminDemotionEnforcementProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'privateAdminDemotionEnforcementProof';
+  const expectedRoleNames = <String, String>{
+    'alice': 'admin',
+    'bob': 'writer',
+    'charlie': 'writer',
+  };
+  final expectedMembers = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['bob'],
+    ?peerIdByRole['charlie'],
+  };
+  final danaPeerId = peerIdByRole['dana'];
+  final avatarBlobIds = <String>{};
+
+  for (final role in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'SCENARIO-4') {
+      failures.add('$role: $proofName.rowId must be SCENARIO-4');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_admin_demotion_enforcement') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+
+    if (role == 'dana') {
+      for (final field in const <String>[
+        'danaLocalGroupAbsent',
+        'danaUninvited',
+        'danaAbsentFromMembers',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: proofName,
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+      final members = _activeMemberPeerIds(byRole[role] ?? const {});
+      if (members.isNotEmpty) {
+        failures.add('dana: $proofName active members must be empty');
+      }
+      continue;
+    }
+
+    for (final field in const <String>[
+      'demotionTimelineVisible',
+      'aliceRoleStillAdmin',
+      'bobRoleConvergedToWriter',
+      'charlieRoleStillWriter',
+      'metadataAvatarRetained',
+      'danaAbsentFromMembers',
+      'memberStateConverged',
+      'finalKeyConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    if (_stringValue(proof['finalMetadataName']) != 'test me') {
+      failures.add('$role: $proofName.finalMetadataName must be test me');
+    }
+    if (_stringValue(proof['finalMetadataDescription']) != 'do you see me?') {
+      failures.add(
+        '$role: $proofName.finalMetadataDescription must be do you see me?',
+      );
+    }
+    final avatarBlobId = _stringValue(proof['finalAvatarBlobId']);
+    if (avatarBlobId == null || avatarBlobId.isEmpty) {
+      failures.add('$role: $proofName.finalAvatarBlobId is required');
+    } else {
+      avatarBlobIds.add(avatarBlobId);
+    }
+    if (_stringValue(proof['finalAvatarMime']) != 'image/png') {
+      failures.add('$role: $proofName.finalAvatarMime must be image/png');
+    }
+
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 1) {
+      failures.add('$role: $proofName.finalEpoch must be positive');
+    }
+
+    final members = _activeMemberPeerIds(byRole[role] ?? const {}).toSet();
+    final missingMembers = expectedMembers.difference(members);
+    if (missingMembers.isNotEmpty) {
+      failures.add(
+        '$role: $proofName active members missing ${missingMembers.join(', ')}',
+      );
+    }
+    if (danaPeerId != null && members.contains(danaPeerId)) {
+      failures.add('$role: $proofName active members must not include Dana');
+    }
+
+    final finalRoles = _mapValue(proof['finalMemberRoles']);
+    if (finalRoles == null) {
+      failures.add('$role: $proofName.finalMemberRoles is required');
+    } else {
+      for (final expected in expectedRoleNames.entries) {
+        if (_stringValue(finalRoles[expected.key]) != expected.value) {
+          failures.add(
+            '$role: $proofName.finalMemberRoles.${expected.key} must be ${expected.value}',
+          );
+        }
+      }
+    }
+  }
+
+  if (avatarBlobIds.length > 1) {
+    failures.add(
+      '$proofName finalAvatarBlobId differs across active members: '
+      '${avatarBlobIds.join(', ')}',
+    );
+  }
+
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  if (bobProof != null) {
+    for (final field in const <String>[
+      'bobLocalRoleDemoted',
+      'bobMyRoleDemoted',
+      'bobMetadataAttemptBlocked',
+      'bobMemberAddAttemptBlocked',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'bobMetadataAttemptOutcome',
+      'bobMemberAddAttemptOutcome',
+    ]) {
+      final outcome = _stringValue(bobProof[field]);
+      if (outcome == null ||
+          outcome.isEmpty ||
+          outcome == 'accepted' ||
+          outcome == 'not_attempted' ||
+          (!outcome.startsWith('blocked:') &&
+              !outcome.startsWith('rejected:'))) {
+        failures.add(
+          'bob: $proofName.$field must record a blocked or rejected outcome',
+        );
+      }
     }
   }
 }

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class PendingGroupInviteCard extends StatelessWidget {
   final PendingGroupInvite invite;
@@ -21,9 +23,14 @@ class PendingGroupInviteCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final isExpired = invite.isExpiredAt(DateTime.now().toUtc());
-    final acceptLabel = isExpired ? 'Expired' : 'Accept';
-    final declineLabel = isExpired ? 'Dismiss' : 'Decline';
+    final acceptLabel = isExpired
+        ? l10n.pending_invite_expired
+        : l10n.pending_invite_accept;
+    final declineLabel = isExpired
+        ? l10n.pending_invite_dismiss
+        : l10n.pending_invite_decline;
     final actionBlue = readableColors.isLightSurface
         ? const Color(0xFF0F5F9C)
         : const Color(0xFF64B5F6);
@@ -65,7 +72,7 @@ class PendingGroupInviteCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Invited by ${invite.senderUsername}',
+                      l10n.pending_invite_invited_by(invite.senderUsername),
                       style: TextStyle(
                         fontSize: 13,
                         color: readableColors.textSecondary,
@@ -81,7 +88,9 @@ class PendingGroupInviteCard extends StatelessWidget {
                   GroupTypeBadge(type: invite.groupType),
                   const SizedBox(height: 8),
                   Text(
-                    isExpired ? 'Expired' : _formatExpiry(invite.expiresAt),
+                    isExpired
+                        ? l10n.pending_invite_expired
+                        : _formatExpiry(invite.expiresAt, l10n),
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
@@ -159,33 +168,11 @@ class PendingGroupInviteCard extends StatelessWidget {
     );
   }
 
-  String _formatExpiry(DateTime expiresAt) {
+  String _formatExpiry(DateTime expiresAt, AppLocalizations l10n) {
     final local = expiresAt.toLocal();
-    final month = _monthName(local.month);
-    final day = local.day.toString().padLeft(2, '0');
-    final hour = local.hour == 0
-        ? 12
-        : (local.hour > 12 ? local.hour - 12 : local.hour);
-    final minute = local.minute.toString().padLeft(2, '0');
-    final period = local.hour < 12 ? 'AM' : 'PM';
-    return 'Expires $month $day, $hour:$minute $period';
-  }
-
-  String _monthName(int month) {
-    const names = <String>[
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return names[month - 1];
+    final formatted = intl.DateFormat.MMMd(
+      l10n.localeName,
+    ).add_jm().format(local);
+    return l10n.pending_invite_expires(formatted);
   }
 }

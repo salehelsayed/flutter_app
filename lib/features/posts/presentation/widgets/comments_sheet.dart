@@ -143,6 +143,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
   @override
   Widget build(BuildContext context) {
     final comments = _comments;
+    final l10n = AppLocalizations.of(context)!;
 
     return Material(
       color: const Color(0xFF12161D),
@@ -202,6 +203,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
                                   Text(
                                     _formatRelativeTimestamp(
                                       widget.post.createdAt,
+                                      context,
                                     ),
                                     style: const TextStyle(
                                       color: Color.fromRGBO(
@@ -257,7 +259,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  '${comments.length} comments',
+                  l10n.comments_count(comments.length),
                   style: const TextStyle(
                     color: Color.fromRGBO(255, 255, 255, 0.54),
                     fontSize: 13,
@@ -267,10 +269,10 @@ class _CommentsSheetState extends State<CommentsSheet> {
                 const SizedBox(height: 12),
                 Expanded(
                   child: comments.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Text(
-                            'No comments yet',
-                            style: TextStyle(
+                            l10n.comments_empty,
+                            style: const TextStyle(
                               color: Color.fromRGBO(255, 255, 255, 0.54),
                             ),
                           ),
@@ -431,7 +433,7 @@ class _CommentTile extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      _formatRelativeTimestamp(comment.commentedAt),
+                      _formatRelativeTimestamp(comment.commentedAt, context),
                       style: const TextStyle(
                         color: Color.fromRGBO(255, 255, 255, 0.32),
                         fontSize: 12,
@@ -500,7 +502,8 @@ class _CommentTile extends StatelessWidget {
   }
 }
 
-String _formatRelativeTimestamp(String rawTimestamp) {
+String _formatRelativeTimestamp(String rawTimestamp, BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
   final timestamp = DateTime.tryParse(rawTimestamp)?.toUtc();
   if (timestamp == null) {
     return rawTimestamp;
@@ -510,16 +513,16 @@ String _formatRelativeTimestamp(String rawTimestamp) {
     return '';
   }
   if (diff.inMinutes < 1) {
-    return 'just now';
+    return l10n.time_just_now;
   }
   if (diff.inMinutes < 60) {
-    return diff.inMinutes == 1 ? '1 min ago' : '${diff.inMinutes} min ago';
+    return l10n.time_min_ago(diff.inMinutes);
   }
   if (diff.inHours < 24) {
-    return '${diff.inHours}h ago';
+    return l10n.time_hour_ago(diff.inHours);
   }
   if (diff.inDays < 7) {
-    return '${diff.inDays}d ago';
+    return l10n.time_day_ago(diff.inDays);
   }
-  return '${(diff.inDays / 7).floor()}w ago';
+  return l10n.time_week_ago((diff.inDays / 7).floor());
 }

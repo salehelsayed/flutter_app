@@ -5,10 +5,65 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 const groupMembershipUpdateMessageType = 'group_membership_update';
+
+class GroupMembershipUpdateDirectTarget {
+  const GroupMembershipUpdateDirectTarget({
+    required this.memberPeerId,
+    required this.deliveryPeerId,
+  });
+
+  final String memberPeerId;
+  final String deliveryPeerId;
+}
+
+List<GroupMembershipUpdateDirectTarget> groupMembershipUpdateDirectTargets({
+  required Iterable<GroupMember> members,
+  String? excludingPeerId,
+}) {
+  final excluded = excludingPeerId?.trim();
+  final seenDeliveryPeerIds = <String>{};
+  final targets = <GroupMembershipUpdateDirectTarget>[];
+
+  for (final member in members) {
+    final memberPeerId = member.peerId.trim();
+    if (memberPeerId.isEmpty || memberPeerId == excluded) {
+      continue;
+    }
+
+    final devices = member.activeDevicesWithLegacyFallback();
+    if (devices.isEmpty) {
+      if (seenDeliveryPeerIds.add(memberPeerId)) {
+        targets.add(
+          GroupMembershipUpdateDirectTarget(
+            memberPeerId: memberPeerId,
+            deliveryPeerId: memberPeerId,
+          ),
+        );
+      }
+      continue;
+    }
+
+    for (final device in devices) {
+      final deliveryPeerId = device.transportPeerId.trim();
+      if (deliveryPeerId.isEmpty || !seenDeliveryPeerIds.add(deliveryPeerId)) {
+        continue;
+      }
+      targets.add(
+        GroupMembershipUpdateDirectTarget(
+          memberPeerId: memberPeerId,
+          deliveryPeerId: deliveryPeerId,
+        ),
+      );
+    }
+  }
+
+  return targets;
+}
 
 String buildGroupMembershipUpdateDirectEnvelope({
   required String groupId,
@@ -156,8 +211,10 @@ class GroupMembershipUpdateListener {
         return;
       }
 
-      final replayEnvelopeRaw = relayEnvelopeRaw['message'];
-      if (replayEnvelopeRaw is! String || replayEnvelopeRaw.isEmpty) {
+      final relayEnvelope = Map<String, dynamic>.from(relayEnvelopeRaw);
+      final relaySenderPeerId = relayEnvelope['from'] as String?;
+      final replayEnvelopeMessage = relayEnvelope['message'];
+      if (replayEnvelopeMessage is! String || replayEnvelopeMessage.isEmpty) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MEMBERSHIP_UPDATE_LISTENER_MALFORMED',
@@ -166,9 +223,9 @@ class GroupMembershipUpdateListener {
         return;
       }
 
-      final replayEnvelope =
-          jsonDecode(replayEnvelopeRaw) as Map<String, dynamic>;
-      if (!isGroupOfflineReplayEnvelope(replayEnvelope)) {
+      final offlineReplayEnvelope =
+          jsonDecode(replayEnvelopeMessage) as Map<String, dynamic>;
+      if (!isGroupOfflineReplayEnvelope(offlineReplayEnvelope)) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MEMBERSHIP_UPDATE_LISTENER_MALFORMED',
@@ -181,8 +238,8 @@ class GroupMembershipUpdateListener {
         bridge: _bridge,
         groupRepo: _groupRepo,
         groupId: groupId,
-        envelope: replayEnvelope,
-        expectedRelayPeerId: relayEnvelopeRaw['from'] as String?,
+        envelope: offlineReplayEnvelope,
+        expectedRelayPeerId: relaySenderPeerId,
       );
       final replayPayload = jsonDecode(plaintext) as Map<String, dynamic>;
       await _groupMessageListener.handleReplayEnvelope(replayPayload);

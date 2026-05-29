@@ -4,6 +4,7 @@ import 'package:flutter_app/features/introduction/application/load_introductions
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Tab content for the Orbit screen's "Intros" filter tab.
 ///
@@ -101,6 +102,7 @@ class IntrosTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final foldedItems = foldedReviewItems;
 
     if (foldedItems != null ? foldedItems.isEmpty : groupedIntros.isEmpty) {
@@ -108,7 +110,7 @@ class IntrosTab extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Text(
-            'No introductions yet',
+            l10n.intro_empty,
             style: TextStyle(fontSize: 14, color: readableColors.textMuted),
           ),
         ),
@@ -124,7 +126,7 @@ class IntrosTab extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Text(
-                'These are people your friends know well. Once you both accept, you can start chatting.',
+                l10n.intro_tab_desc,
                 style: TextStyle(fontSize: 13, color: readableColors.textMuted),
                 textAlign: TextAlign.center,
               ),
@@ -149,7 +151,7 @@ class IntrosTab extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: Text(
-              'These are people your friends know well. Once you both accept, you can start chatting.',
+              l10n.intro_tab_desc,
               style: TextStyle(fontSize: 13, color: readableColors.textMuted),
               textAlign: TextAlign.center,
             ),
