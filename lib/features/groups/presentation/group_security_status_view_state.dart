@@ -1,5 +1,6 @@
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class GroupSecurityStatusViewState {
   final bool hasCurrentKey;
@@ -58,56 +59,63 @@ class GroupSecurityStatusViewState {
 
   bool get hasUnverifiedMembers => unverifiedMemberCount > 0;
 
-  String get encryptionLabel =>
-      hasCurrentKey ? 'End-to-end encrypted' : 'Encryption pending';
+  bool get shouldShowCompactStatus =>
+      !hasCurrentKey ||
+      hasKeyChangeWarning ||
+      hasIdentityWarnings ||
+      hasUnverifiedMembers;
 
-  String get keyEpochLabel {
+  String encryptionLabel(AppLocalizations l10n) => hasCurrentKey
+      ? l10n.group_security_encrypted
+      : l10n.group_security_pending;
+
+  String keyEpochLabel(AppLocalizations l10n) {
     if (!hasCurrentKey || keyEpoch == null) {
-      return 'No group key on this device';
+      return l10n.group_security_no_key;
     }
     if (hasKeyChangeWarning) {
-      return 'Group key changed to epoch $keyEpoch';
+      return l10n.group_security_key_changed(keyEpoch!);
     }
-    return 'Current key epoch $keyEpoch';
+    return l10n.group_security_current_key_epoch(keyEpoch!);
   }
 
-  String get verificationLabel {
+  String verificationLabel(AppLocalizations l10n) {
     if (memberCount <= 0) {
-      return 'No members to verify';
+      return l10n.group_security_no_members;
     }
     if (identityWarningCount == 0 && unverifiedMemberCount == 0) {
-      return 'All $memberCount ${_plural(memberCount, 'member')} verified';
+      return l10n.group_security_all_members_verified(memberCount);
     }
-    return '$verifiedMemberCount of $memberCount ${_plural(memberCount, 'member')} verified';
+    return l10n.group_security_members_verified(
+      verifiedMemberCount,
+      memberCount,
+    );
   }
 
-  String get verificationDetailLabel {
+  String verificationDetailLabel(AppLocalizations l10n) {
     if (identityWarningCount > 0) {
-      return '$identityWarningCount ${_plural(identityWarningCount, 'member')} needs verification review';
+      return l10n.group_security_members_need_review(identityWarningCount);
     }
     if (unverifiedMemberCount > 0) {
-      return '$unverifiedMemberCount ${_plural(unverifiedMemberCount, 'member')} not verified from saved contacts';
+      return l10n.group_security_members_unverified(unverifiedMemberCount);
     }
-    return 'No verification warnings';
+    return l10n.group_security_no_warnings;
   }
 
-  String get compactEncryptionLabel {
+  String compactEncryptionLabel(AppLocalizations l10n) {
     if (!hasCurrentKey || keyEpoch == null) {
-      return encryptionLabel;
+      return encryptionLabel(l10n);
     }
-    return 'Encrypted - key epoch $keyEpoch';
+    return l10n.group_security_compact_encrypted_epoch(keyEpoch!);
   }
 
-  String get compactReviewLabel {
+  String compactReviewLabel(AppLocalizations l10n) {
     if (identityWarningCount > 0) {
-      return verificationDetailLabel;
+      return verificationDetailLabel(l10n);
     }
     if (hasKeyChangeWarning) {
-      return keyEpochLabel;
+      return keyEpochLabel(l10n);
     }
-    return verificationLabel;
+    return verificationLabel(l10n);
   }
-
-  static String _plural(int count, String singular) =>
-      count == 1 ? singular : '${singular}s';
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// "Block" action button — 48px circle with block icon + label.
 class BlockActionButton extends StatelessWidget {
@@ -31,20 +32,16 @@ class BlockActionButton extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Icon(
-              Icons.block,
-              color: Colors.white,
-              size: 20,
-            ),
+            child: const Icon(Icons.block, color: Colors.white, size: 20),
           ),
           const SizedBox(height: 2),
-          const SizedBox(
+          SizedBox(
             width: 48,
             child: Text(
-              'Block',
+              AppLocalizations.of(context)!.orbit_block_action,
               textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
@@ -88,20 +85,16 @@ class UnblockActionButton extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Icon(
-              Icons.replay,
-              color: Colors.white,
-              size: 20,
-            ),
+            child: const Icon(Icons.replay, color: Colors.white, size: 20),
           ),
           const SizedBox(height: 2),
-          const SizedBox(
+          SizedBox(
             width: 48,
             child: Text(
-              'Unblock',
+              AppLocalizations.of(context)!.orbit_unblock_action,
               textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
@@ -152,13 +145,13 @@ class DeleteActionButton extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 2),
-          const SizedBox(
+          SizedBox(
             width: 48,
             child: Text(
-              'Delete',
+              AppLocalizations.of(context)!.orbit_delete_action,
               textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
@@ -209,13 +202,13 @@ class ArchiveActionButton extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 2),
-          const SizedBox(
+          SizedBox(
             width: 48,
             child: Text(
-              'Archive',
+              AppLocalizations.of(context)!.orbit_archive_action,
               textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
@@ -256,14 +249,14 @@ class UnarchiveActionButton extends StatelessWidget {
           ],
         ),
         padding: const EdgeInsets.symmetric(horizontal: 14),
-        child: const Row(
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.unarchive_outlined, color: Colors.white, size: 16),
-            SizedBox(width: 6),
+            const Icon(Icons.unarchive_outlined, color: Colors.white, size: 16),
+            const SizedBox(width: 6),
             Text(
-              'Unarchive',
-              style: TextStyle(
+              AppLocalizations.of(context)!.orbit_unarchive_action,
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,

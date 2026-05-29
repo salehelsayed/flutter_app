@@ -14,6 +14,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart'
     as group_react;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
@@ -58,6 +59,7 @@ class GroupTestUser {
   final FakeGroupPubSubNetwork _network;
   final StreamController<Map<String, dynamic>> _incomingController;
   final StreamController<Map<String, dynamic>> _incomingReactionController;
+  final DownloadGroupAvatarFn? _downloadGroupAvatarFn;
   int _messageSequence = 0;
 
   GroupTestUser._({
@@ -79,9 +81,11 @@ class GroupTestUser {
     required FakeGroupPubSubNetwork network,
     required StreamController<Map<String, dynamic>> incomingController,
     required StreamController<Map<String, dynamic>> incomingReactionController,
+    DownloadGroupAvatarFn? downloadGroupAvatarFn,
   }) : _network = network,
        _incomingController = incomingController,
-       _incomingReactionController = incomingReactionController;
+       _incomingReactionController = incomingReactionController,
+       _downloadGroupAvatarFn = downloadGroupAvatarFn;
 
   GroupMemberDeviceIdentity get deviceIdentity => _deviceIdentityFor(deviceId);
 
@@ -117,6 +121,7 @@ class GroupTestUser {
     GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
     Stream<Map<String, dynamic>>? groupDiagnosticEvents,
     RecoverGroupDispatcherOverflow? recoverFromDispatcherOverflow,
+    DownloadGroupAvatarFn? downloadGroupAvatarFn,
   }) {
     final resolvedDeviceId = deviceId ?? peerId;
     final resolvedPublicKey = publicKey ?? 'pk-$peerId';
@@ -153,6 +158,7 @@ class GroupTestUser {
       reactionRepo: reactionRepo,
       groupDiagnosticEvents:
           groupDiagnosticEvents ?? diagnosticController.stream,
+      downloadGroupAvatarFn: downloadGroupAvatarFn,
       pendingKeyRepairRepo: pendingKeyRepairRepo,
       requestGroupKeyRepair: requestGroupKeyRepair,
       recoverFromDispatcherOverflow: recoverFromDispatcherOverflow,
@@ -178,6 +184,7 @@ class GroupTestUser {
       network: network,
       incomingController: controller,
       incomingReactionController: reactionController,
+      downloadGroupAvatarFn: downloadGroupAvatarFn,
     );
   }
 
@@ -262,9 +269,21 @@ class GroupTestUser {
     if (group != null) {
       final updatedGroup = group.copyWith(lastMembershipEventAt: now);
       await groupRepo.updateGroup(updatedGroup);
-      await invitee.groupRepo.saveGroup(
-        updatedGroup.copyWith(myRole: GroupRole.member),
-      );
+      var inviteeGroup = updatedGroup.copyWith(myRole: GroupRole.member);
+      final avatarBlobId = updatedGroup.avatarBlobId;
+      if (avatarBlobId != null &&
+          updatedGroup.avatarMime != null &&
+          invitee._downloadGroupAvatarFn != null) {
+        final avatarPath = await invitee._downloadGroupAvatarFn(
+          bridge: invitee.bridge,
+          groupId: groupId,
+          blobId: avatarBlobId,
+        );
+        if (avatarPath != null) {
+          inviteeGroup = inviteeGroup.copyWith(avatarPath: avatarPath);
+        }
+      }
+      await invitee.groupRepo.saveGroup(inviteeGroup);
 
       final members = await groupRepo.getMembers(groupId);
       final activePeerIds = members.map((member) => member.peerId).toSet();

@@ -3114,9 +3114,11 @@ void main() {
           'groupId',
           'message',
           'recipientPeerIds',
+          'preserveRecipientPeerIds',
         });
         expect(inboxPayload['groupId'], groupId);
         expect(inboxPayload['recipientPeerIds'], [bob.peerId]);
+        expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
 
         final replayEnvelope =
             jsonDecode(inboxPayload['message'] as String)

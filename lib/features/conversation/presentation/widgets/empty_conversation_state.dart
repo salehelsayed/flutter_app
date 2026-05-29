@@ -48,8 +48,7 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
           constraints: BoxConstraints(minHeight: constraints.maxHeight),
           child: Center(
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -81,10 +80,12 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
                   const SizedBox(height: 24),
                   _buildDashedDivider(),
                   const SizedBox(height: 24),
-                  const Text(
-                    'Write the first letter\nto start your conversation',
+                  Text(
+                    AppLocalizations.of(
+                      context,
+                    )!.conversation_empty_first_letter,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w500,
                       color: Color.fromRGBO(255, 255, 255, 0.5),
@@ -168,7 +169,8 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
         builder: (context, constraints) {
           final dashWidth = 6.0;
           final dashSpace = 4.0;
-          final dashCount = (constraints.maxWidth / (dashWidth + dashSpace)).floor();
+          final dashCount = (constraints.maxWidth / (dashWidth + dashSpace))
+              .floor();
 
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,

@@ -30,6 +30,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Wired widget connecting GroupListScreen to business logic.
 class GroupListWired extends StatefulWidget {
@@ -311,40 +312,43 @@ class _GroupListWiredState extends State<GroupListWired>
       if (!mounted) {
         return;
       }
+      final l10n = AppLocalizations.of(context)!;
 
       switch (result) {
         case AcceptPendingGroupInviteResult.success:
-          _showSnackBar('Joined ${group?.name ?? invite.groupName}');
+          _showSnackBar(
+            l10n.group_invite_joined(group?.name ?? invite.groupName),
+          );
           break;
         case AcceptPendingGroupInviteResult.notFound:
-          _showSnackBar('Invite no longer available');
+          _showSnackBar(l10n.group_invite_no_longer_available);
           break;
         case AcceptPendingGroupInviteResult.expired:
-          _showSnackBar('Invite expired');
+          _showSnackBar(l10n.group_invite_expired);
           break;
         case AcceptPendingGroupInviteResult.revoked:
-          _showSnackBar('Invite was revoked');
+          _showSnackBar(l10n.group_invite_revoked);
           break;
         case AcceptPendingGroupInviteResult.alreadyUsed:
-          _showSnackBar('Invite already used');
+          _showSnackBar(l10n.group_invite_already_used);
           break;
         case AcceptPendingGroupInviteResult.wrongIdentity:
-          _showSnackBar('Invite is for another identity');
+          _showSnackBar(l10n.group_invite_wrong_identity);
           break;
         case AcceptPendingGroupInviteResult.repairPending:
-          _showSnackBar('Invite needs fresh key material');
+          _showSnackBar(l10n.group_invite_needs_key);
           break;
         case AcceptPendingGroupInviteResult.invalidPayload:
-          _showSnackBar('Invite is no longer valid');
+          _showSnackBar(l10n.group_invite_invalid);
           break;
         case AcceptPendingGroupInviteResult.duplicateGroup:
-          _showSnackBar('Group already added');
+          _showSnackBar(l10n.group_invite_duplicate_group);
           break;
         case AcceptPendingGroupInviteResult.bridgeError:
           _showSnackBar(
             group != null
-                ? 'Joined ${group.name}, but recovery is still catching up'
-                : 'Invite accepted, but recovery is still catching up',
+                ? l10n.group_invite_joined_recovery(group.name)
+                : l10n.group_invite_accepted_recovery,
           );
           break;
       }
@@ -361,7 +365,7 @@ class _GroupListWiredState extends State<GroupListWired>
       );
       await _loadGroups();
       if (mounted) {
-        _showSnackBar('Failed to accept invite');
+        _showSnackBar(AppLocalizations.of(context)!.group_invite_accept_failed);
       }
     } finally {
       if (mounted) {
@@ -387,16 +391,17 @@ class _GroupListWiredState extends State<GroupListWired>
       if (!mounted) {
         return;
       }
+      final l10n = AppLocalizations.of(context)!;
 
       switch (result) {
         case DeclinePendingGroupInviteResult.success:
-          _showSnackBar('Invite declined');
+          _showSnackBar(l10n.group_invite_declined);
           break;
         case DeclinePendingGroupInviteResult.notFound:
-          _showSnackBar('Invite no longer available');
+          _showSnackBar(l10n.group_invite_no_longer_available);
           break;
         case DeclinePendingGroupInviteResult.expired:
-          _showSnackBar('Invite expired');
+          _showSnackBar(l10n.group_invite_expired);
           break;
       }
     } catch (e) {
@@ -412,7 +417,9 @@ class _GroupListWiredState extends State<GroupListWired>
       );
       await _loadGroups();
       if (mounted) {
-        _showSnackBar('Failed to decline invite');
+        _showSnackBar(
+          AppLocalizations.of(context)!.group_invite_decline_failed,
+        );
       }
     } finally {
       if (mounted) {

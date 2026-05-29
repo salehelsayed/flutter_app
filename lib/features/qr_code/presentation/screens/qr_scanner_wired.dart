@@ -40,6 +40,7 @@ import 'package:flutter_app/features/share/presentation/navigation/share_target_
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'qr_scanner_screen.dart';
 
 /// Wired widget that connects QR scanner to business logic.
@@ -151,40 +152,40 @@ class QRScannerWired extends StatelessWidget {
       case ParseQRResult.invalidJson:
         _showError(
           context,
-          'Invalid QR Code',
-          'This doesn\'t look like a valid contact QR code.',
+          AppLocalizations.of(context)!.qr_invalid_title,
+          AppLocalizations.of(context)!.qr_invalid_body,
         );
         break;
 
       case ParseQRResult.missingFields:
         _showError(
           context,
-          'Incomplete QR Code',
-          'This QR code is missing required information.',
+          AppLocalizations.of(context)!.qr_incomplete_title,
+          AppLocalizations.of(context)!.qr_incomplete_body,
         );
         break;
 
       case ParseQRResult.invalidSignature:
         _showError(
           context,
-          'Invalid Signature',
-          'This QR code could not be verified.',
+          AppLocalizations.of(context)!.qr_invalid_signature_title,
+          AppLocalizations.of(context)!.qr_invalid_signature_body,
         );
         break;
 
       case ParseQRResult.expired:
         _showError(
           context,
-          'Expired QR Code',
-          'This QR code has expired. Ask your friend for a new one.',
+          AppLocalizations.of(context)!.qr_expired_title,
+          AppLocalizations.of(context)!.qr_expired_body,
         );
         break;
 
       case ParseQRResult.selfScan:
         _showError(
           context,
-          'That\'s You!',
-          'You can\'t add yourself as a contact.',
+          AppLocalizations.of(context)!.qr_self_title,
+          AppLocalizations.of(context)!.qr_self_body,
         );
         break;
     }
@@ -217,8 +218,8 @@ class QRScannerWired extends StatelessWidget {
       case AddContactResult.dbError:
         _showError(
           context,
-          'Error',
-          'Failed to add contact. Please try again.',
+          AppLocalizations.of(context)!.qr_error,
+          AppLocalizations.of(context)!.qr_add_failed,
         );
         break;
     }
@@ -323,7 +324,7 @@ class QRScannerWired extends StatelessWidget {
             const SizedBox(height: 8),
             // Success message
             Text(
-              'Added to your circle!',
+              AppLocalizations.of(context)!.qr_added_to_circle,
               style: TextStyle(color: AppColors.primaryAccent, fontSize: 14),
             ),
             const SizedBox(height: 24),
@@ -389,9 +390,12 @@ class QRScannerWired extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text(
-                  'OK',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                child: Text(
+                  AppLocalizations.of(context)!.btn_ok,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
@@ -429,13 +433,13 @@ class QRScannerWired extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             // Already exists message
-            const Text(
-              'Already in your circle!',
-              style: TextStyle(color: Colors.amber, fontSize: 14),
+            Text(
+              AppLocalizations.of(context)!.qr_already_in_circle,
+              style: const TextStyle(color: Colors.amber, fontSize: 14),
             ),
             const SizedBox(height: 4),
             Text(
-              'This contact was added previously',
+              AppLocalizations.of(context)!.qr_contact_added_previously,
               style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),
             const SizedBox(height: 24),
@@ -452,9 +456,12 @@ class QRScannerWired extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text(
-                  'Got it',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                child: Text(
+                  AppLocalizations.of(context)!.btn_got_it,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),

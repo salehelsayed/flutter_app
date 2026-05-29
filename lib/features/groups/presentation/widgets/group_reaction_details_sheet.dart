@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class GroupReactionParticipantEntry {
   final String peerId;
@@ -25,9 +26,10 @@ String groupReactionDisplayName({
   required String peerId,
   String? username,
   String? ownPeerId,
+  String selfLabel = 'You',
 }) {
   if (ownPeerId != null && peerId == ownPeerId) {
-    return 'You';
+    return selfLabel;
   }
 
   final trimmed = username?.trim();
@@ -44,6 +46,7 @@ List<GroupReactionParticipantEntry> buildGroupReactionParticipantEntries({
   required Iterable<GroupMember> members,
   Map<String, String> usernameHintsByPeerId = const <String, String>{},
   String? ownPeerId,
+  String selfLabel = 'You',
 }) {
   final membersByPeerId = {for (final member in members) member.peerId: member};
   String? resolvedUsername(String peerId) {
@@ -76,11 +79,13 @@ List<GroupReactionParticipantEntry> buildGroupReactionParticipantEntries({
           peerId: left.senderPeerId,
           username: resolvedUsername(left.senderPeerId),
           ownPeerId: ownPeerId,
+          selfLabel: selfLabel,
         );
         final rightName = groupReactionDisplayName(
           peerId: right.senderPeerId,
           username: resolvedUsername(right.senderPeerId),
           ownPeerId: ownPeerId,
+          selfLabel: selfLabel,
         );
         return leftName.toLowerCase().compareTo(rightName.toLowerCase());
       });
@@ -93,6 +98,7 @@ List<GroupReactionParticipantEntry> buildGroupReactionParticipantEntries({
             peerId: reaction.senderPeerId,
             username: resolvedUsername(reaction.senderPeerId),
             ownPeerId: ownPeerId,
+            selfLabel: selfLabel,
           ),
           emoji: reaction.emoji,
           isSelf: ownPeerId != null && reaction.senderPeerId == ownPeerId,
@@ -163,6 +169,7 @@ class GroupReactionDetailsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return SafeArea(
       child: Padding(
@@ -181,7 +188,7 @@ class GroupReactionDetailsSheet extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'Reactions',
+              l10n.group_reactions_title,
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
@@ -201,10 +208,8 @@ class GroupReactionDetailsSheet extends StatelessWidget {
               child: ListView.separated(
                 shrinkWrap: true,
                 itemCount: participants.length,
-                separatorBuilder: (_, __) => Divider(
-                  height: 1,
-                  color: readableColors.divider,
-                ),
+                separatorBuilder: (_, __) =>
+                    Divider(height: 1, color: readableColors.divider),
                 itemBuilder: (context, index) {
                   final participant = participants[index];
                   return ListTile(

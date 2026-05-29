@@ -377,6 +377,7 @@ class OrbitScreen extends StatelessWidget {
                               friends: projection.allFriends
                                   .where((friend) => !friend.isBlocked)
                                   .toList(),
+                              onFriendTap: onFriendTap,
                             ),
                             Padding(
                               padding: const EdgeInsets.only(top: 20),
@@ -563,6 +564,7 @@ class OrbitScreen extends StatelessWidget {
     OrbitViewProjection projection,
   ) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     const accentColor = Color(0xFF157A39);
 
     return GestureDetector(
@@ -590,7 +592,7 @@ class OrbitScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${projection.reviewCount} item${projection.reviewCount == 1 ? '' : 's'} pending',
+                    l10n.orbit_pending_items(projection.reviewCount),
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -598,7 +600,7 @@ class OrbitScreen extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    _buildIntroBannerSubtitle(projection),
+                    _buildIntroBannerSubtitle(projection, l10n),
                     style: TextStyle(
                       fontSize: 11,
                       color: readableColors.textMuted,
@@ -618,16 +620,19 @@ class OrbitScreen extends StatelessWidget {
     );
   }
 
-  String _buildIntroBannerSubtitle(OrbitViewProjection projection) {
+  String _buildIntroBannerSubtitle(
+    OrbitViewProjection projection,
+    AppLocalizations l10n,
+  ) {
     final inviteCount = projection.pendingGroupInviteCount;
     final introCount = projection.introCount;
     if (inviteCount > 0 && introCount > 0) {
-      return '$inviteCount group invite${inviteCount == 1 ? '' : 's'} and $introCount introduction${introCount == 1 ? '' : 's'} waiting';
+      return l10n.orbit_intro_banner_mixed(inviteCount, introCount);
     }
     if (inviteCount > 0) {
-      return 'Review group invite${inviteCount == 1 ? '' : 's'} and join from Intros';
+      return l10n.orbit_intro_banner_invites(inviteCount);
     }
-    return 'Review and accept introductions to start chatting';
+    return l10n.orbit_intro_banner_intros;
   }
 
   Widget _buildContentSliver(
@@ -774,6 +779,7 @@ class OrbitScreen extends StatelessWidget {
     _OrbitIntroEntry entry,
   ) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     switch (entry.type) {
       case _OrbitIntroEntryType.context:
@@ -782,7 +788,7 @@ class OrbitScreen extends StatelessWidget {
             padding: const EdgeInsets.all(32),
             child: Center(
               child: Text(
-                'No introductions yet',
+                l10n.intro_empty,
                 style: TextStyle(fontSize: 14, color: readableColors.textMuted),
               ),
             ),
@@ -792,8 +798,8 @@ class OrbitScreen extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
             data.pendingGroupInvites.isNotEmpty
-                ? 'Review pending group invites here, then check introductions below. Once you accept, the group appears in Orbit and catches up from offline inbox.'
-                : 'These are people your friends know well. Once you both accept, you can start chatting.',
+                ? l10n.orbit_pending_group_intro_desc
+                : l10n.intro_tab_desc,
             style: TextStyle(fontSize: 13, color: readableColors.textMuted),
             textAlign: TextAlign.center,
           ),
@@ -802,7 +808,7 @@ class OrbitScreen extends StatelessWidget {
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Text(
-            'Pending Group Invites',
+            l10n.orbit_pending_group_invites,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -994,6 +1000,7 @@ class OrbitScreen extends StatelessWidget {
 
   Widget _buildNoResults(BuildContext context, String searchQuery) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.only(top: 60),
@@ -1003,7 +1010,7 @@ class OrbitScreen extends StatelessWidget {
             Icon(Icons.search, size: 40, color: readableColors.iconMuted),
             const SizedBox(height: 16),
             Text(
-              'No friends matching "$searchQuery"',
+              l10n.orbit_no_friends_matching(searchQuery),
               style: TextStyle(fontSize: 15, color: readableColors.textMuted),
             ),
           ],

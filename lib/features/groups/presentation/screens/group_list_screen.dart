@@ -9,6 +9,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_card.dart
 import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Pure UI screen displaying a list of groups.
 ///
@@ -78,6 +79,7 @@ class GroupListScreen extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
@@ -90,7 +92,7 @@ class GroupListScreen extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            'Groups',
+            l10n.groups_title,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
@@ -104,6 +106,7 @@ class GroupListScreen extends StatelessWidget {
 
   Widget _buildEmptyState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Center(
       child: Column(
@@ -112,12 +115,12 @@ class GroupListScreen extends StatelessWidget {
           Icon(Icons.group_outlined, size: 64, color: readableColors.iconMuted),
           const SizedBox(height: 16),
           Text(
-            'No groups yet',
+            l10n.groups_empty_title,
             style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
           const SizedBox(height: 8),
           Text(
-            'Create a group to get started',
+            l10n.groups_empty_desc,
             style: TextStyle(
               fontSize: 13,
               color: readableColors.disabledForeground,
@@ -130,6 +133,7 @@ class GroupListScreen extends StatelessWidget {
 
   Widget _buildLoadErrorState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Center(
       child: Padding(
@@ -154,7 +158,7 @@ class GroupListScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Check your connection and try again.',
+              l10n.load_retry_hint,
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -166,7 +170,7 @@ class GroupListScreen extends StatelessWidget {
               TextButton.icon(
                 onPressed: onRetryLoad,
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Retry'),
+                label: Text(l10n.btn_retry),
               ),
             ],
           ],
@@ -176,12 +180,13 @@ class GroupListScreen extends StatelessWidget {
   }
 
   Widget _buildContent(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return ListView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         if (pendingInvites.isNotEmpty) ...[
-          _buildSectionLabel(context, 'Pending Invites'),
+          _buildSectionLabel(context, l10n.groups_pending_invites),
           const SizedBox(height: 12),
           ...pendingInvites.map(
             (invite) => Padding(
@@ -202,13 +207,13 @@ class GroupListScreen extends StatelessWidget {
         ],
         if (groups.isNotEmpty) ...[
           if (pendingInvites.isNotEmpty) ...[
-            _buildSectionLabel(context, 'Joined Groups'),
+            _buildSectionLabel(context, l10n.groups_joined),
             const SizedBox(height: 12),
           ],
           ...groups.map(
             (group) => Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: _buildGroupCard(group),
+              child: _buildGroupCard(context, group),
             ),
           ),
         ] else if (pendingInvites.isNotEmpty) ...[
@@ -218,16 +223,17 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildGroupCard(GroupModel group) {
+  Widget _buildGroupCard(BuildContext context, GroupModel group) {
+    final l10n = AppLocalizations.of(context)!;
     final lastMsg = latestMessages[group.id];
     final unread = unreadCounts[group.id] ?? 0;
-    final retentionNotice = groupBacklogRetentionNoticeFor(group);
+    final retentionNotice = groupBacklogRetentionNoticeFor(group, l10n);
 
     return GroupCard(
       group: group,
       statusText: retentionNotice?.listSummary,
       lastMessageSender: lastMsg != null
-          ? lastMsg.senderUsername ?? 'Unknown'
+          ? lastMsg.senderUsername ?? l10n.groups_unknown_sender
           : null,
       lastMessageBody: lastMsg != null ? lastMsg.text : null,
       lastMessageTime: lastMsg != null ? _formatTime(lastMsg.timestamp) : null,
@@ -252,6 +258,7 @@ class GroupListScreen extends StatelessWidget {
 
   Widget _buildNoJoinedGroupsCard(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -261,7 +268,7 @@ class GroupListScreen extends StatelessWidget {
         border: Border.all(color: readableColors.divider),
       ),
       child: Text(
-        'No joined groups yet. Accept an invite to add it here.',
+        l10n.groups_no_joined,
         style: TextStyle(
           fontSize: 13,
           color: readableColors.textSecondary,

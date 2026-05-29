@@ -7,6 +7,7 @@ import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_scr
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/helpers/readability_test_helpers.dart';
@@ -80,6 +81,8 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
 
       expect(find.byType(QRDisplayScreen), findsOneWidget);
+      expect(find.byType(QrImageView), findsOneWidget);
+      expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
     });
 
     testWidgets('shows noIdentity state when no identity exists', (
@@ -155,6 +158,22 @@ void main() {
       expect(find.byIcon(Icons.error_outline), findsOneWidget);
     });
 
+    testWidgets(
+      'shows error instead of shimmer when signing response is malformed',
+      (tester) async {
+        repo.seed(testIdentity);
+        bridge.responses['payload.sign'] = {'ok': true};
+
+        await tester.pumpWidget(pumpQRDisplay(tester));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Error'), findsOneWidget);
+        expect(find.byIcon(Icons.error_outline), findsOneWidget);
+        expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
+        expect(find.byType(QrImageView), findsNothing);
+      },
+    );
+
     testWidgets('shows QR screen with FTE layout on success', (tester) async {
       repo.seed(testIdentity);
       bridge.responses['payload.sign'] = {
@@ -168,6 +187,7 @@ void main() {
 
       // QRDisplayScreen uses FTE-style layout with QR code section
       expect(find.byType(QRDisplayScreen), findsOneWidget);
+      expect(find.byType(QrImageView), findsOneWidget);
       expect(
         find.text('Show this to someone you want in your circle...'),
         findsOneWidget,

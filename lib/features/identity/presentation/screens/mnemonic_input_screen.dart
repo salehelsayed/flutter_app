@@ -4,10 +4,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 class MnemonicInputScreen extends StatefulWidget {
   final Future<void> Function(String mnemonic) onRestorePressed;
 
-  const MnemonicInputScreen({
-    super.key,
-    required this.onRestorePressed,
-  });
+  const MnemonicInputScreen({super.key, required this.onRestorePressed});
 
   @override
   State<MnemonicInputScreen> createState() => _MnemonicInputScreenState();
@@ -65,10 +62,7 @@ class _MnemonicInputScreenState extends State<MnemonicInputScreen> {
               const SizedBox(height: 16),
               Text(
                 AppLocalizations.of(context)!.mnemonic_error_12,
-                style: const TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey,
-                ),
+                style: const TextStyle(fontSize: 16, color: Colors.grey),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
@@ -99,9 +93,9 @@ class _MnemonicInputScreenState extends State<MnemonicInputScreen> {
                         width: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text(
-                        'Restore identity',
-                        style: TextStyle(fontSize: 16),
+                    : Text(
+                        AppLocalizations.of(context)!.identity_restore_action,
+                        style: const TextStyle(fontSize: 16),
                       ),
               ),
             ],

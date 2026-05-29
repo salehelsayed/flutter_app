@@ -6,6 +6,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Card widget showing group name, type badge, last message preview,
 /// unread count, and timestamp.
@@ -106,7 +107,7 @@ class GroupCard extends StatelessWidget {
                   // Bottom row: preview + unread
                   Row(
                     children: [
-                      Expanded(child: _buildPreviewText(readableColors)),
+                      Expanded(child: _buildPreviewText(context)),
                       if (unreadCount > 0) ...[
                         const SizedBox(width: 8),
                         Container(
@@ -141,7 +142,8 @@ class GroupCard extends StatelessWidget {
     );
   }
 
-  Widget _buildPreviewText(BackgroundReadableColors readableColors) {
+  Widget _buildPreviewText(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final sender = lastMessageSender;
     final body = lastMessageBody;
     final status = statusText;
@@ -218,7 +220,9 @@ class GroupCard extends StatelessWidget {
 
     return Text(
       lastMessagePreview ??
-          (group.isDissolved ? 'Group dissolved' : 'No messages yet'),
+          (group.isDissolved
+              ? AppLocalizations.of(context)!.group_dissolved
+              : AppLocalizations.of(context)!.group_card_no_messages),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(fontSize: 13, color: readableColors.textMuted),

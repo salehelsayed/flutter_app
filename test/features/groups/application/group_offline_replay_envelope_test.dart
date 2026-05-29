@@ -142,6 +142,150 @@ void main() {
   );
 
   test(
+    'EK004 decodes account-signed replay from a known sender before device bootstrap',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.admin,
+          publicKey: 'pk-sender',
+          devices: const [],
+          joinedAt: DateTime.utc(2026, 5, 2),
+        ),
+      );
+
+      final plaintext = jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderDeviceId': 'device-sender',
+        'transportPeerId': 'transport-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 7,
+        'text': 'signed replay before device bootstrap',
+        'timestamp': '2026-05-02T07:15:00.000Z',
+        'messageId': 'msg-ek004-device-bootstrap',
+      });
+
+      final rawEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: plaintext,
+        messageId: 'msg-ek004-device-bootstrap',
+        senderPeerId: 'peer-sender',
+        senderPublicKey: 'pk-sender',
+        senderPrivateKey: 'sk-sender',
+        senderDeviceId: 'device-sender',
+        senderTransportPeerId: 'transport-sender',
+      );
+
+      final decoded = await decodeInboxMessage(bridge, groupRepo, {
+        'from': 'transport-sender',
+        'message': rawEnvelope,
+      }, 'group-1');
+
+      expect(decoded['messageId'], 'msg-ek004-device-bootstrap');
+      expect(decoded['senderDeviceId'], 'device-sender');
+      expect(decoded['transportPeerId'], 'transport-sender');
+      expect(decoded['text'], 'signed replay before device bootstrap');
+      expect(bridge.commandLog, contains('payload.verify'));
+      expect(bridge.commandLog, contains('group.decrypt'));
+    },
+  );
+
+  test(
+    'EK004 decodes metadata replay from a known sender with a stale local device',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.admin,
+          publicKey: 'pk-sender',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-sender-stale',
+              transportPeerId: 'transport-sender-stale',
+              deviceSigningPublicKey: 'pk-sender',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 2),
+        ),
+      );
+
+      final sysText = jsonEncode({
+        '__sys': 'group_metadata_updated',
+        'updatedAt': '2026-05-02T07:15:00.000Z',
+        'groupConfig': {
+          'id': 'group-1',
+          'name': 'test me',
+          'groupType': 'chat',
+          'createdBy': 'peer-sender',
+          'createdAt': '2026-05-02T00:00:00.000Z',
+          'members': [
+            {
+              'peerId': 'peer-sender',
+              'username': 'Sender',
+              'role': 'admin',
+              'publicKey': 'pk-sender',
+              'joinedAt': '2026-05-02T00:00:00.000Z',
+              'devices': [
+                {
+                  'deviceId': 'device-sender-current',
+                  'transportPeerId': 'transport-sender-current',
+                  'deviceSigningPublicKey': 'pk-sender',
+                  'status': 'active',
+                },
+              ],
+            },
+          ],
+        },
+      });
+      final plaintext = jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderDeviceId': 'device-sender-current',
+        'transportPeerId': 'transport-sender-current',
+        'senderUsername': 'Sender',
+        'keyEpoch': 7,
+        'text': sysText,
+        'timestamp': '2026-05-02T07:15:00.000Z',
+        'messageId': 'metadata-stale-device-replay',
+      });
+
+      final rawEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: plaintext,
+        messageId: 'metadata-stale-device-replay',
+        senderPeerId: 'peer-sender',
+        senderPublicKey: 'pk-sender',
+        senderPrivateKey: 'sk-sender',
+        senderDeviceId: 'device-sender-current',
+        senderTransportPeerId: 'transport-sender-current',
+      );
+
+      final decoded = await decodeInboxMessage(bridge, groupRepo, {
+        'from': 'transport-sender-current',
+        'message': rawEnvelope,
+      }, 'group-1');
+
+      expect(decoded['messageId'], 'metadata-stale-device-replay');
+      expect(decoded['senderDeviceId'], 'device-sender-current');
+      expect(decoded['transportPeerId'], 'transport-sender-current');
+      expect(decoded['text'], sysText);
+      expect(bridge.commandLog, contains('payload.verify'));
+      expect(bridge.commandLog, contains('group.decrypt'));
+    },
+  );
+
+  test(
     'EK004 decode rejects missing malformed mismatched and invalid signatures before decrypt',
     () async {
       final rawEnvelope = await buildGroupOfflineReplayEnvelope(

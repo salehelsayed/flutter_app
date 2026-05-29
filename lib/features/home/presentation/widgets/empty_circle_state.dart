@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Empty state with pulsing concentric dashed circles.
 class EmptyCircleState extends StatefulWidget {
@@ -35,6 +36,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final screenHeight = MediaQuery.of(context).size.height;
     // Continuous scaling: 0.0 at 650pt, 1.0 at 900pt
     final t = ((screenHeight - 650) / 250).clamp(0.0, 1.0);
@@ -69,7 +71,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
         SizedBox(height: gap),
         // Main text
         Text(
-          'Your circle is waiting to be filled',
+          l10n.home_empty_circle_title,
           style: TextStyle(
             color: readableColors.textPrimary,
             fontSize: mainFontSize,
@@ -80,7 +82,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
         SizedBox(height: subGap),
         // Secondary text
         Text(
-          'Scan a friend\'s code or share yours to connect',
+          l10n.home_empty_circle_desc,
           style: TextStyle(
             color: readableColors.textSecondary,
             fontSize: subFontSize,

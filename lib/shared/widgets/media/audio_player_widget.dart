@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
 import 'waveform_seek_bar.dart';
 
@@ -267,6 +268,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   }
 
   Widget _buildUnavailableAudio() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       key: ValueKey('unavailable-media-audio-${widget.attachment.id}'),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -283,10 +285,10 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
             color: Color.fromRGBO(255, 255, 255, 0.42),
           ),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Media unavailable',
-              style: TextStyle(
+              l10n.media_unavailable,
+              style: const TextStyle(
                 color: Color.fromRGBO(255, 255, 255, 0.66),
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -296,7 +298,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           if (_canRetryUnavailableMedia)
             Semantics(
               container: true,
-              label: 'Retry unavailable media',
+              label: l10n.media_retry_unavailable,
               button: true,
               child: IconButton(
                 key: ValueKey(
@@ -308,7 +310,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 color: const Color(0xFF4ecdc4),
                 onPressed: widget.onRetryUnavailableMedia,
-                tooltip: 'Retry unavailable media',
+                tooltip: l10n.media_retry_unavailable,
                 icon: const Icon(Icons.refresh_rounded),
               ),
             ),

@@ -134,6 +134,7 @@ class GroupNamePanel extends StatelessWidget {
 
   Widget _buildStartButton(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final start = readableColors.isLightSurface
         ? const Color(0xFF0F5F9C)
         : const Color(0xFF64B5F6);
@@ -168,7 +169,7 @@ class GroupNamePanel extends StatelessWidget {
             Icon(Icons.people, color: onAccent, size: 18),
             const SizedBox(width: 8),
             Text(
-              'Start group chat',
+              l10n.group_start_chat,
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w600,

@@ -273,6 +273,8 @@ Future<bool> _tryInboxStore({
       groupId,
       inboxPayload,
       recipientPeerIds: recipientPeerIds,
+      preserveRecipientPeerIds:
+          recipientPeerIds != null && recipientPeerIds.isNotEmpty,
     );
     return true;
   } catch (e) {

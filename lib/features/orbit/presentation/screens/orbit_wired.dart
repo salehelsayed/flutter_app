@@ -223,6 +223,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   List<PendingGroupInvite> _pendingGroupInvites = [];
   final Set<String> _processingIntroductionIds = <String>{};
   final Set<String> _processingPendingInviteIds = <String>{};
+  final Set<String> _openingFriendPeerIds = <String>{};
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
   final Set<String> _changedGroupIds = <String>{};
@@ -1515,37 +1516,46 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _onFriendTap(OrbitFriend friend) {
     if (!mounted) return;
+    if (!_openingFriendPeerIds.add(friend.peerId)) return;
 
-    Navigator.of(context)
-        .push(
-          buildConversationSlideUpRoute(
-            builder: (_) => ConversationWired(
-              contact: friend.contact,
-              identityRepo: widget.identityRepo,
-              messageRepo: widget.messageRepo,
-              chatMessageListener: widget.chatMessageListener,
-              p2pService: widget.p2pService,
-              bridge: widget.bridge,
-              contactRepo: widget.contactRepo,
-              mediaAttachmentRepo: widget.mediaAttachmentRepo,
-              mediaFileManager: widget.mediaFileManager,
-              imageProcessor: widget.imageProcessor,
-              qualityPreference: _qualityPreference,
-              videoQualityPreference: _videoQualityPreference,
-              conversationTracker: widget.conversationTracker,
-              audioRecorderService: widget.audioRecorderService,
-              reactionRepo: widget.reactionRepository,
-              reactionListener: widget.reactionListener,
-              introductionRepository: widget.introductionRepository,
-              deleteContactFn: _deleteContactFromOrbit,
-              appShellController: widget.appShellController,
-            ),
+    late final Future<Object?> pushedRoute;
+    try {
+      pushedRoute = Navigator.of(context).push(
+        buildConversationSlideUpRoute(
+          builder: (_) => ConversationWired(
+            contact: friend.contact,
+            identityRepo: widget.identityRepo,
+            messageRepo: widget.messageRepo,
+            chatMessageListener: widget.chatMessageListener,
+            p2pService: widget.p2pService,
+            bridge: widget.bridge,
+            contactRepo: widget.contactRepo,
+            mediaAttachmentRepo: widget.mediaAttachmentRepo,
+            mediaFileManager: widget.mediaFileManager,
+            imageProcessor: widget.imageProcessor,
+            qualityPreference: _qualityPreference,
+            videoQualityPreference: _videoQualityPreference,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
+            reactionRepo: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
+            introductionRepository: widget.introductionRepository,
+            deleteContactFn: _deleteContactFromOrbit,
+            appShellController: widget.appShellController,
           ),
-        )
-        .then((_) {
-          _markContactChanged(friend.peerId);
-          unawaited(_refreshOrbitFriend(friend.peerId));
-        });
+        ),
+      );
+    } catch (_) {
+      _openingFriendPeerIds.remove(friend.peerId);
+      rethrow;
+    }
+
+    pushedRoute.whenComplete(() {
+      _openingFriendPeerIds.remove(friend.peerId);
+      if (!mounted) return;
+      _markContactChanged(friend.peerId);
+      unawaited(_refreshOrbitFriend(friend.peerId));
+    });
 
     // Push first, then let the conversation route perform its own initial
     // read-marking without blocking the transition.

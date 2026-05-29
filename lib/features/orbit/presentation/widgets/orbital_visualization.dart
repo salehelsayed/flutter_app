@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'orbital_ring_painter.dart';
 import 'orbital_avatar.dart';
 import 'overflow_badge.dart';
@@ -17,6 +18,7 @@ class OrbitalVisualization extends StatelessWidget {
   final String? userPeerId;
   final Uint8List? userAvatarBytes;
   final List<OrbitFriend> friends;
+  final ValueChanged<OrbitFriend>? onFriendTap;
 
   static const double _size = 320;
   static const double _center = _size / 2;
@@ -24,17 +26,20 @@ class OrbitalVisualization extends StatelessWidget {
   static const double _ring2Radius = 108;
   static const int _ring1Count = 5;
   static const int _ring2Count = 8;
+  static const double _minTapTargetSize = 48;
 
   const OrbitalVisualization({
     super.key,
     required this.userPeerId,
     this.userAvatarBytes,
     required this.friends,
+    this.onFriendTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final innerBorderColor = readableColors.border.withValues(alpha: 0.20);
     final outerBorderColor = readableColors.border.withValues(alpha: 0.14);
     final ring1Friends = friends.take(_ring1Count).toList();
@@ -47,7 +52,7 @@ class OrbitalVisualization extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(bottom: 24),
           child: Text(
-            'YOUR INNER CIRCLE',
+            l10n.orbit_inner_circle_title,
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
@@ -83,6 +88,9 @@ class OrbitalVisualization extends StatelessWidget {
 
               // Ring 1 friends (inner orbit)
               ...List.generate(ring1Friends.length, (i) {
+                final friend = ring1Friends[i];
+                const avatarSize = 38.0;
+                final tapTargetSize = _tapTargetSize(avatarSize);
                 final pos = _positionOnRing(
                   index: i,
                   count: ring1Friends.length,
@@ -90,20 +98,27 @@ class OrbitalVisualization extends StatelessWidget {
                   ringIndex: 0,
                 );
                 return Positioned(
-                  left: _center + pos.dx - 19,
-                  top: _center + pos.dy - 19,
+                  left: _center + pos.dx - tapTargetSize / 2,
+                  top: _center + pos.dy - tapTargetSize / 2,
                   child: OrbitalAvatar(
-                    peerId: ring1Friends[i].peerId,
-                    size: 38,
+                    peerId: friend.peerId,
+                    size: avatarSize,
                     globalIndex: i,
                     borderWidth: 1.5,
                     borderColor: innerBorderColor,
+                    onTap: onFriendTap == null
+                        ? null
+                        : () => onFriendTap!(friend),
+                    semanticLabel: 'Open chat with ${friend.username}',
                   ),
                 );
               }),
 
               // Ring 2 friends (outer orbit)
               ...List.generate(ring2Friends.length, (i) {
+                final friend = ring2Friends[i];
+                const avatarSize = 30.0;
+                final tapTargetSize = _tapTargetSize(avatarSize);
                 final pos = _positionOnRing(
                   index: i,
                   count: ring2Friends.length,
@@ -111,14 +126,18 @@ class OrbitalVisualization extends StatelessWidget {
                   ringIndex: 1,
                 );
                 return Positioned(
-                  left: _center + pos.dx - 15,
-                  top: _center + pos.dy - 15,
+                  left: _center + pos.dx - tapTargetSize / 2,
+                  top: _center + pos.dy - tapTargetSize / 2,
                   child: OrbitalAvatar(
-                    peerId: ring2Friends[i].peerId,
-                    size: 30,
+                    peerId: friend.peerId,
+                    size: avatarSize,
                     globalIndex: _ring1Count + i,
                     borderWidth: 1,
                     borderColor: outerBorderColor,
+                    onTap: onFriendTap == null
+                        ? null
+                        : () => onFriendTap!(friend),
+                    semanticLabel: 'Open chat with ${friend.username}',
                   ),
                 );
               }),
@@ -157,5 +176,12 @@ class OrbitalVisualization extends StatelessWidget {
     final offset = ringIndex * 15; // degrees stagger per ring
     final angle = (index * 360 / count + offset - 90) * (pi / 180);
     return Offset(cos(angle) * radius, sin(angle) * radius);
+  }
+
+  double _tapTargetSize(double avatarSize) {
+    if (onFriendTap == null || avatarSize >= _minTapTargetSize) {
+      return avatarSize;
+    }
+    return _minTapTargetSize;
   }
 }

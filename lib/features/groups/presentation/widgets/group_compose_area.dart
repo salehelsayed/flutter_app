@@ -70,24 +70,20 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     if (!widget.canWrite) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           border: Border(
-            top: BorderSide(
-              color: Colors.white.withOpacity(0.06),
-              width: 0.5,
-            ),
+            top: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
           ),
         ),
         child: Text(
-          'Only admins can send messages in this group',
+          l10n.group_read_only_admin_only,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.white.withOpacity(0.35),
-          ),
+          style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.35)),
         ),
       );
     }
@@ -98,10 +94,7 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         decoration: BoxDecoration(
           border: Border(
-            top: BorderSide(
-              color: Colors.white.withOpacity(0.06),
-              width: 0.5,
-            ),
+            top: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
           ),
         ),
         child: ClipRRect(
@@ -134,7 +127,9 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
                           color: Colors.white,
                         ),
                         decoration: InputDecoration(
-                          hintText: AppLocalizations.of(context)!.group_message_hint,
+                          hintText: AppLocalizations.of(
+                            context,
+                          )!.group_message_hint,
                           hintStyle: TextStyle(
                             color: Colors.white.withOpacity(0.3),
                           ),
@@ -145,30 +140,28 @@ class _GroupComposeAreaState extends State<GroupComposeArea>
                         ),
                       ),
                     ),
-                  AnimatedBuilder(
-                    animation: _sendButtonController,
-                    builder: (context, child) => Opacity(
-                      opacity: _sendOpacity.value,
-                      child: child,
-                    ),
-                    child: GestureDetector(
-                      onTap: _hasText ? _onSend : null,
-                      child: Container(
-                        width: 32,
-                        height: 32,
-                        margin: const EdgeInsets.only(right: 4),
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF64B5F6),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.arrow_upward,
-                          size: 18,
-                          color: Colors.black,
+                    AnimatedBuilder(
+                      animation: _sendButtonController,
+                      builder: (context, child) =>
+                          Opacity(opacity: _sendOpacity.value, child: child),
+                      child: GestureDetector(
+                        onTap: _hasText ? _onSend : null,
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          margin: const EdgeInsets.only(right: 4),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF64B5F6),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.arrow_upward,
+                            size: 18,
+                            color: Colors.black,
+                          ),
                         ),
                       ),
                     ),
-                  ),
                   ],
                 ),
               ),

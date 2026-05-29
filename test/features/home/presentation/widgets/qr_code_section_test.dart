@@ -13,9 +13,7 @@ void main() {
     home: Scaffold(body: child),
   );
 
-  testWidgets('shows shimmer placeholder when qrData is null', (
-    tester,
-  ) async {
+  testWidgets('shows shimmer placeholder when qrData is null', (tester) async {
     await tester.pumpWidget(wrap(const QRCodeSection(qrData: null)));
 
     expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsOneWidget);
@@ -39,6 +37,18 @@ void main() {
     await tester.pumpWidget(wrap(const QRCodeSection(qrData: 'mknoon://qr')));
 
     expect(find.byType(QrImageView), findsOneWidget);
+    expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
+  });
+
+  testWidgets('shows render error when qrData cannot be encoded', (
+    tester,
+  ) async {
+    final oversizedData = List.filled(5000, 'x').join();
+
+    await tester.pumpWidget(wrap(QRCodeSection(qrData: oversizedData)));
+
+    expect(find.byType(QrImageView), findsNothing);
+    expect(find.byKey(const ValueKey('qr-render-error')), findsOneWidget);
     expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
   });
 }

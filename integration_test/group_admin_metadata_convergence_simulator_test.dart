@@ -27,5 +27,14 @@ void main() {
             );
       },
     );
+
+    testWidgets(
+      group_admin_metadata_convergence
+          .exactScenario4AdminDemotionEnforcementLabel,
+      (_) async {
+        await group_admin_metadata_convergence
+            .runExactScenario4AdminDemotionEnforcementJourney();
+      },
+    );
   });
 }

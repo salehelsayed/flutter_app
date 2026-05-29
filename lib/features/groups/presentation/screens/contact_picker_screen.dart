@@ -123,6 +123,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
 
   Widget _buildHeader(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
@@ -136,8 +137,8 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
           const SizedBox(width: 4),
           Text(
             widget.selectedPeerIds.isNotEmpty
-                ? 'Add Members (${widget.selectedPeerIds.length})'
-                : 'Add Member',
+                ? l10n.group_add_members_count(widget.selectedPeerIds.length)
+                : l10n.group_add_member,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
@@ -182,6 +183,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
 
   Widget _buildEmptyState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Center(
       child: Column(
@@ -194,7 +196,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No contacts available',
+            l10n.group_no_contacts_available,
             style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
         ],
@@ -217,6 +219,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
 
   Widget _buildLoadingState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Center(
       child: Column(
@@ -225,7 +228,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
           CircularProgressIndicator(color: readableColors.iconPrimary),
           const SizedBox(height: 16),
           Text(
-            'Loading contacts...',
+            l10n.group_loading_contacts,
             style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
         ],
@@ -235,6 +238,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
 
   Widget _buildLoadErrorState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Center(
       child: Padding(
@@ -259,7 +263,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Check your connection and try again.',
+              l10n.load_retry_hint,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: readableColors.textMuted),
             ),
@@ -267,7 +271,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
             TextButton(
               onPressed: widget.onRetryLoadContacts,
               child: Text(
-                'Retry',
+                l10n.btn_retry,
                 style: TextStyle(color: readableColors.textPrimary),
               ),
             ),
@@ -295,6 +299,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
 
   Widget _buildConfirmButton(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final start = readableColors.isLightSurface
         ? const Color(0xFF0F5F9C)
         : const Color(0xFF64B5F6);
@@ -314,7 +319,7 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
-            'Send Invites',
+            l10n.group_send_invites,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 15,

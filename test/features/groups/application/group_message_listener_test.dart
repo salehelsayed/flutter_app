@@ -565,6 +565,10 @@ void main() {
     String actorPeerId = 'peer-admin',
     String actorUsername = 'Admin',
     String actorPublicKey = 'pk-admin',
+    String? actorDeviceId,
+    String? actorTransportPeerId,
+    String? actorKeyPackageId,
+    String? preTransitionStateHash,
   }) {
     return signGroupSystemTransitionPayload(
       bridge: bridge,
@@ -577,6 +581,10 @@ void main() {
       actorUsername: actorUsername,
       actorSigningPublicKey: actorPublicKey,
       actorPrivateKey: 'sk-$actorPeerId',
+      actorDeviceId: actorDeviceId,
+      actorTransportPeerId: actorTransportPeerId,
+      actorKeyPackageId: actorKeyPackageId,
+      preTransitionStateHash: preTransitionStateHash,
       systemPayload: systemPayload,
     );
   }
@@ -3849,6 +3857,424 @@ void main() {
     );
 
     test(
+      'group_metadata_updated learns a signed admin device from the incoming snapshot',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final updatedAt = DateTime.parse('2026-04-05T12:20:00.000Z');
+        const adminDeviceId = 'device-promoted-admin-b';
+        const adminTransportPeerId = 'transport-promoted-admin-b';
+        final groupConfig = buildGroupConfigPayload(
+          testGroup.copyWith(
+            name: 'test me',
+            description: 'do you see me?',
+            avatarBlobId: 'blob-promoted-admin-b',
+            avatarMime: 'image/png',
+            lastMetadataEventAt: updatedAt,
+          ),
+          [
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-admin',
+              username: 'Admin',
+              role: MemberRole.admin,
+              publicKey: 'pk-admin',
+              devices: const [
+                GroupMemberDeviceIdentity(
+                  deviceId: adminDeviceId,
+                  transportPeerId: adminTransportPeerId,
+                  deviceSigningPublicKey: 'pk-admin',
+                ),
+              ],
+              joinedAt: initialGroupCreatedAt,
+            ),
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-sender',
+              username: 'Sender',
+              role: MemberRole.writer,
+              publicKey: 'pk-sender',
+              joinedAt: initialMemberJoinedAt,
+            ),
+          ],
+        );
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'metadata-bootstrap-device-1',
+          eventAt: updatedAt,
+          actorDeviceId: adminDeviceId,
+          actorTransportPeerId: adminTransportPeerId,
+          systemPayload: signedMetadataSystemPayload(
+            updatedAt: updatedAt,
+            groupConfig: groupConfig,
+          ),
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'senderDeviceId': adminDeviceId,
+          'transportPeerId': adminTransportPeerId,
+          'keyEpoch': 0,
+          'messageId': 'metadata-bootstrap-device-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': updatedAt.toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.name, 'test me');
+        expect(updatedGroup.description, 'do you see me?');
+        expect(updatedGroup.avatarBlobId, 'blob-promoted-admin-b');
+        expect(updatedGroup.avatarMime, 'image/png');
+        expect(updatedGroup.lastMetadataEventAt, updatedAt.toUtc());
+
+        final learnedAdmin = await groupRepo.getMember('group-1', 'peer-admin');
+        expect(learnedAdmin, isNotNull);
+        expect(
+          learnedAdmin!.findDeviceById(adminDeviceId)?.transportPeerId,
+          adminTransportPeerId,
+        );
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_UNBOUND_SYSTEM_DEVICE')),
+        );
+        expect(eventLog.entries, hasLength(1));
+      },
+    );
+
+    test(
+      'group_metadata_updated accepts account-signed admin metadata when transport injects peer device id',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final updatedAt = DateTime.parse('2026-04-05T12:22:00.000Z');
+        final groupConfig = buildMetadataConfig(
+          updatedAt: updatedAt,
+          name: 'test me',
+          description: 'do you see me?',
+          avatarBlobId: 'blob-account-signed',
+          avatarMime: 'image/png',
+        );
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'metadata-account-default-device-1',
+          eventAt: updatedAt,
+          systemPayload: signedMetadataSystemPayload(
+            updatedAt: updatedAt,
+            groupConfig: groupConfig,
+          ),
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'senderDeviceId': 'peer-admin',
+          'transportPeerId': 'peer-admin',
+          'keyEpoch': 0,
+          'messageId': 'metadata-account-default-device-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': updatedAt.toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.name, 'test me');
+        expect(updatedGroup.description, 'do you see me?');
+        expect(updatedGroup.avatarBlobId, 'blob-account-signed');
+        expect(updatedGroup.avatarMime, 'image/png');
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED')),
+        );
+        expect(eventLog.entries, hasLength(1));
+      },
+    );
+
+    test(
+      'group_metadata_updated accepts account-signed admin metadata over a stale local device row',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-admin-stale',
+                transportPeerId: 'transport-admin-stale',
+                deviceSigningPublicKey: 'pk-admin',
+              ),
+            ],
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final updatedAt = DateTime.parse('2026-04-05T12:23:00.000Z');
+        final groupConfig = buildMetadataConfig(
+          updatedAt: updatedAt,
+          name: 'test me',
+          description: 'do you see me?',
+          avatarBlobId: 'blob-account-signed-stale',
+          avatarMime: 'image/png',
+        );
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'metadata-account-stale-device-1',
+          eventAt: updatedAt,
+          systemPayload: signedMetadataSystemPayload(
+            updatedAt: updatedAt,
+            groupConfig: groupConfig,
+          ),
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'senderDeviceId': 'peer-admin',
+          'transportPeerId': 'peer-admin',
+          'keyEpoch': 0,
+          'messageId': 'metadata-account-stale-device-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': updatedAt.toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.name, 'test me');
+        expect(updatedGroup.description, 'do you see me?');
+        expect(updatedGroup.avatarBlobId, 'blob-account-signed-stale');
+        expect(updatedGroup.avatarMime, 'image/png');
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_UNBOUND_SYSTEM_DEVICE')),
+        );
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED')),
+        );
+        expect(eventLog.entries, hasLength(1));
+      },
+    );
+
+    test(
+      'group_metadata_updated replaces a stale admin device from the incoming snapshot',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        const staleDeviceId = 'device-promoted-admin-b-stale';
+        const staleTransportPeerId = 'transport-promoted-admin-b-stale';
+        const currentDeviceId = 'device-promoted-admin-b-current';
+        const currentTransportPeerId = 'transport-promoted-admin-b-current';
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: staleDeviceId,
+                transportPeerId: staleTransportPeerId,
+                deviceSigningPublicKey: 'pk-admin',
+              ),
+            ],
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        final senderPreStateRepo = InMemoryGroupRepository();
+        await senderPreStateRepo.saveGroup(testGroup);
+        await senderPreStateRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: currentDeviceId,
+                transportPeerId: currentTransportPeerId,
+                deviceSigningPublicKey: 'pk-admin',
+              ),
+            ],
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        await senderPreStateRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-sender',
+            username: 'Sender',
+            role: MemberRole.writer,
+            publicKey: 'pk-sender',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        final senderPreTransitionStateHash =
+            await buildGroupTransitionStateHash(senderPreStateRepo, 'group-1');
+
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final updatedAt = DateTime.parse('2026-04-05T12:21:00.000Z');
+        final groupConfig = buildGroupConfigPayload(
+          testGroup.copyWith(
+            name: 'test me',
+            description: 'do you see me?',
+            avatarBlobId: 'blob-promoted-admin-current',
+            avatarMime: 'image/png',
+            lastMetadataEventAt: updatedAt,
+          ),
+          [
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-admin',
+              username: 'Admin',
+              role: MemberRole.admin,
+              publicKey: 'pk-admin',
+              devices: const [
+                GroupMemberDeviceIdentity(
+                  deviceId: currentDeviceId,
+                  transportPeerId: currentTransportPeerId,
+                  deviceSigningPublicKey: 'pk-admin',
+                ),
+              ],
+              joinedAt: initialMemberJoinedAt,
+            ),
+            GroupMember(
+              groupId: 'group-1',
+              peerId: 'peer-sender',
+              username: 'Sender',
+              role: MemberRole.writer,
+              publicKey: 'pk-sender',
+              joinedAt: initialMemberJoinedAt,
+            ),
+          ],
+        );
+        final metadataPayload = signedMetadataSystemPayload(
+          updatedAt: updatedAt,
+          groupConfig: groupConfig,
+        );
+        final sysPayload = await signGroupSystemTransitionPayload(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'metadata-stale-device-bootstrap-1',
+          eventAt: updatedAt,
+          actorPeerId: 'peer-admin',
+          actorUsername: 'Admin',
+          actorSigningPublicKey: 'pk-admin',
+          actorPrivateKey: 'sk-peer-admin',
+          actorDeviceId: currentDeviceId,
+          actorTransportPeerId: currentTransportPeerId,
+          preTransitionStateHash: senderPreTransitionStateHash,
+          systemPayload: metadataPayload,
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'senderDeviceId': currentDeviceId,
+          'transportPeerId': currentTransportPeerId,
+          'keyEpoch': 0,
+          'messageId': 'metadata-stale-device-bootstrap-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': updatedAt.toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.name, 'test me');
+        expect(updatedGroup.description, 'do you see me?');
+        expect(updatedGroup.avatarBlobId, 'blob-promoted-admin-current');
+        expect(updatedGroup.avatarMime, 'image/png');
+        expect(updatedGroup.lastMetadataEventAt, updatedAt.toUtc());
+
+        final learnedAdmin = await groupRepo.getMember('group-1', 'peer-admin');
+        expect(learnedAdmin, isNotNull);
+        expect(learnedAdmin!.findDeviceById(staleDeviceId), isNull);
+        expect(
+          learnedAdmin.findDeviceById(currentDeviceId)?.transportPeerId,
+          currentTransportPeerId,
+        );
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_UNBOUND_SYSTEM_DEVICE')),
+        );
+        expect(eventLog.entries, hasLength(1));
+      },
+    );
+
+    test(
       'KE-010 key-before-config rejects regular message until local recipient membership arrives',
       () async {
         final flowEvents = <Map<String, dynamic>>[];
@@ -5194,6 +5620,221 @@ void main() {
       expect(saved, isNotNull);
       expect(saved!.text, 'Admin added Dave and Eve');
     });
+
+    test(
+      'members_added accepts signed admin event when transport injects peer device id',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        listener.start(sourceController.stream);
+
+        final eventAt = DateTime.parse('2026-04-05T12:24:00.000Z');
+        const adminDeviceId = 'device-admin-current';
+        const adminTransportPeerId = 'transport-admin-current';
+        final adminMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: adminDeviceId,
+              transportPeerId: adminTransportPeerId,
+              deviceSigningPublicKey: 'pk-admin',
+            ),
+          ],
+          joinedAt: initialMemberJoinedAt,
+        );
+        final senderMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          publicKey: 'pk-sender',
+          joinedAt: initialMemberJoinedAt,
+        );
+        final daveMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-dave',
+          username: 'Dave',
+          role: MemberRole.writer,
+          publicKey: 'pk-dave',
+          joinedAt: eventAt,
+        );
+        final senderPreStateRepo = InMemoryGroupRepository();
+        await senderPreStateRepo.saveGroup(testGroup);
+        await senderPreStateRepo.saveMember(adminMember);
+        await senderPreStateRepo.saveMember(senderMember);
+        final preTransitionStateHash = await buildGroupTransitionStateHash(
+          senderPreStateRepo,
+          'group-1',
+        );
+        final groupConfig = buildGroupConfigPayload(testGroup, [
+          adminMember,
+          senderMember,
+          daveMember,
+        ], configVersionOverride: eventAt);
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'members_added',
+          sourceEventId: 'members-added-injected-peer-device-1',
+          eventAt: eventAt,
+          actorDeviceId: adminDeviceId,
+          actorTransportPeerId: adminTransportPeerId,
+          preTransitionStateHash: preTransitionStateHash,
+          systemPayload: {
+            '__sys': 'members_added',
+            'eventAt': eventAt.toUtc().toIso8601String(),
+            'members': [daveMember.toConfigJson()],
+            'groupConfig': groupConfig,
+          },
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'senderDeviceId': 'peer-admin',
+          'transportPeerId': 'peer-admin',
+          'keyEpoch': 0,
+          'messageId': 'members-added-injected-peer-device-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': eventAt.toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final dave = await groupRepo.getMember('group-1', 'peer-dave');
+        expect(dave, isNotNull);
+        expect(dave!.username, 'Dave');
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED')),
+        );
+        expect(bridge.commandLog, contains('group:updateConfig'));
+      },
+    );
+
+    test(
+      'members_added accepts signed admin event over a stale local device row',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-admin-stale',
+                transportPeerId: 'transport-admin-stale',
+                deviceSigningPublicKey: 'pk-admin',
+              ),
+            ],
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        listener.start(sourceController.stream);
+
+        final eventAt = DateTime.parse('2026-04-05T12:25:00.000Z');
+        const currentDeviceId = 'device-admin-current';
+        const currentTransportPeerId = 'transport-admin-current';
+        final adminMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: currentDeviceId,
+              transportPeerId: currentTransportPeerId,
+              deviceSigningPublicKey: 'pk-admin',
+            ),
+          ],
+          joinedAt: initialMemberJoinedAt,
+        );
+        final senderMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          publicKey: 'pk-sender',
+          joinedAt: initialMemberJoinedAt,
+        );
+        final daveMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-dave',
+          username: 'Dave',
+          role: MemberRole.writer,
+          publicKey: 'pk-dave',
+          joinedAt: eventAt,
+        );
+        final senderPreStateRepo = InMemoryGroupRepository();
+        await senderPreStateRepo.saveGroup(testGroup);
+        await senderPreStateRepo.saveMember(adminMember);
+        await senderPreStateRepo.saveMember(senderMember);
+        final preTransitionStateHash = await buildGroupTransitionStateHash(
+          senderPreStateRepo,
+          'group-1',
+        );
+        final groupConfig = buildGroupConfigPayload(testGroup, [
+          adminMember,
+          senderMember,
+          daveMember,
+        ], configVersionOverride: eventAt);
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'members_added',
+          sourceEventId: 'members-added-stale-local-device-1',
+          eventAt: eventAt,
+          actorDeviceId: currentDeviceId,
+          actorTransportPeerId: currentTransportPeerId,
+          preTransitionStateHash: preTransitionStateHash,
+          systemPayload: {
+            '__sys': 'members_added',
+            'eventAt': eventAt.toUtc().toIso8601String(),
+            'members': [daveMember.toConfigJson()],
+            'groupConfig': groupConfig,
+          },
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'senderDeviceId': 'peer-admin',
+          'transportPeerId': 'peer-admin',
+          'keyEpoch': 0,
+          'messageId': 'members-added-stale-local-device-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': eventAt.toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final dave = await groupRepo.getMember('group-1', 'peer-dave');
+        expect(dave, isNotNull);
+        expect(dave!.username, 'Dave');
+        final admin = await groupRepo.getMember('group-1', 'peer-admin');
+        expect(admin?.findDeviceById(currentDeviceId), isNotNull);
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_UNBOUND_SYSTEM_DEVICE')),
+        );
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED')),
+        );
+      },
+    );
 
     test('member_joined saves a durable join timeline event', () async {
       listener.start(sourceController.stream);
@@ -8773,6 +9414,126 @@ void main() {
         expect(
           (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
           roleEventAt,
+        );
+      },
+    );
+
+    test(
+      'signed member_role_updated demotion survives recipient snapshot hash drift',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-sender',
+        );
+        listener.start(sourceController.stream);
+
+        final localMetadataAt = DateTime.utc(2026, 5, 25, 10, 10);
+        final senderMetadataAt = DateTime.utc(2026, 5, 25, 10, 11);
+        final roleEventAt = DateTime.utc(2026, 5, 25, 10, 12);
+        final localGroup = testGroup.copyWith(
+          name: 'test me',
+          description: 'do you see me?',
+          myRole: GroupRole.admin,
+          lastMetadataEventAt: localMetadataAt,
+        );
+        final senderPreGroup = localGroup.copyWith(
+          lastMetadataEventAt: senderMetadataAt,
+        );
+        await groupRepo.updateGroup(localGroup);
+
+        final adminMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          joinedAt: initialMemberJoinedAt,
+        );
+        final bobAdminMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.admin,
+          publicKey: 'pk-sender',
+          joinedAt: initialMemberJoinedAt,
+        );
+        final charlieMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          joinedAt: initialMemberJoinedAt,
+        );
+        await groupRepo.saveMember(adminMember);
+        await groupRepo.saveMember(bobAdminMember);
+        await groupRepo.saveMember(charlieMember);
+
+        final senderPreStateRepo = InMemoryGroupRepository();
+        await senderPreStateRepo.saveGroup(senderPreGroup);
+        await senderPreStateRepo.saveMember(adminMember);
+        await senderPreStateRepo.saveMember(bobAdminMember);
+        await senderPreStateRepo.saveMember(charlieMember);
+        final senderPreTransitionStateHash =
+            await buildGroupTransitionStateHash(senderPreStateRepo, 'group-1');
+        expect(
+          await buildGroupTransitionStateHash(groupRepo, 'group-1'),
+          isNot(senderPreTransitionStateHash),
+        );
+
+        final bobWriterMember = bobAdminMember.copyWith(
+          role: MemberRole.writer,
+        );
+        final groupConfig = buildGroupConfigPayload(
+          senderPreGroup.copyWith(lastMembershipEventAt: roleEventAt),
+          [adminMember, bobWriterMember, charlieMember],
+          configVersionOverride: roleEventAt,
+        );
+        final signedRolePayload = await signedAuditSystemPayload(
+          transitionType: 'member_role_updated',
+          sourceEventId: 'role-demote-hash-drift',
+          eventAt: roleEventAt,
+          preTransitionStateHash: senderPreTransitionStateHash,
+          systemPayload: {
+            '__sys': 'member_role_updated',
+            'eventAt': roleEventAt.toIso8601String(),
+            'member': bobWriterMember.toConfigJson(),
+            'groupConfig': groupConfig,
+          },
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'role-demote-hash-drift',
+          'text': jsonEncode(signedRolePayload),
+          'timestamp': roleEventAt.toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updatedBob = await groupRepo.getMember('group-1', 'peer-sender');
+        expect(updatedBob, isNotNull);
+        expect(updatedBob!.role, MemberRole.writer);
+        expect((await groupRepo.getGroup('group-1'))!.myRole, GroupRole.member);
+        expect(msgRepo.count, 1);
+        expect(
+          (await msgRepo.getLatestMessage('group-1'))!.text,
+          'Admin removed admin from Sender',
+        );
+        expect(bridge.commandLog, contains('group:updateConfig'));
+        expect(
+          flowEvents.map((event) => event['event']),
+          isNot(contains('GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED')),
         );
       },
     );

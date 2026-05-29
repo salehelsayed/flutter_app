@@ -30,6 +30,7 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
 import 'package:flutter_app/features/share/application/share_target_selection.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'share_target_picker_screen.dart';
 
@@ -375,8 +376,8 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
-            content: Text('Could not share to the selected targets.'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.share_send_failed),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -461,18 +462,23 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   }
 
   String _buildSummary(ShareBatchDeliveryResult result) {
+    final l10n = AppLocalizations.of(context)!;
     final parts = <String>[];
     if (result.sentCount > 0) {
-      parts.add('Sent to ${_formatTargetCount(result.sentCount)}');
+      parts.add(l10n.share_summary_sent(_formatTargetCount(result.sentCount)));
     }
     if (result.queuedCount > 0) {
-      parts.add('saved ${_formatTargetCount(result.queuedCount)} for retry');
+      parts.add(
+        l10n.share_summary_queued(_formatTargetCount(result.queuedCount)),
+      );
     }
     if (result.failureCount > 0) {
-      parts.add('failed for ${_formatTargetCount(result.failureCount)}');
+      parts.add(
+        l10n.share_summary_failed(_formatTargetCount(result.failureCount)),
+      );
     }
     if (parts.isEmpty && !result.hasSkippedOversizedGifs) {
-      return 'Nothing was shared.';
+      return l10n.share_summary_nothing;
     }
     final summary = <String>[];
     if (parts.isNotEmpty) {
@@ -480,14 +486,15 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       summary.add('${sentence[0].toUpperCase()}${sentence.substring(1)}.');
     }
     if (result.hasSkippedOversizedGifs) {
-      final count = result.skippedOversizedGifCount;
-      summary.add('Skipped $count oversized GIF${count == 1 ? '' : 's'}.');
+      summary.add(
+        l10n.share_summary_skipped_gifs(result.skippedOversizedGifCount),
+      );
     }
     return summary.join(' ');
   }
 
   String _formatTargetCount(int count) {
-    return '$count target${count == 1 ? '' : 's'}';
+    return AppLocalizations.of(context)!.share_target_count(count);
   }
 
   void _requestClose([ShareBatchDeliveryResult? result]) {

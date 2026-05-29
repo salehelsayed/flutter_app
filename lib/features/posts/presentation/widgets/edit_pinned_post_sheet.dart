@@ -96,9 +96,9 @@ class _EditPinnedPostSheetState extends State<EditPinnedPostSheet> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Edit pinned post',
-                  style: TextStyle(
+                Text(
+                  AppLocalizations.of(context)!.edit_pinned_post_title,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
@@ -132,7 +132,11 @@ class _EditPinnedPostSheetState extends State<EditPinnedPostSheet> {
                     onPressed: _controller.text.trim().isEmpty || _isSaving
                         ? null
                         : _submit,
-                    child: Text(_isSaving ? 'Saving...' : 'Save'),
+                    child: Text(
+                      _isSaving
+                          ? AppLocalizations.of(context)!.btn_saving
+                          : AppLocalizations.of(context)!.btn_save,
+                    ),
                   ),
                 ),
               ],

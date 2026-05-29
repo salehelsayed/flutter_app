@@ -338,8 +338,9 @@ class _SettingsWiredState extends State<SettingsWired> {
           .toList();
     });
 
+    final l10n = AppLocalizations.of(context)!;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Deleted local introduction row')),
+      SnackBar(content: Text(l10n.settings_intro_debug_deleted_row)),
     );
   }
 
@@ -369,9 +370,12 @@ class _SettingsWiredState extends State<SettingsWired> {
 
     final pairLabel =
         '${target.recipientUsername ?? target.recipientId} <-> ${target.introducedUsername ?? target.introducedId}';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('Deleted local pair $pairLabel')));
+    final l10n = AppLocalizations.of(context)!;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(l10n.settings_intro_debug_deleted_pair(pairLabel)),
+      ),
+    );
   }
 
   Future<void> _onUsernameChanged(String newUsername) async {

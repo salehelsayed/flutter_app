@@ -1563,8 +1563,8 @@ class _FeedWiredState extends State<FeedWired>
 
         if (result != SendChatMessageResult.success && message == null) {
           scaffoldMessenger.showSnackBar(
-            const SnackBar(
-              content: Text('Failed to save edit.'),
+            SnackBar(
+              content: Text(AppLocalizations.of(context)!.edit_save_failed),
               behavior: SnackBarBehavior.floating,
             ),
           );
@@ -1584,8 +1584,8 @@ class _FeedWiredState extends State<FeedWired>
           );
         });
         scaffoldMessenger.showSnackBar(
-          const SnackBar(
-            content: Text('Failed to save edit.'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.edit_save_failed),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -1757,9 +1757,9 @@ class _FeedWiredState extends State<FeedWired>
             const SizedBox(height: 16),
             ListTile(
               leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: const Text(
-                'Media Library',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(context)!.picker_media_library,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
@@ -1771,9 +1771,9 @@ class _FeedWiredState extends State<FeedWired>
             ),
             ListTile(
               leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: const Text(
-                'Take Photo',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(context)!.picker_take_photo,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
@@ -1785,9 +1785,9 @@ class _FeedWiredState extends State<FeedWired>
             ),
             ListTile(
               leading: const Icon(Icons.videocam, color: Colors.white),
-              title: const Text(
-                'Record Video',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(context)!.picker_record_video,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
@@ -2129,9 +2129,9 @@ class _FeedWiredState extends State<FeedWired>
             const SizedBox(height: 16),
             ListTile(
               leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: const Text(
-                'Media Library',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(context)!.picker_media_library,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
@@ -2143,9 +2143,9 @@ class _FeedWiredState extends State<FeedWired>
             ),
             ListTile(
               leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: const Text(
-                'Take Photo',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(context)!.picker_take_photo,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
@@ -2157,9 +2157,9 @@ class _FeedWiredState extends State<FeedWired>
             ),
             ListTile(
               leading: const Icon(Icons.videocam, color: Colors.white),
-              title: const Text(
-                'Record Video',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppLocalizations.of(context)!.picker_record_video,
+                style: const TextStyle(color: Colors.white),
               ),
               onTap: () {
                 Navigator.pop(ctx);
@@ -2526,8 +2526,8 @@ class _FeedWiredState extends State<FeedWired>
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('This group has been dissolved'),
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.group_dissolved_snackbar),
           behavior: SnackBarBehavior.floating,
         ),
       );

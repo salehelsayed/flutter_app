@@ -1221,6 +1221,66 @@ void main() {
   );
 
   test(
+    'Scenario 3 C send preserves A and B as durable inbox recipients',
+    () async {
+      final sentAt = DateTime.utc(2026, 5, 28, 12);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: testGroup.id,
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.admin,
+          publicKey: 'pk-2',
+          joinedAt: sentAt.subtract(const Duration(minutes: 2)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: testGroup.id,
+          peerId: 'peer-3',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-3',
+          joinedAt: sentAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'scenario3-charlie-to-ab',
+        'topicPeers': 1,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: testGroup.id,
+        text: 'Scenario 3 from C',
+        senderPeerId: 'peer-3',
+        senderPublicKey: 'pk-3',
+        senderPrivateKey: 'sk-3',
+        senderUsername: 'Charlie',
+        messageId: 'scenario3-charlie-to-ab',
+        timestamp: sentAt,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        inboxPayload['recipientPeerIds'],
+        unorderedEquals(<String>['peer-1', 'peer-2']),
+      );
+      expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
+
+      final replayPayload = _decodedGroupInboxReplayPayload(bridge);
+      expect(replayPayload['senderId'], 'peer-3');
+      expect(replayPayload['messageId'], 'scenario3-charlie-to-ab');
+    },
+  );
+
+  test(
     'propagates quotedMessageId through publish, inbox, and saved message',
     () async {
       final (result, message) = await sendGroupMessage(

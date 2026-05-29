@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class SettingsIntroductionDebugCard extends StatelessWidget {
   final List<IntroductionModel> introductions;
@@ -23,16 +24,18 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
-              'DEBUG INTRODUCTIONS',
-              style: TextStyle(
+              l10n.settings_intro_debug_heading,
+              style: const TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.88,
@@ -58,10 +61,10 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'Local sent intro rows on this device. Deleting a pair makes it selectable again in the picker.',
-                            style: TextStyle(
+                            l10n.settings_intro_debug_description,
+                            style: const TextStyle(
                               fontSize: 12,
                               height: 1.35,
                               color: Color.fromRGBO(255, 255, 255, 0.65),
@@ -116,9 +119,9 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
                         ),
                       )
                     else if (introductions.isEmpty)
-                      const Text(
-                        'No local introduction rows for the current user.',
-                        style: TextStyle(
+                      Text(
+                        l10n.settings_intro_debug_empty,
+                        style: const TextStyle(
                           fontSize: 12,
                           color: Color.fromRGBO(255, 255, 255, 0.5),
                         ),
@@ -159,6 +162,7 @@ class _IntroductionDebugRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final recipientLabel = _displayLabel(
       intro.recipientUsername,
       intro.recipientId,
@@ -190,7 +194,11 @@ class _IntroductionDebugRow extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'status=${intro.status.toDbString()}  recipient=${intro.recipientStatus.toDbString()}  introduced=${intro.introducedStatus.toDbString()}',
+            l10n.settings_intro_debug_status_line(
+              intro.status.toDbString(),
+              intro.recipientStatus.toDbString(),
+              intro.introducedStatus.toDbString(),
+            ),
             style: const TextStyle(
               fontFamily: 'SF Mono',
               fontFamilyFallback: ['Fira Code', 'monospace'],
@@ -200,7 +208,10 @@ class _IntroductionDebugRow extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'id=${intro.id}  created=${intro.createdAt}',
+            l10n.settings_intro_debug_meta_line(
+              intro.id,
+              intro.createdAt.toString(),
+            ),
             style: const TextStyle(
               fontFamily: 'SF Mono',
               fontFamilyFallback: ['Fira Code', 'monospace'],
@@ -215,13 +226,13 @@ class _IntroductionDebugRow extends StatelessWidget {
             children: [
               _DebugActionButton(
                 key: ValueKey('settings-intro-delete-row-${intro.id}'),
-                label: 'Delete Row',
+                label: l10n.settings_intro_debug_delete_row,
                 color: const Color(0xFFF87171),
                 onTap: () => onDeleteIntroduction(intro.id),
               ),
               _DebugActionButton(
                 key: ValueKey('settings-intro-delete-pair-${intro.id}'),
-                label: 'Delete Pair',
+                label: l10n.settings_intro_debug_delete_pair,
                 color: const Color(0xFFFB923C),
                 onTap: () => onDeletePair(intro),
               ),

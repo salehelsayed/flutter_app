@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -10,14 +12,19 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -95,6 +102,7 @@ class ContactPickerWired extends StatefulWidget {
   final P2PService p2pService;
   final GroupMessageRepository? msgRepo;
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
+  final UploadGroupAvatarFn uploadGroupAvatarFn;
   final BackgroundPreference backgroundPreference;
 
   const ContactPickerWired({
@@ -107,6 +115,7 @@ class ContactPickerWired extends StatefulWidget {
     required this.p2pService,
     this.msgRepo,
     this.inviteDeliveryAttemptRepo,
+    this.uploadGroupAvatarFn = uploadGroupAvatar,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
@@ -199,6 +208,74 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
     });
   }
 
+  Future<String?> _resolveExistingAvatarUploadPath(GroupModel group) async {
+    final storedPath = group.avatarPath?.trim();
+    if (storedPath != null && storedPath.isNotEmpty) {
+      final storedFile = File(storedPath);
+      if (storedFile.isAbsolute && storedFile.existsSync()) {
+        return storedPath;
+      }
+    }
+
+    final canonicalPath = await groupAvatarCanonicalPath(group.id);
+    if (File(canonicalPath).existsSync()) {
+      return canonicalPath;
+    }
+    return null;
+  }
+
+  Future<GroupModel> _refreshAvatarAccessForMembers({
+    required GroupModel group,
+    required List<GroupMember> members,
+  }) async {
+    if (group.avatarBlobId == null || group.avatarMime == null) {
+      return group;
+    }
+
+    final uploadPath = await _resolveExistingAvatarUploadPath(group);
+    if (uploadPath == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_PICKER_FL_AVATAR_REGRANT_SKIPPED',
+        details: {
+          'groupId': widget.groupId.length > 8
+              ? widget.groupId.substring(0, 8)
+              : widget.groupId,
+          'reason': 'local_avatar_missing',
+        },
+      );
+      return group;
+    }
+
+    final uploaded = await widget.uploadGroupAvatarFn(
+      bridge: widget.bridge,
+      localFilePath: uploadPath,
+      groupId: widget.groupId,
+      allowedPeers: groupMediaAllowedPeersForMembers(members),
+      mime: group.avatarMime ?? 'image/jpeg',
+    );
+    if (uploaded == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_PICKER_FL_AVATAR_REGRANT_FAILED',
+        details: {
+          'groupId': widget.groupId.length > 8
+              ? widget.groupId.substring(0, 8)
+              : widget.groupId,
+        },
+      );
+      return group;
+    }
+
+    final updatedGroup = group.copyWith(
+      avatarBlobId: uploaded.id,
+      avatarMime: uploaded.mime,
+      avatarPath: group.avatarPath,
+    );
+    await widget.groupRepo.updateGroup(updatedGroup);
+    return updatedGroup;
+  }
+
   Future<void> _inviteSelected() async {
     setState(() => _isInviting = true);
 
@@ -259,9 +336,13 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       );
 
       // 2. Build full GroupConfig and update Go topic validator ONCE
-      final group = await widget.groupRepo.getGroup(widget.groupId);
+      final loadedGroup = await widget.groupRepo.getGroup(widget.groupId);
       final allMembers = await widget.groupRepo.getMembers(widget.groupId);
-      if (group == null) throw StateError('Group not found');
+      if (loadedGroup == null) throw StateError('Group not found');
+      final group = await _refreshAvatarAccessForMembers(
+        group: loadedGroup,
+        members: allMembers,
+      );
 
       final groupConfig = buildGroupConfigPayload(group, allMembers);
       final senderBinding = await resolveGroupSenderDeviceBinding(
@@ -286,6 +367,11 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
             groupId: widget.groupId,
             peerId: member.peerId,
           );
+        }
+        if (group.avatarBlobId != loadedGroup.avatarBlobId ||
+            group.avatarMime != loadedGroup.avatarMime ||
+            group.avatarPath != loadedGroup.avatarPath) {
+          await widget.groupRepo.updateGroup(loadedGroup);
         }
         emitFlowEvent(
           layer: 'FL',
@@ -321,6 +407,10 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         },
       );
       final sysMessage = jsonEncode(sysPayload);
+      final existingRecipientPeerIds = currentMembers
+          .map((member) => member.peerId)
+          .where((peerId) => peerId.isNotEmpty && peerId != identity.peerId)
+          .toList(growable: false);
 
       var membersAddedPublishFailed = false;
       try {
@@ -343,6 +433,71 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         }
       } catch (e) {
         membersAddedPublishFailed = true;
+      }
+      final keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
+      if (existingRecipientPeerIds.isNotEmpty && keyInfo != null) {
+        try {
+          final inboxPayload = jsonEncode({
+            'groupId': widget.groupId,
+            'senderId': identity.peerId,
+            'senderUsername': identity.username,
+            if (senderBinding.deviceId != null)
+              'senderDeviceId': senderBinding.deviceId,
+            if (senderBinding.transportPeerId != null)
+              'transportPeerId': senderBinding.transportPeerId,
+            'text': sysMessage,
+            'timestamp': publishedAt.toIso8601String(),
+            'messageId': sourceEventId,
+          });
+          final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+            bridge: widget.bridge,
+            groupRepo: widget.groupRepo,
+            groupId: widget.groupId,
+            payloadType: groupOfflineReplayPayloadTypeMessage,
+            plaintext: inboxPayload,
+            senderPeerId: identity.peerId,
+            senderPublicKey: identity.publicKey,
+            senderPrivateKey: identity.privateKey,
+            keyInfo: keyInfo,
+            senderDeviceId: senderBinding.deviceId,
+            senderTransportPeerId: senderBinding.transportPeerId,
+            senderKeyPackageId: senderBinding.keyPackageId,
+            messageId: sourceEventId,
+            recipientPeerIds: existingRecipientPeerIds,
+          );
+          await callGroupInboxStore(
+            widget.bridge,
+            widget.groupId,
+            replayEnvelope,
+            recipientPeerIds: existingRecipientPeerIds,
+            preserveRecipientPeerIds: true,
+          );
+          final directTargets = groupMembershipUpdateDirectTargets(
+            members: currentMembers,
+            excludingPeerId: identity.peerId,
+          );
+          for (final target in directTargets) {
+            unawaited(
+              sendGroupMembershipUpdateDirect(
+                sendP2PMessage: (peerId, message) =>
+                    widget.p2pService.sendMessage(peerId, message),
+                recipientPeerId: target.deliveryPeerId,
+                groupId: widget.groupId,
+                senderPeerId: identity.peerId,
+                replayEnvelope: replayEnvelope,
+                timestamp: publishedAt,
+                messageId: sourceEventId,
+              ),
+            );
+          }
+        } catch (e) {
+          membersAddedPublishFailed = true;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_PICKER_FL_MEMBERSHIP_REPLAY_WARNING',
+            details: {'groupId': widget.groupId, 'error': e.toString()},
+          );
+        }
       }
       if (membersAddedPublishFailed) {
         emitFlowEvent(
@@ -379,7 +534,6 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       );
 
       // 4. Send individual encrypted P2P invites in parallel
-      final keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
       GroupInviteBatchResult? inviteBatchResult;
       var inviteDeliverySkippedMissingKey = false;
       if (keyInfo != null) {

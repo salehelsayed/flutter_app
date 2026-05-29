@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   group('BlockedBanner', () {
     testWidgets('renders blocked text and unblock button', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
-          home: Scaffold(
-            body: BlockedBanner(),
-          ),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: BlockedBanner()),
         ),
       );
 
@@ -23,11 +24,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: BlockedBanner(
-              onUnblock: () => tapped = true,
-            ),
-          ),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: BlockedBanner(onUnblock: () => tapped = true)),
         ),
       );
 

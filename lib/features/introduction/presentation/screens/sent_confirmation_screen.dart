@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Animated confirmation screen shown after introductions are sent.
 ///
@@ -22,14 +23,14 @@ class SentConfirmationScreen extends StatelessWidget {
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
-  String _buildUsernamesText() {
+  String _buildUsernamesText(AppLocalizations l10n) {
     if (introducedUsernames.isEmpty) return '';
     if (introducedUsernames.length <= 3) {
       return introducedUsernames.join(', ');
     }
     final shown = introducedUsernames.take(3).join(', ');
     final remaining = introducedUsernames.length - 3;
-    return '$shown and $remaining more';
+    return l10n.intro_and_more(shown, remaining);
   }
 
   @override
@@ -39,6 +40,7 @@ class SentConfirmationScreen extends StatelessWidget {
       child: Builder(
         builder: (context) {
           final readableColors = context.backgroundReadableColors;
+          final l10n = AppLocalizations.of(context)!;
           final accentColor = readableColors.isLightSurface
               ? const Color(0xFF157A39)
               : const Color(0xFF1DB954);
@@ -79,7 +81,7 @@ class SentConfirmationScreen extends StatelessWidget {
 
                       // Count text
                       Text(
-                        '$introductionCount introduction${introductionCount == 1 ? '' : 's'} sent',
+                        l10n.intro_sent_count(introductionCount),
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w600,
@@ -93,7 +95,7 @@ class SentConfirmationScreen extends StatelessWidget {
                       // Usernames
                       if (introducedUsernames.isNotEmpty)
                         Text(
-                          _buildUsernamesText(),
+                          _buildUsernamesText(l10n),
                           style: TextStyle(
                             fontSize: 14,
                             color: readableColors.textMuted,
@@ -116,9 +118,9 @@ class SentConfirmationScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          child: const Text(
-                            'Back to conversation',
-                            style: TextStyle(
+                          child: Text(
+                            l10n.intro_back_to_conversation,
+                            style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w500,
                             ),

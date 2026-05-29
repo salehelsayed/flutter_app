@@ -60,6 +60,20 @@ class _PendingMembershipDependentMessage {
   final String? durableId;
 }
 
+class _SignedTransitionAuditActorBinding {
+  const _SignedTransitionAuditActorBinding({
+    this.deviceId,
+    this.transportPeerId,
+  });
+
+  final String? deviceId;
+  final String? transportPeerId;
+
+  bool get hasBinding =>
+      (deviceId != null && deviceId!.isNotEmpty) ||
+      (transportPeerId != null && transportPeerId!.isNotEmpty);
+}
+
 String _membershipFlowId(String value) =>
     value.length > 8 ? value.substring(0, 8) : value;
 
@@ -1379,6 +1393,8 @@ class GroupMessageListener {
         senderId: senderId,
         senderDeviceId: senderDeviceId,
         transportPeerId: transportPeerId,
+        sysType: sysType,
+        parsed: parsed,
       )) {
         emitFlowEvent(
           layer: 'FL',
@@ -1470,10 +1486,27 @@ class GroupMessageListener {
           senderDeviceId: senderDeviceId,
           transportPeerId: transportPeerId,
         );
-        final preTransitionStateHash = await buildGroupTransitionStateHash(
-          _groupRepo,
-          groupId,
-        );
+        final expectedAuditActorBinding =
+            await _expectedSignedAuditActorBindingForSystemEvent(
+              groupId: groupId,
+              senderId: senderId,
+              senderDeviceId: senderDeviceId,
+              transportPeerId: transportPeerId,
+              sysType: sysType,
+              parsed: parsed,
+            );
+        final relaxSnapshotBackedPreTransitionHash =
+            await _shouldRelaxSnapshotBackedPreTransitionHash(
+              groupId: groupId,
+              senderId: senderId,
+              senderDeviceId: senderDeviceId,
+              transportPeerId: transportPeerId,
+              sysType: sysType,
+              parsed: parsed,
+            );
+        final preTransitionStateHash = relaxSnapshotBackedPreTransitionHash
+            ? null
+            : await buildGroupTransitionStateHash(_groupRepo, groupId);
         final auditCheck = await verifyGroupTransitionAudit(
           bridge: _bridge!,
           containerPayload: parsed,
@@ -1484,8 +1517,8 @@ class GroupMessageListener {
           actorPeerId: senderId,
           actorUsername: senderUsername,
           actorSigningPublicKey: actorPublicKey ?? '',
-          actorDeviceId: senderDeviceId,
-          actorTransportPeerId: transportPeerId,
+          actorDeviceId: expectedAuditActorBinding.deviceId,
+          actorTransportPeerId: expectedAuditActorBinding.transportPeerId,
           expectedPreTransitionStateHash: preTransitionStateHash,
           expectedTransitionSubject: buildGroupSystemTransitionSubject(parsed),
         );
@@ -1809,6 +1842,8 @@ class GroupMessageListener {
     required String senderId,
     String? senderDeviceId,
     String? transportPeerId,
+    String? sysType,
+    Map<String, dynamic>? parsed,
   }) async {
     if (senderId.isEmpty) {
       return false;
@@ -1821,14 +1856,372 @@ class GroupMessageListener {
         ? transportPeerId!.trim()
         : senderId;
     if (member.devices.isEmpty) {
+      if (_canBootstrapSnapshotBackedSenderDevice(
+        member: member,
+        sysType: sysType,
+        parsed: parsed,
+        senderDeviceId: senderDeviceId,
+        transportPeerId: resolvedTransportPeerId,
+      )) {
+        return true;
+      }
+      if (_canBootstrapSnapshotBackedSignedAuditActorDevice(
+        member: member,
+        sysType: sysType,
+        parsed: parsed,
+      )) {
+        return true;
+      }
       return resolvedTransportPeerId == senderId;
     }
     final device = senderDeviceId?.trim().isNotEmpty == true
         ? member.findDeviceById(senderDeviceId)
         : member.findDeviceByTransportPeerId(resolvedTransportPeerId);
-    return device != null &&
+    if (device != null &&
         device.isActive &&
-        device.transportPeerId == resolvedTransportPeerId;
+        device.transportPeerId == resolvedTransportPeerId) {
+      return true;
+    }
+    return _canBootstrapSnapshotBackedSenderDevice(
+          member: member,
+          sysType: sysType,
+          parsed: parsed,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: resolvedTransportPeerId,
+        ) ||
+        _canBootstrapSnapshotBackedSignedAuditActorDevice(
+          member: member,
+          sysType: sysType,
+          parsed: parsed,
+        ) ||
+        _canAcceptLegacySnapshotBackedAccountSender(
+          member: member,
+          senderId: senderId,
+          sysType: sysType,
+          parsed: parsed,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: resolvedTransportPeerId,
+        );
+  }
+
+  Future<bool> _shouldRelaxSnapshotBackedPreTransitionHash({
+    required String groupId,
+    required String senderId,
+    String? senderDeviceId,
+    String? transportPeerId,
+    String? sysType,
+    Map<String, dynamic>? parsed,
+  }) async {
+    if (senderId.isEmpty) {
+      return false;
+    }
+    final member = await _groupRepo.getMember(groupId, senderId);
+    if (member == null) {
+      return false;
+    }
+    final resolvedTransportPeerId = transportPeerId?.trim().isNotEmpty == true
+        ? transportPeerId!.trim()
+        : senderId;
+    return _canBootstrapSnapshotBackedSenderDevice(
+          member: member,
+          sysType: sysType,
+          parsed: parsed,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: resolvedTransportPeerId,
+        ) ||
+        _canBootstrapSnapshotBackedSignedAuditActorDevice(
+          member: member,
+          sysType: sysType,
+          parsed: parsed,
+        ) ||
+        _canAcceptLegacySnapshotBackedAccountSender(
+          member: member,
+          senderId: senderId,
+          sysType: sysType,
+          parsed: parsed,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: resolvedTransportPeerId,
+        );
+  }
+
+  Future<_SignedTransitionAuditActorBinding>
+  _expectedSignedAuditActorBindingForSystemEvent({
+    required String groupId,
+    required String senderId,
+    String? senderDeviceId,
+    String? transportPeerId,
+    String? sysType,
+    Map<String, dynamic>? parsed,
+  }) async {
+    final defaultBinding = _SignedTransitionAuditActorBinding(
+      deviceId: _trimToNull(senderDeviceId),
+      transportPeerId: _trimToNull(transportPeerId),
+    );
+    if (!_allowsSnapshotBackedSystemSender(sysType) || senderId.isEmpty) {
+      return defaultBinding;
+    }
+
+    final member = await _groupRepo.getMember(groupId, senderId);
+    if (member == null) {
+      return defaultBinding;
+    }
+    final resolvedTransportPeerId = transportPeerId?.trim().isNotEmpty == true
+        ? transportPeerId!.trim()
+        : senderId;
+    final knownDevice = senderDeviceId?.trim().isNotEmpty == true
+        ? member.findDeviceById(senderDeviceId)
+        : member.findDeviceByTransportPeerId(resolvedTransportPeerId);
+    if (knownDevice != null &&
+        knownDevice.isActive &&
+        knownDevice.transportPeerId == resolvedTransportPeerId) {
+      return defaultBinding;
+    }
+
+    final signedAuditActorBinding = _signedTransitionAuditActorBinding(parsed);
+    if (_canBootstrapSnapshotBackedSignedAuditActorDevice(
+      member: member,
+      sysType: sysType,
+      parsed: parsed,
+      actorBinding: signedAuditActorBinding,
+    )) {
+      return signedAuditActorBinding;
+    }
+
+    if (_canBootstrapSnapshotBackedSenderDevice(
+      member: member,
+      sysType: sysType,
+      parsed: parsed,
+      senderDeviceId: senderDeviceId,
+      transportPeerId: resolvedTransportPeerId,
+    )) {
+      return defaultBinding;
+    }
+
+    if (_canAcceptLegacySnapshotBackedAccountSender(
+      member: member,
+      senderId: senderId,
+      sysType: sysType,
+      parsed: parsed,
+      senderDeviceId: senderDeviceId,
+      transportPeerId: resolvedTransportPeerId,
+      actorBinding: signedAuditActorBinding,
+    )) {
+      return const _SignedTransitionAuditActorBinding();
+    }
+
+    return defaultBinding;
+  }
+
+  bool _canBootstrapSnapshotBackedSignedAuditActorDevice({
+    required GroupMember member,
+    required String? sysType,
+    required Map<String, dynamic>? parsed,
+    _SignedTransitionAuditActorBinding? actorBinding,
+  }) {
+    final binding = actorBinding ?? _signedTransitionAuditActorBinding(parsed);
+    if (!binding.hasBinding) {
+      return false;
+    }
+    final actorDeviceId = binding.deviceId;
+    final actorTransportPeerId = binding.transportPeerId;
+    if (actorDeviceId == null ||
+        actorDeviceId.isEmpty ||
+        actorTransportPeerId == null ||
+        actorTransportPeerId.isEmpty) {
+      return false;
+    }
+    return _canBootstrapSnapshotBackedSenderDevice(
+      member: member,
+      sysType: sysType,
+      parsed: parsed,
+      senderDeviceId: actorDeviceId,
+      transportPeerId: actorTransportPeerId,
+    );
+  }
+
+  bool _canAcceptLegacySnapshotBackedAccountSender({
+    required GroupMember member,
+    required String senderId,
+    required String? sysType,
+    required Map<String, dynamic>? parsed,
+    required String? senderDeviceId,
+    required String? transportPeerId,
+    _SignedTransitionAuditActorBinding? actorBinding,
+  }) {
+    if (!_allowsSnapshotBackedSystemSender(sysType)) {
+      return false;
+    }
+    if (!_isLegacyAccountSystemTransport(
+      senderId: senderId,
+      senderDeviceId: senderDeviceId,
+      transportPeerId: transportPeerId,
+    )) {
+      return false;
+    }
+
+    final binding = actorBinding ?? _signedTransitionAuditActorBinding(parsed);
+    if (binding.hasBinding &&
+        !_isLegacyAccountSystemTransport(
+          senderId: senderId,
+          senderDeviceId: binding.deviceId,
+          transportPeerId: binding.transportPeerId,
+        )) {
+      return false;
+    }
+
+    final trustedMemberPublicKey = member.publicKey?.trim();
+    if (trustedMemberPublicKey == null || trustedMemberPublicKey.isEmpty) {
+      return false;
+    }
+    final groupConfig = parsed?['groupConfig'] as Map<String, dynamic>?;
+    final snapshotMemberData = _findGroupConfigMember(
+      groupConfig,
+      member.peerId,
+    );
+    if (snapshotMemberData == null) {
+      return false;
+    }
+    final snapshotPublicKey = (snapshotMemberData['publicKey'] as String?)
+        ?.trim();
+    return snapshotPublicKey == trustedMemberPublicKey;
+  }
+
+  bool _isLegacyAccountSystemTransport({
+    required String senderId,
+    required String? senderDeviceId,
+    required String? transportPeerId,
+  }) {
+    final normalizedSenderId = senderId.trim();
+    if (normalizedSenderId.isEmpty) {
+      return false;
+    }
+    final normalizedDeviceId = _trimToNull(senderDeviceId);
+    final normalizedTransportPeerId = _trimToNull(transportPeerId);
+    final deviceIsLegacy =
+        normalizedDeviceId == null || normalizedDeviceId == normalizedSenderId;
+    final transportIsLegacy =
+        normalizedTransportPeerId == null ||
+        normalizedTransportPeerId == normalizedSenderId ||
+        (normalizedDeviceId != null &&
+            normalizedTransportPeerId == normalizedDeviceId &&
+            normalizedDeviceId == normalizedSenderId);
+    return deviceIsLegacy && transportIsLegacy;
+  }
+
+  bool _canBootstrapSnapshotBackedSenderDevice({
+    required GroupMember member,
+    required String? sysType,
+    required Map<String, dynamic>? parsed,
+    required String? senderDeviceId,
+    required String transportPeerId,
+  }) {
+    if (!_allowsSnapshotBackedSystemSender(sysType)) {
+      return false;
+    }
+    final normalizedDeviceId = senderDeviceId?.trim();
+    if (normalizedDeviceId == null || normalizedDeviceId.isEmpty) {
+      return false;
+    }
+    final normalizedTransportPeerId = transportPeerId.trim();
+    if (normalizedTransportPeerId.isEmpty ||
+        normalizedTransportPeerId == member.peerId) {
+      return false;
+    }
+    final localDeviceById = member.findDeviceById(
+      normalizedDeviceId,
+      activeOnly: false,
+    );
+    final localDeviceByTransport = member.findDeviceByTransportPeerId(
+      normalizedTransportPeerId,
+      activeOnly: false,
+    );
+    if (localDeviceById != null) {
+      if (!localDeviceById.isActive ||
+          localDeviceById.transportPeerId != normalizedTransportPeerId) {
+        return false;
+      }
+      return false;
+    }
+    if (localDeviceByTransport != null) {
+      if (!localDeviceByTransport.isActive ||
+          localDeviceByTransport.deviceId != normalizedDeviceId) {
+        return false;
+      }
+      return false;
+    }
+
+    final trustedMemberPublicKey = member.publicKey?.trim();
+    if (trustedMemberPublicKey == null || trustedMemberPublicKey.isEmpty) {
+      return false;
+    }
+
+    final groupConfig = parsed?['groupConfig'] as Map<String, dynamic>?;
+    final snapshotMemberData = _findGroupConfigMember(
+      groupConfig,
+      member.peerId,
+    );
+    if (snapshotMemberData == null) {
+      return false;
+    }
+    final snapshotPublicKey = (snapshotMemberData['publicKey'] as String?)
+        ?.trim();
+    if (snapshotPublicKey != trustedMemberPublicKey) {
+      return false;
+    }
+
+    final devices = GroupMemberDeviceIdentity.listFromJson(
+      snapshotMemberData['devices'],
+    );
+    return devices.any(
+      (device) =>
+          device.isActive &&
+          device.deviceId == normalizedDeviceId &&
+          device.transportPeerId == normalizedTransportPeerId &&
+          device.deviceSigningPublicKey == trustedMemberPublicKey,
+    );
+  }
+
+  _SignedTransitionAuditActorBinding _signedTransitionAuditActorBinding(
+    Map<String, dynamic>? parsed,
+  ) {
+    final audit = parsed?[signedGroupTransitionAuditField];
+    if (audit is! Map) {
+      return const _SignedTransitionAuditActorBinding();
+    }
+    final signedPayload = audit['signedPayload'];
+    if (signedPayload is! String || signedPayload.isEmpty) {
+      return const _SignedTransitionAuditActorBinding();
+    }
+    try {
+      final decoded = jsonDecode(signedPayload);
+      if (decoded is! Map) {
+        return const _SignedTransitionAuditActorBinding();
+      }
+      final actor = decoded['actor'];
+      if (actor is! Map) {
+        return const _SignedTransitionAuditActorBinding();
+      }
+      return _SignedTransitionAuditActorBinding(
+        deviceId: _trimToNull(actor['deviceId'] as String?),
+        transportPeerId: _trimToNull(actor['transportPeerId'] as String?),
+      );
+    } catch (_) {
+      return const _SignedTransitionAuditActorBinding();
+    }
+  }
+
+  String? _trimToNull(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  bool _allowsSnapshotBackedSystemSender(String? sysType) {
+    return sysType == 'group_metadata_updated' ||
+        sysType == 'members_added' ||
+        sysType == 'member_role_updated';
   }
 
   bool _shouldRequireSignedTransitionAudit(

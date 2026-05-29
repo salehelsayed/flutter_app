@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -330,6 +333,7 @@ Widget buildDirectWiredTestWidget({
   FakeP2PService? p2pService,
   InMemoryGroupMessageRepository? msgRepo,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  UploadGroupAvatarFn? uploadGroupAvatarFn,
   String groupId = 'group-1',
 }) {
   return MaterialApp(
@@ -347,6 +351,7 @@ Widget buildDirectWiredTestWidget({
         p2pService: p2pService ?? FakeP2PService(),
         msgRepo: msgRepo,
         inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        uploadGroupAvatarFn: uploadGroupAvatarFn ?? uploadGroupAvatar,
       ),
     ),
   );
@@ -873,6 +878,451 @@ void main() {
         final publishIndex = bridge.commandLog.indexOf('group:publish');
         expect(signIndex, isNonNegative);
         expect(signIndex, lessThan(publishIndex));
+      },
+    );
+
+    testWidgets(
+      'batch invite stores and directly sends members_added replay to existing members',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveMember(memberBob);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 30);
+
+        final inboxStoreMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:inboxStore';
+        });
+        final inboxPayload =
+            (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(inboxPayload['recipientPeerIds'], ['peer-bob']);
+        expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
+
+        final directUpdate = p2pService.sentMessageLog.singleWhere(
+          (entry) => entry.peerId == 'peer-bob',
+        );
+        final directEnvelope =
+            jsonDecode(directUpdate.content) as Map<String, dynamic>;
+        expect(directEnvelope['type'], 'group_membership_update');
+        expect(directEnvelope['groupId'], 'group-1');
+        expect(
+          (directEnvelope['relayEnvelope'] as Map<String, dynamic>)['message'],
+          inboxPayload['message'],
+        );
+
+        final invite = p2pService.sentMessageLog.singleWhere(
+          (entry) => entry.peerId == 'peer-alice',
+        );
+        final inviteEnvelope =
+            jsonDecode(invite.content) as Map<String, dynamic>;
+        expect(inviteEnvelope['type'], 'group_invite');
+      },
+    );
+
+    testWidgets(
+      'batch invite reuploads existing avatar for expanded member ACL before signing invites',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+
+        final avatarDir = Directory.systemTemp.createTempSync(
+          'group-avatar-regrant-',
+        );
+        addTearDown(() {
+          if (avatarDir.existsSync()) {
+            avatarDir.deleteSync(recursive: true);
+          }
+        });
+        final avatarFile = File('${avatarDir.path}/avatar.jpg');
+        avatarFile.writeAsBytesSync(<int>[0xFF, 0xD8, 0xFF, 0xD9]);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(
+          testGroup.copyWith(
+            avatarBlobId: 'blob-old-ab',
+            avatarMime: 'image/jpeg',
+            avatarPath: avatarFile.path,
+          ),
+        );
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveMember(memberBob);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        List<String>? uploadedAllowedPeers;
+        String? uploadedPath;
+        final bridge = PassthroughCryptoBridge();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+            uploadGroupAvatarFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required groupId,
+                  required allowedPeers,
+                  blobId,
+                  mime = 'image/jpeg',
+                }) async {
+                  uploadedPath = localFilePath;
+                  uploadedAllowedPeers = allowedPeers;
+                  return const GroupAvatarUpload(
+                    id: 'blob-regranted-abc',
+                    mime: 'image/jpeg',
+                    size: 4,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 30);
+
+        expect(uploadedPath, avatarFile.path);
+        expect(uploadedAllowedPeers, ['peer-admin', 'peer-bob', 'peer-alice']);
+
+        final persistedGroup = await groupRepo.getGroup('group-1');
+        expect(persistedGroup?.avatarBlobId, 'blob-regranted-abc');
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:updateConfig';
+        });
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final updateConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        expect(updateConfig['avatarBlobId'], 'blob-regranted-abc');
+
+        final invite = p2pService.sentMessageLog.singleWhere(
+          (entry) => entry.peerId == 'peer-alice',
+        );
+        final inviteEnvelope =
+            jsonDecode(invite.content) as Map<String, dynamic>;
+        final encrypted = inviteEnvelope['encrypted'] as Map<String, dynamic>;
+        final payload = GroupInvitePayload.fromInnerJson(
+          encrypted['ciphertext'] as String,
+        );
+        expect(payload?.groupConfig['avatarBlobId'], 'blob-regranted-abc');
+      },
+    );
+
+    testWidgets(
+      'promoted admin invite from production picker carries latest metadata, avatar, existing-member replay, and full membership snapshot',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactCharlie);
+
+        final avatarDir = Directory.systemTemp.createTempSync(
+          'promoted-admin-picker-avatar-',
+        );
+        addTearDown(() {
+          if (avatarDir.existsSync()) {
+            avatarDir.deleteSync(recursive: true);
+          }
+        });
+        final avatarFile = File('${avatarDir.path}/avatar.jpg');
+        avatarFile.writeAsBytesSync(<int>[0xFF, 0xD8, 0xFF, 0xD9]);
+
+        final promotedAdminIdentity = IdentityModel(
+          peerId: contactBob.peerId,
+          publicKey: contactBob.publicKey,
+          privateKey: 'sk-bob',
+          mnemonic12:
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+          mlKemPublicKey: contactBob.mlKemPublicKey,
+          username: contactBob.username,
+          createdAt: DateTime.utc(2026, 5, 28, 12).toIso8601String(),
+          updatedAt: DateTime.utc(2026, 5, 28, 12).toIso8601String(),
+        );
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(
+          testGroup.copyWith(
+            name: 'Bob latest name',
+            description: 'Bob latest description',
+            createdBy: contactAlice.peerId,
+            myRole: GroupRole.admin,
+            avatarBlobId: 'blob-bob-latest',
+            avatarMime: 'image/jpeg',
+            avatarPath: avatarFile.path,
+            lastMetadataEventAt: DateTime.utc(2026, 5, 28, 12),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: contactAlice.peerId,
+            username: contactAlice.username,
+            role: MemberRole.admin,
+            publicKey: contactAlice.publicKey,
+            mlKemPublicKey: contactAlice.mlKemPublicKey,
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-alice',
+                transportPeerId: 'peer-alice-device',
+                deviceSigningPublicKey: 'pk-alice',
+                mlKemPublicKey: 'mlkem-pk-alice',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 28, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: contactBob.peerId,
+            username: contactBob.username,
+            role: MemberRole.admin,
+            publicKey: contactBob.publicKey,
+            mlKemPublicKey: contactBob.mlKemPublicKey,
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: 'peer-bob-device',
+                transportPeerId: 'peer-bob-device',
+                deviceSigningPublicKey: 'pk-bob',
+                mlKemPublicKey: 'mlkem-pk-bob',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 28, 11),
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 3,
+            encryptedKey: 'latest-group-key-base64',
+            createdAt: DateTime.utc(2026, 5, 28, 12),
+          ),
+        );
+
+        List<String>? uploadedAllowedPeers;
+        final bridge = PassthroughCryptoBridge();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(
+            peerId: 'peer-bob-device',
+            isStarted: true,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            identityRepo: FakeIdentityRepository(
+              identity: promotedAdminIdentity,
+            ),
+            p2pService: p2pService,
+            uploadGroupAvatarFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required groupId,
+                  required allowedPeers,
+                  blobId,
+                  mime = 'image/jpeg',
+                }) async {
+                  expect(localFilePath, avatarFile.path);
+                  uploadedAllowedPeers = allowedPeers;
+                  return const GroupAvatarUpload(
+                    id: 'blob-bob-regranted-for-abc',
+                    mime: 'image/jpeg',
+                    size: 4,
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Charlie'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 30);
+
+        expect(uploadedAllowedPeers, [
+          contactAlice.peerId,
+          contactBob.peerId,
+          contactCharlie.peerId,
+        ]);
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:updateConfig';
+        });
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final updateConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        expect(updateConfig['name'], 'Bob latest name');
+        expect(updateConfig['description'], 'Bob latest description');
+        expect(updateConfig['avatarBlobId'], 'blob-bob-regranted-for-abc');
+        expect(updateConfig[groupConfigStateHashField], isA<String>());
+        final updatedMembers = (updateConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(updatedMembers.map((member) => member['peerId']).toSet(), {
+          contactAlice.peerId,
+          contactBob.peerId,
+          contactCharlie.peerId,
+        });
+        expect(
+          updatedMembers.singleWhere(
+            (member) => member['peerId'] == contactBob.peerId,
+          )['role'],
+          'admin',
+        );
+
+        final publishMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(publishPayload['senderPeerId'], contactBob.peerId);
+        final sysText =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        expect(sysText['__sys'], 'members_added');
+        final sysConfig = sysText['groupConfig'] as Map<String, dynamic>;
+        expect(sysConfig['name'], 'Bob latest name');
+        expect(sysConfig['description'], 'Bob latest description');
+        expect(sysConfig['avatarBlobId'], 'blob-bob-regranted-for-abc');
+        expect(sysConfig[groupConfigStateHashField], updateConfig['stateHash']);
+        expect(
+          (sysConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'])
+              .toSet(),
+          {contactAlice.peerId, contactBob.peerId, contactCharlie.peerId},
+        );
+        final audit = (sysText[signedGroupTransitionAuditField] as Map)
+            .cast<String, dynamic>();
+        expect(audit['transitionType'], 'members_added');
+        final auditPayload =
+            jsonDecode(audit['signedPayload'] as String)
+                as Map<String, dynamic>;
+        final auditActor = auditPayload['actor'] as Map<String, dynamic>;
+        expect(auditActor['peerId'], contactBob.peerId);
+        expect(auditActor['signingPublicKey'], contactBob.publicKey);
+
+        final inboxStoreMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:inboxStore';
+        });
+        final inboxPayload =
+            (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(inboxPayload['recipientPeerIds'], [contactAlice.peerId]);
+        expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
+
+        final directMembershipUpdates = p2pService.sentMessageLog
+            .where((entry) {
+              final envelope =
+                  jsonDecode(entry.content) as Map<String, dynamic>;
+              return envelope['type'] == 'group_membership_update';
+            })
+            .toList(growable: false);
+        expect(directMembershipUpdates.map((entry) => entry.peerId).toSet(), {
+          'peer-alice-device',
+        });
+        final directEnvelope =
+            jsonDecode(directMembershipUpdates.single.content)
+                as Map<String, dynamic>;
+        final directRelayEnvelope =
+            directEnvelope['relayEnvelope'] as Map<String, dynamic>;
+        expect(directRelayEnvelope['from'], contactBob.peerId);
+        expect(directRelayEnvelope['message'], inboxPayload['message']);
+
+        final invite = p2pService.sentMessageLog.singleWhere(
+          (entry) => entry.peerId == contactCharlie.peerId,
+        );
+        final inviteEnvelope =
+            jsonDecode(invite.content) as Map<String, dynamic>;
+        expect(inviteEnvelope['type'], 'group_invite');
+        final encrypted = inviteEnvelope['encrypted'] as Map<String, dynamic>;
+        final invitePayload = GroupInvitePayload.fromInnerJson(
+          encrypted['ciphertext'] as String,
+        );
+        expect(invitePayload, isNotNull);
+        expect(invitePayload!.senderPeerId, contactBob.peerId);
+        expect(invitePayload.groupConfig['name'], 'Bob latest name');
+        expect(
+          invitePayload.groupConfig['description'],
+          'Bob latest description',
+        );
+        expect(
+          invitePayload.groupConfig['avatarBlobId'],
+          'blob-bob-regranted-for-abc',
+        );
+        expect(
+          (invitePayload.groupConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'])
+              .toSet(),
+          {contactAlice.peerId, contactBob.peerId, contactCharlie.peerId},
+        );
+        final freshnessProof = invitePayload.membershipFreshnessProof;
+        expect(freshnessProof, isNotNull);
+        expect(freshnessProof!.inviterPeerId, contactBob.peerId);
+        expect(freshnessProof.inviterPublicKey, contactBob.publicKey);
+        expect(
+          freshnessProof.inviterMemberSnapshot['role'],
+          MemberRole.admin.toValue(),
+        );
+        expect(
+          freshnessProof.groupConfigStateHash,
+          invitePayload.groupConfig[groupConfigStateHashField],
+        );
       },
     );
 

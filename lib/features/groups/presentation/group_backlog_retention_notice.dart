@@ -1,6 +1,7 @@
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 enum GroupBacklogRetentionNoticeKind { fullyExpired, mixedWindow }
 
@@ -20,7 +21,10 @@ class GroupBacklogRetentionNotice {
   });
 }
 
-GroupBacklogRetentionNotice? groupBacklogRetentionNoticeFor(GroupModel group) {
+GroupBacklogRetentionNotice? groupBacklogRetentionNoticeFor(
+  GroupModel group,
+  AppLocalizations l10n,
+) {
   if (group.lastBacklogExpiredAt == null) {
     return null;
   }
@@ -29,23 +33,19 @@ GroupBacklogRetentionNotice? groupBacklogRetentionNoticeFor(GroupModel group) {
   if (group.lastBacklogRetainedAt != null) {
     return GroupBacklogRetentionNotice(
       kind: GroupBacklogRetentionNoticeKind.mixedWindow,
-      listSummary: 'Older backlog expired after $windowDays days',
-      bannerText:
-          'Older missed messages expired after $windowDays days. Recent messages were recovered.',
-      emptyTitle: 'Recent messages recovered',
-      emptySubtitle:
-          'Older missed messages expired after $windowDays days while you were away.',
+      listSummary: l10n.group_backlog_mixed_list_summary(windowDays),
+      bannerText: l10n.group_backlog_mixed_banner(windowDays),
+      emptyTitle: l10n.group_backlog_mixed_empty_title,
+      emptySubtitle: l10n.group_backlog_mixed_empty_subtitle(windowDays),
     );
   }
 
   return GroupBacklogRetentionNotice(
     kind: GroupBacklogRetentionNoticeKind.fullyExpired,
-    listSummary: 'Missed backlog expired after $windowDays days',
-    bannerText:
-        'Missed messages older than $windowDays days expired while you were away.',
-    emptyTitle: 'Older backlog expired',
-    emptySubtitle:
-        'Missed messages older than $windowDays days expired while you were away.',
+    listSummary: l10n.group_backlog_expired_list_summary(windowDays),
+    bannerText: l10n.group_backlog_expired_banner(windowDays),
+    emptyTitle: l10n.group_backlog_expired_empty_title,
+    emptySubtitle: l10n.group_backlog_expired_empty_subtitle(windowDays),
   );
 }
 
@@ -67,35 +67,32 @@ class GroupHistoryGapRepairNotice {
 
 GroupHistoryGapRepairNotice? groupHistoryGapRepairNoticeFor(
   GroupHistoryGapRepair? repair,
+  AppLocalizations l10n,
 ) {
   if (repair == null) return null;
 
   switch (repair.status) {
     case groupHistoryGapRepairStatusDetected:
     case groupHistoryGapRepairStatusRepairing:
-      return const GroupHistoryGapRepairNotice(
+      return GroupHistoryGapRepairNotice(
         kind: GroupHistoryGapRepairNoticeKind.active,
-        bannerText:
-            'Some missed messages are being repaired from trusted group members.',
-        emptyTitle: 'Repairing missed messages',
-        emptySubtitle:
-            'Some missed messages are being verified before they appear here.',
+        bannerText: l10n.group_history_repair_active_banner,
+        emptyTitle: l10n.group_history_repair_active_empty_title,
+        emptySubtitle: l10n.group_history_repair_active_empty_subtitle,
       );
     case groupHistoryGapRepairStatusFailed:
-      return const GroupHistoryGapRepairNotice(
+      return GroupHistoryGapRepairNotice(
         kind: GroupHistoryGapRepairNoticeKind.failed,
-        bannerText:
-            'Some missed messages could not be repaired from trusted group members.',
-        emptyTitle: 'History repair needed',
-        emptySubtitle:
-            'Some missed messages could not be verified from trusted members.',
+        bannerText: l10n.group_history_repair_failed_banner,
+        emptyTitle: l10n.group_history_repair_failed_empty_title,
+        emptySubtitle: l10n.group_history_repair_failed_empty_subtitle,
       );
     case groupHistoryGapRepairStatusRepaired:
-      return const GroupHistoryGapRepairNotice(
+      return GroupHistoryGapRepairNotice(
         kind: GroupHistoryGapRepairNoticeKind.repaired,
-        bannerText: 'Missed messages were repaired and verified.',
-        emptyTitle: 'Messages repaired',
-        emptySubtitle: 'Missed messages were verified and restored.',
+        bannerText: l10n.group_history_repair_done_banner,
+        emptyTitle: l10n.group_history_repair_done_empty_title,
+        emptySubtitle: l10n.group_history_repair_done_empty_subtitle,
       );
     default:
       return null;

@@ -5,6 +5,7 @@ import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart'
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Glassmorphic tappable friend card for the friends list.
 class FriendRow extends StatelessWidget {
@@ -24,6 +25,7 @@ class FriendRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final relativeTime = friend.lastMessageTimestamp != null
         ? formatRelativeTime(friend.lastMessageTimestamp!)
         : '';
@@ -77,9 +79,9 @@ class FriendRow extends StatelessWidget {
                                 : const Color(0x261DB954),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Text(
-                            'Inner Circle',
-                            style: TextStyle(
+                          child: Text(
+                            l10n.orbit_inner_circle_badge,
+                            style: const TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
                               letterSpacing: 0.3,

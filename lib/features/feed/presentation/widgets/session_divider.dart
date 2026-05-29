@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// "PREVIOUSLY SEEN" divider separating unread and read thread cards.
 ///
@@ -27,11 +28,11 @@ class SessionDivider extends StatelessWidget {
               ),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              'PREVIOUSLY SEEN',
-              style: TextStyle(
+              AppLocalizations.of(context)!.feed_previously_seen,
+              style: const TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
                 color: Color.fromRGBO(255, 255, 255, 0.3),

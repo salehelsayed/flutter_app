@@ -164,7 +164,9 @@ class _ConnectionCardState extends State<ConnectionCard>
                             if (widget.introducedBy != null) ...[
                               const SizedBox(height: 4),
                               Text(
-                                'Introduced by ${widget.introducedBy}',
+                                AppLocalizations.of(
+                                  context,
+                                )!.feed_introduced_by(widget.introducedBy!),
                                 style: TextStyle(
                                   fontSize: compact ? 12 : 13,
                                   color: isLightSurface
@@ -188,19 +190,19 @@ class _ConnectionCardState extends State<ConnectionCard>
                           borderRadius: BorderRadius.circular(34),
                           color: const Color.fromRGBO(0, 0, 0, 0.45),
                         ),
-                        child: const Center(
+                        child: Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.block,
                                 size: 28,
                                 color: Color.fromRGBO(255, 255, 255, 0.60),
                               ),
-                              SizedBox(height: 8),
+                              const SizedBox(height: 8),
                               Text(
-                                'Blocked',
-                                style: TextStyle(
+                                AppLocalizations.of(context)!.feed_blocked,
+                                style: const TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                   color: Color.fromRGBO(255, 255, 255, 0.60),

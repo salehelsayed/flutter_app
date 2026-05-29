@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 enum PassPostAlongSubmitOutcome { closeSheet, keepSheetOpen }
 
@@ -36,6 +37,8 @@ class _PassPostAlongSheetState extends State<PassPostAlongSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return SafeArea(
       top: false,
       child: Container(
@@ -59,29 +62,29 @@ class _PassPostAlongSheetState extends State<PassPostAlongSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Pass along',
-              style: TextStyle(
+            Text(
+              l10n.post_pass_along_title,
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Choose who should receive this one-hop pass.',
-              style: TextStyle(
+            Text(
+              l10n.post_pass_along_desc,
+              style: const TextStyle(
                 color: Color.fromRGBO(255, 255, 255, 0.6),
                 fontSize: 14,
               ),
             ),
             const SizedBox(height: 16),
             if (widget.eligibleContacts.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 16),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
                 child: Text(
-                  'No eligible friends available right now.',
-                  style: TextStyle(color: Colors.white70),
+                  l10n.post_pass_along_no_eligible,
+                  style: const TextStyle(color: Colors.white70),
                 ),
               )
             else
@@ -144,7 +147,9 @@ class _PassPostAlongSheetState extends State<PassPostAlongSheet> {
                           }
                         }
                       },
-                child: Text(_isSubmitting ? 'Sending…' : 'Send pass'),
+                child: Text(
+                  _isSubmitting ? l10n.share_sending : l10n.post_send_pass,
+                ),
               ),
             ),
           ],

@@ -60,6 +60,7 @@ void main() {
           'private_stale_invite_readd',
           'private_admin_role_transfer_delivery',
           'private_admin_metadata_intro_photo_convergence',
+          'private_admin_demotion_enforcement',
           'gm002',
           'gm035',
         ]),
@@ -510,6 +511,18 @@ void main() {
         ).requiredDeviceCount,
         3,
       );
+      expect(scenarioRequirement('private_admin_demotion_enforcement').roles, [
+        'alice',
+        'bob',
+        'charlie',
+        'dana',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_admin_demotion_enforcement',
+        ).requiredDeviceCount,
+        4,
+      );
       expect(scenarioRequirement('gm005').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('gm005').requiredDeviceCount, 3);
       expect(scenarioRequirement('gm006').roles, ['alice', 'bob', 'charlie']);
@@ -611,6 +624,44 @@ void main() {
       expect(duplicate.ok, isFalse);
       expect(duplicate.detail, contains('distinct Flutter app targets'));
     });
+
+    test(
+      'private_admin_demotion_enforcement maps Alice Bob Charlie Dana devices',
+      () {
+        final valid = evaluateDeviceSelection(
+          scenario: 'private_admin_demotion_enforcement',
+          deviceIds: const <String>[
+            'alice-device',
+            'bob-device',
+            'charlie-device',
+            'dana-device',
+          ],
+        );
+
+        expect(valid.ok, isTrue);
+        expect(
+          valid.detail,
+          contains('private_admin_demotion_enforcement role devices'),
+        );
+        expect(
+          roleDeviceMapForScenario(
+            scenario: 'private_admin_demotion_enforcement',
+            deviceIds: const <String>[
+              'alice-device',
+              'bob-device',
+              'charlie-device',
+              'dana-device',
+            ],
+          ),
+          const <String, String>{
+            'alice': 'alice-device',
+            'bob': 'bob-device',
+            'charlie': 'charlie-device',
+            'dana': 'dana-device',
+          },
+        );
+      },
+    );
 
     test('relay configuration must use the exact app relay profile', () {
       expect(
@@ -833,6 +884,85 @@ void main() {
       expect(rejected.detail, contains('charlieToBobDelivered'));
       expect(rejected.detail, contains('charlieAfterCharlieAccept'));
     });
+
+    test(
+      'private_admin_demotion_enforcement accepts simulator proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_admin_demotion_enforcement',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateAdminDemotionEnforcementVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains('private_admin_demotion_enforcement verdicts valid'),
+        );
+      },
+    );
+
+    test('private_admin_demotion_enforcement rejects Dana in active members', () {
+      final verdicts = _validPrivateAdminDemotionEnforcementVerdicts();
+      verdicts[3] = <String, dynamic>{
+        ...verdicts[3],
+        'activeMemberPeerIds': const <String>['dana-peer'],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_admin_demotion_enforcement',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'dana: privateAdminDemotionEnforcementProof active members must be empty',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains('dana: Scenario 4 must remain absent from membership'),
+      );
+    });
+
+    test(
+      'private_admin_demotion_enforcement rejects Bob accepted or not_attempted mutation outcomes',
+      () {
+        for (final outcome in const <String>['accepted', 'not_attempted']) {
+          final verdicts = _validPrivateAdminDemotionEnforcementVerdicts();
+          verdicts[1] = _withPrivateAdminDemotionProofOverrides(
+            verdicts[1],
+            <String, Object?>{
+              'bobMetadataAttemptOutcome': outcome,
+              'bobMemberAddAttemptOutcome': outcome,
+            },
+          );
+
+          final rejected = evaluateGroupMultiPartyVerdicts(
+            scenario: 'private_admin_demotion_enforcement',
+            relayAddresses: expectedMultiPartyRelayAddresses,
+            verdicts: verdicts,
+          );
+
+          expect(rejected.ok, isFalse, reason: outcome);
+          expect(
+            rejected.detail,
+            contains(
+              'bob: privateAdminDemotionEnforcementProof.bobMetadataAttemptOutcome',
+            ),
+          );
+          expect(
+            rejected.detail,
+            contains(
+              'bob: privateAdminDemotionEnforcementProof.bobMemberAddAttemptOutcome',
+            ),
+          );
+        }
+      },
+    );
 
     test('PL-009 accepts private reaction roundtrip verdicts', () {
       expect(scenarioRequirement('private_reaction_roundtrip').roles, [
@@ -25453,6 +25583,164 @@ Map<String, dynamic> _withPromptProofOverrides(
     ...verdict,
     'promptGroupMessagingProof': <String, Object?>{
       ...Map<String, Object?>.from(verdict['promptGroupMessagingProof'] as Map),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateAdminDemotionEnforcementVerdicts() {
+  const scenario = 'private_admin_demotion_enforcement';
+  const groupId = 'group-scenario4-admin-demotion';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const danaPeerId = 'dana-peer';
+  const activeMembers = <String>[alicePeerId, bobPeerId, charliePeerId];
+  final promptVerdictsByRole = <String, Map<String, dynamic>>{
+    for (final verdict in _validPromptGroupMessagingVerdicts())
+      verdict['role'] as String: verdict,
+  };
+
+  List<Map<String, Object?>> promptMessages(String role, String field) {
+    final entries =
+        promptVerdictsByRole[role]![field] as List<dynamic>? ??
+        const <dynamic>[];
+    return <Map<String, Object?>>[
+      for (final entry in entries) Map<String, Object?>.from(entry as Map),
+    ];
+  }
+
+  Map<String, int> promptCounts(String role) {
+    return Map<String, int>.from(
+      promptVerdictsByRole[role]!['persistedMessageCounts'] as Map,
+    );
+  }
+
+  Map<String, Object?> activeProofFor(
+    String role, {
+    String bobMetadataAttemptOutcome = 'not_attempted',
+    String bobMemberAddAttemptOutcome = 'not_attempted',
+  }) {
+    return <String, Object?>{
+      'rowId': 'SCENARIO-4',
+      'scenario': scenario,
+      'proofRole': role,
+      'appPeerPlatform': 'ios_26_2_core_simulator',
+      'demotionTimelineVisible': true,
+      'aliceRoleStillAdmin': true,
+      'bobRoleConvergedToWriter': true,
+      'charlieRoleStillWriter': true,
+      'bobLocalRoleDemoted': true,
+      'bobMyRoleDemoted': role == 'bob',
+      'bobMetadataAttemptBlocked': bobMetadataAttemptOutcome != 'accepted',
+      'bobMetadataAttemptOutcome': bobMetadataAttemptOutcome,
+      'bobMemberAddAttemptBlocked': bobMemberAddAttemptOutcome != 'accepted',
+      'bobMemberAddAttemptOutcome': bobMemberAddAttemptOutcome,
+      'finalMetadataName': 'test me',
+      'finalMetadataDescription': 'do you see me?',
+      'finalAvatarBlobId': 'scenario4-final-avatar',
+      'finalAvatarMime': 'image/png',
+      'finalAvatarPath': 'media/group_avatars/$groupId.png',
+      'metadataAvatarRetained': true,
+      'danaAbsentFromMembers': true,
+      'memberStateConverged': true,
+      'finalKeyConverged': true,
+      'finalEpoch': 2,
+      'finalMemberPeerIds': activeMembers,
+      'finalMemberRoles': const <String, String>{
+        'alice': 'admin',
+        'bob': 'writer',
+        'charlie': 'writer',
+      },
+    };
+  }
+
+  const danaProof = <String, Object?>{
+    'rowId': 'SCENARIO-4',
+    'scenario': scenario,
+    'proofRole': 'dana',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'danaLocalGroupAbsent': true,
+    'danaUninvited': true,
+    'danaAbsentFromMembers': true,
+    'finalMemberPeerIds': <String>[],
+  };
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      keyEpoch: 2,
+      memberPeerIds: activeMembers,
+      sentMessages: promptMessages('alice', 'sentMessages'),
+      receivedMessages: promptMessages('alice', 'receivedMessages'),
+      persistedMessageCounts: promptCounts('alice'),
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'privateAdminDemotionEnforcementProof': activeProofFor('alice'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      keyEpoch: 2,
+      memberPeerIds: activeMembers,
+      sentMessages: promptMessages('bob', 'sentMessages'),
+      receivedMessages: promptMessages('bob', 'receivedMessages'),
+      persistedMessageCounts: promptCounts('bob'),
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'privateAdminDemotionEnforcementProof': activeProofFor(
+          'bob',
+          bobMetadataAttemptOutcome: 'blocked:permission_denied',
+          bobMemberAddAttemptOutcome: 'blocked:permission_denied',
+        ),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      keyEpoch: 2,
+      memberPeerIds: activeMembers,
+      sentMessages: promptMessages('charlie', 'sentMessages'),
+      receivedMessages: promptMessages('charlie', 'receivedMessages'),
+      persistedMessageCounts: promptCounts('charlie'),
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'privateAdminDemotionEnforcementProof': activeProofFor('charlie'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'dana',
+      peerId: danaPeerId,
+      groupId: groupId,
+      keyEpoch: 0,
+      memberPeerIds: const <String>[],
+      extra: const <String, Object?>{
+        'activeMemberPeerIds': <String>[],
+        'privateAdminDemotionEnforcementProof': danaProof,
+      },
+    ),
+  ];
+}
+
+Map<String, dynamic> _withPrivateAdminDemotionProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'privateAdminDemotionEnforcementProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['privateAdminDemotionEnforcementProof'] as Map,
+      ),
       ...overrides,
     },
   };

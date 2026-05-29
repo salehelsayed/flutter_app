@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/application/group_avatar_storage.dar
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -976,19 +977,23 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             recipientPeerIds: removalReplayRecipientPeerIds,
             preserveRecipientPeerIds: true,
           );
-          unawaited(
-            sendGroupMembershipUpdateDirect(
-              sendP2PMessage: (peerId, message) async {
-                return widget.p2pService.sendMessage(peerId, message);
-              },
-              recipientPeerId: member.peerId,
-              groupId: widget.group.id,
-              senderPeerId: identity.peerId,
-              replayEnvelope: removalReplayEnvelope,
-              timestamp: removedAt,
-              messageId: sourceEventId,
-            ),
-          );
+          for (final target in groupMembershipUpdateDirectTargets(
+            members: [member],
+          )) {
+            unawaited(
+              sendGroupMembershipUpdateDirect(
+                sendP2PMessage: (peerId, message) async {
+                  return widget.p2pService.sendMessage(peerId, message);
+                },
+                recipientPeerId: target.deliveryPeerId,
+                groupId: widget.group.id,
+                senderPeerId: identity.peerId,
+                replayEnvelope: removalReplayEnvelope,
+                timestamp: removedAt,
+                messageId: sourceEventId,
+              ),
+            );
+          }
 
           emitFlowEvent(
             layer: 'FL',
@@ -1108,11 +1113,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         ? MemberRole.writer
         : MemberRole.admin;
     final changedAt = DateTime.now().toUtc();
+    final l10n = AppLocalizations.of(context)!;
+    final noIdentityMessage = l10n.group_info_no_identity;
+    final memberNotFoundMessage = l10n.group_info_member_not_found;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity == null) {
-        throw StateError(AppLocalizations.of(context)!.group_info_no_identity);
+        throw StateError(noIdentityMessage);
       }
       final preTransitionStateHash = await buildGroupTransitionStateHash(
         widget.groupRepo,
@@ -1137,9 +1145,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final members = await widget.groupRepo.getMembers(_group.id);
 
       if (group == null || updatedMember == null) {
-        throw StateError(
-          AppLocalizations.of(context)!.group_info_member_not_found,
-        );
+        throw StateError(memberNotFoundMessage);
       }
 
       final senderBinding = await resolveGroupSenderDeviceBinding(
@@ -1223,7 +1229,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'timestamp': changedAt.toIso8601String(),
           'messageId': sourceEventId,
         });
-        await storeGroupOfflineReplayEnvelope(
+        final replayEnvelope = await buildGroupOfflineReplayEnvelope(
           bridge: widget.bridge,
           groupRepo: widget.groupRepo,
           groupId: _group.id,
@@ -1238,6 +1244,32 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           messageId: roleTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
+        await callGroupInboxStore(
+          widget.bridge,
+          _group.id,
+          replayEnvelope,
+          recipientPeerIds: recipientPeerIds,
+          preserveRecipientPeerIds: true,
+        );
+        final directTargets = groupMembershipUpdateDirectTargets(
+          members: members,
+          excludingPeerId: identity.peerId,
+        );
+        for (final target in directTargets) {
+          unawaited(
+            sendGroupMembershipUpdateDirect(
+              sendP2PMessage: (peerId, message) async {
+                return widget.p2pService.sendMessage(peerId, message);
+              },
+              recipientPeerId: target.deliveryPeerId,
+              groupId: _group.id,
+              senderPeerId: identity.peerId,
+              replayEnvelope: replayEnvelope,
+              timestamp: changedAt,
+              messageId: sourceEventId,
+            ),
+          );
+        }
       }
 
       _didMutateGroup = true;
@@ -1371,6 +1403,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     final l10n = AppLocalizations.of(context)!;
     final noIdentityMessage = l10n.group_info_no_identity;
     final uploadPhotoFailedMessage = l10n.group_info_upload_photo_failed;
+    final signMetadataFailedMessage = l10n.group_info_sign_metadata_failed;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
@@ -1393,7 +1426,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final members = await widget.groupRepo.getMembers(_group.id);
       final allowedPeers = members.isEmpty
           ? <String>[identity.peerId]
-          : members.map((member) => member.peerId).toList();
+          : groupMediaAllowedPeersForMembers(members);
 
       String? avatarBlobId = _group.avatarBlobId;
       String? avatarMime = _group.avatarMime;
@@ -1472,9 +1505,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           if (signResponse['ok'] != true ||
               signature is! String ||
               signature.isEmpty) {
-            throw StateError(
-              AppLocalizations.of(context)!.group_info_sign_metadata_failed,
-            );
+            throw StateError(signMetadataFailedMessage);
           }
 
           refreshedMembers = membersForConfig;
@@ -1514,9 +1545,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final signedSysText = sysText;
       final signedMembers = refreshedMembers;
       if (signedSysText == null || signedMembers == null) {
-        throw StateError(
-          AppLocalizations.of(context)!.group_info_sign_metadata_failed,
-        );
+        throw StateError(signMetadataFailedMessage);
       }
       final metadataTimelineMessage = buildGroupMetadataUpdatedTimelineMessage(
         groupId: _group.id,
@@ -1529,6 +1558,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         await widget.msgRepo!.saveMessage(metadataTimelineMessage);
       }
 
+      final sourceMessageId =
+          'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
       await callGroupPublish(
         widget.bridge,
         groupId: _group.id,
@@ -1541,8 +1572,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderTransportPeerId: senderBinding.transportPeerId,
         senderDevicePublicKey: senderBinding.devicePublicKey,
         senderKeyPackageId: senderBinding.keyPackageId,
-        messageId:
-            'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}',
+        messageId: sourceMessageId,
       );
 
       final recipientPeerIds = signedMembers
@@ -1560,10 +1590,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             'transportPeerId': senderBinding.transportPeerId,
           'text': signedSysText,
           'timestamp': changedAt.toIso8601String(),
-          'messageId':
-              'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}',
+          'messageId': sourceMessageId,
         });
-        await storeGroupOfflineReplayEnvelope(
+        final replayEnvelope = await buildGroupOfflineReplayEnvelope(
           bridge: widget.bridge,
           groupRepo: widget.groupRepo,
           groupId: _group.id,
@@ -1578,6 +1607,32 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           messageId: metadataTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
+        await callGroupInboxStore(
+          widget.bridge,
+          _group.id,
+          replayEnvelope,
+          recipientPeerIds: recipientPeerIds,
+          preserveRecipientPeerIds: true,
+        );
+        final directTargets = groupMembershipUpdateDirectTargets(
+          members: signedMembers,
+          excludingPeerId: identity.peerId,
+        );
+        for (final target in directTargets) {
+          unawaited(
+            sendGroupMembershipUpdateDirect(
+              sendP2PMessage: (peerId, message) async {
+                return widget.p2pService.sendMessage(peerId, message);
+              },
+              recipientPeerId: target.deliveryPeerId,
+              groupId: _group.id,
+              senderPeerId: identity.peerId,
+              replayEnvelope: replayEnvelope,
+              timestamp: changedAt,
+              messageId: sourceMessageId,
+            ),
+          );
+        }
       }
 
       _didMutateGroup = true;
@@ -1625,6 +1680,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
               p2pService: widget.p2pService,
               msgRepo: widget.msgRepo,
               inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+              uploadGroupAvatarFn: widget.uploadGroupAvatarFn,
               backgroundPreference: widget.backgroundPreference,
             ),
           ),

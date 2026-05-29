@@ -43,6 +43,8 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_scre
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -241,10 +243,12 @@ class _DownloadRepairBridge extends FakeBridge {
     required this.downloadedBytes,
     // ignore: unused_element_parameter
     this.mime = 'image/png',
+    this.downloadGate,
   });
 
   List<int> downloadedBytes;
   String mime;
+  Completer<void>? downloadGate;
 
   @override
   Future<String> send(String message) async {
@@ -260,9 +264,10 @@ class _DownloadRepairBridge extends FakeBridge {
 
       final payload = parsed['payload'] as Map<String, dynamic>;
       final outputPath = payload['outputPath'] as String;
+      await downloadGate?.future;
       final file = File(outputPath);
-      await file.parent.create(recursive: true);
-      await file.writeAsBytes(downloadedBytes, flush: true);
+      file.parent.createSync(recursive: true);
+      file.writeAsBytesSync(downloadedBytes, flush: true);
       return jsonEncode({
         'ok': true,
         'id': payload['id'],
@@ -282,7 +287,7 @@ class _DownloadRepairBridge extends FakeBridge {
       final filePath = payload['filePath'] as String;
       final keyBase64 = payload['keyBase64'] as String;
       final nonce = payload['nonce'] as String;
-      final encrypted = await File(filePath).readAsBytes();
+      final encrypted = File(filePath).readAsBytesSync();
       final prefix = 'cipher:$keyBase64:$nonce:'.codeUnits;
       final hasPrefix =
           encrypted.length >= prefix.length &&
@@ -294,7 +299,7 @@ class _DownloadRepairBridge extends FakeBridge {
         return jsonEncode({'ok': false, 'errorMessage': 'decrypt failed'});
       }
       final decryptedPath = '$filePath.dec';
-      await File(decryptedPath).writeAsBytes(
+      File(decryptedPath).writeAsBytesSync(
         encrypted.skip(prefix.length).toList().reversed.toList(),
         flush: true,
       );
@@ -748,7 +753,7 @@ void main() {
       expect(textField.controller?.text, 'Shared group text');
     });
 
-    testWidgets('shows security status from key epoch and member safety', (
+    testWidgets('does not render security status in group chat chrome', (
       tester,
     ) async {
       final group = makeChatGroup();
@@ -807,16 +812,14 @@ void main() {
       );
 
       await tester.pumpWidget(buildWidget(group: group));
-      await pumpUntil(
-        tester,
-        () => find
-            .byKey(const ValueKey('group-conversation-security-strip'))
-            .evaluate()
-            .isNotEmpty,
-      );
+      await pumpFrames(tester, count: 20);
 
-      expect(find.text('Encrypted - key epoch 2'), findsOneWidget);
-      expect(find.text('1 member needs verification review'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('group-conversation-security-strip')),
+        findsNothing,
+      );
+      expect(find.text('Encrypted - key epoch 2'), findsNothing);
+      expect(find.text('1 member needs verification review'), findsNothing);
       expect(find.textContaining('test-group-key-2'), findsNothing);
     });
 
@@ -882,16 +885,14 @@ void main() {
       );
 
       await tester.pumpWidget(buildWidget(group: group));
-      await pumpUntil(
-        tester,
-        () => find
-            .byKey(const ValueKey('group-conversation-security-strip'))
-            .evaluate()
-            .isNotEmpty,
-      );
+      await pumpFrames(tester, count: 20);
 
-      expect(find.text('Encrypted - key epoch 1'), findsOneWidget);
-      expect(find.text('All 3 members verified'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('group-conversation-security-strip')),
+        findsNothing,
+      );
+      expect(find.text('Encrypted - key epoch 1'), findsNothing);
+      expect(find.text('All 3 members verified'), findsNothing);
       expect(find.text('2 of 3 members verified'), findsNothing);
       expect(
         find.textContaining('not verified from saved contacts'),
@@ -2303,7 +2304,7 @@ void main() {
     );
 
     testWidgets(
-      'NW-007 zero topic peers keep active member UI and recovery banner',
+      'NW-007 zero topic peers keep active member UI without transient banners',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -2386,19 +2387,17 @@ void main() {
             removedStreamController: removedStreamController,
           ),
         );
-        await pumpUntil(
-          tester,
-          () => find
-              .byKey(const ValueKey('group-conversation-security-strip'))
-              .evaluate()
-              .isNotEmpty,
-        );
+        await pumpFrames(tester, count: 20);
 
         expect(find.byType(GroupConversationScreen), findsOneWidget);
-        expect(find.text('All 3 members verified'), findsOneWidget);
+        expect(find.text('All 3 members verified'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-conversation-security-strip')),
+          findsNothing,
+        );
         expect(
           find.byKey(const ValueKey('group-recovery-banner')),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
           find.byKey(const ValueKey('group-read-only-banner')),
@@ -2420,10 +2419,10 @@ void main() {
           find.text('NW-007 zero peers keep group active'),
           findsOneWidget,
         );
-        expect(find.text('All 3 members verified'), findsOneWidget);
+        expect(find.text('All 3 members verified'), findsNothing);
         expect(
           find.byKey(const ValueKey('group-recovery-banner')),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
           find.byKey(const ValueKey('group-read-only-banner')),
@@ -2780,6 +2779,176 @@ void main() {
         });
 
         expectHydratedOnce();
+      },
+    );
+
+    testWidgets(
+      'incoming group image refreshes on open recipient route after background download without reopen',
+      (tester) async {
+        final group = makeChatGroup();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-open-route-image-refresh-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final timestamp = DateTime.utc(2026, 5, 29, 6, 20);
+        const messageId = 'group-open-route-image-refresh-message';
+        const attachmentId = 'group-open-route-image-refresh-blob';
+        final encryptedBytes = _md012EncryptedBytes(_tinyPngBytes);
+        final downloadGate = Completer<void>();
+        bridge = _DownloadRepairBridge(
+          downloadedBytes: encryptedBytes,
+          downloadGate: downloadGate,
+        );
+
+        await groupRepo.saveGroup(group);
+        await messageStreamController.close();
+        messageStreamController = StreamController<GroupMessage>.broadcast(
+          sync: true,
+        );
+        final incomingMessage = makeMessage(
+          id: messageId,
+          text: 'Image on open route',
+          groupId: group.id,
+          isIncoming: true,
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          status: 'delivered',
+          timestamp: timestamp,
+        );
+        final pendingImageAttachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          width: 1,
+          height: 1,
+          downloadStatus: kMediaDownloadStatusPending,
+          contentHash: _md012HashBytes(encryptedBytes),
+          encryptionKeyBase64: _md012MediaKey,
+          encryptionNonce: _md012MediaNonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          createdAt: timestamp.toIso8601String(),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        int mediaGridBrokenImageCount() => find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byIcon(Icons.broken_image_outlined),
+            )
+            .evaluate()
+            .length;
+
+        int mediaGridLoadingCount() => find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byType(CircularProgressIndicator),
+            )
+            .evaluate()
+            .length;
+
+        await msgRepo.saveMessage(incomingMessage);
+        await mediaAttachmentRepo.saveAttachment(pendingImageAttachment);
+        await tester.runAsync(() async {
+          messageStreamController.add(incomingMessage);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final media = screen.mediaMap[messageId];
+          return media != null &&
+              media.single.downloadStatus == kMediaDownloadStatusPending &&
+              mediaGridLoadingCount() == 1;
+        }, maxPumps: 80);
+
+        final initialScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(initialScreen.messages.map((message) => message.id), [
+          messageId,
+        ]);
+        expect(initialScreen.mediaMap[messageId], hasLength(1));
+        expect(find.byType(MediaGrid), findsOneWidget);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
+        );
+        final relativePath = mediaFileManager.relativePathForAttachment(
+          contactPeerId: group.id,
+          blobId: attachmentId,
+          mime: 'image/png',
+        );
+        final absolutePath = await mediaFileManager.resolveStoredPath(
+          relativePath,
+        );
+        final mediaFile = File(absolutePath);
+        mediaFile.parent.createSync(recursive: true);
+        mediaFile.writeAsBytesSync(_tinyPngBytes, flush: true);
+        await mediaAttachmentRepo.saveAttachment(
+          pendingImageAttachment.copyWith(
+            localPath: relativePath,
+            downloadStatus: kMediaDownloadStatusDone,
+          ),
+        );
+        await tester.runAsync(() async {
+          messageStreamController.add(incomingMessage);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final media = screen.mediaMap[messageId];
+          return media != null &&
+              media.single.downloadStatus == kMediaDownloadStatusDone &&
+              media.single.localPath == absolutePath &&
+              mediaGridBrokenImageCount() == 0 &&
+              mediaGridLoadingCount() == 0;
+        }, maxPumps: 80);
+
+        final refreshedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(refreshedScreen.mediaMap[messageId], hasLength(1));
+        expect(
+          refreshedScreen.mediaMap[messageId]!.single.downloadStatus,
+          kMediaDownloadStatusDone,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
+        );
+        expect(find.text('Media unavailable'), findsNothing);
+        expect(mediaGridBrokenImageCount(), 0);
+        expect(mediaGridLoadingCount(), 0);
+
+        await tester.tap(find.byType(MediaGrid));
+        await pumpFrames(tester, count: 4);
+        expect(find.byType(FullScreenImageViewer), findsOneWidget);
+        if (!downloadGate.isCompleted) {
+          downloadGate.complete();
+        }
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
       },
     );
 
@@ -3151,7 +3320,7 @@ void main() {
     );
 
     testWidgets(
-      'IR-018 shows recovery state while restart replay is pending and live messages still arrive',
+      'IR-018 keeps messages live while restart replay is pending without flashing a banner',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -3165,7 +3334,7 @@ void main() {
 
         expect(
           find.byKey(const ValueKey('group-recovery-banner')),
-          findsOneWidget,
+          findsNothing,
         );
         expect(find.text('Local before replay'), findsOneWidget);
 
@@ -5580,6 +5749,15 @@ void main() {
             mediaFileManager: mediaFileManager,
           ),
         );
+        await tester.pump();
+        await pumpUntil(
+          tester,
+          () => mediaAttachmentRepo.getAttachmentsForMessagesCalls > 0,
+        );
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await pumpFrames(tester, count: 20);
         await pumpUntil(tester, () {
           final screen = tester.widget<GroupConversationScreen>(
             find.byType(GroupConversationScreen),

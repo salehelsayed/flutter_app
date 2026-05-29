@@ -325,7 +325,9 @@ class MessageBubble extends StatelessWidget {
             if (hasStatus) ...[
               const SizedBox(width: 4),
               Semantics(
-                label: 'Message status: ${_statusSemantic(status!)}',
+                label: AppLocalizations.of(
+                  context,
+                )!.message_status_semantics(_statusSemantic(context, status!)),
                 child: Icon(
                   _statusIcon(status!),
                   size: 14,
@@ -465,14 +467,15 @@ class MessageBubble extends StatelessWidget {
     return const Color.fromRGBO(255, 255, 255, 0.25);
   }
 
-  static String _statusSemantic(String status) {
+  static String _statusSemantic(BuildContext context, String status) {
+    final l10n = AppLocalizations.of(context)!;
     if (status == 'delivered' || status == 'queued') {
-      return 'delivered';
+      return l10n.message_status_delivered;
     }
-    if (status == 'failed') return 'failed';
-    if (status == 'sending') return 'sending';
-    if (status == 'sent') return 'sent';
-    if (status == 'pending') return 'pending delivery via inbox';
+    if (status == 'failed') return l10n.message_status_failed;
+    if (status == 'sending') return l10n.message_status_sending;
+    if (status == 'sent') return l10n.message_status_sent;
+    if (status == 'pending') return l10n.message_status_pending_inbox;
     return status;
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Banner shown in place of ComposeArea when a contact is blocked.
 ///
@@ -10,13 +11,13 @@ class BlockedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Container(
       decoration: const BoxDecoration(
         color: Color.fromRGBO(255, 255, 255, 0.04),
         border: Border(
-          top: BorderSide(
-            color: Color.fromRGBO(255, 255, 255, 0.08),
-          ),
+          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
         ),
       ),
       child: SafeArea(
@@ -32,9 +33,9 @@ class BlockedBanner extends StatelessWidget {
                 color: Color.fromRGBO(255, 255, 255, 0.35),
               ),
               const SizedBox(width: 8),
-              const Text(
-                'You blocked this contact.',
-                style: TextStyle(
+              Text(
+                l10n.conversation_blocked_contact,
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w400,
                   color: Color.fromRGBO(255, 255, 255, 0.5),
@@ -43,9 +44,9 @@ class BlockedBanner extends StatelessWidget {
               const SizedBox(width: 8),
               GestureDetector(
                 onTap: onUnblock,
-                child: const Text(
-                  'Unblock',
-                  style: TextStyle(
+                child: Text(
+                  l10n.conversation_unblock,
+                  style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                     color: Color(0xFF10B981),

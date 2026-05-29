@@ -57,6 +57,7 @@ import 'package:flutter_app/features/posts/presentation/widgets/comments_sheet.d
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/edit_pinned_post_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/pass_post_along_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class PostsWired extends StatefulWidget {
   final IdentityRepository identityRepo;
@@ -901,62 +902,64 @@ class _PostsWiredState extends State<PostsWired> {
   }
 
   String? _pinStatusMessage(PinPostResult result) {
+    final l10n = AppLocalizations.of(context)!;
     return switch (result) {
       PinPostResult.success => null,
-      PinPostResult.partiallySettled => 'Pin update will continue retrying',
-      PinPostResult.queuedForRetry => 'Pin update queued for retry',
-      PinPostResult.sendFailed => 'Pin update failed',
+      PinPostResult.partiallySettled => l10n.post_pin_retrying,
+      PinPostResult.queuedForRetry => l10n.post_pin_queued,
+      PinPostResult.sendFailed => l10n.post_pin_failed,
       PinPostResult.nodeNotRunning ||
       PinPostResult.postNotFound ||
       PinPostResult.notAuthor ||
-      PinPostResult.noRecipients => 'Could not pin post',
+      PinPostResult.noRecipients => l10n.post_pin_could_not,
     };
   }
 
   String? _editPinnedPostStatusMessage(EditPinnedPostResult result) {
+    final l10n = AppLocalizations.of(context)!;
     return switch (result) {
       EditPinnedPostResult.success => null,
-      EditPinnedPostResult.partiallySettled =>
-        'Pinned post update will continue retrying',
-      EditPinnedPostResult.queuedForRetry =>
-        'Pinned post update queued for retry',
-      EditPinnedPostResult.sendFailed => 'Pinned post update failed',
+      EditPinnedPostResult.partiallySettled => l10n.post_pinned_update_retrying,
+      EditPinnedPostResult.queuedForRetry => l10n.post_pinned_update_queued,
+      EditPinnedPostResult.sendFailed => l10n.post_pinned_update_failed,
       EditPinnedPostResult.nodeNotRunning ||
       EditPinnedPostResult.postNotFound ||
       EditPinnedPostResult.notAuthor ||
       EditPinnedPostResult.notPinned ||
-      EditPinnedPostResult.noRecipients => 'Could not update pinned post',
+      EditPinnedPostResult.noRecipients => l10n.post_pinned_update_could_not,
     };
   }
 
   String? _removePinStatusMessage(RemovePinResult result) {
+    final l10n = AppLocalizations.of(context)!;
     return switch (result) {
       RemovePinResult.success => null,
-      RemovePinResult.partiallySettled => 'Pin removal will continue retrying',
-      RemovePinResult.queuedForRetry => 'Pin removal queued for retry',
-      RemovePinResult.sendFailed => 'Pin removal failed',
+      RemovePinResult.partiallySettled => l10n.post_pin_removal_retrying,
+      RemovePinResult.queuedForRetry => l10n.post_pin_removal_queued,
+      RemovePinResult.sendFailed => l10n.post_pin_removal_failed,
       RemovePinResult.nodeNotRunning ||
       RemovePinResult.postNotFound ||
       RemovePinResult.notAuthor ||
       RemovePinResult.notPinned ||
-      RemovePinResult.noRecipients => 'Could not remove pin',
+      RemovePinResult.noRecipients => l10n.post_pin_remove_could_not,
     };
   }
 
   String? _passAlongStatusMessage(PassPostAlongResult result) {
+    final l10n = AppLocalizations.of(context)!;
     return switch (result) {
       PassPostAlongResult.success => null,
-      PassPostAlongResult.partiallySettled => 'Repost will continue retrying',
-      PassPostAlongResult.queuedForRetry => 'Repost queued for retry',
+      PassPostAlongResult.partiallySettled => l10n.post_repost_retrying,
+      PassPostAlongResult.queuedForRetry => l10n.post_repost_queued,
       PassPostAlongResult.mediaPreparationFailed =>
-        'Could not prepare repost media',
+        l10n.post_repost_media_failed,
       PassPostAlongResult.nodeNotRunning ||
-      PassPostAlongResult.sendFailed => 'Could not prepare repost',
-      PassPostAlongResult.postNotFound => 'Post is no longer available',
+      PassPostAlongResult.sendFailed => l10n.post_repost_could_not,
+      PassPostAlongResult.postNotFound => l10n.post_no_longer_available,
       PassPostAlongResult.noEligibleRecipients =>
-        'No eligible friends available right now',
+        l10n.post_pass_along_no_eligible,
       PassPostAlongResult.pickPeopleNotAllowed ||
-      PassPostAlongResult.oneHopLimitReached => 'This post cannot be reposted',
+      PassPostAlongResult.oneHopLimitReached => l10n.post_repost_not_allowed,
     };
   }
 

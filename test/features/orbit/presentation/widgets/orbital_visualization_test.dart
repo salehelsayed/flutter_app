@@ -7,6 +7,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../shared/helpers/readability_test_helpers.dart';
 
@@ -27,6 +28,9 @@ OrbitFriend _makeFriend(int i) {
 void main() {
   Widget wrap(Widget child, {BackgroundReadableColors? readableColors}) =>
       MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         theme: ThemeData(
           extensions: [readableColors ?? BackgroundReadableColors.dark],
         ),
@@ -133,6 +137,73 @@ void main() {
       expect(overflow.style!.color, colors.textMuted);
       expectTextContrast(heading.style!.color!, colors.surfaceBase);
       expectTextContrast(overflow.style!.color!, colors.surfaceSubtle);
+    });
+
+    testWidgets('inner-ring avatar tap reports the exact friend', (
+      tester,
+    ) async {
+      final friends = List.generate(3, (i) => _makeFriend(i));
+      OrbitFriend? tappedFriend;
+
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            friends: friends,
+            onFriendTap: (friend) => tappedFriend = friend,
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      await tester.tap(find.bySemanticsLabel('Open chat with friend1'));
+
+      expect(tappedFriend?.peerId, 'peer-1-abcdef1234');
+    });
+
+    testWidgets('outer-ring avatar tap reports the exact friend', (
+      tester,
+    ) async {
+      final friends = List.generate(8, (i) => _makeFriend(i));
+      OrbitFriend? tappedFriend;
+
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            friends: friends,
+            onFriendTap: (friend) => tappedFriend = friend,
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      await tester.tap(find.bySemanticsLabel('Open chat with friend6'));
+
+      expect(tappedFriend?.peerId, 'peer-6-abcdef1234');
+    });
+
+    testWidgets('center avatar and overflow badge do not open chat', (
+      tester,
+    ) async {
+      final friends = List.generate(15, (i) => _makeFriend(i));
+      var tapCount = 0;
+
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            friends: friends,
+            onFriendTap: (_) => tapCount++,
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      await tester.tap(find.byType(UserAvatar).first);
+      await tester.tap(find.byType(OverflowBadge), warnIfMissed: false);
+
+      expect(tapCount, 0);
     });
   });
 }

@@ -28,6 +28,12 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - `test/features/orbit/presentation/screens/orbit_wired_test.dart` and `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` now carry the Session 35 stale-intro-reload and intro follow-up wiring regressions; they stay outside the frozen named gate lists and should be run directly with the Intro / Reintroduction Gate when intro-to-Orbit or intro-to-Feed follow-up wiring changes.
 - `test/features/groups/integration/announcement_happy_path_test.dart` carries the Session 6 announcement create/send/read-only/react regression and stays in the Optional / Manual direct-suite bucket so the frozen named gate lists do not widen.
 - `integration_test/group_recovery_e2e_test.dart` now carries the Session 72 device-backed dissolved local-cleanup recovery proof and stays in the Nightly / Release Pool because it remains simulator-bound and should not widen the frozen named gates.
+- `test/features/groups/integration/group_admin_metadata_convergence_test.dart`
+  stays in the Group Messaging Gate because its exact Scenario 3 promoted-admin
+  invite, metadata, fanout, and photo journey covers promoted-admin
+  metadata/photo authority, pre-join photo snapshots, promoted-admin invite
+  propagation, and C-to-creator delivery after a promoted-admin invite as part
+  of the group membership and metadata safety contract.
 - `test/features/groups/integration/group_startup_rejoin_smoke_test.dart` stays in the Group Messaging Gate, not Startup / Transport. It validates group-topic rejoin behavior with fake infrastructure rather than the real transport gate.
 - `integration_test/multi_relay_failover_test.dart` stays nightly-only because it needs multi-relay runtime configuration and composes heavier real-stack coverage than the named transport gate.
 - `integration_test/multi_relay_failover_test.dart` now supports
@@ -150,7 +156,7 @@ Required companion rule:
 
 ### Group Messaging Gate
 
-Run when group send, receive, retry, resume, invite, or announcement behavior changes.
+Run when group send, receive, retry, resume, invite, metadata/photo authority, or announcement behavior changes.
 
 Command:
 
@@ -161,6 +167,7 @@ Command:
 Files:
 
 - `test/features/groups/integration/group_messaging_smoke_test.dart`
+- `test/features/groups/integration/group_admin_metadata_convergence_test.dart`
 - `test/features/groups/integration/group_resume_recovery_test.dart`
 - `test/features/groups/integration/group_edge_cases_smoke_test.dart`
 - `test/features/groups/integration/invite_round_trip_test.dart`
@@ -460,8 +467,12 @@ Validation run dates:
 - 2026-04-29 Report 89 Android emulator simulator proof for newly-added group member video/voice render, play, and reopen
 - 2026-04-29 Report 89 iPhone 17 simulator proof for newly-added group member video/voice render, play, and reopen
 - 2026-05-03 Report 90 GMAR-005 final acceptance/recovery revalidation for direct GMAR suites, configured simulator media proofs, two-simulator routing/group and foreground group push smoke commands, device-pinned `all`, `completeness-check`, broad `flutter test`, Go module tests, and `git diff --check`
+- 2026-05-28 promoted-admin group Scenario 3 regression validation for
+  `group_admin_metadata_convergence_test.dart`,
+  `group_info_wired_test.dart`, `send_group_invite_use_case_test.dart`,
+  `member_removal_integration_test.dart`, and `git diff --check`
 
-- Completeness check: revalidated on 2026-05-03 via `./scripts/run_test_gates.sh completeness-check` and passed with `712/712` test files classified.
+- Completeness check: latest attempted on 2026-05-28 via `./scripts/run_test_gates.sh completeness-check` and failed with `747/750` test files classified. The unmatched files were reported as pre-existing and unrelated to the promoted-admin regression task: `test/l10n/l10n_integrity_test.dart`, `test/shared/fakes/fake_group_pubsub_network_test.dart`, and `test/shared/fakes/seeded_group_reproduction_log_test.dart`.
 - Report 90 GMAR-005 final gate set: passed on 2026-05-03 via the required direct optional/manual suites, configured simulator commands on `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, paired simulator smoke commands on `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD,5BA69F1C-B112-47BE-B1FF-8C1003728C8F` with relay addresses, `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD ./scripts/run_test_gates.sh all`, broad `flutter test`, `cd go-mknoon && go test ./...`, and `git diff --check`.
 - Report 89 simulator proof: passed on 2026-04-29 via `flutter test -d emulator-5554 integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d emulator-5554 integration_test/media_message_journey_e2e_test.dart`, `flutter test -d emulator-5554 integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d emulator-5554 integration_test/foreground_group_push_drain_test.dart`.
 - Report 89 iOS simulator proof: passed on 2026-04-29 via `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_message_journey_e2e_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/foreground_group_push_drain_test.dart`.
@@ -471,5 +482,5 @@ Validation run dates:
 - Group Messaging Gate: revalidated on 2026-04-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` and passed.
 - Posts / Privacy Gate: `test/features/posts/phase3/post_presence_listener_test.dart` passed, and `integration_test/posts_phase1_fake_test.dart` ran successfully on macOS. `integration_test/posts_phase2_fake_test.dart` through `integration_test/posts_phase5_fake_test.dart` failed to start on macOS with `Error waiting for a debug connection` / `Unable to start the app on the device`.
 - Startup / Transport Gate: revalidated on 2026-03-26 via `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport` and passed. During the first rerun, `integration_test/wifi_relay_fallback_smoke_test.dart` and `integration_test/transport_e2e_test.dart` exposed stale `MessageRepositoryImpl` constructor wiring; after those repo-local test harness fixes landed, the same simulator-backed gate reran green.
-- Top-level script validation: the current Session 41 reruns confirm `completeness-check`, `baseline`, `1to1`, and `groups` are green.
+- Top-level script validation: earlier Session 41 reruns confirmed `completeness-check`, `baseline`, `1to1`, and `groups` green; the latest 2026-05-28 completeness-check attempt is red only on the three unmatched files listed above.
 - Device note: when multiple Flutter targets are attached, set `FLUTTER_DEVICE_ID=<device-id>` for integration-backed gates. Session 27 revalidation used `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F`.

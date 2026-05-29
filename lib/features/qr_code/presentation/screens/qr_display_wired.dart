@@ -54,7 +54,9 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
   void initState() {
     super.initState();
     emitFlowEvent(layer: 'FL', event: 'QR_FL_SCREEN_INIT', details: {});
-    _buildPayload();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _buildPayload();
+    });
   }
 
   @override
@@ -64,8 +66,10 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
   }
 
   Future<void> _buildPayload() async {
+    if (!mounted) return;
     setState(() {
       _state = _QRDisplayState.loading;
+      _qrData = null;
       _errorMessage = null;
     });
 
@@ -73,11 +77,13 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
 
     try {
       final identity = await widget.repo.loadIdentity();
+      if (!mounted) return;
 
       if (identity == null) {
         setState(() {
           _state = _QRDisplayState.noIdentity;
-          _errorMessage = 'No identity found. Please create one first.';
+          _qrData = null;
+          _errorMessage = _noIdentityDetail();
         });
         return;
       }
@@ -96,13 +102,29 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
       final (result, qrString) = await buildQRPayload(
         repo: widget.repo,
         callSign: jsSign,
+        cachedIdentity: identity,
       );
+      if (!mounted) return;
 
       switch (result) {
         case BuildQRPayloadResult.success:
+          final qrData = qrString?.trim();
+          if (qrData == null || qrData.isEmpty) {
+            setState(() {
+              _state = _QRDisplayState.error;
+              _qrData = null;
+              _errorMessage = _unexpectedError();
+            });
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'QR_FL_SCREEN_ERROR',
+              details: {'reason': 'emptyPayload'},
+            );
+            break;
+          }
           setState(() {
             _state = _QRDisplayState.success;
-            _qrData = qrString;
+            _qrData = qrData;
           });
           emitFlowEvent(
             layer: 'FL',
@@ -114,7 +136,8 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
         case BuildQRPayloadResult.noIdentity:
           setState(() {
             _state = _QRDisplayState.noIdentity;
-            _errorMessage = 'No identity found. Please create one first.';
+            _qrData = null;
+            _errorMessage = _noIdentityDetail();
           });
           emitFlowEvent(
             layer: 'FL',
@@ -126,7 +149,8 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
         case BuildQRPayloadResult.signingError:
           setState(() {
             _state = _QRDisplayState.error;
-            _errorMessage = 'Failed to sign QR code. Please try again.';
+            _qrData = null;
+            _errorMessage = _signFailed();
           });
           emitFlowEvent(
             layer: 'FL',
@@ -136,9 +160,11 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           break;
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _state = _QRDisplayState.error;
-        _errorMessage = 'An unexpected error occurred. Please try again.';
+        _qrData = null;
+        _errorMessage = _unexpectedError();
       });
       emitFlowEvent(
         layer: 'FL',
@@ -146,6 +172,21 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
         details: {'reason': 'exception', 'error': e.toString()},
       );
     }
+  }
+
+  String _noIdentityDetail() {
+    return AppLocalizations.of(context)?.qr_no_identity_detail ??
+        'No identity found. Please create one first.';
+  }
+
+  String _signFailed() {
+    return AppLocalizations.of(context)?.qr_sign_failed ??
+        'Failed to sign QR code. Please try again.';
+  }
+
+  String _unexpectedError() {
+    return AppLocalizations.of(context)?.qr_unexpected_error ??
+        'An unexpected error occurred. Please try again.';
   }
 
   @override

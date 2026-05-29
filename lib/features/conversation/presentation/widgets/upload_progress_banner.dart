@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class UploadProgressViewState {
   final int sentBytes;
@@ -32,6 +33,7 @@ class UploadProgressBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return Container(
       key: const ValueKey('upload-progress-banner'),
@@ -46,7 +48,7 @@ class UploadProgressBanner extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Uploading media',
+            l10n.upload_progress_title,
             style: TextStyle(
               color: readableColors.textPrimary,
               fontSize: 14,
@@ -73,7 +75,7 @@ class UploadProgressBanner extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Keep the app open until the upload completes',
+            l10n.upload_progress_keep_open,
             style: TextStyle(color: readableColors.textMuted, fontSize: 12),
           ),
           if (onCancel != null) ...[
@@ -93,7 +95,7 @@ class UploadProgressBanner extends StatelessWidget {
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 icon: const Icon(Icons.close_rounded, size: 16),
-                label: const Text('Cancel'),
+                label: Text(l10n.btn_cancel),
               ),
             ),
           ],
