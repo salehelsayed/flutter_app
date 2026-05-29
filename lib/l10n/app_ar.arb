@@ -541,6 +541,15 @@
   "group_edit_remove_photo": "إزالة الصورة",
   "group_edit_name": "اسم المجموعة",
   "group_edit_description": "الوصف",
+  "group_edit_recovery_waiting": "يرجى الانتظار بينما يلحق هذا الجهاز.",
+  "group_edit_recovery_waiting_elapsed": "بانتظار منذ {seconds} ث",
+  "@group_edit_recovery_waiting_elapsed": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "btn_save": "حفظ",
   "group_member_sending": "جارٍ الإرسال...",
   "group_member_resend": "إعادة الإرسال",

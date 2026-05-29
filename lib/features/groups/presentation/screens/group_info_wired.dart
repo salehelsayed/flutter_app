@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -23,6 +24,7 @@ import 'package:flutter_app/features/groups/application/group_media_allowed_peer
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
@@ -1369,6 +1371,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             group: _group,
             mediaPicker: _mediaPicker,
             imageProcessor: widget.imageProcessor,
+            recoveryActiveDepthListenable:
+                groupRecoveryGate.activeDepthListenable,
           ),
         );
       },
@@ -1404,6 +1408,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     final noIdentityMessage = l10n.group_info_no_identity;
     final uploadPhotoFailedMessage = l10n.group_info_upload_photo_failed;
     final signMetadataFailedMessage = l10n.group_info_sign_metadata_failed;
+    final recoveryWaitMessage = l10n.group_edit_recovery_waiting;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
@@ -1431,12 +1436,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       String? avatarBlobId = _group.avatarBlobId;
       String? avatarMime = _group.avatarMime;
       String? avatarPath = _group.avatarPath;
+      String? preparedReplacementAvatarPath;
+
+      if ((isRemovingAvatar || isReplacingAvatar) &&
+          isGroupRecoveryInProgress()) {
+        throw StateError(groupRecoveryPendingError);
+      }
 
       if (isRemovingAvatar) {
-        await deleteGroupAvatar(
-          storedPath: _group.avatarPath,
-          groupId: _group.id,
-        );
         avatarBlobId = null;
         avatarMime = null;
         avatarPath = null;
@@ -1454,14 +1461,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           throw StateError(uploadPhotoFailedMessage);
         }
 
-        await commitPreparedGroupAvatar(
-          groupId: _group.id,
-          sourcePath: edit.preparedAvatarPath!,
-          avatarNormalizer: AvatarNormalizationHelper(
-            imageProcessor: widget.imageProcessor,
-          ),
-        );
-
+        preparedReplacementAvatarPath = edit.preparedAvatarPath!;
         avatarBlobId = uploaded.id;
         avatarMime = uploaded.mime;
         avatarPath = groupAvatarRelativePath(_group.id);
@@ -1508,7 +1508,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             throw StateError(signMetadataFailedMessage);
           }
 
-          refreshedMembers = membersForConfig;
           final sourceEventId =
               'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
           final unsignedPayload = {
@@ -1538,6 +1537,29 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             preTransitionStateHash: preTransitionStateHash,
             systemPayload: unsignedPayload,
           );
+
+          if ((isRemovingAvatar || isReplacingAvatar) &&
+              isGroupRecoveryInProgress()) {
+            throw StateError(groupRecoveryPendingError);
+          }
+          if (isRemovingAvatar) {
+            await deleteGroupAvatar(
+              storedPath: _group.avatarPath,
+              groupId: _group.id,
+            );
+          }
+          final replacementPath = preparedReplacementAvatarPath;
+          if (replacementPath != null) {
+            await commitPreparedGroupAvatar(
+              groupId: _group.id,
+              sourcePath: replacementPath,
+              avatarNormalizer: AvatarNormalizationHelper(
+                imageProcessor: widget.imageProcessor,
+              ),
+            );
+          }
+
+          refreshedMembers = membersForConfig;
           sysText = jsonEncode(signedPayload);
         },
       );
@@ -1658,7 +1680,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       );
       if (!mounted) return;
       final message = e is StateError
-          ? e.message
+          ? e.message == groupRecoveryPendingError
+                ? recoveryWaitMessage
+                : e.message
           : AppLocalizations.of(context)!.group_info_details_update_failed;
       ScaffoldMessenger.of(
         context,
@@ -1872,11 +1896,13 @@ class _GroupMetadataEditorSheet extends StatefulWidget {
   final GroupModel group;
   final MediaPicker mediaPicker;
   final ImageProcessor? imageProcessor;
+  final ValueListenable<int> recoveryActiveDepthListenable;
 
   const _GroupMetadataEditorSheet({
     required this.group,
     required this.mediaPicker,
     required this.imageProcessor,
+    required this.recoveryActiveDepthListenable,
   });
 
   @override
@@ -1891,11 +1917,15 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
   Uint8List? _previewBytes;
   bool _removeAvatar = false;
   bool _isPickingImage = false;
+  int _recoveryActiveDepth = 0;
+  int _recoveryWaitSeconds = 0;
+  Timer? _recoveryWaitTimer;
 
   bool get _hasCurrentAvatar =>
       widget.group.avatarBlobId != null ||
       widget.group.avatarPath != null ||
       _previewBytes != null;
+  bool get _isRecoveryActive => _recoveryActiveDepth > 0;
 
   @override
   void initState() {
@@ -1904,13 +1934,72 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
     _descriptionController = TextEditingController(
       text: widget.group.description ?? '',
     );
+    _recoveryActiveDepth = widget.recoveryActiveDepthListenable.value;
+    widget.recoveryActiveDepthListenable.addListener(
+      _handleRecoveryDepthChanged,
+    );
+    _syncRecoveryWaitTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _GroupMetadataEditorSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.recoveryActiveDepthListenable !=
+        widget.recoveryActiveDepthListenable) {
+      oldWidget.recoveryActiveDepthListenable.removeListener(
+        _handleRecoveryDepthChanged,
+      );
+      widget.recoveryActiveDepthListenable.addListener(
+        _handleRecoveryDepthChanged,
+      );
+      _handleRecoveryDepthChanged();
+    }
   }
 
   @override
   void dispose() {
+    widget.recoveryActiveDepthListenable.removeListener(
+      _handleRecoveryDepthChanged,
+    );
+    _recoveryWaitTimer?.cancel();
     _nameController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  void _handleRecoveryDepthChanged() {
+    if (!mounted) {
+      return;
+    }
+    final activeDepth = widget.recoveryActiveDepthListenable.value;
+    setState(() {
+      _recoveryActiveDepth = activeDepth;
+      if (activeDepth > 0 && _recoveryWaitTimer == null) {
+        _recoveryWaitSeconds = 0;
+      } else if (activeDepth == 0) {
+        _recoveryWaitSeconds = 0;
+      }
+    });
+    _syncRecoveryWaitTimer();
+  }
+
+  void _syncRecoveryWaitTimer() {
+    if (_isRecoveryActive) {
+      _recoveryWaitTimer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _tickRecoveryWait(),
+      );
+      return;
+    }
+    _recoveryWaitTimer?.cancel();
+    _recoveryWaitTimer = null;
+  }
+
+  void _tickRecoveryWait() {
+    if (!mounted || !_isRecoveryActive) {
+      return;
+    }
+    setState(() => _recoveryWaitSeconds += 1);
   }
 
   Future<void> _pickAvatar() async {
@@ -1963,7 +2052,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
 
   void _save() {
     final resolvedName = _nameController.text.trim();
-    if (resolvedName.isEmpty) {
+    if (resolvedName.isEmpty || _isRecoveryActive) {
       return;
     }
 
@@ -1982,6 +2071,8 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final isSaveDisabled =
+        _nameController.text.trim().isEmpty || _isRecoveryActive;
 
     return SafeArea(
       top: false,
@@ -2073,6 +2164,27 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                 maxLines: 4,
               ),
               const SizedBox(height: 20),
+              if (_isRecoveryActive) ...[
+                Text(
+                  l10n.group_edit_recovery_waiting,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: readableColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  l10n.group_edit_recovery_waiting_elapsed(
+                    _recoveryWaitSeconds,
+                  ),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: readableColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               Row(
                 children: [
                   Expanded(
@@ -2086,9 +2198,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                   Expanded(
                     child: FilledButton(
                       key: const ValueKey('group-edit-save'),
-                      onPressed: _nameController.text.trim().isEmpty
-                          ? null
-                          : _save,
+                      onPressed: isSaveDisabled ? null : _save,
                       child: Text(l10n.btn_save),
                     ),
                   ),

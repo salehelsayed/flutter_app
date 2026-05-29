@@ -9230,6 +9230,7 @@ void main() {
           name: 'UP-001 Sync',
         );
         expect(created.group.id, 'grp-up001-sync');
+        final membershipTimelineBase = DateTime.now().toUtc();
 
         Future<void> expectDbAndLatestConfig(
           Set<String> expectedPeerIds,
@@ -9270,7 +9271,7 @@ void main() {
           role: MemberRole.writer,
           publicKey: 'pk-charlie',
           mlKemPublicKey: 'mlkem-charlie',
-          joinedAt: DateTime.utc(2026, 5, 13, 12),
+          joinedAt: membershipTimelineBase.add(const Duration(seconds: 1)),
         );
         await addGroupMember(
           bridge: bridge,
@@ -9291,7 +9292,7 @@ void main() {
           groupId: created.group.id,
           memberPeerId: 'peer-charlie',
           selfPeerId: identity.peerId,
-          eventAt: DateTime.utc(2026, 5, 13, 13),
+          eventAt: membershipTimelineBase.add(const Duration(seconds: 2)),
         );
         await expectDbAndLatestConfig({'peer-admin', 'peer-bob'});
 
@@ -9306,7 +9307,7 @@ void main() {
             role: MemberRole.writer,
             publicKey: 'pk-charlie',
             mlKemPublicKey: 'mlkem-charlie',
-            joinedAt: DateTime.utc(2026, 5, 13, 14),
+            joinedAt: membershipTimelineBase.add(const Duration(seconds: 3)),
           ),
           selfPeerId: identity.peerId,
         );

@@ -1460,24 +1460,44 @@ class GroupMessageListener {
             _acceptedSignedTransitionAuditHashesBySourceId[transitionSourceEventId];
         if (acceptedHash != null) {
           if (signedAuditHash != null && acceptedHash == signedAuditHash) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_DUPLICATE_IGNORED',
-              details: {
-                'groupId': groupId.length > 8
-                    ? groupId.substring(0, 8)
-                    : groupId,
-                'type': sysType ?? 'null',
-              },
+            if (sysType == 'group_metadata_updated' &&
+                await _shouldRetryAcceptedSignedMetadataAvatarRecovery(
+                  groupId,
+                  eventAt: eventAt,
+                  parsed: parsed,
+                )) {
+              emitFlowEvent(
+                layer: 'FL',
+                event:
+                    'GROUP_MESSAGE_LISTENER_SIGNED_METADATA_DUPLICATE_RETRYING_AVATAR',
+                details: {
+                  'groupId': groupId.length > 8
+                      ? groupId.substring(0, 8)
+                      : groupId,
+                  'type': sysType ?? 'null',
+                },
+              );
+            } else {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_DUPLICATE_IGNORED',
+                details: {
+                  'groupId': groupId.length > 8
+                      ? groupId.substring(0, 8)
+                      : groupId,
+                  'type': sysType ?? 'null',
+                },
+              );
+              return;
+            }
+          } else {
+            _emitSignedTransitionAuditRejected(
+              groupId,
+              sysType: sysType,
+              reason: 'conflicting_replay',
             );
             return;
           }
-          _emitSignedTransitionAuditRejected(
-            groupId,
-            sysType: sysType,
-            reason: 'conflicting_replay',
-          );
-          return;
         }
 
         final actorPublicKey = await _resolveActorSigningPublicKey(
@@ -4398,6 +4418,35 @@ class GroupMessageListener {
       },
     );
     return true;
+  }
+
+  Future<bool> _shouldRetryAcceptedSignedMetadataAvatarRecovery(
+    String groupId, {
+    required DateTime? eventAt,
+    required Map<String, dynamic> parsed,
+  }) async {
+    if (eventAt == null) {
+      return false;
+    }
+
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    final payloadAvatarBlobId = groupConfig?['avatarBlobId'] as String?;
+    final payloadAvatarMime = groupConfig?['avatarMime'] as String?;
+    if (payloadAvatarBlobId == null || payloadAvatarMime == null) {
+      return false;
+    }
+
+    final group = await _groupRepo.getGroup(groupId);
+    final watermark = group?.lastMetadataEventAt?.toUtc();
+    if (group == null ||
+        watermark == null ||
+        !eventAt.toUtc().isAtSameMomentAs(watermark)) {
+      return false;
+    }
+
+    return group.avatarBlobId == payloadAvatarBlobId &&
+        group.avatarMime == payloadAvatarMime &&
+        (group.avatarPath == null || group.avatarPath!.isEmpty);
   }
 
   Future<void> _applyAuthoritativeGroupConfigSnapshot(

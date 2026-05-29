@@ -1,15 +1,25 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -27,6 +37,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
+import '../../../shared/fakes/fake_media_picker.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -52,6 +63,33 @@ class FakeIdentityRepository implements IdentityRepository {
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
   }
+}
+
+class _ControlledRecoveryIdentityRepository extends FakeIdentityRepository {
+  bool beginRecoveryOnNextLoad = false;
+
+  _ControlledRecoveryIdentityRepository({super.identity});
+
+  @override
+  Future<IdentityModel?> loadIdentity() async {
+    final loaded = await super.loadIdentity();
+    if (beginRecoveryOnNextLoad) {
+      beginRecoveryOnNextLoad = false;
+      groupRecoveryGate.begin();
+    }
+    return loaded;
+  }
+}
+
+class _FakePathProvider extends Fake
+    with MockPlatformInterfaceMixin
+    implements PathProviderPlatform {
+  final String docsPath;
+
+  _FakePathProvider(this.docsPath);
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => docsPath;
 }
 
 class _TrackingInviteDeliveryAttemptRepository
@@ -231,6 +269,210 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
   for (var i = 0; i < count; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
+}
+
+const _groupEditRecoveryWaitCopy = 'Please wait while this device catches up.';
+
+String _groupEditRecoveryElapsedCopy(int seconds) => 'Waiting ${seconds}s';
+
+final _tinyPngBytes = Uint8List.fromList(const [
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1F,
+  0x15,
+  0xC4,
+  0x89,
+  0x00,
+  0x00,
+  0x00,
+  0x0A,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x78,
+  0x9C,
+  0x63,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x05,
+  0x00,
+  0x01,
+  0x0D,
+  0x0A,
+  0x2D,
+  0xB4,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
+]);
+
+Finder _groupEditNameField() {
+  return find.descendant(
+    of: find.byKey(const ValueKey('group-edit-name-field')),
+    matching: find.byType(TextField),
+  );
+}
+
+Finder _groupEditDescriptionField() {
+  return find.descendant(
+    of: find.byKey(const ValueKey('group-edit-description-field')),
+    matching: find.byType(TextField),
+  );
+}
+
+FilledButton _groupEditSaveButton(WidgetTester tester) {
+  return tester.widget<FilledButton>(
+    find.byKey(const ValueKey('group-edit-save')),
+  );
+}
+
+Future<void> _seedEditableGroup(
+  InMemoryGroupRepository groupRepo, {
+  GroupModel? group,
+}) async {
+  final resolvedGroup = group ?? makeAdminGroup();
+  await groupRepo.saveGroup(resolvedGroup);
+  await _saveGroupReplayKey(groupRepo, groupId: resolvedGroup.id);
+  await groupRepo.saveMember(
+    GroupMember(
+      groupId: resolvedGroup.id,
+      peerId: testIdentity.peerId,
+      username: testIdentity.username,
+      role: MemberRole.admin,
+      publicKey: testIdentity.publicKey,
+      mlKemPublicKey: testIdentity.mlKemPublicKey,
+      joinedAt: DateTime.now().toUtc(),
+    ),
+  );
+}
+
+Future<void> _pumpEditableGroupInfo(
+  WidgetTester tester, {
+  required InMemoryGroupRepository groupRepo,
+  GroupModel? group,
+  IdentityRepository? identityRepo,
+  FakeBridge? bridge,
+  FakeP2PService? p2pService,
+  FakeMediaPicker? mediaPicker,
+  ImageProcessor? imageProcessor,
+  UploadGroupAvatarFn? uploadGroupAvatarFn,
+}) async {
+  await tester.pumpWidget(
+    _localizedMaterialApp(
+      home: GroupInfoWired(
+        group: group ?? makeAdminGroup(),
+        groupRepo: groupRepo,
+        contactRepo: InMemoryContactRepository(),
+        bridge: bridge ?? FakeBridge(),
+        identityRepo:
+            identityRepo ?? FakeIdentityRepository(identity: testIdentity),
+        p2pService: p2pService ?? FakeP2PService(),
+        mediaPicker: mediaPicker,
+        imageProcessor: imageProcessor,
+        uploadGroupAvatarFn: uploadGroupAvatarFn ?? uploadGroupAvatar,
+      ),
+    ),
+  );
+  await pumpFrames(tester);
+}
+
+Future<void> _openGroupDetailsEditor(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('group-edit-details-button')));
+  await pumpFrames(tester);
+}
+
+Future<void> _pickGroupEditPhoto(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    await tester.tap(find.byKey(const ValueKey('group-edit-pick-photo')));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  });
+  await pumpFrames(tester, count: 10);
+}
+
+Future<void> _tapGroupEditSave(WidgetTester tester) async {
+  final saveButton = find.byKey(const ValueKey('group-edit-save'));
+  await tester.ensureVisible(saveButton);
+  await pumpFrames(tester, count: 2);
+  await tester.tap(saveButton, warnIfMissed: false);
+}
+
+ImageProcessor _testAvatarImageProcessor([Uint8List? processedBytes]) {
+  return ImageProcessor(
+    compressFile:
+        ({
+          required String path,
+          required int quality,
+          required bool keepExif,
+          int minWidth = 1920,
+          int minHeight = 1080,
+        }) async {
+          final outputPath = '${path}_processed.jpg';
+          File(
+            outputPath,
+          ).writeAsBytesSync(processedBytes ?? _tinyPngBytes, flush: true);
+          return XFile(outputPath);
+        },
+  );
+}
+
+Future<Directory> _installPathProviderTempDirForTest() async {
+  final previousPathProvider = PathProviderPlatform.instance;
+  final tempDir = Directory.systemTemp.createTempSync(
+    'group_info_wired_avatar_',
+  );
+  PathProviderPlatform.instance = _FakePathProvider(tempDir.path);
+  addTearDown(() {
+    PathProviderPlatform.instance = previousPathProvider;
+    if (tempDir.existsSync()) {
+      tempDir.deleteSync(recursive: true);
+    }
+  });
+  return tempDir;
+}
+
+Future<File> _writePickedAvatar(Directory tempDir, String name) async {
+  final file = File(p.join(tempDir.path, '$name.jpg'));
+  file.writeAsBytesSync(_tinyPngBytes, flush: true);
+  return file;
 }
 
 Future<void> _waitForInviteStatus({
@@ -545,6 +787,14 @@ List<String> _lastUpdateConfigMemberPeerIds(FakeBridge bridge) {
 
 void main() {
   group('GroupInfoWired', () {
+    setUp(() {
+      groupRecoveryGate.resetForTest();
+    });
+
+    tearDown(() {
+      groupRecoveryGate.resetForTest();
+    });
+
     testWidgets('loads and displays group members on init', (tester) async {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
@@ -2280,6 +2530,266 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'GDR-001 active recovery before opening editor disables Save and shows elapsed wait copy',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo);
+        groupRecoveryGate.begin();
+
+        await _pumpEditableGroupInfo(tester, groupRepo: groupRepo);
+        await _openGroupDetailsEditor(tester);
+
+        expect(_groupEditSaveButton(tester).onPressed, isNull);
+        expect(find.text(_groupEditRecoveryWaitCopy), findsOneWidget);
+        expect(find.text(_groupEditRecoveryElapsedCopy(0)), findsOneWidget);
+        expect(find.textContaining('resync'), findsNothing);
+        expect(
+          find.textContaining(RegExp('group recovery', caseSensitive: false)),
+          findsNothing,
+        );
+
+        await tester.pump(const Duration(seconds: 2));
+
+        expect(find.text(_groupEditRecoveryElapsedCopy(2)), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'GDR-001 recovery ending re-enables Save without losing draft text or selected photo preview',
+      (tester) async {
+        final tempDir = await _installPathProviderTempDirForTest();
+        final pickedAvatar = await _writePickedAvatar(tempDir, 'picked');
+        final mediaPicker = FakeMediaPicker()
+          ..imageResult = XFile(pickedAvatar.path);
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo);
+        groupRecoveryGate.begin();
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          mediaPicker: mediaPicker,
+          imageProcessor: _testAvatarImageProcessor(),
+        );
+        await _openGroupDetailsEditor(tester);
+
+        await _pickGroupEditPhoto(tester);
+        expect(mediaPicker.pickImageCalls, 1);
+        expect(find.text('Failed to pick group photo'), findsNothing);
+        await tester.enterText(_groupEditNameField(), 'Queued Name');
+        await tester.enterText(
+          _groupEditDescriptionField(),
+          'Queued description',
+        );
+        expect(
+          find.byKey(
+            const ValueKey('group-avatar-image-group-1-memory-none-editor'),
+          ),
+          findsOneWidget,
+        );
+        expect(_groupEditSaveButton(tester).onPressed, isNull);
+
+        groupRecoveryGate.end();
+        await tester.pump();
+
+        final nameField = tester.widget<TextField>(_groupEditNameField());
+        final descriptionField = tester.widget<TextField>(
+          _groupEditDescriptionField(),
+        );
+        expect(nameField.controller!.text, 'Queued Name');
+        expect(descriptionField.controller!.text, 'Queued description');
+        expect(
+          find.byKey(
+            const ValueKey('group-avatar-image-group-1-memory-none-editor'),
+          ),
+          findsOneWidget,
+        );
+        expect(_groupEditSaveButton(tester).onPressed, isNotNull);
+        expect(find.text(_groupEditRecoveryWaitCopy), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'GDR-001 recovery starting after editor opens disables Save and shows wait copy',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo);
+
+        await _pumpEditableGroupInfo(tester, groupRepo: groupRepo);
+        await _openGroupDetailsEditor(tester);
+
+        expect(_groupEditSaveButton(tester).onPressed, isNotNull);
+        expect(find.text(_groupEditRecoveryWaitCopy), findsNothing);
+
+        groupRecoveryGate.begin();
+        await tester.pump();
+
+        expect(_groupEditSaveButton(tester).onPressed, isNull);
+        expect(find.text(_groupEditRecoveryWaitCopy), findsOneWidget);
+        expect(find.textContaining('resync'), findsNothing);
+        expect(
+          find.textContaining(RegExp('group recovery', caseSensitive: false)),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'GDR-001 empty-name validation keeps Save disabled after recovery ends',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo);
+        groupRecoveryGate.begin();
+
+        await _pumpEditableGroupInfo(tester, groupRepo: groupRepo);
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), '   ');
+
+        groupRecoveryGate.end();
+        await tester.pump();
+
+        expect(find.text(_groupEditRecoveryWaitCopy), findsNothing);
+        expect(_groupEditSaveButton(tester).onPressed, isNull);
+      },
+    );
+
+    testWidgets(
+      'GDR-001 recovery rejection during save maps to wait copy without raw recovery text',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo);
+        final identityRepo = _ControlledRecoveryIdentityRepository(
+          identity: testIdentity,
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'Rename during wait');
+
+        identityRepo.beginRecoveryOnNextLoad = true;
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup('group-1');
+        expect(persisted!.name, 'Test Group');
+        expect(find.text(_groupEditRecoveryWaitCopy), findsOneWidget);
+        expect(find.textContaining('resync'), findsNothing);
+        expect(
+          find.textContaining(RegExp('group recovery', caseSensitive: false)),
+          findsNothing,
+        );
+        expect(find.textContaining('groupRecoveryPendingError'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'GDR-001 recovery-blocked replacement does not commit canonical avatar before metadata success',
+      (tester) async {
+        final tempDir = await _installPathProviderTempDirForTest();
+        final pickedAvatar = await _writePickedAvatar(tempDir, 'replacement');
+        final canonicalAvatar = File(
+          p.join(tempDir.path, groupAvatarRelativePath('group-1')),
+        );
+        final mediaPicker = FakeMediaPicker()
+          ..imageResult = XFile(pickedAvatar.path);
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo);
+        var uploadCalls = 0;
+        final UploadGroupAvatarFn uploadAndStartRecovery =
+            ({
+              required Bridge bridge,
+              required String localFilePath,
+              required String groupId,
+              required List<String> allowedPeers,
+              String? blobId,
+              String mime = 'image/jpeg',
+            }) {
+              uploadCalls += 1;
+              groupRecoveryGate.begin();
+              return Future<GroupAvatarUpload?>.value(
+                const GroupAvatarUpload(
+                  id: 'avatar-new',
+                  mime: 'image/jpeg',
+                  size: 4,
+                ),
+              );
+            };
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          mediaPicker: mediaPicker,
+          imageProcessor: _testAvatarImageProcessor(
+            Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]),
+          ),
+          uploadGroupAvatarFn: uploadAndStartRecovery,
+        );
+        await _openGroupDetailsEditor(tester);
+        await _pickGroupEditPhoto(tester);
+        await tester.enterText(_groupEditNameField(), 'Avatar Rename');
+
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup('group-1');
+        expect(uploadCalls, 1);
+        expect(canonicalAvatar.existsSync(), isFalse);
+        expect(persisted!.avatarBlobId, isNull);
+        expect(persisted.avatarMime, isNull);
+        expect(persisted.avatarPath, isNull);
+        expect(find.text(_groupEditRecoveryWaitCopy), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'GDR-001 recovery-blocked removal keeps existing canonical avatar until metadata success',
+      (tester) async {
+        final tempDir = await _installPathProviderTempDirForTest();
+        final existingAvatarBytes = Uint8List.fromList([1, 2, 3, 4]);
+        final existingAvatarPath = groupAvatarRelativePath('group-1');
+        final existingAvatar = File(p.join(tempDir.path, existingAvatarPath));
+        existingAvatar.parent.createSync(recursive: true);
+        existingAvatar.writeAsBytesSync(existingAvatarBytes, flush: true);
+        final group = makeAdminGroup().copyWith(
+          avatarBlobId: 'avatar-old',
+          avatarMime: 'image/jpeg',
+          avatarPath: existingAvatarPath,
+        );
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo, group: group);
+        final identityRepo = _ControlledRecoveryIdentityRepository(
+          identity: testIdentity,
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: group,
+          identityRepo: identityRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.tap(find.byKey(const ValueKey('group-edit-remove-photo')));
+        await pumpFrames(tester);
+
+        identityRepo.beginRecoveryOnNextLoad = true;
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup('group-1');
+        expect(existingAvatar.existsSync(), isTrue);
+        expect(existingAvatar.readAsBytesSync(), existingAvatarBytes);
+        expect(persisted!.avatarBlobId, 'avatar-old');
+        expect(persisted.avatarMime, 'image/jpeg');
+        expect(persisted.avatarPath, existingAvatarPath);
+        expect(find.text(_groupEditRecoveryWaitCopy), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'EK004 PREREQ-SIGNED-COMMIT-AUDIT admin metadata edit stores signed replay and audit payloads',

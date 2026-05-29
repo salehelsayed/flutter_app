@@ -36,5 +36,14 @@ void main() {
             .runExactScenario4AdminDemotionEnforcementJourney();
       },
     );
+
+    testWidgets(
+      group_admin_metadata_convergence
+          .promotedAdminRecoverySaveConvergenceLabel,
+      (_) async {
+        await group_admin_metadata_convergence
+            .runPromotedAdminRecoverySaveConvergenceScenario();
+      },
+    );
   });
 }

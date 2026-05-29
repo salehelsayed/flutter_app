@@ -1972,6 +1972,18 @@ abstract class AppLocalizations {
   /// **'Description'**
   String get group_edit_description;
 
+  /// No description provided for @group_edit_recovery_waiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Please wait while this device catches up.'**
+  String get group_edit_recovery_waiting;
+
+  /// No description provided for @group_edit_recovery_waiting_elapsed.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting {seconds}s'**
+  String group_edit_recovery_waiting_elapsed(int seconds);
+
   /// No description provided for @btn_save.
   ///
   /// In en, this message translates to:

@@ -249,6 +249,12 @@ const _privateAdminDemotionEnforcementRequirement =
       scenario: 'private_admin_demotion_enforcement',
       roles: <String>['alice', 'bob', 'charlie', 'dana'],
     );
+const _regressionGroupAdminPermissionsFourUsersRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario:
+          'regression_group_admin_permissions_and_message_reliability_four_users',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
 const _ge001Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'ge001',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -542,6 +548,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
       _privateAdminMetadataIntroPhotoConvergenceRequirement,
   'private_admin_demotion_enforcement':
       _privateAdminDemotionEnforcementRequirement,
+  'regression_group_admin_permissions_and_message_reliability_four_users':
+      _regressionGroupAdminPermissionsFourUsersRequirement,
   'gm002': _gm002Requirement,
   'gm003': _gm003Requirement,
   'gm004': _gm004Requirement,
@@ -764,6 +772,8 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
                 'private_background_resume_group_delivery' ||
             requirement.scenario == 'private_removed_reaction_rejected' ||
             requirement.scenario == 'private_admin_demotion_enforcement' ||
+            requirement.scenario ==
+                'regression_group_admin_permissions_and_message_reliability_four_users' ||
             requirement.scenario == 'gm009' ||
             requirement.scenario == 'gm011' ||
             requirement.scenario == 'gm013' ||
@@ -881,6 +891,38 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
       if (danaVerdict != null &&
           _activeMemberPeerIds(danaVerdict).contains(absentPeerId)) {
         failures.add('dana: Scenario 4 must remain absent from membership');
+      }
+    } else if (requirement.scenario ==
+        'regression_group_admin_permissions_and_message_reliability_four_users') {
+      final activePeerIds = <String>{
+        peerIdByRole['alice']!,
+        peerIdByRole['bob']!,
+        peerIdByRole['charlie']!,
+      };
+      final removedPeerId = peerIdByRole['dana']!;
+      for (final role in const <String>['alice', 'bob', 'charlie']) {
+        final verdict = byRole[role];
+        if (verdict == null) continue;
+        final members = _activeMemberPeerIds(verdict).toSet();
+        final missingMembers = activePeerIds.difference(members);
+        if (missingMembers.isNotEmpty) {
+          failures.add(
+            '$role: incomplete admin-permissions final membership, missing '
+            '${missingMembers.join(', ')}',
+          );
+        }
+        if (members.contains(removedPeerId)) {
+          failures.add(
+            '$role: admin-permissions final membership includes Dana',
+          );
+        }
+      }
+      final danaVerdict = byRole['dana'];
+      if (danaVerdict != null &&
+          _activeMemberPeerIds(danaVerdict).contains(removedPeerId)) {
+        failures.add(
+          'dana: admin-permissions final active members must exclude Dana',
+        );
       }
     } else if (requirement.scenario == 'ge002' ||
         requirement.scenario == 'ge003' ||
@@ -1013,9 +1055,11 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
   for (final role in requirement.roles) {
     final verdict = byRole[role];
     if (verdict == null) continue;
-    final receivedKeys = _mapList(
-      verdict['receivedMessages'],
-    ).map((entry) => _stringValue(entry['key'])).whereType<String>().toSet();
+    final receivedKeys = _mapList(verdict['receivedMessages'])
+        .where((entry) => entry['selfDelivery'] != true)
+        .map((entry) => _stringValue(entry['key']))
+        .whereType<String>()
+        .toSet();
     final expectedKeys = expectedReceivedByRole[role] ?? const <String>{};
     final unexpected = receivedKeys.difference(expectedKeys);
     final missing = expectedKeys.difference(receivedKeys);
@@ -2292,6 +2336,69 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['alice', 'bob'],
         ),
       ];
+    case 'regression_group_admin_permissions_and_message_reliability_four_users':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceRegAdminAfterBobAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobRegAdminAfterBobAccept',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceRegAdminAfterCharlieAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobRegAdminAfterCharlieAccept',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieRegAdminAfterCharlieAccept',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceRegAdminAfterDanaAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobRegAdminAfterDanaAccept',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieRegAdminAfterDanaAccept',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'danaRegAdminAfterDanaAccept',
+          senderRole: 'dana',
+          receiverRoles: <String>['alice', 'bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'aliceRegAdminPostDanaRemoval',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobRegAdminPostDanaRemoval',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieRegAdminPostDanaRemoval',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob'],
+        ),
+      ];
     case 'private_history_retention':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
@@ -3299,6 +3406,15 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_admin_demotion_enforcement') {
     _validatePrivateAdminDemotionEnforcementProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario ==
+      'regression_group_admin_permissions_and_message_reliability_four_users') {
+    _validateRegressionGroupAdminPermissionsFourUsersProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -8122,6 +8238,684 @@ void _validatePrivateAdminDemotionEnforcementProof({
         );
       }
     }
+  }
+}
+
+void _validateRegressionGroupAdminPermissionsFourUsersProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'regressionGroupAdminPermissionsProof';
+  const scenario =
+      'regression_group_admin_permissions_and_message_reliability_four_users';
+  const expectedMatrixKeys = <String>[
+    'aliceRegAdminAfterBobAccept',
+    'bobRegAdminAfterBobAccept',
+    'aliceRegAdminAfterCharlieAccept',
+    'bobRegAdminAfterCharlieAccept',
+    'charlieRegAdminAfterCharlieAccept',
+    'aliceRegAdminAfterDanaAccept',
+    'bobRegAdminAfterDanaAccept',
+    'charlieRegAdminAfterDanaAccept',
+    'danaRegAdminAfterDanaAccept',
+    'aliceRegAdminPostDanaRemoval',
+    'bobRegAdminPostDanaRemoval',
+    'charlieRegAdminPostDanaRemoval',
+  ];
+  const expectedMetadataWatermarkStages = <String>[
+    'after_bob_accept',
+    'after_bob_metadata_v1',
+    'after_charlie_metadata_v2',
+    'after_alice_avatar_v3',
+    'after_dana_removal',
+  ];
+  const expectedMembershipWatermarkStages = <String>[
+    'after_bob_promotion',
+    'after_charlie_accept',
+    'after_charlie_promotion',
+    'after_bob_demotion',
+    'after_dana_accept',
+    'after_dana_removal',
+  ];
+  const expectedLatestTimelineEventRolesByStage = <String, List<String>>{
+    'after_dana_removal': <String>['alice', 'bob', 'charlie'],
+  };
+  const expectedSystemEventsByRole = <String, List<String>>{
+    'alice': <String>[
+      'bob_promotion',
+      'charlie_promotion',
+      'bob_demotion',
+      'dana_removal',
+    ],
+    'bob': <String>[
+      'bob_promotion',
+      'charlie_promotion',
+      'bob_demotion',
+      'dana_removal',
+    ],
+    'charlie': <String>['charlie_promotion', 'bob_demotion', 'dana_removal'],
+    'dana': <String>[],
+  };
+  const expectedEventTypes = <String, String>{
+    'bob_promotion': 'member_role_updated',
+    'charlie_promotion': 'member_role_updated',
+    'bob_demotion': 'member_role_updated',
+    'dana_removal': 'member_removed',
+  };
+  const expectedEventTargets = <String, String>{
+    'bob_promotion': 'bob',
+    'charlie_promotion': 'charlie',
+    'bob_demotion': 'bob',
+    'dana_removal': 'dana',
+  };
+  final activePeerIds = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['bob'],
+    ?peerIdByRole['charlie'],
+  };
+  final adminPeerIds = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['charlie'],
+  };
+  final danaPeerId = peerIdByRole['dana'];
+  final activeStateHashes = <String>{};
+  final activeAvatarHashes = <String>{};
+
+  bool blockedOutcome(Object? raw) {
+    final outcome = _stringValue(raw);
+    return outcome != null &&
+        outcome.isNotEmpty &&
+        outcome != 'accepted' &&
+        outcome != 'not_attempted' &&
+        (outcome.startsWith('blocked:') ||
+            outcome.startsWith('rejected:') ||
+            outcome == 'missing_contact');
+  }
+
+  void requireBlockedOutcome(
+    String role,
+    Map<String, dynamic> outcomes,
+    String field,
+  ) {
+    if (!blockedOutcome(outcomes[field])) {
+      failures.add('$role: $proofName.$field must be blocked or rejected');
+    }
+  }
+
+  void requireRejectedAction(
+    String role,
+    Map<String, dynamic> outcomes,
+    String fieldPrefix,
+  ) {
+    requireBlockedOutcome(role, outcomes, '${fieldPrefix}AttemptOutcome');
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: outcomes,
+      field: '${fieldPrefix}StateUnchanged',
+      failures: failures,
+    );
+  }
+
+  void requireSystemEvent(
+    String role,
+    Map<String, dynamic> events,
+    String eventKey,
+  ) {
+    final fieldPath = '$proofName.systemEventVisibilityProof.$eventKey';
+    final event = _mapValue(events[eventKey]);
+    if (event == null) {
+      failures.add('$role: $fieldPath is required');
+      return;
+    }
+    if (event['visible'] != true) {
+      failures.add('$role: $fieldPath.visible must be true');
+    }
+    final expectedType = expectedEventTypes[eventKey];
+    if (_stringValue(event['eventType']) != expectedType) {
+      failures.add('$role: $fieldPath.eventType must be $expectedType');
+    }
+    final expectedTargetRole = expectedEventTargets[eventKey];
+    final expectedTargetPeerId = expectedTargetRole == null
+        ? null
+        : peerIdByRole[expectedTargetRole];
+    if (expectedTargetPeerId != null &&
+        _stringValue(event['targetPeerId']) != expectedTargetPeerId) {
+      failures.add('$role: $fieldPath.targetPeerId mismatch');
+    }
+    final source = _stringValue(event['source']);
+    if (source != 'timeline' && source != 'event_log') {
+      failures.add('$role: $fieldPath.source must be timeline or event_log');
+    }
+    final messageId = _stringValue(event['messageId']);
+    if (messageId == null || messageId.isEmpty) {
+      failures.add('$role: $fieldPath.messageId is required');
+    }
+    if (_dateTimeValue(event['eventAt']) == null) {
+      failures.add('$role: $fieldPath.eventAt is required');
+    }
+    final textHash = _stringValue(event['textHash']);
+    if (textHash == null || textHash.length != 64) {
+      failures.add('$role: $fieldPath.textHash is required');
+    }
+  }
+
+  String? latestTimelineEventSignature({
+    required String role,
+    required String fieldPath,
+    required Map<String, dynamic> event,
+  }) {
+    final messageId = _stringValue(event['messageId']);
+    final eventType = _stringValue(event['eventType']);
+    final eventAt = _stringValue(event['eventAt']);
+    final textHash = _stringValue(event['textHash']);
+    var valid = true;
+    if (messageId == null || messageId.isEmpty) {
+      failures.add('$role: $fieldPath.messageId is required');
+      valid = false;
+    }
+    if (eventType == null || eventType.isEmpty) {
+      failures.add('$role: $fieldPath.eventType is required');
+      valid = false;
+    }
+    if (eventAt == null || _dateTimeValue(eventAt) == null) {
+      failures.add('$role: $fieldPath.eventAt is required');
+      valid = false;
+    }
+    if (textHash == null || textHash.length != 64) {
+      failures.add('$role: $fieldPath.textHash is required');
+      valid = false;
+    }
+    if (!valid) return null;
+    return '$messageId\n$eventType\n$eventAt\n$textHash';
+  }
+
+  void requireLatestTimelineEventProof(
+    String role,
+    Map<String, dynamic> convergence,
+  ) {
+    const convergenceProofName =
+        'regressionGroupAdminPermissionsProof.convergenceFieldProof';
+    final proof = _mapValue(convergence['latestTimelineEventProof']);
+    if (proof == null) {
+      failures.add(
+        '$role: $convergenceProofName.latestTimelineEventProof '
+        'is required',
+      );
+      return;
+    }
+
+    for (final entry in expectedLatestTimelineEventRolesByStage.entries) {
+      final stage = entry.key;
+      final requiredRoles = entry.value;
+      final stagePath = '$convergenceProofName.latestTimelineEventProof.$stage';
+      final stageProof = _mapValue(proof[stage]);
+      if (stageProof == null) {
+        failures.add('$role: $stagePath is required');
+        continue;
+      }
+      if (stageProof['stable'] != true) {
+        failures.add('$role: $stagePath.stable must be true');
+      }
+      final activeRoles = _stringList(stageProof['activeRoles']).toSet();
+      final missingActiveRoles = requiredRoles
+          .where((requiredRole) => !activeRoles.contains(requiredRole))
+          .toList(growable: false);
+      if (missingActiveRoles.isNotEmpty) {
+        failures.add(
+          '$role: $stagePath.activeRoles missing '
+          '${missingActiveRoles.join(', ')}',
+        );
+      }
+      final eventsByRole = _mapValue(stageProof['eventsByRole']);
+      if (eventsByRole == null) {
+        failures.add('$role: $stagePath.eventsByRole is required');
+        continue;
+      }
+      final signatures = <String>{};
+      for (final activeRole in requiredRoles) {
+        final eventPath = '$stagePath.eventsByRole.$activeRole';
+        final event = _mapValue(eventsByRole[activeRole]);
+        if (event == null) {
+          failures.add('$role: $eventPath is required');
+          continue;
+        }
+        final signature = latestTimelineEventSignature(
+          role: role,
+          fieldPath: eventPath,
+          event: event,
+        );
+        if (signature != null) {
+          signatures.add(signature);
+        }
+      }
+      if (signatures.length != 1) {
+        failures.add('$role: $stagePath events must match across active roles');
+      }
+    }
+  }
+
+  void requireConvergenceFields(String role, Map<String, dynamic> convergence) {
+    const convergenceProofName =
+        'regressionGroupAdminPermissionsProof.convergenceFieldProof';
+    for (final field in const <String>[
+      'lastMetadataEventAtMatched',
+      'lastMembershipEventAtMatched',
+      'latestTimelineEventProofPresent',
+      'pendingInviteStateProofPresent',
+      'removedMemberRepresentedAfterRemoval',
+      'avatarMetadataAndBytesMatched',
+      'activeMembersMatched',
+      'adminsMatched',
+      'stateHashMatched',
+      'keyEpochMatched',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: convergenceProofName,
+        proof: convergence,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    final metadataStages = _stringList(
+      convergence['metadataWatermarkStages'],
+    ).toSet();
+    final missingMetadataStages = expectedMetadataWatermarkStages
+        .where((stage) => !metadataStages.contains(stage))
+        .toList(growable: false);
+    if (missingMetadataStages.isNotEmpty) {
+      failures.add(
+        '$role: $convergenceProofName.metadataWatermarkStages missing '
+        '${missingMetadataStages.join(', ')}',
+      );
+    }
+
+    final membershipStages = _stringList(
+      convergence['membershipWatermarkStages'],
+    ).toSet();
+    final missingMembershipStages = expectedMembershipWatermarkStages
+        .where((stage) => !membershipStages.contains(stage))
+        .toList(growable: false);
+    if (missingMembershipStages.isNotEmpty) {
+      failures.add(
+        '$role: $convergenceProofName.membershipWatermarkStages missing '
+        '${missingMembershipStages.join(', ')}',
+      );
+    }
+
+    final latestTimelineStages = _stringList(
+      convergence['latestTimelineEventStages'],
+    ).toSet();
+    if (!latestTimelineStages.contains('after_dana_removal')) {
+      failures.add(
+        '$role: $convergenceProofName.latestTimelineEventStages must include '
+        'after_dana_removal',
+      );
+    }
+    requireLatestTimelineEventProof(role, convergence);
+
+    final convergenceRemoved = _stringList(
+      convergence['removedMemberPeerIds'],
+    ).toSet();
+    if (danaPeerId != null && !convergenceRemoved.contains(danaPeerId)) {
+      failures.add(
+        '$role: $convergenceProofName.removedMemberPeerIds must include Dana',
+      );
+    }
+  }
+
+  void requireAcceptedPendingInvite(
+    String role,
+    Map<String, dynamic> pendingStates,
+    String pendingKey,
+  ) {
+    final fieldPath =
+        '$proofName.convergenceFieldProof.pendingInviteStateProof.$pendingKey';
+    final pending = _mapValue(pendingStates[pendingKey]);
+    if (pending == null) {
+      failures.add('$role: $fieldPath is required');
+      return;
+    }
+    if (pending['storedBeforeAccept'] != true) {
+      failures.add('$role: $fieldPath.storedBeforeAccept must be true');
+    }
+    if (pending['consumedAfterAccept'] != true) {
+      failures.add('$role: $fieldPath.consumedAfterAccept must be true');
+    }
+    if (_intValue(pending['pendingInviteCountBeforeAccept']) != 1) {
+      failures.add(
+        '$role: $fieldPath.pendingInviteCountBeforeAccept must be 1',
+      );
+    }
+    if (_intValue(pending['pendingInviteCountAfterAccept']) != 0) {
+      failures.add('$role: $fieldPath.pendingInviteCountAfterAccept must be 0');
+    }
+  }
+
+  void requireRejectedDanaPendingInvite(
+    String role,
+    Map<String, dynamic> pendingStates,
+  ) {
+    const pendingKey = 'aliceDanaRejectedInvite';
+    final fieldPath =
+        '$proofName.convergenceFieldProof.pendingInviteStateProof.$pendingKey';
+    final pending = _mapValue(pendingStates[pendingKey]);
+    if (pending == null) {
+      failures.add('$role: $fieldPath is required');
+      return;
+    }
+    if (pending['noPendingInviteForDana'] != true) {
+      failures.add('$role: $fieldPath.noPendingInviteForDana must be true');
+    }
+    if (_intValue(pending['pendingInviteCountAfterRejectedInvite']) != 0) {
+      failures.add(
+        '$role: $fieldPath.pendingInviteCountAfterRejectedInvite must be 0',
+      );
+    }
+  }
+
+  for (final role in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) !=
+        'REGRESSION-GROUP-ADMIN-PERMISSIONS-FOUR-USERS') {
+      failures.add('$role: $proofName.rowId mismatch');
+    }
+    if (_stringValue(proof['scenario']) != scenario) {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+
+    for (final field in const <String>[
+      'initialContactGraphProof',
+      'allStateConvergenceChecksPassed',
+      'fullMessageMatrixProofPassed',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireKeySetProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'fullMessageMatrixPhaseKeys',
+      expected: expectedMatrixKeys,
+      failures: failures,
+    );
+    final sentMatrixKeys = _mapList(byRole[role]?['sentMessages'])
+        .map((entry) => _stringValue(entry['key']))
+        .whereType<String>()
+        .where(expectedMatrixKeys.contains)
+        .toList(growable: false);
+    final receivedEntries = _mapList(byRole[role]?['receivedMessages']);
+    for (final key in sentMatrixKeys) {
+      final selfEntries = receivedEntries
+          .where(
+            (entry) =>
+                _stringValue(entry['key']) == key &&
+                entry['selfDelivery'] == true,
+          )
+          .toList(growable: false);
+      if (selfEntries.length != 1) {
+        failures.add(
+          '$role: $proofName self-delivery $key count=${selfEntries.length}; '
+          'requires exactly one',
+        );
+        continue;
+      }
+      final selfEntry = selfEntries.single;
+      if (selfEntry['isIncoming'] != false) {
+        failures.add('$role: $proofName self-delivery $key must be outgoing');
+      }
+      if (_intValue(selfEntry['persistedCount']) != 1) {
+        failures.add(
+          '$role: $proofName self-delivery $key persistedCount must be 1',
+        );
+      }
+    }
+
+    final outcomes = _mapValue(proof['rejectedActionOutcomes']);
+    if (outcomes == null) {
+      failures.add('$role: $proofName.rejectedActionOutcomes is required');
+    }
+
+    final systemEvents = _mapValue(proof['systemEventVisibilityProof']);
+    if (systemEvents == null) {
+      failures.add('$role: $proofName.systemEventVisibilityProof is required');
+    } else {
+      for (final eventKey in expectedSystemEventsByRole[role]!) {
+        requireSystemEvent(role, systemEvents, eventKey);
+      }
+    }
+
+    final convergence = _mapValue(proof['convergenceFieldProof']);
+    if (convergence == null) {
+      failures.add('$role: $proofName.convergenceFieldProof is required');
+    } else {
+      requireConvergenceFields(role, convergence);
+      final pendingStates = _mapValue(convergence['pendingInviteStateProof']);
+      if (pendingStates == null) {
+        failures.add(
+          '$role: $proofName.convergenceFieldProof.pendingInviteStateProof '
+          'is required',
+        );
+      } else {
+        switch (role) {
+          case 'alice':
+            requireRejectedDanaPendingInvite(role, pendingStates);
+            break;
+          case 'bob':
+            requireAcceptedPendingInvite(
+              role,
+              pendingStates,
+              'bobInitialInvite',
+            );
+            break;
+          case 'charlie':
+            requireAcceptedPendingInvite(role, pendingStates, 'charlieInvite');
+            break;
+          case 'dana':
+            requireRejectedDanaPendingInvite(role, pendingStates);
+            requireAcceptedPendingInvite(role, pendingStates, 'danaInvite');
+            break;
+        }
+      }
+    }
+
+    if (role != 'dana') {
+      for (final field in const <String>[
+        'avatarBytesVisible',
+        'finalMetadataConverged',
+        'finalRolesConverged',
+        'danaRemovedFromActiveMembers',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: proofName,
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+      if (_stringValue(proof['finalMetadataName']) != 'test me v2') {
+        failures.add('$role: $proofName.finalMetadataName must be test me v2');
+      }
+      if (_stringValue(proof['finalMetadataDescription']) !=
+          'do you see me v2?') {
+        failures.add(
+          '$role: $proofName.finalMetadataDescription must be do you see me v2?',
+        );
+      }
+      if (_stringValue(proof['finalAvatarMime']) != 'image/png') {
+        failures.add('$role: $proofName.finalAvatarMime must be image/png');
+      }
+      final avatarHash = _stringValue(proof['finalAvatarSha256']);
+      if (avatarHash == null || avatarHash.length != 64) {
+        failures.add('$role: $proofName.finalAvatarSha256 is required');
+      } else {
+        activeAvatarHashes.add(avatarHash);
+      }
+      final finalStateHash = _stringValue(proof['finalStateHash']);
+      if (finalStateHash == null || finalStateHash.isEmpty) {
+        failures.add('$role: $proofName.finalStateHash is required');
+      } else {
+        activeStateHashes.add(finalStateHash);
+      }
+      final finalEpoch = _intValue(proof['finalKeyEpoch']);
+      if (finalEpoch == null || finalEpoch < 1) {
+        failures.add('$role: $proofName.finalKeyEpoch must be positive');
+      }
+      if (activePeerIds.length == 3) {
+        _requireProofPeerSet(
+          role: role,
+          proofName: proofName,
+          proof: proof,
+          field: 'finalActiveMemberPeerIds',
+          expected: activePeerIds,
+          failures: failures,
+        );
+      }
+      if (adminPeerIds.length == 2) {
+        _requireProofPeerSet(
+          role: role,
+          proofName: proofName,
+          proof: proof,
+          field: 'finalAdminPeerIds',
+          expected: adminPeerIds,
+          failures: failures,
+        );
+      }
+      final removed = _stringList(proof['removedMemberPeerIds']).toSet();
+      if (danaPeerId != null && !removed.contains(danaPeerId)) {
+        failures.add(
+          '$role: $proofName.removedMemberPeerIds must include Dana',
+        );
+      }
+    }
+
+    if (outcomes == null) continue;
+    switch (role) {
+      case 'alice':
+        requireRejectedAction(role, outcomes, 'aliceDanaInvite');
+        _requireTrueProof(
+          role: role,
+          proofName: proofName,
+          proof: outcomes,
+          field: 'aliceDanaInviteNoPendingInviteForDana',
+          failures: failures,
+        );
+        _requireIntProof(
+          role: role,
+          proofName: proofName,
+          proof: outcomes,
+          field: 'aliceDanaInviteDanaPendingInviteCount',
+          expected: 0,
+          failures: failures,
+        );
+        break;
+      case 'bob':
+        for (final fieldPrefix in const <String>[
+          'bobPrePromotionName',
+          'bobPrePromotionDescription',
+          'bobPrePromotionImage',
+          'bobPrePromotionAddCharlie',
+          'bobPrePromotionPromoteSelf',
+          'bobPrePromotionDemoteAlice',
+          'bobPrePromotionRemoveAlice',
+          'bobDemotedName',
+          'bobDemotedDescription',
+          'bobDemotedImage',
+          'bobDemotedInviteDana',
+          'bobDemotedPromoteDana',
+          'bobDemotedDemoteCharlie',
+          'bobDemotedRemoveDana',
+          'bobPostDanaPromoteDana',
+          'bobPostDanaDemoteCharlie',
+          'bobPostDanaRemoveDana',
+        ]) {
+          requireRejectedAction(role, outcomes, fieldPrefix);
+        }
+        break;
+      case 'charlie':
+        for (final fieldPrefix in const <String>[
+          'charlieNonAdminName',
+          'charlieNonAdminDescription',
+          'charlieNonAdminImage',
+          'charlieNonAdminInviteDana',
+          'charlieNonAdminPromoteSelf',
+          'charlieNonAdminDemoteBob',
+          'charlieNonAdminRemoveBob',
+        ]) {
+          requireRejectedAction(role, outcomes, fieldPrefix);
+        }
+        break;
+      case 'dana':
+        for (final field in const <String>[
+          'danaAcceptedBeforeRemoval',
+          'danaRemovedLocally',
+          'danaNoActiveAccessAfterRemoval',
+          'danaPostRemovalSendRejected',
+        ]) {
+          _requireTrueProof(
+            role: role,
+            proofName: proofName,
+            proof: outcomes,
+            field: field,
+            failures: failures,
+          );
+        }
+        for (final fieldPrefix in const <String>[
+          'danaPostRemovalName',
+          'danaPostRemovalPromoteSelf',
+          'danaPostRemovalRemoveBob',
+          'danaPostRemovalAddBob',
+        ]) {
+          requireRejectedAction(role, outcomes, fieldPrefix);
+        }
+        _requireIntProof(
+          role: role,
+          proofName: proofName,
+          proof: outcomes,
+          field: 'danaPostRemovalPlaintextCount',
+          expected: 0,
+          failures: failures,
+        );
+        if (_stringList(outcomes['danaPostRemovalReceivedKeys']).isNotEmpty) {
+          failures.add(
+            'dana: $proofName.danaPostRemovalReceivedKeys must be empty',
+          );
+        }
+        break;
+    }
+  }
+
+  if (activeStateHashes.length > 1) {
+    failures.add(
+      '$proofName finalStateHash differs across active members: '
+      '${activeStateHashes.join(', ')}',
+    );
+  }
+  if (activeAvatarHashes.length > 1) {
+    failures.add(
+      '$proofName finalAvatarSha256 differs across active members: '
+      '${activeAvatarHashes.join(', ')}',
+    );
   }
 }
 

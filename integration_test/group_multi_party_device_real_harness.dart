@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -62,6 +63,7 @@ import 'package:flutter_app/features/groups/domain/models/pending_group_invite.d
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 import 'group_multi_device_real_harness.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
@@ -86,6 +88,10 @@ const _mode = String.fromEnvironment(
   'GROUP_MULTI_PARTY_MODE',
   defaultValue: 'proof',
 );
+const _regressionAdminPermissionsScenario =
+    'regression_group_admin_permissions_and_message_reliability_four_users';
+const _regressionAdminPermissionsProofName =
+    'regressionGroupAdminPermissionsProof';
 const _restoreMnemonic = String.fromEnvironment(
   'GROUP_MULTI_PARTY_RESTORE_MNEMONIC',
   defaultValue: '',
@@ -211,6 +217,12 @@ const _rolesByScenario = <String, List<String>>{
     'charlie',
   ],
   'private_admin_demotion_enforcement': <String>[
+    'alice',
+    'bob',
+    'charlie',
+    'dana',
+  ],
+  _regressionAdminPermissionsScenario: <String>[
     'alice',
     'bob',
     'charlie',
@@ -645,6 +657,38 @@ Future<void> _addPromptScenarioInitialContacts(
       return;
     default:
       throw StateError('Unsupported prompt scenario role $_role');
+  }
+}
+
+Future<void> _addRegressionAdminPermissionsInitialContacts(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  switch (_role) {
+    case 'alice':
+      await _addPeerContactsForRoles(stack, identities, const <String>['bob']);
+      return;
+    case 'bob':
+      await _addPeerContactsForRoles(stack, identities, const <String>[
+        'alice',
+        'charlie',
+        'dana',
+      ]);
+      return;
+    case 'charlie':
+      await _addPeerContactsForRoles(stack, identities, const <String>[
+        'bob',
+        'dana',
+      ]);
+      return;
+    case 'dana':
+      await _addPeerContactsForRoles(stack, identities, const <String>[
+        'bob',
+        'charlie',
+      ]);
+      return;
+    default:
+      throw StateError('Unsupported regression scenario role $_role');
   }
 }
 
@@ -8760,9 +8804,13 @@ Future<Map<String, dynamic>> _uploadPromptGroupAvatar({
   final localPath = await groupAvatarCanonicalPath(groupId);
   final localFile = File(localPath);
   await localFile.parent.create(recursive: true);
-  await localFile.writeAsBytes(
-    _pngFixtureBytes(<int>[25, 5, 25, 1, 2, 3, 4, 5]),
-  );
+  final bytes = _pngFixtureBytes(<int>[
+    25,
+    5,
+    25,
+    ...utf8.encode(blobIdSuffix ?? 'default'),
+  ]);
+  await localFile.writeAsBytes(bytes);
   final blobId = blobIdSuffix == null
       ? 'prompt-group-avatar-$_runId'
       : 'prompt-group-avatar-$_runId-$blobIdSuffix';
@@ -8782,6 +8830,8 @@ Future<Map<String, dynamic>> _uploadPromptGroupAvatar({
     'mime': uploaded.mime,
     'path': groupAvatarRelativePath(groupId),
     'allowedPeers': allowedPeers,
+    'sha256': sha256.convert(bytes).toString(),
+    'byteLength': bytes.length,
   };
 }
 
@@ -8847,6 +8897,8 @@ Future<Map<String, dynamic>> _regrantPromptGroupAvatarForMembers({
     'mime': uploaded.mime,
     'path': avatarPath,
     'allowedPeers': allowedPeers,
+    'sha256': sha256.convert(await File(uploadPath).readAsBytes()).toString(),
+    'byteLength': await File(uploadPath).length(),
   };
 }
 
@@ -17676,7 +17728,15 @@ Future<Map<String, dynamic>> _promptGroupMessagingProof({
   };
 }
 
-Future<({String groupId, bool storedPendingInvite, bool acceptedInvite})>
+Future<
+  ({
+    String groupId,
+    bool storedPendingInvite,
+    bool acceptedInvite,
+    int pendingInviteCountBeforeAccept,
+    int pendingInviteCountAfterAccept,
+  })
+>
 _acceptPromptPendingInvite({
   required GroupMultiDeviceTestStack stack,
   required InMemoryPendingGroupInviteRepository pendingInviteRepo,
@@ -17684,6 +17744,7 @@ _acceptPromptPendingInvite({
   final invite = await _waitForMl001PendingInvite(
     pendingInviteRepo: pendingInviteRepo,
   );
+  final pendingBeforeAccept = await pendingInviteRepo.getPendingInvites();
   final storedPendingInvite =
       await pendingInviteRepo.getPendingInvite(invite.groupId) != null;
   final (acceptResult, acceptedGroup) = await acceptPendingGroupInvite(
@@ -17708,12 +17769,3024 @@ _acceptPromptPendingInvite({
   );
   expect(acceptResult, AcceptPendingGroupInviteResult.success);
   expect(acceptedGroup, isNotNull);
+  final pendingAfterAccept = await pendingInviteRepo.getPendingInvites();
   return (
     groupId: invite.groupId,
     storedPendingInvite: storedPendingInvite,
     acceptedInvite:
         await pendingInviteRepo.getPendingInvite(invite.groupId) == null,
+    pendingInviteCountBeforeAccept: pendingBeforeAccept.length,
+    pendingInviteCountAfterAccept: pendingAfterAccept.length,
   );
+}
+
+const _regressionAllMessageKeys = <String>[
+  'aliceRegAdminAfterBobAccept',
+  'bobRegAdminAfterBobAccept',
+  'aliceRegAdminAfterCharlieAccept',
+  'bobRegAdminAfterCharlieAccept',
+  'charlieRegAdminAfterCharlieAccept',
+  'aliceRegAdminAfterDanaAccept',
+  'bobRegAdminAfterDanaAccept',
+  'charlieRegAdminAfterDanaAccept',
+  'danaRegAdminAfterDanaAccept',
+  'aliceRegAdminPostDanaRemoval',
+  'bobRegAdminPostDanaRemoval',
+  'charlieRegAdminPostDanaRemoval',
+];
+const _regressionConvergenceProofStages = <String>[
+  'after_bob_accept',
+  'after_bob_pre_promotion_rejections',
+  'after_bob_promotion',
+  'after_bob_metadata_v1',
+  'after_charlie_accept',
+  'after_charlie_non_admin_rejections',
+  'after_alice_non_friend_dana_rejection',
+  'after_charlie_promotion',
+  'after_charlie_metadata_v2',
+  'after_bob_demotion',
+  'after_bob_demoted_rejections',
+  'after_dana_accept',
+  'after_bob_post_dana_rejections',
+  'after_alice_avatar_v3',
+  'after_dana_removal',
+];
+const _regressionMetadataWatermarkStages = <String>[
+  'after_bob_accept',
+  'after_bob_metadata_v1',
+  'after_charlie_metadata_v2',
+  'after_alice_avatar_v3',
+  'after_dana_removal',
+];
+const _regressionMembershipWatermarkStages = <String>[
+  'after_bob_promotion',
+  'after_charlie_accept',
+  'after_charlie_promotion',
+  'after_bob_demotion',
+  'after_dana_accept',
+  'after_dana_removal',
+];
+const _regressionLatestTimelineProofStages = <String>['after_dana_removal'];
+
+String _regressionMatrixKey({required String role, required String phase}) {
+  final prefix = switch (role) {
+    'alice' => 'alice',
+    'bob' => 'bob',
+    'charlie' => 'charlie',
+    'dana' => 'dana',
+    _ => throw StateError('Unsupported regression matrix role $role'),
+  };
+  return switch (phase) {
+    'after_bob_accept' => '${prefix}RegAdminAfterBobAccept',
+    'after_charlie_accept' => '${prefix}RegAdminAfterCharlieAccept',
+    'after_dana_accept' => '${prefix}RegAdminAfterDanaAccept',
+    'post_dana_removal' => '${prefix}RegAdminPostDanaRemoval',
+    _ => throw StateError('Unsupported regression matrix phase $phase'),
+  };
+}
+
+List<String> _regressionActiveRolesForStage(String stage) {
+  return switch (stage) {
+    'after_bob_accept' ||
+    'after_bob_pre_promotion_rejections' ||
+    'after_bob_promotion' ||
+    'after_bob_metadata_v1' => const <String>['alice', 'bob'],
+    'after_charlie_accept' ||
+    'after_charlie_non_admin_rejections' ||
+    'after_alice_non_friend_dana_rejection' ||
+    'after_charlie_promotion' ||
+    'after_charlie_metadata_v2' ||
+    'after_bob_demotion' ||
+    'after_bob_demoted_rejections' => const <String>['alice', 'bob', 'charlie'],
+    'after_dana_accept' ||
+    'after_bob_post_dana_rejections' ||
+    'after_alice_avatar_v3' => const <String>[
+      'alice',
+      'bob',
+      'charlie',
+      'dana',
+    ],
+    'after_dana_removal' => const <String>['alice', 'bob', 'charlie'],
+    _ => const <String>[],
+  };
+}
+
+Future<Map<String, String>> _regressionMemberRoleNames({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  final roles = <String, String>{};
+  for (final roleName in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    final peerId = identities[roleName]!['peerId'] as String;
+    final member = await stack.groupRepo.getMember(groupId, peerId);
+    if (member != null) {
+      roles[roleName] = member.role.toValue();
+    }
+  }
+  return roles;
+}
+
+String _regressionTimelineEventType(String messageId) {
+  if (messageId.startsWith('sys-member_role_updated:')) {
+    return 'member_role_updated';
+  }
+  if (messageId.startsWith('sys-member_removed:')) {
+    return 'member_removed';
+  }
+  if (messageId.startsWith('sys-group_metadata_updated:')) {
+    return 'group_metadata_updated';
+  }
+  if (messageId.startsWith('sys-members_added:')) {
+    return 'members_added';
+  }
+  if (messageId.startsWith('sys-member_joined:')) {
+    return 'member_joined';
+  }
+  return 'system';
+}
+
+Future<Map<String, dynamic>?> _regressionLatestTimelineEvent({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+}) async {
+  final messages = await stack.groupMsgRepo.getMessagesPage(
+    groupId,
+    limit: 200,
+  );
+  final systemMessages = messages
+      .where((message) => message.id.startsWith('sys-'))
+      .toList(growable: false);
+  if (systemMessages.isEmpty) return null;
+  systemMessages.sort(
+    (left, right) => left.timestamp.compareTo(right.timestamp),
+  );
+  final latest = systemMessages.last;
+  return <String, dynamic>{
+    'messageId': latest.id,
+    'eventType': _regressionTimelineEventType(latest.id),
+    'eventAt': latest.timestamp.toUtc().toIso8601String(),
+    'textHash': sha256.convert(utf8.encode(latest.text)).toString(),
+  };
+}
+
+Future<Map<String, dynamic>> _regressionGroupStateSnapshot({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  final members = await stack.groupRepo.getMembers(groupId);
+  final memberPeerIds = members.map((member) => member.peerId).toList();
+  memberPeerIds.sort();
+  final adminPeerIds = members
+      .where((member) => member.role == MemberRole.admin)
+      .map((member) => member.peerId)
+      .toList();
+  adminPeerIds.sort();
+  return <String, dynamic>{
+    'role': _role,
+    'groupId': groupId,
+    'name': group?.name,
+    'description': group?.description,
+    'avatarBlobId': group?.avatarBlobId,
+    'avatarMime': group?.avatarMime,
+    'avatarPath': group?.avatarPath,
+    'lastMetadataEventAt': group?.lastMetadataEventAt
+        ?.toUtc()
+        .toIso8601String(),
+    'lastMembershipEventAt': group?.lastMembershipEventAt
+        ?.toUtc()
+        .toIso8601String(),
+    'latestTimelineEvent': await _regressionLatestTimelineEvent(
+      stack: stack,
+      groupId: groupId,
+    ),
+    'memberPeerIds': memberPeerIds,
+    'adminPeerIds': adminPeerIds,
+    'memberRoles': await _regressionMemberRoleNames(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+    ),
+    'keyEpoch': await _keyEpoch(stack, groupId),
+    'stateHash': await buildGroupTransitionStateHash(stack.groupRepo, groupId),
+  };
+}
+
+final _regressionExactAvatarNormalizer = _RegressionExactAvatarNormalizer();
+
+class _RegressionExactAvatarNormalizer extends AvatarNormalizationHelper {
+  @override
+  Future<String> normalizeAvatar({
+    required String inputPath,
+    required String canonicalPath,
+  }) {
+    return commitAvatar(sourcePath: inputPath, canonicalPath: canonicalPath);
+  }
+}
+
+Future<bool> _regressionHasSupportedAvatarSignature(File file) async {
+  try {
+    final bytes = await file
+        .openRead(0, 12)
+        .fold<List<int>>(<int>[], (previous, chunk) => previous..addAll(chunk));
+    return (bytes.length >= 8 &&
+            bytes[0] == 0x89 &&
+            bytes[1] == 0x50 &&
+            bytes[2] == 0x4E &&
+            bytes[3] == 0x47 &&
+            bytes[4] == 0x0D &&
+            bytes[5] == 0x0A &&
+            bytes[6] == 0x1A &&
+            bytes[7] == 0x0A) ||
+        (bytes.length >= 3 &&
+            bytes[0] == 0xFF &&
+            bytes[1] == 0xD8 &&
+            bytes[2] == 0xFF) ||
+        (bytes.length >= 12 &&
+            bytes[0] == 0x52 &&
+            bytes[1] == 0x49 &&
+            bytes[2] == 0x46 &&
+            bytes[3] == 0x46 &&
+            bytes[8] == 0x57 &&
+            bytes[9] == 0x45 &&
+            bytes[10] == 0x42 &&
+            bytes[11] == 0x50);
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<Map<String, dynamic>> _assertRegressionGroupImageVisible({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, dynamic> expectedAvatar,
+}) async {
+  final blobId = expectedAvatar['blobId'] as String;
+  final mime = expectedAvatar['mime'] as String;
+  final path = expectedAvatar['path'] as String;
+  final expectedSha256 = expectedAvatar['sha256'] as String;
+  await _waitForGroupMetadata(
+    stack: stack,
+    groupId: groupId,
+    avatarBlobId: blobId,
+    avatarMime: mime,
+    avatarPath: path,
+  );
+
+  Map<String, dynamic>? matched;
+  var nextDownloadAt = DateTime.fromMillisecondsSinceEpoch(0);
+  await waitForCondition(() async {
+    final canonicalPath = await groupAvatarCanonicalPath(groupId);
+    final file = File(canonicalPath);
+    if (await file.exists()) {
+      final bytes = await file.readAsBytes();
+      final actualHash = sha256.convert(bytes).toString();
+      final hasImageSignature = await _regressionHasSupportedAvatarSignature(
+        file,
+      );
+      if (bytes.isNotEmpty &&
+          hasImageSignature &&
+          actualHash == expectedSha256) {
+        matched = <String, dynamic>{
+          'blobId': blobId,
+          'mime': mime,
+          'path': path,
+          'canonicalPath': canonicalPath,
+          'sha256': actualHash,
+          'byteLength': bytes.length,
+          'bytesVisible': true,
+        };
+        return true;
+      }
+    }
+    if (DateTime.now().isAfter(nextDownloadAt)) {
+      nextDownloadAt = DateTime.now().add(const Duration(seconds: 2));
+      await downloadGroupAvatar(
+        bridge: stack.bridge,
+        groupId: groupId,
+        blobId: blobId,
+        avatarNormalizer: _regressionExactAvatarNormalizer,
+      );
+    }
+    return false;
+  }, timeout: const Duration(seconds: 120));
+  return matched!;
+}
+
+bool _regressionListsMatch(Set<String> expected, Iterable<String> actual) {
+  final actualSet = actual.toSet();
+  return actualSet.length == expected.length && actualSet.containsAll(expected);
+}
+
+Future<Map<String, dynamic>> _assertRegressionGroupStateConverged({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required String stage,
+  required List<String> activeRoles,
+  required Map<String, MemberRole> expectedRoles,
+  required String expectedName,
+  String? expectedDescription,
+  Map<String, dynamic>? expectedAvatar,
+  List<String> removedRoles = const <String>[],
+}) async {
+  final activePeerIds = activeRoles
+      .map((role) => identities[role]!['peerId'] as String)
+      .toSet();
+  final adminPeerIds = expectedRoles.entries
+      .where((entry) => entry.value == MemberRole.admin)
+      .map((entry) => identities[entry.key]!['peerId'] as String)
+      .toSet();
+
+  await _waitForGroupMetadata(
+    stack: stack,
+    groupId: groupId,
+    name: expectedName,
+    description: expectedDescription,
+    avatarBlobId: expectedAvatar?['blobId'] as String?,
+    avatarMime: expectedAvatar?['mime'] as String?,
+    avatarPath: expectedAvatar?['path'] as String?,
+  );
+  for (final role in activeRoles) {
+    final peerId = identities[role]!['peerId'] as String;
+    await _waitForMemberInclusion(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: peerId,
+    );
+    final expectedRole = expectedRoles[role];
+    if (expectedRole != null) {
+      await _waitForMemberRole(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: peerId,
+        role: expectedRole,
+      );
+    }
+  }
+  for (final role in removedRoles) {
+    await _waitForMemberExclusion(
+      stack: stack,
+      groupId: groupId,
+      removedPeerId: identities[role]!['peerId'] as String,
+    );
+  }
+  final avatarProof = expectedAvatar == null
+      ? null
+      : await _assertRegressionGroupImageVisible(
+          stack: stack,
+          groupId: groupId,
+          expectedAvatar: expectedAvatar,
+        );
+  final snapshot = await _regressionGroupStateSnapshot(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+  );
+  final members = (snapshot['memberPeerIds'] as List).cast<String>();
+  final admins = (snapshot['adminPeerIds'] as List).cast<String>();
+  if (!_regressionListsMatch(activePeerIds, members)) {
+    throw StateError('$_role $stage members did not converge: $members');
+  }
+  if (!_regressionListsMatch(adminPeerIds, admins)) {
+    throw StateError('$_role $stage admins did not converge: $admins');
+  }
+  if (expectedAvatar != null && avatarProof?['bytesVisible'] != true) {
+    throw StateError('$_role $stage avatar bytes not visible');
+  }
+
+  final signalPayload = <String, dynamic>{
+    ...snapshot,
+    'avatarProof': avatarProof,
+  };
+  writeSharedJson(
+    _signalName('${_role}_regression_state_$stage.json'),
+    signalPayload,
+  );
+  final peerSnapshots = <Map<String, dynamic>>[];
+  for (final role in activeRoles) {
+    peerSnapshots.add(
+      await waitForSharedJson(
+        _signalName('${role}_regression_state_$stage.json'),
+      ),
+    );
+  }
+  final stateHashes = peerSnapshots
+      .map((entry) => entry['stateHash'] as String?)
+      .whereType<String>()
+      .toSet();
+  final keyEpochs = peerSnapshots
+      .map((entry) => entry['keyEpoch'])
+      .whereType<int>()
+      .toSet();
+  final names = peerSnapshots
+      .map((entry) => entry['name'] as String?)
+      .whereType<String>()
+      .toSet();
+  final descriptions = peerSnapshots
+      .map((entry) => entry['description'] as String?)
+      .whereType<String>()
+      .toSet();
+  final avatarHashes = peerSnapshots
+      .map((entry) => (entry['avatarProof'] as Map?)?['sha256'] as String?)
+      .whereType<String>()
+      .toSet();
+  final metadataWatermarks = peerSnapshots
+      .map((entry) => entry['lastMetadataEventAt'] as String?)
+      .whereType<String>()
+      .toSet();
+  final membershipWatermarks = peerSnapshots
+      .map((entry) => entry['lastMembershipEventAt'] as String?)
+      .whereType<String>()
+      .toSet();
+  final latestTimelineProof = _regressionLatestTimelineStageProof(
+    activeRoles: activeRoles,
+    snapshots: peerSnapshots,
+  );
+  if (stateHashes.length != 1 ||
+      keyEpochs.length != 1 ||
+      names.length != 1 ||
+      (expectedDescription != null && descriptions.length != 1) ||
+      (expectedAvatar != null && avatarHashes.length != 1)) {
+    throw StateError('$_role $stage state differs across active roles');
+  }
+  final requiresMetadataWatermark = _regressionMetadataWatermarkStages.contains(
+    stage,
+  );
+  if (metadataWatermarks.length > 1 ||
+      (requiresMetadataWatermark && metadataWatermarks.length != 1)) {
+    throw StateError('$_role $stage metadata watermark differs');
+  }
+  final requiresMembershipWatermark = _regressionMembershipWatermarkStages
+      .contains(stage);
+  if (membershipWatermarks.length > 1 ||
+      (requiresMembershipWatermark && membershipWatermarks.length != 1)) {
+    throw StateError('$_role $stage membership watermark differs');
+  }
+  final latestEventsByRole = (latestTimelineProof['eventsByRole'] as Map)
+      .cast<String, dynamic>();
+  if (latestEventsByRole.length != activeRoles.length) {
+    throw StateError('$_role $stage latest timeline proof missing');
+  }
+  if (_regressionLatestTimelineProofStages.contains(stage) &&
+      latestTimelineProof['stable'] != true) {
+    throw StateError('$_role $stage latest timeline event differs');
+  }
+  return signalPayload;
+}
+
+Future<Map<String, dynamic>> _regressionAssertRejectedWithoutStateChange({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Future<void> Function() action,
+}) async {
+  final before = await buildGroupTransitionStateHash(stack.groupRepo, groupId);
+  String outcome;
+  try {
+    await action();
+    outcome = 'accepted';
+  } on StateError catch (error) {
+    outcome = 'blocked:${error.message}';
+  } catch (error) {
+    outcome = 'rejected:${error.runtimeType}';
+  }
+  await Future<void>.delayed(const Duration(seconds: 2));
+  final after = await buildGroupTransitionStateHash(stack.groupRepo, groupId);
+  final unchanged = before == after;
+  if (outcome == 'accepted' || !unchanged) {
+    throw StateError(
+      '$_role rejected-action proof failed: outcome=$outcome unchanged=$unchanged',
+    );
+  }
+  return <String, dynamic>{
+    'outcome': outcome,
+    'stateUnchanged': unchanged,
+    'beforeStateHash': before,
+    'afterStateHash': after,
+  };
+}
+
+void _recordRegressionRejectedAction({
+  required Map<String, dynamic> rejectedOutcomes,
+  required String fieldPrefix,
+  required Map<String, dynamic> proof,
+}) {
+  rejectedOutcomes['${fieldPrefix}AttemptOutcome'] = proof['outcome'];
+  rejectedOutcomes['${fieldPrefix}StateUnchanged'] = proof['stateUnchanged'];
+}
+
+Future<void> _sendRegressionInviteToRole({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, Map<String, dynamic>> identities,
+  required String groupId,
+  required String recipientRole,
+}) async {
+  final contact = await stack.contactRepo.getContact(
+    identities[recipientRole]!['peerId'] as String,
+  );
+  if (contact == null) {
+    throw StateError('missing_contact');
+  }
+  final group = await stack.groupRepo.getGroup(groupId);
+  final keyInfo = await stack.groupRepo.getLatestKey(groupId);
+  final members = await stack.groupRepo.getMembers(groupId);
+  if (group == null || keyInfo == null) {
+    throw StateError('Missing regression group/key before invite');
+  }
+  final result = await sendGroupInvite(
+    p2pService: stack.p2pService,
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    recipientPeerId: contact.peerId,
+    recipientMlKemPublicKey: contact.mlKemPublicKey,
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    groupId: groupId,
+    groupKey: keyInfo.encryptedKey,
+    keyEpoch: keyInfo.keyGeneration,
+    groupConfig: buildGroupConfigPayload(group, members),
+  );
+  if (result != SendGroupInviteResult.success &&
+      result != SendGroupInviteResult.queued) {
+    throw StateError('invite_failed:$result');
+  }
+}
+
+Future<Map<String, dynamic>> _regressionAddMemberFromContactAndInvite({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, Map<String, dynamic>> identities,
+  required String groupId,
+  required String recipientRole,
+  required String avatarSuffix,
+}) async {
+  final contact = await stack.contactRepo.getContact(
+    identities[recipientRole]!['peerId'] as String,
+  );
+  if (contact == null) {
+    throw StateError('missing_contact');
+  }
+  final preAddHash = await buildGroupTransitionStateHash(
+    stack.groupRepo,
+    groupId,
+  );
+  final member = _groupMemberForIdentityRole(
+    groupId: groupId,
+    identities: identities,
+    role: recipientRole,
+  );
+  await addGroupMember(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    newMember: member,
+    selfPeerId: stack.identity.peerId,
+  );
+  final expandedMembers = await stack.groupRepo.getMembers(groupId);
+  final avatar = await _regrantPromptGroupAvatarForMembers(
+    stack: stack,
+    groupId: groupId,
+    members: expandedMembers,
+    blobIdSuffix: avatarSuffix,
+  );
+  await _publishMembersAddedSystemPayload(
+    stack: stack,
+    groupId: groupId,
+    danaMember: member,
+    eventAt: member.joinedAt,
+    saveLocalTimeline: true,
+    preTransitionStateHash: preAddHash,
+  );
+  await _sendRegressionInviteToRole(
+    stack: stack,
+    identities: identities,
+    groupId: groupId,
+    recipientRole: recipientRole,
+  );
+  return avatar;
+}
+
+Future<void> _runRegressionFullMessageMatrixPhase({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, Map<String, dynamic>> identities,
+  required String groupId,
+  required String phase,
+  required List<String> activeRoles,
+  required List<Map<String, dynamic>> sentMessages,
+  required List<Map<String, dynamic>> receivedMessages,
+}) async {
+  if (activeRoles.contains(_role)) {
+    final key = _regressionMatrixKey(role: _role, phase: phase);
+    final sent = await _sendProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: key,
+      text: 'Regression admin permissions $phase $_role $_runId',
+    );
+    sentMessages.add(sent);
+    var selfPersistedCount = 0;
+    await waitForCondition(() async {
+      selfPersistedCount = await _proofMessageCount(
+        stack: stack,
+        groupId: groupId,
+        text: sent['text'] as String,
+        senderPeerId: stack.identity.peerId,
+      );
+      return selfPersistedCount == 1;
+    }, timeout: const Duration(seconds: 30));
+    receivedMessages.add(<String, dynamic>{
+      'key': key,
+      'messageId': sent['messageId'],
+      'groupId': groupId,
+      'text': sent['text'],
+      'senderPeerId': stack.identity.peerId,
+      'timestamp': sent['timestamp'],
+      'keyEpoch': sent['keyEpoch'],
+      'isIncoming': false,
+      'selfDelivery': true,
+      'persistedCount': selfPersistedCount,
+    });
+  }
+
+  for (final senderRole in activeRoles) {
+    if (senderRole == _role) continue;
+    final key = _regressionMatrixKey(role: senderRole, phase: phase);
+    final sent = await waitForSharedJson(
+      _signalName('${senderRole}_sent_$key.json'),
+    );
+    final received = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: key,
+      text: sent['text'] as String,
+      senderPeerId: identities[senderRole]!['peerId'] as String,
+    );
+    receivedMessages.add(received);
+    writeSharedText(_signalName('${_role}_received_$key'), 'ok');
+  }
+
+  if (activeRoles.contains(_role)) {
+    final key = _regressionMatrixKey(role: _role, phase: phase);
+    for (final receiverRole in activeRoles) {
+      if (receiverRole == _role) continue;
+      await waitForSharedSignal(_signalName('${receiverRole}_received_$key'));
+    }
+  }
+}
+
+Future<Map<String, dynamic>> _regressionPostRemovalExclusionProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  final receivedKeys = <String>[];
+  var plaintextCount = 0;
+  for (final senderRole in const <String>['alice', 'bob', 'charlie']) {
+    final key = _regressionMatrixKey(
+      role: senderRole,
+      phase: 'post_dana_removal',
+    );
+    final sent = await waitForSharedJson(
+      _signalName('${senderRole}_sent_$key.json'),
+    );
+    await Future<void>.delayed(const Duration(seconds: 2));
+    final count = await _proofMessageCount(
+      stack: stack,
+      groupId: groupId,
+      text: sent['text'] as String,
+      senderPeerId: identities[senderRole]!['peerId'] as String,
+    );
+    plaintextCount += count;
+    if (count > 0) {
+      receivedKeys.add(key);
+    }
+  }
+  return <String, dynamic>{
+    'danaPostRemovalPlaintextCount': plaintextCount,
+    'danaPostRemovalReceivedKeys': receivedKeys,
+  };
+}
+
+Future<String> _regressionPostRemovalSendOutcome({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+}) async {
+  try {
+    await _sendProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'danaRegAdminPostRemovalRejectedSend',
+      text: 'Regression Dana post-removal rejected send $_runId',
+    );
+    return 'accepted';
+  } on StateError catch (error) {
+    return 'blocked:${error.message}';
+  } catch (error) {
+    return 'rejected:${error.runtimeType}';
+  }
+}
+
+Future<bool> _regressionInitialContactGraphProof({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  Future<bool> has(String role) =>
+      _hasContactForRole(stack: stack, identities: identities, role: role);
+  switch (_role) {
+    case 'alice':
+      return await has('bob') &&
+          !(await has('charlie')) &&
+          !(await has('dana'));
+    case 'bob':
+      return await has('alice') && await has('charlie') && await has('dana');
+    case 'charlie':
+      return !(await has('alice')) && await has('bob') && await has('dana');
+    case 'dana':
+      return !(await has('alice')) && await has('bob') && await has('charlie');
+    default:
+      return false;
+  }
+}
+
+String _regressionUsernameForRole(
+  Map<String, Map<String, dynamic>> identities,
+  String role,
+) {
+  final username = identities[role]?['username'] as String?;
+  return username?.trim().isNotEmpty == true ? username!.trim() : role;
+}
+
+List<Map<String, dynamic>> _regressionExpectedSystemEventsForRole(
+  Map<String, Map<String, dynamic>> identities,
+) {
+  Map<String, dynamic> roleUpdate({
+    required String key,
+    required String actorRole,
+    required String targetRole,
+    required MemberRole? previousRole,
+    required MemberRole newRole,
+  }) {
+    return <String, dynamic>{
+      'key': key,
+      'eventType': 'member_role_updated',
+      'actorRole': actorRole,
+      'targetRole': targetRole,
+      'text': buildMemberRoleUpdatedTimelineText(
+        _regressionUsernameForRole(identities, actorRole),
+        _regressionUsernameForRole(identities, targetRole),
+        previousRole: previousRole,
+        newRole: newRole,
+      ),
+    };
+  }
+
+  Map<String, dynamic> removal({
+    required String key,
+    required String actorRole,
+    required String targetRole,
+  }) {
+    return <String, dynamic>{
+      'key': key,
+      'eventType': 'member_removed',
+      'actorRole': actorRole,
+      'targetRole': targetRole,
+      'text': buildMemberRemovedTimelineText(
+        _regressionUsernameForRole(identities, actorRole),
+        _regressionUsernameForRole(identities, targetRole),
+      ),
+    };
+  }
+
+  final events = <Map<String, dynamic>>[];
+  if (_role == 'alice' || _role == 'bob') {
+    events.add(
+      roleUpdate(
+        key: 'bob_promotion',
+        actorRole: 'alice',
+        targetRole: 'bob',
+        previousRole: MemberRole.writer,
+        newRole: MemberRole.admin,
+      ),
+    );
+  }
+  if (_role == 'alice' || _role == 'bob' || _role == 'charlie') {
+    events
+      ..add(
+        roleUpdate(
+          key: 'charlie_promotion',
+          actorRole: 'alice',
+          targetRole: 'charlie',
+          previousRole: MemberRole.writer,
+          newRole: MemberRole.admin,
+        ),
+      )
+      ..add(
+        roleUpdate(
+          key: 'bob_demotion',
+          actorRole: 'alice',
+          targetRole: 'bob',
+          previousRole: MemberRole.admin,
+          newRole: MemberRole.writer,
+        ),
+      )
+      ..add(
+        removal(key: 'dana_removal', actorRole: 'charlie', targetRole: 'dana'),
+      );
+  }
+  return events;
+}
+
+Future<Map<String, dynamic>> _regressionTimelineSystemEventProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required Map<String, dynamic> expected,
+}) async {
+  final eventType = expected['eventType'] as String;
+  final expectedText = expected['text'] as String;
+  GroupMessage? matched;
+  await waitForCondition(() async {
+    final messages = await stack.groupMsgRepo.getMessagesPage(
+      groupId,
+      limit: 200,
+    );
+    final matches = messages
+        .where(
+          (message) =>
+              message.id.startsWith('sys-$eventType:') &&
+              message.text == expectedText,
+        )
+        .toList(growable: false);
+    if (matches.isEmpty) return false;
+    matches.sort((left, right) => left.timestamp.compareTo(right.timestamp));
+    matched = matches.last;
+    return true;
+  }, timeout: const Duration(seconds: 120));
+
+  final actorRole = expected['actorRole'] as String;
+  final targetRole = expected['targetRole'] as String;
+  final message = matched!;
+  return <String, dynamic>{
+    'visible': true,
+    'source': 'timeline',
+    'eventType': eventType,
+    'actorPeerId': identities[actorRole]!['peerId'] as String,
+    'targetPeerId': identities[targetRole]!['peerId'] as String,
+    'messageId': message.id,
+    'eventAt': message.timestamp.toUtc().toIso8601String(),
+    'textHash': sha256.convert(utf8.encode(message.text)).toString(),
+  };
+}
+
+Future<Map<String, dynamic>> _regressionSystemEventVisibilityProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  final proof = <String, dynamic>{};
+  for (final expected in _regressionExpectedSystemEventsForRole(identities)) {
+    proof[expected['key']
+        as String] = await _regressionTimelineSystemEventProof(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      expected: expected,
+    );
+  }
+  return proof;
+}
+
+String _regressionStringListSignature(Object? raw) {
+  final values = raw is List
+      ? raw.map((entry) => entry.toString()).toList(growable: false)
+      : <String>[];
+  values.sort();
+  return values.join('|');
+}
+
+bool _regressionAllSameNonEmpty(Iterable<Object?> values) {
+  final normalized = values
+      .whereType<String>()
+      .where((value) => value.isNotEmpty)
+      .toSet();
+  return normalized.length == 1;
+}
+
+Map<String, dynamic>? _regressionComparableLatestTimelineEvent(Object? raw) {
+  if (raw is! Map) return null;
+  final messageId = raw['messageId'] as String?;
+  final eventType = raw['eventType'] as String?;
+  final eventAt = raw['eventAt'] as String?;
+  final textHash = raw['textHash'] as String?;
+  if (messageId == null ||
+      messageId.isEmpty ||
+      eventType == null ||
+      eventType.isEmpty ||
+      eventAt == null ||
+      eventAt.isEmpty ||
+      textHash == null ||
+      textHash.length != 64) {
+    return null;
+  }
+  return <String, dynamic>{
+    'messageId': messageId,
+    'eventType': eventType,
+    'eventAt': eventAt,
+    'textHash': textHash,
+  };
+}
+
+String _regressionLatestTimelineEventSignature(Map<String, dynamic> event) {
+  return [
+    event['messageId'],
+    event['eventType'],
+    event['eventAt'],
+    event['textHash'],
+  ].join('\n');
+}
+
+Map<String, dynamic> _regressionLatestTimelineStageProof({
+  required List<String> activeRoles,
+  required List<Map<String, dynamic>> snapshots,
+}) {
+  final eventsByRole = <String, dynamic>{};
+  for (var index = 0; index < activeRoles.length; index += 1) {
+    final event = _regressionComparableLatestTimelineEvent(
+      snapshots[index]['latestTimelineEvent'],
+    );
+    if (event != null) {
+      eventsByRole[activeRoles[index]] = event;
+    }
+  }
+  final signatures = eventsByRole.values
+      .whereType<Map>()
+      .map(
+        (event) => _regressionLatestTimelineEventSignature(
+          event.cast<String, dynamic>(),
+        ),
+      )
+      .toSet();
+  return <String, dynamic>{
+    'activeRoles': activeRoles,
+    'stable':
+        eventsByRole.length == activeRoles.length && signatures.length == 1,
+    if (signatures.length == 1) 'signature': signatures.single,
+    'eventsByRole': eventsByRole,
+  };
+}
+
+Future<Map<String, dynamic>> _regressionConvergenceFieldProof({
+  required Map<String, Map<String, dynamic>> identities,
+  required Map<String, dynamic> pendingInviteStateProof,
+}) async {
+  final danaPeerId = identities['dana']!['peerId'] as String;
+  final metadataWatermarkStages = <String>[];
+  final membershipWatermarkStages = <String>[];
+  final latestTimelineEventStages = <String>[];
+  final latestTimelineEventProof = <String, dynamic>{};
+  final activeMemberStages = <String>[];
+  final adminStages = <String>[];
+  final stateHashStages = <String>[];
+  final keyEpochStages = <String>[];
+  final avatarHashStages = <String>[];
+  var removedMemberRepresentedAfterRemoval = false;
+
+  for (final stage in _regressionConvergenceProofStages) {
+    final activeRoles = _regressionActiveRolesForStage(stage);
+    final snapshots = <Map<String, dynamic>>[];
+    for (final role in activeRoles) {
+      snapshots.add(
+        await waitForSharedJson(
+          _signalName('${role}_regression_state_$stage.json'),
+        ),
+      );
+    }
+    if (_regressionAllSameNonEmpty(
+      snapshots.map((snapshot) => snapshot['lastMetadataEventAt']),
+    )) {
+      metadataWatermarkStages.add(stage);
+    }
+    if (_regressionAllSameNonEmpty(
+      snapshots.map((snapshot) => snapshot['lastMembershipEventAt']),
+    )) {
+      membershipWatermarkStages.add(stage);
+    }
+    final latestStageProof = _regressionLatestTimelineStageProof(
+      activeRoles: activeRoles,
+      snapshots: snapshots,
+    );
+    latestTimelineEventProof[stage] = latestStageProof;
+    if (latestStageProof['stable'] == true) {
+      latestTimelineEventStages.add(stage);
+    }
+    if (_regressionAllSameNonEmpty(
+      snapshots.map(
+        (snapshot) => _regressionStringListSignature(snapshot['memberPeerIds']),
+      ),
+    )) {
+      activeMemberStages.add(stage);
+    }
+    if (_regressionAllSameNonEmpty(
+      snapshots.map(
+        (snapshot) => _regressionStringListSignature(snapshot['adminPeerIds']),
+      ),
+    )) {
+      adminStages.add(stage);
+    }
+    if (_regressionAllSameNonEmpty(
+      snapshots.map((snapshot) => snapshot['stateHash']),
+    )) {
+      stateHashStages.add(stage);
+    }
+    final keyEpochs = snapshots
+        .map((snapshot) => snapshot['keyEpoch'])
+        .whereType<int>()
+        .toSet();
+    if (keyEpochs.length == 1 && keyEpochs.single > 0) {
+      keyEpochStages.add(stage);
+    }
+    final avatarHashes = snapshots
+        .map((snapshot) => (snapshot['avatarProof'] as Map?)?['sha256'])
+        .whereType<String>()
+        .where((hash) => hash.length == 64)
+        .toSet();
+    if (avatarHashes.length == 1) {
+      avatarHashStages.add(stage);
+    }
+    if (stage == 'after_dana_removal') {
+      removedMemberRepresentedAfterRemoval = snapshots.every((snapshot) {
+        final members =
+            (snapshot['memberPeerIds'] as List?)?.cast<String>() ??
+            const <String>[];
+        return !members.contains(danaPeerId);
+      });
+    }
+  }
+
+  bool containsAll(List<String> actual, List<String> expected) {
+    final actualSet = actual.toSet();
+    return expected.every(actualSet.contains);
+  }
+
+  return <String, dynamic>{
+    'stages': _regressionConvergenceProofStages,
+    'metadataWatermarkStages': metadataWatermarkStages,
+    'membershipWatermarkStages': membershipWatermarkStages,
+    'latestTimelineEventStages': latestTimelineEventStages,
+    'latestTimelineEventProof': latestTimelineEventProof,
+    'lastMetadataEventAtMatched': containsAll(
+      metadataWatermarkStages,
+      _regressionMetadataWatermarkStages,
+    ),
+    'lastMembershipEventAtMatched': containsAll(
+      membershipWatermarkStages,
+      _regressionMembershipWatermarkStages,
+    ),
+    'latestTimelineEventProofPresent': containsAll(
+      latestTimelineEventStages,
+      _regressionLatestTimelineProofStages,
+    ),
+    'pendingInviteStateProofPresent': pendingInviteStateProof.isNotEmpty,
+    'removedMemberRepresentedAfterRemoval':
+        removedMemberRepresentedAfterRemoval,
+    'avatarMetadataAndBytesMatched': avatarHashStages.contains(
+      'after_dana_removal',
+    ),
+    'activeMembersMatched':
+        activeMemberStages.length == _regressionConvergenceProofStages.length,
+    'adminsMatched':
+        adminStages.length == _regressionConvergenceProofStages.length,
+    'stateHashMatched':
+        stateHashStages.length == _regressionConvergenceProofStages.length,
+    'keyEpochMatched':
+        keyEpochStages.length == _regressionConvergenceProofStages.length,
+    'removedMemberPeerIds': <String>[danaPeerId],
+    'pendingInviteStateProof': pendingInviteStateProof,
+  };
+}
+
+Map<String, dynamic> _regressionAcceptedPendingInviteStateProof({
+  required bool storedBeforeAccept,
+  required bool consumedAfterAccept,
+  required int pendingInviteCountBeforeAccept,
+  required int pendingInviteCountAfterAccept,
+}) {
+  return <String, dynamic>{
+    'storedBeforeAccept': storedBeforeAccept,
+    'consumedAfterAccept': consumedAfterAccept,
+    'pendingInviteCountBeforeAccept': pendingInviteCountBeforeAccept,
+    'pendingInviteCountAfterAccept': pendingInviteCountAfterAccept,
+  };
+}
+
+Map<String, dynamic> _regressionRejectedDanaPendingInviteStateProof(
+  Map<String, dynamic> proof,
+) {
+  return <String, dynamic>{
+    'noPendingInviteForDana': proof['noPendingInviteForDana'] == true,
+    'pendingInviteCountAfterRejectedInvite': proof['pendingInviteCount'] ?? -1,
+  };
+}
+
+Future<Map<String, dynamic>> _regressionGroupAdminPermissionsProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required Map<String, dynamic> rejectedActionOutcomes,
+  required List<String> stateConvergenceStages,
+  required Map<String, dynamic> pendingInviteStateProof,
+  Map<String, dynamic>? finalAvatarProof,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  final memberPeerIds = group == null
+      ? const <String>[]
+      : await _memberPeerIds(stack, groupId);
+  final finalRoles = group == null
+      ? const <String, String>{}
+      : await _regressionMemberRoleNames(
+          stack: stack,
+          groupId: groupId,
+          identities: identities,
+        );
+  final adminPeerIds = <String>[];
+  for (final role in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    if (finalRoles[role] == MemberRole.admin.toValue()) {
+      adminPeerIds.add(identities[role]!['peerId'] as String);
+    }
+  }
+  adminPeerIds.sort();
+  final danaPeerId = identities['dana']!['peerId'] as String;
+  final finalStateHash = group == null
+      ? ''
+      : await buildGroupTransitionStateHash(stack.groupRepo, groupId);
+  final finalEpoch = group == null ? 0 : await _keyEpoch(stack, groupId);
+  return <String, dynamic>{
+    'rowId': 'REGRESSION-GROUP-ADMIN-PERMISSIONS-FOUR-USERS',
+    'scenario': _regressionAdminPermissionsScenario,
+    'proofRole': _role,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'initialContactGraphProof': await _regressionInitialContactGraphProof(
+      stack: stack,
+      identities: identities,
+    ),
+    'allStateConvergenceChecksPassed': stateConvergenceStages.isNotEmpty,
+    'stateConvergenceStages': stateConvergenceStages,
+    'fullMessageMatrixProofPassed': true,
+    'fullMessageMatrixPhaseKeys': _regressionAllMessageKeys,
+    'avatarBytesVisible': finalAvatarProof?['bytesVisible'] == true,
+    'finalMetadataConverged':
+        group?.name == 'test me v2' &&
+        group?.description == 'do you see me v2?',
+    'finalRolesConverged':
+        finalRoles['alice'] == MemberRole.admin.toValue() &&
+        finalRoles['bob'] == MemberRole.writer.toValue() &&
+        finalRoles['charlie'] == MemberRole.admin.toValue(),
+    'danaRemovedFromActiveMembers': !memberPeerIds.contains(danaPeerId),
+    'finalMetadataName': group?.name ?? '',
+    'finalMetadataDescription': group?.description ?? '',
+    'finalAvatarBlobId': group?.avatarBlobId ?? '',
+    'finalAvatarMime': group?.avatarMime ?? '',
+    'finalAvatarPath': group?.avatarPath ?? '',
+    'finalAvatarSha256': finalAvatarProof?['sha256'] ?? '',
+    'finalAvatarByteLength': finalAvatarProof?['byteLength'] ?? 0,
+    'finalStateHash': finalStateHash,
+    'finalKeyEpoch': finalEpoch,
+    'finalActiveMemberPeerIds': memberPeerIds,
+    'finalAdminPeerIds': adminPeerIds,
+    'removedMemberPeerIds': <String>[danaPeerId],
+    'finalMemberRoles': finalRoles,
+    'systemEventVisibilityProof': await _regressionSystemEventVisibilityProof(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+    ),
+    'convergenceFieldProof': await _regressionConvergenceFieldProof(
+      identities: identities,
+      pendingInviteStateProof: pendingInviteStateProof,
+    ),
+    'rejectedActionOutcomes': rejectedActionOutcomes,
+  };
+}
+
+Future<Map<String, dynamic>> _regressionNameRejectedProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String attemptedName,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  return _regressionAssertRejectedWithoutStateChange(
+    stack: stack,
+    groupId: groupId,
+    action: () async {
+      await _publishGroupMetadataUpdate(
+        stack: stack,
+        groupId: groupId,
+        name: attemptedName,
+        description: group?.description,
+        avatarBlobId: group?.avatarBlobId,
+        avatarMime: group?.avatarMime,
+        avatarPath: group?.avatarPath,
+        changedAt: DateTime.now().toUtc(),
+      );
+    },
+  );
+}
+
+Future<Map<String, dynamic>> _regressionDescriptionRejectedProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String attemptedDescription,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  return _regressionAssertRejectedWithoutStateChange(
+    stack: stack,
+    groupId: groupId,
+    action: () async {
+      await _publishGroupMetadataUpdate(
+        stack: stack,
+        groupId: groupId,
+        name: group?.name ?? 'unauthorized regression metadata update',
+        description: attemptedDescription,
+        avatarBlobId: group?.avatarBlobId,
+        avatarMime: group?.avatarMime,
+        avatarPath: group?.avatarPath,
+        changedAt: DateTime.now().toUtc(),
+      );
+    },
+  );
+}
+
+Future<Map<String, dynamic>> _regressionImageRejectedProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String blobIdSuffix,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  return _regressionAssertRejectedWithoutStateChange(
+    stack: stack,
+    groupId: groupId,
+    action: () async {
+      await _publishGroupMetadataUpdate(
+        stack: stack,
+        groupId: groupId,
+        name: group?.name ?? 'unauthorized regression metadata update',
+        description: group?.description,
+        avatarBlobId: 'unauthorized-regression-avatar-$_runId-$blobIdSuffix',
+        avatarMime: 'image/png',
+        avatarPath: 'media/group_avatars/$groupId-$blobIdSuffix.png',
+        changedAt: DateTime.now().toUtc(),
+      );
+    },
+  );
+}
+
+Future<Map<String, dynamic>> _regressionAddAndInviteRejectedProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required String roleToAdd,
+  required String avatarSuffix,
+}) {
+  return _regressionAssertRejectedWithoutStateChange(
+    stack: stack,
+    groupId: groupId,
+    action: () async {
+      await _regressionAddMemberFromContactAndInvite(
+        stack: stack,
+        identities: identities,
+        groupId: groupId,
+        recipientRole: roleToAdd,
+        avatarSuffix: avatarSuffix,
+      );
+    },
+  );
+}
+
+Future<Map<String, dynamic>> _regressionRoleUpdateRejectedProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String memberPeerId,
+  MemberRole role = MemberRole.admin,
+}) {
+  return _regressionAssertRejectedWithoutStateChange(
+    stack: stack,
+    groupId: groupId,
+    action: () async {
+      await _updateMemberRoleAndPublish(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: memberPeerId,
+        role: role,
+        eventAt: DateTime.now().toUtc(),
+      );
+    },
+  );
+}
+
+Future<Map<String, dynamic>> _regressionRemoveRejectedProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String memberPeerId,
+}) {
+  return _regressionAssertRejectedWithoutStateChange(
+    stack: stack,
+    groupId: groupId,
+    action: () async {
+      await removeGroupMember(
+        bridge: stack.bridge,
+        groupRepo: stack.groupRepo,
+        groupId: groupId,
+        memberPeerId: memberPeerId,
+        selfPeerId: stack.identity.peerId,
+        actorUsername: stack.identity.username,
+        eventAt: DateTime.now().toUtc(),
+        msgRepo: stack.groupMsgRepo,
+      );
+    },
+  );
+}
+
+Future<void> _runRegressionAdminPermissionsAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final stateStages = <String>[];
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+  final rejectedOutcomes = <String, dynamic>{};
+  final pendingInviteStateProof = <String, dynamic>{};
+  Map<String, dynamic>? finalAvatarProof;
+
+  await waitForSharedSignal(_signalName('bob_regression_invite_ready'));
+  final (groupId, _) = await _createPromptAliceBobGroup(
+    stack: stack,
+    identities: identities,
+  );
+  await waitForSharedSignal(_signalName('bob_regression_initial_accepted'));
+  final initialAvatar = await _uploadPromptGroupAvatar(
+    stack: stack,
+    groupId: groupId,
+    blobIdSuffix: 'alice-v0',
+  );
+  writeSharedJson(
+    _signalName('alice_regression_avatar_v0.json'),
+    initialAvatar,
+  );
+  await _publishGroupMetadataUpdate(
+    stack: stack,
+    groupId: groupId,
+    name: 'test',
+    description: 'initial description',
+    avatarBlobId: initialAvatar['blobId'] as String,
+    avatarMime: initialAvatar['mime'] as String,
+    avatarPath: initialAvatar['path'] as String,
+  );
+
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_bob_accept',
+    activeRoles: const <String>['alice', 'bob'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+    },
+    expectedName: 'test',
+    expectedDescription: 'initial description',
+    expectedAvatar: initialAvatar,
+  );
+  stateStages.add('after_bob_accept');
+  await _runRegressionFullMessageMatrixPhase(
+    stack: stack,
+    identities: identities,
+    groupId: groupId,
+    phase: 'after_bob_accept',
+    activeRoles: const <String>['alice', 'bob'],
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+  );
+
+  await waitForSharedSignal(_signalName('bob_regression_pre_promotion_done'));
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_bob_pre_promotion_rejections',
+    activeRoles: const <String>['alice', 'bob'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+    },
+    expectedName: 'test',
+    expectedDescription: 'initial description',
+    expectedAvatar: initialAvatar,
+  );
+  stateStages.add('after_bob_pre_promotion_rejections');
+
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['bob']!['peerId'] as String,
+    role: MemberRole.admin,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  writeSharedText(_signalName('alice_regression_promoted_bob'), 'ok');
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_bob_promotion',
+    activeRoles: const <String>['alice', 'bob'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.admin,
+    },
+    expectedName: 'test',
+    expectedDescription: 'initial description',
+    expectedAvatar: initialAvatar,
+  );
+  stateStages.add('after_bob_promotion');
+
+  final bobAvatar = await waitForSharedJson(
+    _signalName('bob_regression_avatar_v1.json'),
+  );
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_bob_metadata_v1',
+    activeRoles: const <String>['alice', 'bob'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.admin,
+    },
+    expectedName: 'test me',
+    expectedDescription: 'do you see me?',
+    expectedAvatar: bobAvatar,
+  );
+  stateStages.add('after_bob_metadata_v1');
+
+  final charlieAvatar = await waitForSharedJson(
+    _signalName('bob_regression_charlie_avatar.json'),
+  );
+  await waitForSharedSignal(_signalName('charlie_regression_invite_accepted'));
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_charlie_accept',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.admin,
+      'charlie': MemberRole.writer,
+    },
+    expectedName: 'test me',
+    expectedDescription: 'do you see me?',
+    expectedAvatar: charlieAvatar,
+  );
+  stateStages.add('after_charlie_accept');
+  await _runRegressionFullMessageMatrixPhase(
+    stack: stack,
+    identities: identities,
+    groupId: groupId,
+    phase: 'after_charlie_accept',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+  );
+
+  await waitForSharedSignal(_signalName('charlie_regression_non_admin_done'));
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_charlie_non_admin_rejections',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.admin,
+      'charlie': MemberRole.writer,
+    },
+    expectedName: 'test me',
+    expectedDescription: 'do you see me?',
+    expectedAvatar: charlieAvatar,
+  );
+  stateStages.add('after_charlie_non_admin_rejections');
+
+  final danaInviteAttempt = await _regressionAssertRejectedWithoutStateChange(
+    stack: stack,
+    groupId: groupId,
+    action: () async {
+      await _regressionAddMemberFromContactAndInvite(
+        stack: stack,
+        identities: identities,
+        groupId: groupId,
+        recipientRole: 'dana',
+        avatarSuffix: 'alice-dana-missing-contact',
+      );
+    },
+  );
+  rejectedOutcomes['aliceDanaInviteAttemptOutcome'] =
+      danaInviteAttempt['outcome'];
+  rejectedOutcomes['aliceDanaInviteStateUnchanged'] =
+      danaInviteAttempt['stateUnchanged'];
+  writeSharedJson(
+    _signalName('alice_regression_non_friend_dana_invite.json'),
+    danaInviteAttempt,
+  );
+  final danaNoInviteProof = await waitForSharedJson(
+    _signalName('dana_regression_alice_no_invite.json'),
+  );
+  rejectedOutcomes['aliceDanaInviteNoPendingInviteForDana'] =
+      danaNoInviteProof['noPendingInviteForDana'] == true;
+  rejectedOutcomes['aliceDanaInviteDanaPendingInviteCount'] =
+      danaNoInviteProof['pendingInviteCount'] ?? -1;
+  pendingInviteStateProof['aliceDanaRejectedInvite'] =
+      _regressionRejectedDanaPendingInviteStateProof(
+        danaNoInviteProof.cast<String, dynamic>(),
+      );
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_alice_non_friend_dana_rejection',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.admin,
+      'charlie': MemberRole.writer,
+    },
+    expectedName: 'test me',
+    expectedDescription: 'do you see me?',
+    expectedAvatar: charlieAvatar,
+  );
+  stateStages.add('after_alice_non_friend_dana_rejection');
+
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['charlie']!['peerId'] as String,
+    role: MemberRole.admin,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  writeSharedText(_signalName('alice_regression_promoted_charlie'), 'ok');
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_charlie_promotion',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.admin,
+      'charlie': MemberRole.admin,
+    },
+    expectedName: 'test me',
+    expectedDescription: 'do you see me?',
+    expectedAvatar: charlieAvatar,
+  );
+  stateStages.add('after_charlie_promotion');
+
+  final charlieAvatarV2 = await waitForSharedJson(
+    _signalName('charlie_regression_avatar_v2.json'),
+  );
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_charlie_metadata_v2',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.admin,
+      'charlie': MemberRole.admin,
+    },
+    expectedName: 'test me v2',
+    expectedDescription: 'do you see me v2?',
+    expectedAvatar: charlieAvatarV2,
+  );
+  stateStages.add('after_charlie_metadata_v2');
+
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['bob']!['peerId'] as String,
+    role: MemberRole.writer,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  writeSharedText(_signalName('alice_regression_demoted_bob'), 'ok');
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_bob_demotion',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+    },
+    expectedName: 'test me v2',
+    expectedDescription: 'do you see me v2?',
+    expectedAvatar: charlieAvatarV2,
+  );
+  stateStages.add('after_bob_demotion');
+
+  await waitForSharedSignal(
+    _signalName('bob_regression_demoted_attempts_done'),
+  );
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_bob_demoted_rejections',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+    },
+    expectedName: 'test me v2',
+    expectedDescription: 'do you see me v2?',
+    expectedAvatar: charlieAvatarV2,
+  );
+  stateStages.add('after_bob_demoted_rejections');
+
+  final danaJoinAvatar = await waitForSharedJson(
+    _signalName('charlie_regression_dana_avatar.json'),
+  );
+  await waitForSharedSignal(_signalName('dana_regression_invite_accepted'));
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_dana_accept',
+    activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+      'dana': MemberRole.writer,
+    },
+    expectedName: 'test me v2',
+    expectedDescription: 'do you see me v2?',
+    expectedAvatar: danaJoinAvatar,
+  );
+  stateStages.add('after_dana_accept');
+  await _runRegressionFullMessageMatrixPhase(
+    stack: stack,
+    identities: identities,
+    groupId: groupId,
+    phase: 'after_dana_accept',
+    activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+  );
+
+  await waitForSharedSignal(
+    _signalName('bob_regression_post_dana_attempts_done'),
+  );
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_bob_post_dana_rejections',
+    activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+      'dana': MemberRole.writer,
+    },
+    expectedName: 'test me v2',
+    expectedDescription: 'do you see me v2?',
+    expectedAvatar: danaJoinAvatar,
+  );
+  stateStages.add('after_bob_post_dana_rejections');
+
+  final avatarV3 = await _uploadPromptGroupAvatar(
+    stack: stack,
+    groupId: groupId,
+    blobIdSuffix: 'alice-v3',
+  );
+  writeSharedJson(_signalName('alice_regression_avatar_v3.json'), avatarV3);
+  await _publishGroupMetadataUpdate(
+    stack: stack,
+    groupId: groupId,
+    name: 'test me v2',
+    description: 'do you see me v2?',
+    avatarBlobId: avatarV3['blobId'] as String,
+    avatarMime: avatarV3['mime'] as String,
+    avatarPath: avatarV3['path'] as String,
+  );
+  final avatarV3State = await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_alice_avatar_v3',
+    activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+      'dana': MemberRole.writer,
+    },
+    expectedName: 'test me v2',
+    expectedDescription: 'do you see me v2?',
+    expectedAvatar: avatarV3,
+  );
+  stateStages.add('after_alice_avatar_v3');
+
+  await waitForSharedSignal(_signalName('charlie_regression_removed_dana'));
+  final finalState = await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'after_dana_removal',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+    },
+    expectedName: 'test me v2',
+    expectedDescription: 'do you see me v2?',
+    expectedAvatar: avatarV3,
+    removedRoles: const <String>['dana'],
+  );
+  stateStages.add('after_dana_removal');
+  finalAvatarProof =
+      (finalState['avatarProof'] as Map?)?.cast<String, dynamic>() ??
+      (avatarV3State['avatarProof'] as Map?)?.cast<String, dynamic>();
+
+  await _runRegressionFullMessageMatrixPhase(
+    stack: stack,
+    identities: identities,
+    groupId: groupId,
+    phase: 'post_dana_removal',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+  );
+  await waitForSharedSignal(
+    _signalName('dana_regression_post_removal_exclusion_done'),
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+    extra: <String, dynamic>{
+      'activeMemberPeerIds': await _memberPeerIds(stack, groupId),
+      _regressionAdminPermissionsProofName:
+          await _regressionGroupAdminPermissionsProof(
+            stack: stack,
+            groupId: groupId,
+            identities: identities,
+            rejectedActionOutcomes: rejectedOutcomes,
+            stateConvergenceStages: stateStages,
+            pendingInviteStateProof: pendingInviteStateProof,
+            finalAvatarProof: finalAvatarProof,
+          ),
+    },
+  );
+}
+
+Future<void> _writeRegressionAdminPermissionsVerdict({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required List<Map<String, dynamic>> sentMessages,
+  required List<Map<String, dynamic>> receivedMessages,
+  required Map<String, dynamic> rejectedOutcomes,
+  required List<String> stateStages,
+  required Map<String, dynamic> pendingInviteStateProof,
+  Map<String, dynamic>? finalAvatarProof,
+  List<String>? activeMemberPeerIdsOverride,
+}) async {
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+    extra: <String, dynamic>{
+      'activeMemberPeerIds':
+          activeMemberPeerIdsOverride ?? await _memberPeerIds(stack, groupId),
+      _regressionAdminPermissionsProofName:
+          await _regressionGroupAdminPermissionsProof(
+            stack: stack,
+            groupId: groupId,
+            identities: identities,
+            rejectedActionOutcomes: rejectedOutcomes,
+            stateConvergenceStages: stateStages,
+            pendingInviteStateProof: pendingInviteStateProof,
+            finalAvatarProof: finalAvatarProof,
+          ),
+    },
+  );
+}
+
+Future<void> _runRegressionAdminPermissionsBob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final stateStages = <String>[];
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+  final rejectedOutcomes = <String, dynamic>{};
+  final pendingInviteStateProof = <String, dynamic>{};
+  Map<String, dynamic>? finalAvatarProof;
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = _buildGroupInviteListener(
+    stack: stack,
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  inviteListener.start();
+  try {
+    writeSharedText(_signalName('bob_regression_invite_ready'), 'ok');
+    final accepted = await _acceptPromptPendingInvite(
+      stack: stack,
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final groupId = accepted.groupId;
+    pendingInviteStateProof['bobInitialInvite'] =
+        _regressionAcceptedPendingInviteStateProof(
+          storedBeforeAccept: accepted.storedPendingInvite,
+          consumedAfterAccept: accepted.acceptedInvite,
+          pendingInviteCountBeforeAccept:
+              accepted.pendingInviteCountBeforeAccept,
+          pendingInviteCountAfterAccept: accepted.pendingInviteCountAfterAccept,
+        );
+    writeSharedText(_signalName('bob_regression_initial_accepted'), 'ok');
+
+    final initialAvatar = await waitForSharedJson(
+      _signalName('alice_regression_avatar_v0.json'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_accept',
+      activeRoles: const <String>['alice', 'bob'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+      },
+      expectedName: 'test',
+      expectedDescription: 'initial description',
+      expectedAvatar: initialAvatar,
+    );
+    stateStages.add('after_bob_accept');
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'after_bob_accept',
+      activeRoles: const <String>['alice', 'bob'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPrePromotionName',
+      proof: await _regressionNameRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        attemptedName: 'bad name from non-admin b',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPrePromotionDescription',
+      proof: await _regressionDescriptionRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        attemptedDescription: 'bad description from non-admin b',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPrePromotionImage',
+      proof: await _regressionImageRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        blobIdSuffix: 'bob-pre-promotion',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPrePromotionAddCharlie',
+      proof: await _regressionAddAndInviteRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        roleToAdd: 'charlie',
+        avatarSuffix: 'bob-pre-promotion-charlie',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPrePromotionPromoteSelf',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: stack.identity.peerId,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPrePromotionDemoteAlice',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['alice']!['peerId'] as String,
+        role: MemberRole.writer,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPrePromotionRemoveAlice',
+      proof: await _regressionRemoveRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['alice']!['peerId'] as String,
+      ),
+    );
+    writeSharedText(_signalName('bob_regression_pre_promotion_done'), 'ok');
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_pre_promotion_rejections',
+      activeRoles: const <String>['alice', 'bob'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+      },
+      expectedName: 'test',
+      expectedDescription: 'initial description',
+      expectedAvatar: initialAvatar,
+    );
+    stateStages.add('after_bob_pre_promotion_rejections');
+
+    await waitForSharedSignal(_signalName('alice_regression_promoted_bob'));
+    await _waitForLocalMemberAndGroupRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+      memberRole: MemberRole.admin,
+      groupRole: GroupRole.admin,
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_promotion',
+      activeRoles: const <String>['alice', 'bob'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+      },
+      expectedName: 'test',
+      expectedDescription: 'initial description',
+      expectedAvatar: initialAvatar,
+    );
+    stateStages.add('after_bob_promotion');
+
+    final bobAvatar = await _uploadPromptGroupAvatar(
+      stack: stack,
+      groupId: groupId,
+      blobIdSuffix: 'bob-v1',
+    );
+    writeSharedJson(_signalName('bob_regression_avatar_v1.json'), bobAvatar);
+    await _publishGroupMetadataUpdate(
+      stack: stack,
+      groupId: groupId,
+      name: 'test me',
+      description: 'do you see me?',
+      avatarBlobId: bobAvatar['blobId'] as String,
+      avatarMime: bobAvatar['mime'] as String,
+      avatarPath: bobAvatar['path'] as String,
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_metadata_v1',
+      activeRoles: const <String>['alice', 'bob'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: bobAvatar,
+    );
+    stateStages.add('after_bob_metadata_v1');
+
+    final charlieAvatar = await _regressionAddMemberFromContactAndInvite(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      recipientRole: 'charlie',
+      avatarSuffix: 'bob-charlie',
+    );
+    writeSharedJson(
+      _signalName('bob_regression_charlie_avatar.json'),
+      charlieAvatar,
+    );
+    await waitForSharedSignal(
+      _signalName('charlie_regression_invite_accepted'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.writer,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_charlie_accept');
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'after_charlie_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+
+    await waitForSharedSignal(_signalName('charlie_regression_non_admin_done'));
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_non_admin_rejections',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.writer,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_charlie_non_admin_rejections');
+
+    await waitForSharedJson(
+      _signalName('alice_regression_non_friend_dana_invite.json'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_alice_non_friend_dana_rejection',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.writer,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_alice_non_friend_dana_rejection');
+
+    await waitForSharedSignal(_signalName('alice_regression_promoted_charlie'));
+    await _waitForMemberRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: identities['charlie']!['peerId'] as String,
+      role: MemberRole.admin,
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_promotion',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_charlie_promotion');
+
+    final charlieAvatarV2 = await waitForSharedJson(
+      _signalName('charlie_regression_avatar_v2.json'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_metadata_v2',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: charlieAvatarV2,
+    );
+    stateStages.add('after_charlie_metadata_v2');
+
+    await waitForSharedSignal(_signalName('alice_regression_demoted_bob'));
+    await _waitForLocalMemberAndGroupRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+      memberRole: MemberRole.writer,
+      groupRole: GroupRole.member,
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_demotion',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: charlieAvatarV2,
+    );
+    stateStages.add('after_bob_demotion');
+
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobDemotedName',
+      proof: await _regressionNameRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        attemptedName: 'bad name from demoted b',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobDemotedDescription',
+      proof: await _regressionDescriptionRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        attemptedDescription: 'bad description from demoted b',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobDemotedImage',
+      proof: await _regressionImageRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        blobIdSuffix: 'bob-demoted',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobDemotedInviteDana',
+      proof: await _regressionAddAndInviteRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        roleToAdd: 'dana',
+        avatarSuffix: 'bob-demoted-dana',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobDemotedPromoteDana',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['dana']!['peerId'] as String,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobDemotedDemoteCharlie',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['charlie']!['peerId'] as String,
+        role: MemberRole.writer,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobDemotedRemoveDana',
+      proof: await _regressionRemoveRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['dana']!['peerId'] as String,
+      ),
+    );
+    writeSharedText(_signalName('bob_regression_demoted_attempts_done'), 'ok');
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_demoted_rejections',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: charlieAvatarV2,
+    );
+    stateStages.add('after_bob_demoted_rejections');
+
+    final danaJoinAvatar = await waitForSharedJson(
+      _signalName('charlie_regression_dana_avatar.json'),
+    );
+    await waitForSharedSignal(_signalName('dana_regression_invite_accepted'));
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: danaJoinAvatar,
+    );
+    stateStages.add('after_dana_accept');
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPostDanaPromoteDana',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['dana']!['peerId'] as String,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPostDanaDemoteCharlie',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['charlie']!['peerId'] as String,
+        role: MemberRole.writer,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'bobPostDanaRemoveDana',
+      proof: await _regressionRemoveRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['dana']!['peerId'] as String,
+      ),
+    );
+    writeSharedText(
+      _signalName('bob_regression_post_dana_attempts_done'),
+      'ok',
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_post_dana_rejections',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: danaJoinAvatar,
+    );
+    stateStages.add('after_bob_post_dana_rejections');
+
+    final avatarV3 = await waitForSharedJson(
+      _signalName('alice_regression_avatar_v3.json'),
+    );
+    final avatarV3State = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_alice_avatar_v3',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: avatarV3,
+    );
+    stateStages.add('after_alice_avatar_v3');
+
+    await waitForSharedSignal(_signalName('charlie_regression_removed_dana'));
+    final finalState = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_dana_removal',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: avatarV3,
+      removedRoles: const <String>['dana'],
+    );
+    stateStages.add('after_dana_removal');
+    finalAvatarProof =
+        (finalState['avatarProof'] as Map?)?.cast<String, dynamic>() ??
+        (avatarV3State['avatarProof'] as Map?)?.cast<String, dynamic>();
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'post_dana_removal',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+    await waitForSharedSignal(
+      _signalName('dana_regression_post_removal_exclusion_done'),
+    );
+
+    await _writeRegressionAdminPermissionsVerdict(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+      rejectedOutcomes: rejectedOutcomes,
+      stateStages: stateStages,
+      pendingInviteStateProof: pendingInviteStateProof,
+      finalAvatarProof: finalAvatarProof,
+    );
+  } finally {
+    inviteListener.dispose();
+  }
+}
+
+Future<void> _runRegressionAdminPermissionsCharlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final stateStages = <String>[];
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+  final rejectedOutcomes = <String, dynamic>{};
+  final pendingInviteStateProof = <String, dynamic>{};
+  Map<String, dynamic>? finalAvatarProof;
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = _buildGroupInviteListener(
+    stack: stack,
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  inviteListener.start();
+  try {
+    final accepted = await _acceptPromptPendingInvite(
+      stack: stack,
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final groupId = accepted.groupId;
+    pendingInviteStateProof['charlieInvite'] =
+        _regressionAcceptedPendingInviteStateProof(
+          storedBeforeAccept: accepted.storedPendingInvite,
+          consumedAfterAccept: accepted.acceptedInvite,
+          pendingInviteCountBeforeAccept:
+              accepted.pendingInviteCountBeforeAccept,
+          pendingInviteCountAfterAccept: accepted.pendingInviteCountAfterAccept,
+        );
+    final charlieAvatar = await waitForSharedJson(
+      _signalName('bob_regression_charlie_avatar.json'),
+    );
+    writeSharedText(_signalName('charlie_regression_invite_accepted'), 'ok');
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.writer,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_charlie_accept');
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'after_charlie_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'charlieNonAdminName',
+      proof: await _regressionNameRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        attemptedName: 'bad name from c',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'charlieNonAdminDescription',
+      proof: await _regressionDescriptionRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        attemptedDescription: 'bad description from c',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'charlieNonAdminImage',
+      proof: await _regressionImageRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        blobIdSuffix: 'charlie-non-admin',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'charlieNonAdminInviteDana',
+      proof: await _regressionAddAndInviteRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        roleToAdd: 'dana',
+        avatarSuffix: 'charlie-non-admin-dana',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'charlieNonAdminPromoteSelf',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: stack.identity.peerId,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'charlieNonAdminDemoteBob',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['bob']!['peerId'] as String,
+        role: MemberRole.writer,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'charlieNonAdminRemoveBob',
+      proof: await _regressionRemoveRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['bob']!['peerId'] as String,
+      ),
+    );
+    writeSharedText(_signalName('charlie_regression_non_admin_done'), 'ok');
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_non_admin_rejections',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.writer,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_charlie_non_admin_rejections');
+
+    await waitForSharedJson(
+      _signalName('alice_regression_non_friend_dana_invite.json'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_alice_non_friend_dana_rejection',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.writer,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_alice_non_friend_dana_rejection');
+
+    await waitForSharedSignal(_signalName('alice_regression_promoted_charlie'));
+    await _waitForLocalMemberAndGroupRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+      memberRole: MemberRole.admin,
+      groupRole: GroupRole.admin,
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_promotion',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me',
+      expectedDescription: 'do you see me?',
+      expectedAvatar: charlieAvatar,
+    );
+    stateStages.add('after_charlie_promotion');
+
+    final charlieAvatarV2 = await _uploadPromptGroupAvatar(
+      stack: stack,
+      groupId: groupId,
+      blobIdSuffix: 'charlie-v2',
+    );
+    writeSharedJson(
+      _signalName('charlie_regression_avatar_v2.json'),
+      charlieAvatarV2,
+    );
+    await _publishGroupMetadataUpdate(
+      stack: stack,
+      groupId: groupId,
+      name: 'test me v2',
+      description: 'do you see me v2?',
+      avatarBlobId: charlieAvatarV2['blobId'] as String,
+      avatarMime: charlieAvatarV2['mime'] as String,
+      avatarPath: charlieAvatarV2['path'] as String,
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_charlie_metadata_v2',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.admin,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: charlieAvatarV2,
+    );
+    stateStages.add('after_charlie_metadata_v2');
+
+    await waitForSharedSignal(_signalName('alice_regression_demoted_bob'));
+    await _waitForMemberRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: identities['bob']!['peerId'] as String,
+      role: MemberRole.writer,
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_demotion',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: charlieAvatarV2,
+    );
+    stateStages.add('after_bob_demotion');
+
+    await waitForSharedSignal(
+      _signalName('bob_regression_demoted_attempts_done'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_demoted_rejections',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: charlieAvatarV2,
+    );
+    stateStages.add('after_bob_demoted_rejections');
+
+    final danaJoinAvatar = await _regressionAddMemberFromContactAndInvite(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      recipientRole: 'dana',
+      avatarSuffix: 'charlie-dana',
+    );
+    writeSharedJson(
+      _signalName('charlie_regression_dana_avatar.json'),
+      danaJoinAvatar,
+    );
+    await waitForSharedSignal(_signalName('dana_regression_invite_accepted'));
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: danaJoinAvatar,
+    );
+    stateStages.add('after_dana_accept');
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+
+    await waitForSharedSignal(
+      _signalName('bob_regression_post_dana_attempts_done'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_post_dana_rejections',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: danaJoinAvatar,
+    );
+    stateStages.add('after_bob_post_dana_rejections');
+
+    final avatarV3 = await waitForSharedJson(
+      _signalName('alice_regression_avatar_v3.json'),
+    );
+    final avatarV3State = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_alice_avatar_v3',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: avatarV3,
+    );
+    stateStages.add('after_alice_avatar_v3');
+
+    await _removeCharlieAndPublish(
+      stack: stack,
+      groupId: groupId,
+      charlieIdentity: identities['dana']!,
+    );
+    writeSharedText(_signalName('charlie_regression_removed_dana'), 'ok');
+    final finalState = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_dana_removal',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: avatarV3,
+      removedRoles: const <String>['dana'],
+    );
+    stateStages.add('after_dana_removal');
+    finalAvatarProof =
+        (finalState['avatarProof'] as Map?)?.cast<String, dynamic>() ??
+        (avatarV3State['avatarProof'] as Map?)?.cast<String, dynamic>();
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'post_dana_removal',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+    await waitForSharedSignal(
+      _signalName('dana_regression_post_removal_exclusion_done'),
+    );
+
+    await _writeRegressionAdminPermissionsVerdict(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+      rejectedOutcomes: rejectedOutcomes,
+      stateStages: stateStages,
+      pendingInviteStateProof: pendingInviteStateProof,
+      finalAvatarProof: finalAvatarProof,
+    );
+  } finally {
+    inviteListener.dispose();
+  }
+}
+
+Future<void> _runRegressionAdminPermissionsDana(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final stateStages = <String>[];
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+  final rejectedOutcomes = <String, dynamic>{};
+  final pendingInviteStateProof = <String, dynamic>{};
+  Map<String, dynamic>? finalAvatarProof;
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = _buildGroupInviteListener(
+    stack: stack,
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  inviteListener.start();
+  try {
+    await waitForSharedJson(
+      _signalName('alice_regression_non_friend_dana_invite.json'),
+    );
+    final pendingInvitesAfterAliceAttempt = await pendingInviteRepo
+        .getPendingInvites();
+    writeSharedJson(_signalName('dana_regression_alice_no_invite.json'), {
+      'noPendingInviteForDana': pendingInvitesAfterAliceAttempt.isEmpty,
+      'pendingInviteCount': pendingInvitesAfterAliceAttempt.length,
+    });
+    pendingInviteStateProof['aliceDanaRejectedInvite'] =
+        _regressionRejectedDanaPendingInviteStateProof(<String, dynamic>{
+          'noPendingInviteForDana': pendingInvitesAfterAliceAttempt.isEmpty,
+          'pendingInviteCount': pendingInvitesAfterAliceAttempt.length,
+        });
+    final accepted = await _acceptPromptPendingInvite(
+      stack: stack,
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final groupId = accepted.groupId;
+    rejectedOutcomes['danaAcceptedBeforeRemoval'] =
+        accepted.storedPendingInvite && accepted.acceptedInvite;
+    pendingInviteStateProof['danaInvite'] =
+        _regressionAcceptedPendingInviteStateProof(
+          storedBeforeAccept: accepted.storedPendingInvite,
+          consumedAfterAccept: accepted.acceptedInvite,
+          pendingInviteCountBeforeAccept:
+              accepted.pendingInviteCountBeforeAccept,
+          pendingInviteCountAfterAccept: accepted.pendingInviteCountAfterAccept,
+        );
+    writeSharedText(_signalName('dana_regression_invite_accepted'), 'ok');
+    final danaJoinAvatar = await waitForSharedJson(
+      _signalName('charlie_regression_dana_avatar.json'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: danaJoinAvatar,
+    );
+    stateStages.add('after_dana_accept');
+    await _runRegressionFullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      phase: 'after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+
+    await waitForSharedSignal(
+      _signalName('bob_regression_post_dana_attempts_done'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_bob_post_dana_rejections',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: danaJoinAvatar,
+    );
+    stateStages.add('after_bob_post_dana_rejections');
+
+    final avatarV3 = await waitForSharedJson(
+      _signalName('alice_regression_avatar_v3.json'),
+    );
+    final avatarV3State = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'after_alice_avatar_v3',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test me v2',
+      expectedDescription: 'do you see me v2?',
+      expectedAvatar: avatarV3,
+    );
+    stateStages.add('after_alice_avatar_v3');
+    finalAvatarProof = (avatarV3State['avatarProof'] as Map?)
+        ?.cast<String, dynamic>();
+
+    await waitForSharedSignal(_signalName('charlie_regression_removed_dana'));
+    await _waitForSelfRemovalOrRetainedExclusion(
+      stack: stack,
+      groupId: groupId,
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'danaPostRemovalName',
+      proof: await _regressionNameRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        attemptedName: 'bad name from removed dana',
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'danaPostRemovalPromoteSelf',
+      proof: await _regressionRoleUpdateRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: stack.identity.peerId,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'danaPostRemovalRemoveBob',
+      proof: await _regressionRemoveRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        memberPeerId: identities['bob']!['peerId'] as String,
+      ),
+    );
+    _recordRegressionRejectedAction(
+      rejectedOutcomes: rejectedOutcomes,
+      fieldPrefix: 'danaPostRemovalAddBob',
+      proof: await _regressionAddAndInviteRejectedProof(
+        stack: stack,
+        groupId: groupId,
+        identities: identities,
+        roleToAdd: 'bob',
+        avatarSuffix: 'dana-post-removal-bob',
+      ),
+    );
+    final postRemovalSendOutcome = await _regressionPostRemovalSendOutcome(
+      stack: stack,
+      groupId: groupId,
+    );
+    final exclusionProof = await _regressionPostRemovalExclusionProof(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+    );
+    final groupAfterRemoval = await stack.groupRepo.getGroup(groupId);
+    final selfMemberAfterRemoval = groupAfterRemoval == null
+        ? null
+        : await stack.groupRepo.getMember(groupId, stack.identity.peerId);
+    final noActiveAccessAfterRemoval =
+        groupAfterRemoval == null || selfMemberAfterRemoval == null;
+    rejectedOutcomes['danaRemovedLocally'] = noActiveAccessAfterRemoval;
+    rejectedOutcomes['danaNoActiveAccessAfterRemoval'] =
+        noActiveAccessAfterRemoval;
+    rejectedOutcomes['danaPostRemovalSendRejected'] =
+        postRemovalSendOutcome != 'accepted';
+    rejectedOutcomes['danaPostRemovalSendOutcome'] = postRemovalSendOutcome;
+    rejectedOutcomes.addAll(exclusionProof);
+    writeSharedText(
+      _signalName('dana_regression_post_removal_exclusion_done'),
+      'ok',
+    );
+
+    await _writeRegressionAdminPermissionsVerdict(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+      rejectedOutcomes: rejectedOutcomes,
+      stateStages: stateStages,
+      pendingInviteStateProof: pendingInviteStateProof,
+      finalAvatarProof: finalAvatarProof,
+      activeMemberPeerIdsOverride: const <String>[],
+    );
+  } finally {
+    inviteListener.dispose();
+  }
 }
 
 Future<void> _runPromptAlice(
@@ -41838,7 +44911,9 @@ Future<void> _runScenarioRole() async {
     }
 
     final identities = await _publishIdentityAndWaitForAll(stack, roles);
-    if (_scenario == 'private_admin_metadata_intro_photo_convergence') {
+    if (_scenario == _regressionAdminPermissionsScenario) {
+      await _addRegressionAdminPermissionsInitialContacts(stack, identities);
+    } else if (_scenario == 'private_admin_metadata_intro_photo_convergence') {
       await _addPromptScenarioInitialContacts(stack, identities);
     } else if (_scenario != 'private_non_friend_member_delivery' ||
         _role != 'dana') {
@@ -42644,6 +45719,19 @@ Future<void> _runScenarioRole() async {
         await _runPromptCharlie(stack, identities, includeDemotion: true);
       } else {
         await _runPrivateAdminDemotionDana(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == _regressionAdminPermissionsScenario) {
+      if (_role == 'alice') {
+        await _runRegressionAdminPermissionsAlice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runRegressionAdminPermissionsBob(stack, identities);
+      } else if (_role == 'charlie') {
+        await _runRegressionAdminPermissionsCharlie(stack, identities);
+      } else {
+        await _runRegressionAdminPermissionsDana(stack, identities);
       }
       return;
     }

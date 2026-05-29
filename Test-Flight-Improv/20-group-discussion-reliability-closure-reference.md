@@ -386,6 +386,61 @@ That is the correct level of honesty for a publish + inbox-backed, receipt-less 
 - `Test-Flight-Improv/test-gate-definitions.md` was inspected through
   `completeness-check` and was not changed by GEK-005.
 
+### 14. Four-user admin-permission checklist proof
+
+- Report 96 is covered by the four-session GAPR rollout for
+  `regression_group_admin_permissions_and_message_reliability_four_users`.
+  The final program verdict is `accepted_with_explicit_follow_up` on
+  `2026-05-29`.
+- GAPR-001 stabilized the four-user baseline after fixing duplicate same-hash
+  metadata/avatar recovery in the group message listener. Its targeted simulator
+  evidence passed as run id `1780055021026`.
+- GAPR-002 expanded the scenario and criteria to prove independent forbidden
+  admin-action rejection for non-admin, demoted-admin, non-friend invite, and
+  removed-member states. Its targeted simulator evidence passed as run id
+  `1780057317153`.
+- GAPR-003 added system-event visibility and richer convergence proof for
+  promotion, demotion, removal, watermarks, pending-invite state, removed-member
+  representation, latest event identity, avatar bytes/hash, state hash, and key
+  epoch. Its final post-fix targeted simulator evidence passed as run id
+  `1780060893842`, with proof accepted for Alice, Bob, Charlie, and Dana.
+- Final GAPR-004 checks passed on `2026-05-29`: the criteria suite passed with
+  537 tests, scenario listing/discovery still exposed the target scenario, the
+  reliability-sims group list still mapped it as check `#87`, and scoped
+  `git diff --check` passed.
+- The explicit follow-up is not a Report 96 checklist gap: the full
+  `./scripts/run_test_gates.sh groups` gate remains red only on the known
+  non-target `UP-001 create add remove and re-add keep DB and bridge groupConfig
+  snapshots aligned` stale-membership residual at
+  `lib/features/groups/application/add_group_member_use_case.dart:281`.
+  Do not reopen Report 96 unless the four-user admin-permission scenario, its
+  action-specific rejection proof, its system-event proof, or its convergence
+  proof regresses.
+
+### 15. Group details recovery-save feedback proof
+
+- Report 97 is closed on `2026-05-29` after the GDR rollout.
+- GDR-001 added the group-details editor recovery-save waiting contract:
+  localized non-jargon wait copy, elapsed waiting timer, Save disabled only
+  while `groupRecoveryGate` is active or the name is invalid, draft
+  name/description/photo preservation, raw recovery-error mapping, and avatar
+  commit/delete atomicity when recovery starts during a save.
+- GDR-001 host evidence passed:
+  `flutter test --no-pub test/features/groups/presentation/group_info_wired_test.dart`,
+  `flutter test --no-pub test/features/groups/application/update_group_metadata_use_case_test.dart`,
+  `flutter test --no-pub test/l10n/l10n_integrity_test.dart`, and
+  `./scripts/run_test_gates.sh groups`.
+- GDR-002 added promoted-admin A/B/C acceptance coverage for the reported shape:
+  A/B and B/C are connected, A/C are not direct contacts, B and then C become
+  admins, C's recovery-window details/photo save is rejected without local-only
+  metadata/avatar persistence, and C's post-recovery save converges to A, B, and
+  C.
+- GDR-002 host evidence passed the targeted promoted-admin recovery-save
+  selector, full `group_admin_metadata_convergence_test.dart`, and
+  `./scripts/run_test_gates.sh groups`.
+- No gate-definition changes were required; the existing groups gate remains the
+  release-facing host proof for this regression.
+
 ---
 
 ## Accepted Architectural Differences From 1:1
@@ -426,6 +481,11 @@ There are still narrow residuals worth remembering:
   delivery plus immediate post-rotation send repair path regresses, and do not
   reopen GEK-004 unless delayed membership/config catch-up plus durable
   unknown-sender replay recovery regresses.
+- Report 96 group admin-permission checklist coverage is accepted with explicit
+  follow-up after GAPR-004. The remaining follow-up is the known non-target
+  `UP-001` stale-membership groups-gate residual, not a reason to reopen the
+  Report 96 four-user admin-permission checklist unless that exact scenario or
+  its criteria proof regresses.
 
 These are **not** reasons to reopen the whole group reliability program. Reopen only if they become real escaped bugs or clearly justified trust gaps.
 

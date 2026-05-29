@@ -541,6 +541,15 @@
   "group_edit_remove_photo": "Foto entfernen",
   "group_edit_name": "Gruppenname",
   "group_edit_description": "Beschreibung",
+  "group_edit_recovery_waiting": "Bitte warten, während dieses Gerät aufholt.",
+  "group_edit_recovery_waiting_elapsed": "Wartet seit {seconds} s",
+  "@group_edit_recovery_waiting_elapsed": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "btn_save": "Speichern",
   "group_member_sending": "Wird gesendet...",
   "group_member_resend": "Erneut senden",

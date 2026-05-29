@@ -8,6 +8,7 @@ import 'package:flutter_app/features/groups/application/add_group_member_use_cas
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -33,6 +34,8 @@ const exactScenario3PromotedAdminJourneyLabel =
     'exact Scenario 3 promoted admin invite, metadata, fanout, and photo journey passes';
 const exactScenario4AdminDemotionEnforcementLabel =
     'exact Scenario 4 admin demotion enforcement journey passes';
+const promotedAdminRecoverySaveConvergenceLabel =
+    'promoted admin recovery-blocked save waits then metadata and photo converge';
 
 enum GroupAdminMetadataMemberAdder { alice, bob }
 
@@ -1139,6 +1142,201 @@ Future<void> runExactScenario3PromotedAdminJourney() async {
   }, reason: 'bug-3 A photo update is visible to A and C');
 }
 
+Future<void> runPromotedAdminRecoverySaveConvergenceScenario() async {
+  groupRecoveryGate.resetForTest();
+  addTearDown(groupRecoveryGate.resetForTest);
+
+  final network = FakeGroupPubSubNetwork();
+  final directHarness = _DirectMembershipUpdateHarness();
+  addTearDown(directHarness.dispose);
+
+  const groupId = 'grp-promoted-admin-recovery-save';
+  const groupKeyEpoch = 1;
+  final createdAt = DateTime.utc(2026, 5, 25, 23);
+  const savedName = 'after recovery details';
+  const savedDescription = 'all members see this after recovery clears';
+  const savedAvatarBlobId = 'blob-recovery-save-by-c';
+  const savedAvatarMime = 'image/jpeg';
+  const savedAvatarPath = 'media/group_avatars/$groupId.jpg';
+
+  final alice = GroupTestUser.create(
+    peerId: 'recovery-user-a',
+    deviceId: 'recovery-device-a',
+    username: 'User A',
+    network: network,
+  );
+  final bob = GroupTestUser.create(
+    peerId: 'recovery-user-b',
+    deviceId: 'recovery-device-b',
+    username: 'User B',
+    network: network,
+  );
+  final charlie = GroupTestUser.create(
+    peerId: 'recovery-user-c',
+    deviceId: 'recovery-device-c',
+    username: 'User C',
+    network: network,
+  );
+  addTearDown(() {
+    alice.dispose();
+    bob.dispose();
+    charlie.dispose();
+  });
+
+  alice.start();
+  bob.start();
+  charlie.start();
+  directHarness.attach(alice);
+  directHarness.attach(bob);
+  directHarness.attach(charlie);
+
+  final aliceBobContact = _contactFor(bob, createdAt);
+  final bobCharlieContact = _contactFor(charlie, createdAt);
+  expect(aliceBobContact.peerId, bob.peerId, reason: 'A and B are friends');
+  expect(
+    bobCharlieContact.peerId,
+    charlie.peerId,
+    reason: 'B and C are friends',
+  );
+  expect(alice.peerId, isNot(charlie.peerId), reason: 'A and C are distinct');
+
+  await alice.createGroup(groupId: groupId, name: 'test', createdAt: createdAt);
+  await _saveKey(user: alice, groupId: groupId, epoch: groupKeyEpoch);
+
+  await _inviteAndAcceptViaPendingFlow(
+    inviter: alice,
+    invitee: bob,
+    groupId: groupId,
+    joinedAt: createdAt.add(const Duration(minutes: 1)),
+    inviteReceivedAt: createdAt.add(const Duration(minutes: 1, seconds: 10)),
+    directHarness: directHarness,
+  );
+
+  await _promoteBob(
+    alice: alice,
+    bob: bob,
+    groupId: groupId,
+    changedAt: createdAt.add(const Duration(minutes: 2)),
+  );
+
+  await _inviteAndAcceptViaPendingFlow(
+    inviter: bob,
+    invitee: charlie,
+    groupId: groupId,
+    joinedAt: createdAt.add(const Duration(minutes: 3)),
+    inviteReceivedAt: createdAt.add(const Duration(minutes: 3, seconds: 10)),
+    directHarness: directHarness,
+    existingRecipientsForMembershipReplay: [alice],
+  );
+  await _waitUntil(() async {
+    final aliceSeesCharlie = await alice.groupRepo.getMember(
+      groupId,
+      charlie.peerId,
+    );
+    final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+    return aliceSeesCharlie != null && charlieGroup?.name == 'test';
+  }, reason: 'C joins via promoted B and A learns C');
+
+  await alice.updateMemberRole(
+    groupId: groupId,
+    memberPeerId: charlie.peerId,
+    role: MemberRole.admin,
+    changedAt: createdAt.add(const Duration(minutes: 4)),
+  );
+  await _waitUntil(() async {
+    final aliceCharlie = await alice.groupRepo.getMember(
+      groupId,
+      charlie.peerId,
+    );
+    final bobCharlie = await bob.groupRepo.getMember(groupId, charlie.peerId);
+    final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+    final charlieSelf = await charlie.groupRepo.getMember(
+      groupId,
+      charlie.peerId,
+    );
+    return aliceCharlie?.role == MemberRole.admin &&
+        bobCharlie?.role == MemberRole.admin &&
+        charlieGroup?.myRole == GroupRole.admin &&
+        charlieSelf?.role == MemberRole.admin;
+  }, reason: 'C admin promotion converges');
+
+  groupRecoveryGate.begin();
+  try {
+    await expectLater(
+      charlie.updateMetadata(
+        groupId: groupId,
+        name: 'blocked local name',
+        description: 'blocked local description',
+        avatarBlobId: 'blob-blocked-local-only',
+        avatarMime: savedAvatarMime,
+        avatarPath: savedAvatarPath,
+        changedAt: createdAt.add(const Duration(minutes: 5)),
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          groupRecoveryPendingError,
+        ),
+      ),
+    );
+  } finally {
+    groupRecoveryGate.end();
+  }
+
+  for (final user in [alice, bob, charlie]) {
+    final group = await user.groupRepo.getGroup(groupId);
+    expect(group?.name, 'test', reason: '${user.username} blocked name');
+    expect(
+      group?.description,
+      isNull,
+      reason: '${user.username} blocked description',
+    );
+    expect(
+      group?.avatarBlobId,
+      isNull,
+      reason: '${user.username} blocked avatar',
+    );
+  }
+
+  await charlie.updateMetadata(
+    groupId: groupId,
+    name: savedName,
+    description: savedDescription,
+    avatarBlobId: savedAvatarBlobId,
+    avatarMime: savedAvatarMime,
+    avatarPath: savedAvatarPath,
+    changedAt: createdAt.add(const Duration(minutes: 6)),
+  );
+
+  await _waitUntil(() async {
+    final aliceGroup = await alice.groupRepo.getGroup(groupId);
+    final bobGroup = await bob.groupRepo.getGroup(groupId);
+    return aliceGroup?.name == savedName &&
+        aliceGroup?.description == savedDescription &&
+        aliceGroup?.avatarBlobId == savedAvatarBlobId &&
+        bobGroup?.name == savedName &&
+        bobGroup?.description == savedDescription &&
+        bobGroup?.avatarBlobId == savedAvatarBlobId;
+  }, reason: 'C post-recovery metadata/photo reaches A and B');
+
+  for (final user in [alice, bob, charlie]) {
+    await _expectGroupMetadata(
+      user: user,
+      groupId: groupId,
+      name: savedName,
+      description: savedDescription,
+      avatarBlobId: savedAvatarBlobId,
+      avatarMime: savedAvatarMime,
+    );
+    expect(
+      await _memberPeerIds(user: user, groupId: groupId),
+      {alice.peerId, bob.peerId, charlie.peerId},
+      reason: '${user.username} final members',
+    );
+  }
+}
+
 Future<void> runGroupAdminMetadataConvergenceScenario({
   GroupAdminMetadataMemberAdder charlieAdder =
       GroupAdminMetadataMemberAdder.alice,
@@ -1303,6 +1501,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Group admin metadata convergence', () {
+    setUp(groupRecoveryGate.resetForTest);
+    tearDown(groupRecoveryGate.resetForTest);
+
     test(
       groupAdminMetadataConvergenceLabel,
       runGroupAdminMetadataConvergenceScenario,
@@ -1322,6 +1523,11 @@ void main() {
     test(
       exactScenario4AdminDemotionEnforcementLabel,
       runExactScenario4AdminDemotionEnforcementJourney,
+    );
+
+    test(
+      promotedAdminRecoverySaveConvergenceLabel,
+      runPromotedAdminRecoverySaveConvergenceScenario,
     );
 
     test(

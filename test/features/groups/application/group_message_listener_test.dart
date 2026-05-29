@@ -6686,6 +6686,84 @@ void main() {
       },
     );
 
+    test(
+      'duplicate signed group_metadata_updated retries missing avatar recovery without duplicating the event',
+      () async {
+        await saveTrustedAdminMember();
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final eventLog = _FakeEventLog();
+        var downloadCalls = 0;
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+          downloadGroupAvatarFn:
+              ({
+                required dynamic bridge,
+                required String groupId,
+                required String blobId,
+              }) async {
+                downloadCalls++;
+                return downloadCalls == 1
+                    ? null
+                    : 'media/group_avatars/$groupId.jpg';
+              },
+        );
+
+        final updatedAt = DateTime.parse('2026-04-05T12:20:30.000Z');
+        final groupConfig = buildMetadataConfig(
+          updatedAt: updatedAt,
+          name: 'Recovered Signed Avatar Group',
+          avatarBlobId: 'blob-signed-retry',
+          avatarMime: 'image/jpeg',
+        );
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'metadata-signed-avatar-retry-1',
+          eventAt: updatedAt,
+          systemPayload: signedMetadataSystemPayload(
+            updatedAt: updatedAt,
+            groupConfig: groupConfig,
+          ),
+        );
+        final replayEnvelope = {
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'metadata-signed-avatar-retry-1',
+          'text': jsonEncode(sysPayload),
+          'timestamp': updatedAt.toUtc().toIso8601String(),
+        };
+
+        await listener.handleReplayEnvelope(
+          replayEnvelope,
+          rethrowOnError: true,
+        );
+        final missingAvatarGroup = await groupRepo.getGroup('group-1');
+        expect(missingAvatarGroup, isNotNull);
+        expect(missingAvatarGroup!.name, 'Recovered Signed Avatar Group');
+        expect(missingAvatarGroup.avatarBlobId, 'blob-signed-retry');
+        expect(missingAvatarGroup.avatarPath, isNull);
+        expect(downloadCalls, 1);
+        expect(eventLog.entries, hasLength(1));
+        expect(msgRepo.count, 1);
+
+        await listener.handleReplayEnvelope(
+          replayEnvelope,
+          rethrowOnError: true,
+        );
+
+        final recoveredGroup = await groupRepo.getGroup('group-1');
+        expect(recoveredGroup, isNotNull);
+        expect(recoveredGroup!.avatarPath, 'media/group_avatars/group-1.jpg');
+        expect(downloadCalls, 2);
+        expect(eventLog.entries, hasLength(1));
+        expect(msgRepo.count, 1);
+      },
+    );
+
     test('unauthorized member_removed is ignored', () async {
       listener.start(sourceController.stream);
 
