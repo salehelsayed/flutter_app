@@ -1081,6 +1081,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get group_edit_description => 'الوصف';
 
   @override
+  String get group_edit_recovery_waiting =>
+      'يرجى الانتظار بينما يلحق هذا الجهاز.';
+
+  @override
+  String group_edit_recovery_waiting_elapsed(int seconds) {
+    return 'بانتظار منذ $seconds ث';
+  }
+
+  @override
   String get btn_save => 'حفظ';
 
   @override

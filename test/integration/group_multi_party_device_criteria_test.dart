@@ -964,6 +964,442 @@ void main() {
       },
     );
 
+    test(
+      'regression group admin permissions accepts expanded forbidden-action proof',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validRegressionGroupAdminPermissionsVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains(
+            'regression_group_admin_permissions_and_message_reliability_four_users verdicts valid',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing Bob pre-promotion field',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[1] = _withoutRegressionGroupAdminOutcome(
+          verdicts[1],
+          'bobPrePromotionPromoteSelfAttemptOutcome',
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'bob: regressionGroupAdminPermissionsProof.bobPrePromotionPromoteSelfAttemptOutcome',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects accepted Charlie non-admin action',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[2] = _withRegressionGroupAdminOutcomeOverrides(
+          verdicts[2],
+          const <String, Object?>{
+            'charlieNonAdminRemoveBobAttemptOutcome': 'accepted',
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: regressionGroupAdminPermissionsProof.charlieNonAdminRemoveBobAttemptOutcome',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing Alice Dana no-invite proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[0] = _withoutRegressionGroupAdminOutcome(
+          verdicts[0],
+          'aliceDanaInviteNoPendingInviteForDana',
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: regressionGroupAdminPermissionsProof.aliceDanaInviteNoPendingInviteForDana',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing Dana post-removal admin proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[3] = _withoutRegressionGroupAdminOutcome(
+          verdicts[3],
+          'danaPostRemovalPromoteSelfAttemptOutcome',
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'dana: regressionGroupAdminPermissionsProof.danaPostRemovalPromoteSelfAttemptOutcome',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects legacy combined-only proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[1] = _withRegressionGroupAdminProofOverrides(
+          verdicts[1],
+          const <String, Object?>{
+            'rejectedActionOutcomes': <String, Object?>{
+              'bobPrePromotionMetadataAttemptOutcome': 'blocked:not admin',
+              'bobPrePromotionMemberAddAttemptOutcome': 'blocked:not admin',
+              'bobPrePromotionStateUnchanged': true,
+              'bobDemotedMetadataAttemptOutcome': 'blocked:not admin',
+              'bobDemotedMemberAddAttemptOutcome': 'blocked:not admin',
+              'bobDemotedStateUnchanged': true,
+              'bobPostDanaRoleAttemptOutcome': 'blocked:not admin',
+              'bobPostDanaRemoveAttemptOutcome': 'blocked:not admin',
+              'bobPostDanaStateUnchanged': true,
+            },
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'bob: regressionGroupAdminPermissionsProof.bobPrePromotionNameAttemptOutcome',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing promotion event proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[0] = _withoutRegressionGroupAdminSystemEvent(
+          verdicts[0],
+          'bob_promotion',
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: regressionGroupAdminPermissionsProof.systemEventVisibilityProof.bob_promotion',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing demotion event proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[1] = _withoutRegressionGroupAdminSystemEvent(
+          verdicts[1],
+          'bob_demotion',
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'bob: regressionGroupAdminPermissionsProof.systemEventVisibilityProof.bob_demotion',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing removal event proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[2] = _withoutRegressionGroupAdminSystemEvent(
+          verdicts[2],
+          'dana_removal',
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: regressionGroupAdminPermissionsProof.systemEventVisibilityProof.dana_removal',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing convergence watermarks',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[0] = _withRegressionGroupAdminConvergenceOverrides(
+          verdicts[0],
+          const <String, Object?>{
+            'lastMetadataEventAtMatched': false,
+            'lastMembershipEventAtMatched': false,
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: regressionGroupAdminPermissionsProof.convergenceFieldProof.lastMetadataEventAtMatched',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'alice: regressionGroupAdminPermissionsProof.convergenceFieldProof.lastMembershipEventAtMatched',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects drifted latest timeline event proof',
+      () {
+        final driftCases = <String, Object?>{
+          'messageId': 'sys-member_removed:drifted-bob',
+          'eventType': 'member_role_updated',
+          'eventAt': '2026-05-29T12:05:00.000Z',
+          'textHash': ''.padLeft(64, 'f'),
+        };
+        for (final driftCase in driftCases.entries) {
+          final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+          verdicts[0] = _withRegressionGroupAdminConvergenceOverrides(
+            verdicts[0],
+            <String, Object?>{
+              'latestTimelineEventProof':
+                  _regressionGroupAdminLatestTimelineEventProof(
+                    driftRole: 'bob',
+                    driftOverrides: <String, Object?>{
+                      driftCase.key: driftCase.value,
+                    },
+                  ),
+            },
+          );
+
+          final rejected = evaluateGroupMultiPartyVerdicts(
+            scenario:
+                'regression_group_admin_permissions_and_message_reliability_four_users',
+            relayAddresses: expectedMultiPartyRelayAddresses,
+            verdicts: verdicts,
+          );
+
+          expect(rejected.ok, isFalse, reason: driftCase.key);
+          expect(
+            rejected.detail,
+            contains(
+              'alice: regressionGroupAdminPermissionsProof.convergenceFieldProof.latestTimelineEventProof.after_dana_removal',
+            ),
+            reason: driftCase.key,
+          );
+        }
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing latest timeline event proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[0] = _withRegressionGroupAdminConvergenceOverrides(
+          verdicts[0],
+          const <String, Object?>{
+            'latestTimelineEventProof': <String, Object?>{},
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: regressionGroupAdminPermissionsProof.convergenceFieldProof.latestTimelineEventProof.after_dana_removal',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing latest timeline event role proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[0] = _withRegressionGroupAdminConvergenceOverrides(
+          verdicts[0],
+          <String, Object?>{
+            'latestTimelineEventProof':
+                _regressionGroupAdminLatestTimelineEventProof(
+                  driftRole: 'bob',
+                  driftOverrides: const <String, Object?>{},
+                  omitDriftRole: true,
+                ),
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: regressionGroupAdminPermissionsProof.convergenceFieldProof.latestTimelineEventProof.after_dana_removal',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing pending invite state proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[1] = _withoutRegressionGroupAdminPendingState(
+          verdicts[1],
+          'bobInitialInvite',
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'bob: regressionGroupAdminPermissionsProof.convergenceFieldProof.pendingInviteStateProof.bobInitialInvite',
+          ),
+        );
+      },
+    );
+
+    test(
+      'regression group admin permissions rejects missing removed-member representation proof',
+      () {
+        final verdicts = _validRegressionGroupAdminPermissionsVerdicts();
+        verdicts[0] = _withRegressionGroupAdminConvergenceOverrides(
+          verdicts[0],
+          const <String, Object?>{
+            'removedMemberRepresentedAfterRemoval': false,
+            'removedMemberPeerIds': <String>[],
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario:
+              'regression_group_admin_permissions_and_message_reliability_four_users',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: regressionGroupAdminPermissionsProof.convergenceFieldProof.removedMemberRepresentedAfterRemoval',
+          ),
+        );
+      },
+    );
+
     test('PL-009 accepts private reaction roundtrip verdicts', () {
       expect(scenarioRequirement('private_reaction_roundtrip').roles, [
         'alice',
@@ -3125,6 +3561,37 @@ void main() {
       );
 
       expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_abc_create verdicts valid'));
+    });
+
+    test('receiver proof validation ignores sender self-delivery rows', () {
+      final verdicts = _validPrivateAbcCreateVerdicts();
+      verdicts[0] = <String, dynamic>{
+        ...verdicts[0],
+        'receivedMessages': <Map<String, Object?>>[
+          <String, Object?>{
+            ..._received(
+              'aliceInitial',
+              'pabc-a1',
+              'private abc hello',
+              'alice-peer',
+              keyEpoch: 1,
+            ),
+            'isIncoming': false,
+            'selfDelivery': true,
+            'persistedCount': 1,
+          },
+        ],
+        'persistedMessageCounts': const <String, int>{'aliceInitial': 1},
+      };
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_abc_create',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
       expect(verdict.detail, contains('private_abc_create verdicts valid'));
     });
 
@@ -25744,6 +26211,627 @@ Map<String, dynamic> _withPrivateAdminDemotionProofOverrides(
       ...overrides,
     },
   };
+}
+
+const _regressionGroupAdminPermissionsScenario =
+    'regression_group_admin_permissions_and_message_reliability_four_users';
+const _regressionGroupAdminPermissionsProofName =
+    'regressionGroupAdminPermissionsProof';
+const _regressionGroupAdminPermissionsGroupId =
+    'regression-group-admin-permissions-group';
+const _regressionGroupAdminPermissionsPeerIds = <String, String>{
+  'alice': 'alice-peer',
+  'bob': 'bob-peer',
+  'charlie': 'charlie-peer',
+  'dana': 'dana-peer',
+};
+const _regressionGroupAdminPermissionsActiveMembers = <String>[
+  'alice-peer',
+  'bob-peer',
+  'charlie-peer',
+];
+const _regressionGroupAdminPermissionsMatrixKeys = <String>[
+  'aliceRegAdminAfterBobAccept',
+  'bobRegAdminAfterBobAccept',
+  'aliceRegAdminAfterCharlieAccept',
+  'bobRegAdminAfterCharlieAccept',
+  'charlieRegAdminAfterCharlieAccept',
+  'aliceRegAdminAfterDanaAccept',
+  'bobRegAdminAfterDanaAccept',
+  'charlieRegAdminAfterDanaAccept',
+  'danaRegAdminAfterDanaAccept',
+  'aliceRegAdminPostDanaRemoval',
+  'bobRegAdminPostDanaRemoval',
+  'charlieRegAdminPostDanaRemoval',
+];
+const _regressionGroupAdminPermissionsConvergenceStages = <String>[
+  'after_bob_accept',
+  'after_bob_pre_promotion_rejections',
+  'after_bob_promotion',
+  'after_bob_metadata_v1',
+  'after_charlie_accept',
+  'after_charlie_non_admin_rejections',
+  'after_alice_non_friend_dana_rejection',
+  'after_charlie_promotion',
+  'after_charlie_metadata_v2',
+  'after_bob_demotion',
+  'after_bob_demoted_rejections',
+  'after_dana_accept',
+  'after_bob_post_dana_rejections',
+  'after_alice_avatar_v3',
+  'after_dana_removal',
+];
+const _regressionGroupAdminPermissionsMembershipWatermarkStages = <String>[
+  'after_bob_promotion',
+  'after_charlie_accept',
+  'after_charlie_promotion',
+  'after_bob_demotion',
+  'after_dana_accept',
+  'after_dana_removal',
+];
+const _regressionGroupAdminPermissionsMetadataWatermarkStages = <String>[
+  'after_bob_accept',
+  'after_bob_metadata_v1',
+  'after_charlie_metadata_v2',
+  'after_alice_avatar_v3',
+  'after_dana_removal',
+];
+
+List<Map<String, Object?>> _regressionGroupAdminPermissionMessageSpecs() {
+  return const <Map<String, Object?>>[
+    <String, Object?>{
+      'key': 'aliceRegAdminAfterBobAccept',
+      'sender': 'alice',
+      'receivers': <String>['bob'],
+    },
+    <String, Object?>{
+      'key': 'bobRegAdminAfterBobAccept',
+      'sender': 'bob',
+      'receivers': <String>['alice'],
+    },
+    <String, Object?>{
+      'key': 'aliceRegAdminAfterCharlieAccept',
+      'sender': 'alice',
+      'receivers': <String>['bob', 'charlie'],
+    },
+    <String, Object?>{
+      'key': 'bobRegAdminAfterCharlieAccept',
+      'sender': 'bob',
+      'receivers': <String>['alice', 'charlie'],
+    },
+    <String, Object?>{
+      'key': 'charlieRegAdminAfterCharlieAccept',
+      'sender': 'charlie',
+      'receivers': <String>['alice', 'bob'],
+    },
+    <String, Object?>{
+      'key': 'aliceRegAdminAfterDanaAccept',
+      'sender': 'alice',
+      'receivers': <String>['bob', 'charlie', 'dana'],
+    },
+    <String, Object?>{
+      'key': 'bobRegAdminAfterDanaAccept',
+      'sender': 'bob',
+      'receivers': <String>['alice', 'charlie', 'dana'],
+    },
+    <String, Object?>{
+      'key': 'charlieRegAdminAfterDanaAccept',
+      'sender': 'charlie',
+      'receivers': <String>['alice', 'bob', 'dana'],
+    },
+    <String, Object?>{
+      'key': 'danaRegAdminAfterDanaAccept',
+      'sender': 'dana',
+      'receivers': <String>['alice', 'bob', 'charlie'],
+    },
+    <String, Object?>{
+      'key': 'aliceRegAdminPostDanaRemoval',
+      'sender': 'alice',
+      'receivers': <String>['bob', 'charlie'],
+    },
+    <String, Object?>{
+      'key': 'bobRegAdminPostDanaRemoval',
+      'sender': 'bob',
+      'receivers': <String>['alice', 'charlie'],
+    },
+    <String, Object?>{
+      'key': 'charlieRegAdminPostDanaRemoval',
+      'sender': 'charlie',
+      'receivers': <String>['alice', 'bob'],
+    },
+  ];
+}
+
+Map<String, Object?> _regressionGroupAdminSentMessage(
+  Map<String, Object?> spec,
+) {
+  final key = spec['key'] as String;
+  final sender = spec['sender'] as String;
+  return <String, Object?>{
+    'key': key,
+    'messageId': 'msg-$key',
+    'groupId': _regressionGroupAdminPermissionsGroupId,
+    'text': 'Regression group admin permissions $key',
+    'outcome': 'success',
+    'senderPeerId': _regressionGroupAdminPermissionsPeerIds[sender],
+    'keyEpoch': 5,
+    'timestamp': '2026-05-29T12:00:00.000Z',
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminSelfDelivery(
+  Map<String, Object?> spec,
+) {
+  final sent = _regressionGroupAdminSentMessage(spec);
+  return <String, Object?>{
+    ...sent,
+    'isIncoming': false,
+    'selfDelivery': true,
+    'persistedCount': 1,
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminReceivedMessage(
+  Map<String, Object?> spec,
+) {
+  final key = spec['key'] as String;
+  final sender = spec['sender'] as String;
+  return _received(
+    key,
+    'msg-$key',
+    'Regression group admin permissions $key',
+    _regressionGroupAdminPermissionsPeerIds[sender]!,
+    groupId: _regressionGroupAdminPermissionsGroupId,
+    keyEpoch: 5,
+    timestamp: '2026-05-29T12:00:00.000Z',
+  );
+}
+
+Map<String, Object?> _regressionGroupAdminRejectedActions(
+  Iterable<String> prefixes,
+) {
+  final outcomes = <String, Object?>{};
+  for (final prefix in prefixes) {
+    outcomes['${prefix}AttemptOutcome'] = 'blocked:permission_denied';
+    outcomes['${prefix}StateUnchanged'] = true;
+  }
+  return outcomes;
+}
+
+Map<String, Object?> _regressionGroupAdminOutcomesFor(String role) {
+  switch (role) {
+    case 'alice':
+      return <String, Object?>{
+        ..._regressionGroupAdminRejectedActions(const <String>[
+          'aliceDanaInvite',
+        ]),
+        'aliceDanaInviteNoPendingInviteForDana': true,
+        'aliceDanaInviteDanaPendingInviteCount': 0,
+      };
+    case 'bob':
+      return _regressionGroupAdminRejectedActions(const <String>[
+        'bobPrePromotionName',
+        'bobPrePromotionDescription',
+        'bobPrePromotionImage',
+        'bobPrePromotionAddCharlie',
+        'bobPrePromotionPromoteSelf',
+        'bobPrePromotionDemoteAlice',
+        'bobPrePromotionRemoveAlice',
+        'bobDemotedName',
+        'bobDemotedDescription',
+        'bobDemotedImage',
+        'bobDemotedInviteDana',
+        'bobDemotedPromoteDana',
+        'bobDemotedDemoteCharlie',
+        'bobDemotedRemoveDana',
+        'bobPostDanaPromoteDana',
+        'bobPostDanaDemoteCharlie',
+        'bobPostDanaRemoveDana',
+      ]);
+    case 'charlie':
+      return _regressionGroupAdminRejectedActions(const <String>[
+        'charlieNonAdminName',
+        'charlieNonAdminDescription',
+        'charlieNonAdminImage',
+        'charlieNonAdminInviteDana',
+        'charlieNonAdminPromoteSelf',
+        'charlieNonAdminDemoteBob',
+        'charlieNonAdminRemoveBob',
+      ]);
+    case 'dana':
+      return <String, Object?>{
+        ..._regressionGroupAdminRejectedActions(const <String>[
+          'danaPostRemovalName',
+          'danaPostRemovalPromoteSelf',
+          'danaPostRemovalRemoveBob',
+          'danaPostRemovalAddBob',
+        ]),
+        'danaAcceptedBeforeRemoval': true,
+        'danaRemovedLocally': true,
+        'danaNoActiveAccessAfterRemoval': true,
+        'danaPostRemovalSendRejected': true,
+        'danaPostRemovalSendOutcome': 'blocked:not active member',
+        'danaPostRemovalPlaintextCount': 0,
+        'danaPostRemovalReceivedKeys': <String>[],
+      };
+    default:
+      throw ArgumentError.value(role, 'role');
+  }
+}
+
+Map<String, Object?> _regressionGroupAdminSystemEvent({
+  required String eventType,
+  required String actorRole,
+  required String targetRole,
+  required String eventAt,
+  required String hashSeed,
+}) {
+  return <String, Object?>{
+    'visible': true,
+    'source': 'timeline',
+    'eventType': eventType,
+    'actorPeerId': _regressionGroupAdminPermissionsPeerIds[actorRole],
+    'targetPeerId': _regressionGroupAdminPermissionsPeerIds[targetRole],
+    'messageId': 'sys-$eventType-$actorRole-$targetRole',
+    'eventAt': eventAt,
+    'textHash': hashSeed.padRight(64, hashSeed),
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminSystemEventsFor(String role) {
+  final events = <String, Object?>{};
+  void add(
+    String key, {
+    required String eventType,
+    required String actorRole,
+    required String targetRole,
+    required String eventAt,
+    required String hashSeed,
+  }) {
+    events[key] = _regressionGroupAdminSystemEvent(
+      eventType: eventType,
+      actorRole: actorRole,
+      targetRole: targetRole,
+      eventAt: eventAt,
+      hashSeed: hashSeed,
+    );
+  }
+
+  if (role == 'alice' || role == 'bob') {
+    add(
+      'bob_promotion',
+      eventType: 'member_role_updated',
+      actorRole: 'alice',
+      targetRole: 'bob',
+      eventAt: '2026-05-29T12:01:00.000Z',
+      hashSeed: 'b',
+    );
+  }
+  if (role == 'alice' || role == 'bob' || role == 'charlie') {
+    add(
+      'charlie_promotion',
+      eventType: 'member_role_updated',
+      actorRole: 'alice',
+      targetRole: 'charlie',
+      eventAt: '2026-05-29T12:02:00.000Z',
+      hashSeed: 'c',
+    );
+    add(
+      'bob_demotion',
+      eventType: 'member_role_updated',
+      actorRole: 'alice',
+      targetRole: 'bob',
+      eventAt: '2026-05-29T12:03:00.000Z',
+      hashSeed: 'd',
+    );
+    add(
+      'dana_removal',
+      eventType: 'member_removed',
+      actorRole: 'charlie',
+      targetRole: 'dana',
+      eventAt: '2026-05-29T12:04:00.000Z',
+      hashSeed: 'e',
+    );
+  }
+  return events;
+}
+
+Map<String, Object?> _regressionGroupAdminAcceptedPendingInvite() {
+  return const <String, Object?>{
+    'storedBeforeAccept': true,
+    'consumedAfterAccept': true,
+    'pendingInviteCountBeforeAccept': 1,
+    'pendingInviteCountAfterAccept': 0,
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminRejectedPendingInvite() {
+  return const <String, Object?>{
+    'noPendingInviteForDana': true,
+    'pendingInviteCountAfterRejectedInvite': 0,
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminPendingStatesFor(String role) {
+  return <String, Object?>{
+    if (role == 'alice')
+      'aliceDanaRejectedInvite': _regressionGroupAdminRejectedPendingInvite(),
+    if (role == 'bob')
+      'bobInitialInvite': _regressionGroupAdminAcceptedPendingInvite(),
+    if (role == 'charlie')
+      'charlieInvite': _regressionGroupAdminAcceptedPendingInvite(),
+    if (role == 'dana') ...<String, Object?>{
+      'aliceDanaRejectedInvite': _regressionGroupAdminRejectedPendingInvite(),
+      'danaInvite': _regressionGroupAdminAcceptedPendingInvite(),
+    },
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminLatestTimelineEvent({
+  Map<String, Object?> overrides = const <String, Object?>{},
+}) {
+  return <String, Object?>{
+    'messageId':
+        'sys-member_removed:$_regressionGroupAdminPermissionsGroupId:dana-peer:charlie-peer:1780059522611',
+    'eventType': 'member_removed',
+    'eventAt': '2026-05-29T12:04:00.000Z',
+    'textHash': ''.padLeft(64, 'e'),
+    ...overrides,
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminLatestTimelineEventProof({
+  String? driftRole,
+  Map<String, Object?> driftOverrides = const <String, Object?>{},
+  bool omitDriftRole = false,
+}) {
+  return <String, Object?>{
+    'after_dana_removal': <String, Object?>{
+      'activeRoles': const <String>['alice', 'bob', 'charlie'],
+      'stable': driftRole == null && !omitDriftRole,
+      'eventsByRole': <String, Object?>{
+        for (final role in const <String>['alice', 'bob', 'charlie'])
+          if (role != driftRole || !omitDriftRole)
+            role: _regressionGroupAdminLatestTimelineEvent(
+              overrides: role == driftRole
+                  ? driftOverrides
+                  : const <String, Object?>{},
+            ),
+      },
+    },
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminConvergenceFor(String role) {
+  return <String, Object?>{
+    'stages': _regressionGroupAdminPermissionsConvergenceStages,
+    'metadataWatermarkStages':
+        _regressionGroupAdminPermissionsMetadataWatermarkStages,
+    'membershipWatermarkStages':
+        _regressionGroupAdminPermissionsMembershipWatermarkStages,
+    'latestTimelineEventStages':
+        _regressionGroupAdminPermissionsConvergenceStages,
+    'lastMetadataEventAtMatched': true,
+    'lastMembershipEventAtMatched': true,
+    'latestTimelineEventProofPresent': true,
+    'pendingInviteStateProofPresent': true,
+    'removedMemberRepresentedAfterRemoval': true,
+    'avatarMetadataAndBytesMatched': true,
+    'activeMembersMatched': true,
+    'adminsMatched': true,
+    'stateHashMatched': true,
+    'keyEpochMatched': true,
+    'removedMemberPeerIds': const <String>['dana-peer'],
+    'pendingInviteStateProof': _regressionGroupAdminPendingStatesFor(role),
+    'latestTimelineEventProof': _regressionGroupAdminLatestTimelineEventProof(),
+  };
+}
+
+Map<String, Object?> _regressionGroupAdminProofFor(String role) {
+  final activeRole = role != 'dana';
+  return <String, Object?>{
+    'rowId': 'REGRESSION-GROUP-ADMIN-PERMISSIONS-FOUR-USERS',
+    'scenario': _regressionGroupAdminPermissionsScenario,
+    'proofRole': role,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'initialContactGraphProof': true,
+    'allStateConvergenceChecksPassed': true,
+    'stateConvergenceStages': const <String>[
+      'after_bob_pre_promotion_rejections',
+      'after_charlie_non_admin_rejections',
+      'after_alice_non_friend_dana_rejection',
+      'after_bob_demoted_rejections',
+      'after_bob_post_dana_rejections',
+      'after_dana_removal',
+    ],
+    'fullMessageMatrixProofPassed': true,
+    'fullMessageMatrixPhaseKeys': _regressionGroupAdminPermissionsMatrixKeys,
+    'avatarBytesVisible': activeRole,
+    'finalMetadataConverged': activeRole,
+    'finalRolesConverged': activeRole,
+    'danaRemovedFromActiveMembers': true,
+    'finalMetadataName': activeRole ? 'test me v2' : '',
+    'finalMetadataDescription': activeRole ? 'do you see me v2?' : '',
+    'finalAvatarBlobId': activeRole ? 'final-avatar' : '',
+    'finalAvatarMime': activeRole ? 'image/png' : '',
+    'finalAvatarPath': activeRole
+        ? 'media/group_avatars/$_regressionGroupAdminPermissionsGroupId.png'
+        : '',
+    'finalAvatarSha256': activeRole ? ''.padLeft(64, 'a') : '',
+    'finalAvatarByteLength': activeRole ? 64 : 0,
+    'finalStateHash': activeRole ? 'shared-final-state-hash' : '',
+    'finalKeyEpoch': activeRole ? 5 : 0,
+    'finalActiveMemberPeerIds': activeRole
+        ? _regressionGroupAdminPermissionsActiveMembers
+        : const <String>[],
+    'finalAdminPeerIds': activeRole
+        ? const <String>['alice-peer', 'charlie-peer']
+        : const <String>[],
+    'removedMemberPeerIds': const <String>['dana-peer'],
+    'finalMemberRoles': activeRole
+        ? const <String, String>{
+            'alice': 'admin',
+            'bob': 'writer',
+            'charlie': 'admin',
+          }
+        : const <String, String>{},
+    'systemEventVisibilityProof': _regressionGroupAdminSystemEventsFor(role),
+    'convergenceFieldProof': _regressionGroupAdminConvergenceFor(role),
+    'rejectedActionOutcomes': _regressionGroupAdminOutcomesFor(role),
+  };
+}
+
+List<Map<String, dynamic>> _validRegressionGroupAdminPermissionsVerdicts() {
+  final specs = _regressionGroupAdminPermissionMessageSpecs();
+
+  List<Map<String, Object?>> sentMessages(String role) {
+    return <Map<String, Object?>>[
+      for (final spec in specs)
+        if (spec['sender'] == role) _regressionGroupAdminSentMessage(spec),
+    ];
+  }
+
+  List<Map<String, Object?>> receivedMessages(String role) {
+    return <Map<String, Object?>>[
+      for (final spec in specs)
+        if (List<String>.from(spec['receivers'] as List).contains(role))
+          _regressionGroupAdminReceivedMessage(spec),
+      for (final spec in specs)
+        if (spec['sender'] == role) _regressionGroupAdminSelfDelivery(spec),
+    ];
+  }
+
+  Map<String, int> persistedCounts(String role) {
+    return <String, int>{
+      for (final spec in specs)
+        if (List<String>.from(spec['receivers'] as List).contains(role))
+          spec['key'] as String: 1,
+    };
+  }
+
+  Map<String, dynamic> verdictFor(String role) {
+    final activeRole = role != 'dana';
+    return _baseVerdict(
+      scenario: _regressionGroupAdminPermissionsScenario,
+      role: role,
+      peerId: _regressionGroupAdminPermissionsPeerIds[role]!,
+      groupId: _regressionGroupAdminPermissionsGroupId,
+      keyEpoch: activeRole ? 5 : 0,
+      memberPeerIds: activeRole
+          ? _regressionGroupAdminPermissionsActiveMembers
+          : const <String>[],
+      sentMessages: sentMessages(role),
+      receivedMessages: receivedMessages(role),
+      persistedMessageCounts: persistedCounts(role),
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeRole
+            ? _regressionGroupAdminPermissionsActiveMembers
+            : const <String>[],
+        _regressionGroupAdminPermissionsProofName:
+            _regressionGroupAdminProofFor(role),
+      },
+    );
+  }
+
+  return <Map<String, dynamic>>[
+    verdictFor('alice'),
+    verdictFor('bob'),
+    verdictFor('charlie'),
+    verdictFor('dana'),
+  ];
+}
+
+Map<String, dynamic> _withRegressionGroupAdminProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    _regressionGroupAdminPermissionsProofName: <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict[_regressionGroupAdminPermissionsProofName] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+Map<String, dynamic> _withRegressionGroupAdminOutcomeOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  final proof = Map<String, Object?>.from(
+    verdict[_regressionGroupAdminPermissionsProofName] as Map,
+  );
+  final outcomes = Map<String, Object?>.from(
+    proof['rejectedActionOutcomes'] as Map,
+  );
+  return _withRegressionGroupAdminProofOverrides(verdict, {
+    'rejectedActionOutcomes': <String, Object?>{...outcomes, ...overrides},
+  });
+}
+
+Map<String, dynamic> _withoutRegressionGroupAdminOutcome(
+  Map<String, dynamic> verdict,
+  String field,
+) {
+  final proof = Map<String, Object?>.from(
+    verdict[_regressionGroupAdminPermissionsProofName] as Map,
+  );
+  final outcomes = Map<String, Object?>.from(
+    proof['rejectedActionOutcomes'] as Map,
+  )..remove(field);
+  return _withRegressionGroupAdminProofOverrides(verdict, {
+    'rejectedActionOutcomes': outcomes,
+  });
+}
+
+Map<String, dynamic> _withoutRegressionGroupAdminSystemEvent(
+  Map<String, dynamic> verdict,
+  String eventKey,
+) {
+  final proof = Map<String, Object?>.from(
+    verdict[_regressionGroupAdminPermissionsProofName] as Map,
+  );
+  final events = Map<String, Object?>.from(
+    proof['systemEventVisibilityProof'] as Map,
+  )..remove(eventKey);
+  return _withRegressionGroupAdminProofOverrides(verdict, {
+    'systemEventVisibilityProof': events,
+  });
+}
+
+Map<String, dynamic> _withRegressionGroupAdminConvergenceOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  final proof = Map<String, Object?>.from(
+    verdict[_regressionGroupAdminPermissionsProofName] as Map,
+  );
+  final convergence = Map<String, Object?>.from(
+    proof['convergenceFieldProof'] as Map,
+  );
+  return _withRegressionGroupAdminProofOverrides(verdict, {
+    'convergenceFieldProof': <String, Object?>{...convergence, ...overrides},
+  });
+}
+
+Map<String, dynamic> _withoutRegressionGroupAdminPendingState(
+  Map<String, dynamic> verdict,
+  String pendingKey,
+) {
+  final proof = Map<String, Object?>.from(
+    verdict[_regressionGroupAdminPermissionsProofName] as Map,
+  );
+  final convergence = Map<String, Object?>.from(
+    proof['convergenceFieldProof'] as Map,
+  );
+  final pending = Map<String, Object?>.from(
+    convergence['pendingInviteStateProof'] as Map,
+  )..remove(pendingKey);
+  return _withRegressionGroupAdminConvergenceOverrides(verdict, {
+    'pendingInviteStateProof': pending,
+  });
 }
 
 List<Map<String, dynamic>> _validMl020AdminRoleTransferVerdicts() {

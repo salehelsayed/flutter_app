@@ -1108,6 +1108,15 @@ class AppLocalizationsDe extends AppLocalizations {
   String get group_edit_description => 'Beschreibung';
 
   @override
+  String get group_edit_recovery_waiting =>
+      'Bitte warten, während dieses Gerät aufholt.';
+
+  @override
+  String group_edit_recovery_waiting_elapsed(int seconds) {
+    return 'Wartet seit $seconds s';
+  }
+
+  @override
   String get btn_save => 'Speichern';
 
   @override

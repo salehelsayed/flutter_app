@@ -541,6 +541,15 @@
   "group_edit_remove_photo": "Remove Photo",
   "group_edit_name": "Group Name",
   "group_edit_description": "Description",
+  "group_edit_recovery_waiting": "Please wait while this device catches up.",
+  "group_edit_recovery_waiting_elapsed": "Waiting {seconds}s",
+  "@group_edit_recovery_waiting_elapsed": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "btn_save": "Save",
   "group_member_sending": "Sending...",
   "group_member_resend": "Resend",
