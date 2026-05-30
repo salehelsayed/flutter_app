@@ -1,8 +1,9 @@
 # Relay-Path Quality (Cross-Network Latency & Reliability) — Problem & Tracking Doc
 
 Prepared on: 2026-05-30
-Status: **Proposed (scoping; no code changed)** — measurement-first; gated on a
-valid NET-REL-04 baseline harvest before improvement work is justified
+Status: **Proposed (scoping; no code changed)** — measurement-first; **justified by
+the 2026-05-30 baseline** (cross-network ~100% relay @ ~1.1s — relay is the
+cross-network lever). Phase 1 improvement is now baseline-justified, not gated.
 Tracking ID: NET-REL-08
 
 ## Why this doc exists
@@ -221,11 +222,11 @@ claim; never accept the `{direct, relay, inbox}` set for a relay-path assertion.
 
 ## Dependencies / Sequencing
 
-- **Gated on a valid NET-REL-04 baseline harvest** (two real debug devices,
-  discovery-enabled) — needed both to justify prioritizing relay-quality work and
-  to provide honest before/after numbers. Until then, Phase 0 M1/M2/M3 (which are
-  themselves measurement) can proceed, but Phase 1 improvement should not be
-  claimed as ROI-justified.
+- **Justified by the 2026-05-30 baseline harvest** (real-device, N=50/condition):
+  cross-network ~100% relay @ ~1.1s median (≈3.8× same-network) is exactly what makes
+  relay-path quality the highest-ROI cross-network lever. A further discovery-enabled
+  real-device read still gives the best before/after numbers, but 08 is **no longer
+  gated** on it — both Phase 0 measurement and Phase 1 improvement are baseline-justified.
 - **Builds on:** NET-REL-04 (census), NET-REL-05 (the relay rung;
   `relayProbeSendAttempts = 1`), NET-REL-07 (compatibility).
 - **Supersedes** the deprioritized NET-REL-03 as *the* cross-network workstream;
@@ -266,6 +267,7 @@ claim; never accept the `{direct, relay, inbox}` set for a relay-path assertion.
   median, 0 hole-punch upgrades) deprioritized DCUtR/NET-REL-03 (RSD-001) and
   NET-REL-02 Option C redirected effort to relay-path latency/reliability.
   Measurement-first; all directions constrained to additive-only per NET-REL-07.
-  Pending: add the NET-REL-08 row + dependency-graph edge to `00-INDEX.md` (held
-  for monitoring-session confirmation, since 00-INDEX has other sessions'
-  uncommitted edits).
+- **2026-05-30 — Re-baselined from "gated" to "justified" + indexed.** The
+  NET-REL-04 baseline harvest is done (cross-network ~100% relay @ ~1.1s), so 08 is
+  now justified-by-baseline rather than gated on it. NET-REL-08 row + dependency-graph
+  edge + changelog applied to `00-INDEX.md`.
