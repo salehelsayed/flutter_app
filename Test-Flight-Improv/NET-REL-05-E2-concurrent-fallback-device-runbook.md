@@ -113,11 +113,13 @@ markers.
 
 ## 6. Pass criteria (path-pinned)
 
-**E2-A (per send, all N):**
-- Live attempt fired (sender FLOW direct/relay marker) **AND**
-  `relay_inbox_stored_total` delta **== +1** (the InboxStore fired) **AND**
-  receiver surfaced **exactly 1** message for that id. All three required — any missing →
-  fail (that is the false-positive this gate exists to catch).
+**E2-A (per send, all N) — correlated by the same messageId (requires the id-tag in §7):**
+- Live attempt fired (`CHAT_MSG_SEND_RELAY_PROBE_CONNECTED`, id-tagged) **AND** inbox store
+  wire-acked (`CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY`, id-tagged) **AND** receiver surfaced
+  **exactly 1** message for that id; with `relay_inbox_stored_total` delta **== +1** as
+  corroboration. All required — any missing → fail (that is the false-positive this gate
+  exists to catch). *Until the id-tag lands,* fall back to per-launch ordering at low N and
+  flag the run as **id-unverified**.
 
 **E2-B (sizing):** report the offline send→custody **median + p95** as the sized
 offline-tail. (If a pre-NET-REL-05 sequential-tail number is available, report the delta;
@@ -134,12 +136,23 @@ baseline-runbook N discipline.
 
 ## 7. Trust caveats (doctrine)
 
-- **No single Go signal today.** There is no Go FLOW/counter that says "live-attempt AND
-  InboxStore for THIS messageId." The proof is **assembled** from Dart FLOW +
-  `relay_inbox_stored_total` delta + receiver==1. Treat a passing E2-A as valid only if
-  **all three** align for the **same** messageId. *Recommended BUILD:* a Go-side
-  correlation FLOW event so the harness has one decisive signal (turns this from
-  multi-signal assembly into a single assertion).
+- **Per-id correlation needs a tiny Dart id-tag — NOT a Go signal** (revised 2026-05-31
+  after reading the send path). The live-attempt and inbox signals already exist on the
+  **Dart** side — `CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN` (inbox arm fired),
+  `CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY` (inbox store wire-acked = relay accepted it),
+  and `CHAT_MSG_SEND_RELAY_PROBE_CONNECTED` (live relay circuit connected) — but **none of
+  the three carries the messageId** in its payload (`send_chat_message_use_case.dart:557,
+  :875, :1391` carry `{targetPeerId}`, `{reason}`, `{}` respectively), so they cannot be
+  cleanly correlated by id from logs under concurrency at N≥30. **Cheapest fix (recommended
+  over a Go signal):** add `'id': resolvedMessageId.substring(0, 8)` to those three events'
+  `details` — a ~3-line **additive Dart** change, no Go production change, mutation-testable.
+  Then E2-A asserts, for the **same** id: CONCURRENT_INBOX_CUSTODY (store wire-acked) AND
+  RELAY_PROBE_CONNECTED (live attempt) AND receiver==1, with `relay_inbox_stored_total`
+  delta as corroboration. A dedicated Go correlation FLOW is heavier (Go production +
+  de-confliction) and only marginally better — **defer** it unless E2-A proves ambiguous on
+  hardware. **NOTE:** `send_chat_message_use_case.dart` is the cross-session de-confliction
+  hotspot (NET-REL-01 P1 + NET-REL-05 both edit it) — the id-tag must be made by, or
+  sequenced with, its owner.
 - **`relay_inbox_stored_total` over-counts duplicates** (`inbox.go` increments even on a
   duplicate store). Read it as a **delta around a single send** and cross-check the
   receiver count; do not sum naively across a noisy window.
