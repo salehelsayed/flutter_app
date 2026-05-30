@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -50,6 +52,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _unusedSendFn({
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  TransportMetrics? transportMetrics,
 }) async {
   return (SendChatMessageResult.success, null);
 }
@@ -148,6 +151,22 @@ class _NoOpP2PService implements P2PService {
   bool isLocalPeer(String peerId) => false;
 
   @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
+
+  @override
   String? get lastRecoveryMethod => null;
 }
 
@@ -170,6 +189,7 @@ Future<void> _pumpScreen(
   required ChatMessageListener chatListener,
   required MediaPicker mediaPicker,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  TransportMetrics? transportMetrics,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -183,6 +203,7 @@ Future<void> _pumpScreen(
         chatMessageListener: chatListener,
         p2pService: _NoOpP2PService(),
         sendChatMessageFn: _unusedSendFn,
+        transportMetrics: transportMetrics,
         contactRepo: contactRepo,
         mediaAttachmentRepo: mediaAttachmentRepo,
         mediaPicker: mediaPicker,

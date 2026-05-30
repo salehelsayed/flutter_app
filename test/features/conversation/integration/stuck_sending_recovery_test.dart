@@ -164,6 +164,215 @@ void main() {
       },
     );
 
+    // --- NET-REL-05 R1: concurrent-fallback interaction (regression) ---
+    //
+    // The full resume sequence is recoverStuckSending -> retryFailed. A message
+    // whose concurrent durable fallback already took custody is settled as
+    // delivered/inbox/null-envelope. It must survive BOTH steps untouched: it is
+    // neither 'sending' (so recovery skips it) nor 'failed' (so the failed
+    // retrier skips it). Meanwhile a genuinely stuck 'sending' row in the same
+    // batch must still be reclassified sending>30s -> failed and then retried.
+    test(
+      'concurrently-inboxed message survives recover+retry untouched while a '
+      'stuck sending message is still reclassified and retried',
+      () async {
+        final stuckTs = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 2))
+            .toIso8601String();
+
+        final stuckMessage = ConversationMessage(
+          id: 'msg-stuck-coexist',
+          contactPeerId: 'peer-bob',
+          senderPeerId: 'peer-alice',
+          text: 'Stuck Hello',
+          timestamp: stuckTs,
+          status: 'sending',
+          isIncoming: false,
+          createdAt: stuckTs,
+          wireEnvelope: null,
+        );
+
+        // Already-durable concurrent-fallback row to a different peer.
+        final concurrentlyInboxed = ConversationMessage(
+          id: 'msg-concurrent-inbox-coexist',
+          contactPeerId: 'peer-carol',
+          senderPeerId: 'peer-alice',
+          text: 'Low-confidence send',
+          timestamp: stuckTs,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: stuckTs,
+          transport: 'inbox',
+          wireEnvelope: null,
+        );
+
+        final messageRepo = FakeMessageRepository()
+          ..seed([stuckMessage, concurrentlyInboxed]);
+        final identityRepo = FakeIdentityRepository()
+          ..seed(
+            IdentityModel(
+              peerId: 'peer-alice',
+              publicKey: 'pk-alice',
+              privateKey: 'sk-alice',
+              mnemonic12:
+                  'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+              createdAt: stuckTs,
+              updatedAt: stuckTs,
+            ),
+          );
+        final contactRepo = FakeContactRepository()
+          ..seed([
+            ContactModel(
+              peerId: 'peer-bob',
+              publicKey: 'pk-bob',
+              rendezvous: '/ip4/127.0.0.1/tcp/4001',
+              username: 'Bob',
+              signature: 'sig',
+              scannedAt: stuckTs,
+              mlKemPublicKey: 'mlkem-peer-bob',
+            ),
+            ContactModel(
+              peerId: 'peer-carol',
+              publicKey: 'pk-carol',
+              rendezvous: '/ip4/127.0.0.1/tcp/4001',
+              username: 'Carol',
+              signature: 'sig',
+              scannedAt: stuckTs,
+              mlKemPublicKey: 'mlkem-peer-carol',
+            ),
+          ]);
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'peer-alice',
+            circuitAddresses: ['/p2p-circuit/addr1'],
+          ),
+          storeInInboxResult: true,
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-bob',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+        );
+        final bridge = FakeBridge(
+          initialResponses: {
+            'message.encrypt': {
+              'ok': true,
+              'kem': 'fake-kem',
+              'ciphertext': 'fake-ct',
+              'nonce': 'fake-nonce',
+            },
+          },
+        );
+
+        // Step 1: recovery only flips the stuck 'sending' row -> 'failed'.
+        // The concurrent-inbox row is NOT 'sending', so it is untouched.
+        final recovered = await recoverStuckSendingMessages(
+          messageRepo: messageRepo,
+          threshold: const Duration(seconds: 30),
+        );
+        expect(recovered, 1);
+        expect(
+          (await messageRepo.getMessage('msg-stuck-coexist'))?.status,
+          'failed',
+        );
+        // NEGATIVE CONTROL: durable copy untouched by recovery.
+        final carolAfterRecovery = await messageRepo.getMessage(
+          'msg-concurrent-inbox-coexist',
+        );
+        expect(carolAfterRecovery?.status, 'delivered');
+        expect(carolAfterRecovery?.transport, 'inbox');
+
+        // Step 2: retryFailed picks up ONLY the recovered stuck row, not the
+        // already-durable concurrent-inbox row.
+        final retried = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        // Exactly one message retried (the stuck one). The concurrent-inbox copy
+        // was NOT double-retried.
+        expect(retried, 1);
+        expect(messageRepo.getFailedOutgoingCallCount, 1);
+
+        // NEGATIVE CONTROL: durable copy STILL delivered/inbox after the full
+        // sequence — never re-sent live, never re-stored.
+        final carolFinal = await messageRepo.getMessage(
+          'msg-concurrent-inbox-coexist',
+        );
+        expect(carolFinal?.status, 'delivered');
+        expect(carolFinal?.transport, 'inbox');
+
+        // The stuck row is now resolved (delivered/sent), no longer 'sending'.
+        final bobFinal = await messageRepo.getMessage('msg-stuck-coexist');
+        expect(bobFinal?.status, isNot('sending'));
+        expect(bobFinal?.status, isNot('failed'));
+      },
+    );
+
+    test(
+      'recoverStuckSending reclassifies sending>30s to failed and leaves a '
+      'concurrently-inboxed row alone',
+      () async {
+        final stuckTs = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 2))
+            .toIso8601String();
+
+        final messageRepo = FakeMessageRepository()
+          ..seed([
+            ConversationMessage(
+              id: 'msg-stuck-only',
+              contactPeerId: 'peer-bob',
+              senderPeerId: 'peer-alice',
+              text: 'Stuck',
+              timestamp: stuckTs,
+              status: 'sending',
+              isIncoming: false,
+              createdAt: stuckTs,
+            ),
+            ConversationMessage(
+              id: 'msg-durable',
+              contactPeerId: 'peer-carol',
+              senderPeerId: 'peer-alice',
+              text: 'Durable',
+              timestamp: stuckTs,
+              status: 'delivered',
+              isIncoming: false,
+              createdAt: stuckTs,
+              transport: 'inbox',
+              wireEnvelope: null,
+            ),
+          ]);
+
+        final recovered = await recoverStuckSendingMessages(
+          messageRepo: messageRepo,
+          threshold: const Duration(seconds: 30),
+        );
+
+        // Only the stuck 'sending' row is reclassified.
+        expect(recovered, 1);
+        expect(
+          (await messageRepo.getMessage('msg-stuck-only'))?.status,
+          'failed',
+        );
+        // NEGATIVE CONTROL: the durable concurrent-inbox row is not a recovery
+        // candidate and is left exactly as-is.
+        final durable = await messageRepo.getMessage('msg-durable');
+        expect(durable?.status, 'delivered');
+        expect(durable?.transport, 'inbox');
+        expect(durable?.wireEnvelope, isNull);
+      },
+    );
+
     test('no stuck messages — both recovery and retry are no-ops', () async {
       final messageRepo = FakeMessageRepository(); // empty
       final identityRepo = FakeIdentityRepository();

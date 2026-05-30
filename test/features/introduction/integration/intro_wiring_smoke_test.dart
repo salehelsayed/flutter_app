@@ -4,9 +4,11 @@
 // and verify that "Make introductions" actually opens the FriendPickerWired
 // bottom sheet, and that the full send flow works.
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -188,6 +190,22 @@ class _FakeP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
   @override
   bool isLocalPeer(String peerId) => false;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
   @override
   Future<bool> sendLocalMessage(
     String peerId,
@@ -292,6 +310,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendFn({
   String? recipientMlKemPublicKey,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  TransportMetrics? transportMetrics,
 }) async {
   return (SendChatMessageResult.nodeNotRunning, null);
 }

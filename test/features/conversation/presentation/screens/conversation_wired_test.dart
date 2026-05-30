@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:async';
 
 import 'package:flutter/gestures.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -597,6 +599,22 @@ class FakeP2PService implements P2PService {
   bool isLocalPeer(String peerId) => localPeer;
 
   @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
+
+  @override
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
@@ -849,6 +867,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           capturedText = text;
           capturedMessageId = messageId;
@@ -1054,6 +1073,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         sentMessageId = messageId;
         sentTimestamp = timestamp;
@@ -1127,6 +1147,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         sentMessageId = messageId;
         await gate.future;
@@ -1185,6 +1206,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           sendCalls++;
           if (sendCalls > 1) {
@@ -1287,6 +1309,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           sendCalls++;
           if (sendCalls > 1) {
@@ -1388,6 +1411,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         sentMessageId = messageId;
         await gate.future;
@@ -1730,6 +1754,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           sentMessageId = messageId;
           if (mediaAttachments != null && mediaAttachmentRepo != null) {
@@ -1862,6 +1887,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           sentMessageId = messageId;
           if (mediaAttachments != null && mediaAttachmentRepo != null) {
@@ -1986,6 +2012,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         sentMessageId = messageId;
         await gate.future;
@@ -2056,6 +2083,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           sendCallCount += 1;
           await gate.future;
@@ -2502,6 +2530,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         passedMedia = mediaAttachments;
         passedMediaRepo = mediaAttachmentRepo;
@@ -2569,6 +2598,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         sendCalled = true;
         return (SendChatMessageResult.success, null);
@@ -2629,6 +2659,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         capturedQuotedMessageId = quotedMessageId;
         final delivered = ConversationMessage(
@@ -2717,6 +2748,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           capturedQuotedMessageId = quotedMessageId;
           final delivered = ConversationMessage(
@@ -2806,6 +2838,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           capturedQuotedMessageId = quotedMessageId;
           final delivered = ConversationMessage(
@@ -4257,6 +4290,7 @@ void main() {
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
       }) async {
         capturedQuotedMessageId = quotedMessageId;
         final delivered = ConversationMessage(
@@ -4416,6 +4450,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           if (mediaAttachments != null && mediaAttachmentRepo != null) {
             for (final attachment in mediaAttachments) {
@@ -4906,6 +4941,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           sendCalls++;
           return _instantSuccessSendFn(
@@ -5055,6 +5091,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async {
           sendCalls++;
           return _instantSuccessSendFn(
@@ -5326,6 +5363,7 @@ void main() {
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
           MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
         }) async => (SendChatMessageResult.sendFailed, null);
 
         await pumpScreen(
@@ -5404,6 +5442,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  TransportMetrics? transportMetrics,
 }) async {
   final delivered = ConversationMessage(
     id: messageId ?? 'msg-default',
