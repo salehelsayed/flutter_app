@@ -1855,6 +1855,48 @@ void main() {
         expect(p2pService.storeInInboxCallCount, 1);
       },
     );
+
+    // NET-REL-05 P5 consolidation pin. With the direct leg missing
+    // (useNullDiscover) the ONLY sendMessageWithReply caller is the post-probe
+    // loop, so sendCallCount equals exactly relayProbeSendAttempts. The probe
+    // connects but every post-probe send returns sent:false, forcing the loop to
+    // run to its full count. P5 collapsed that count from 2 → 1 (suppressing the
+    // redundant second send). This test pins it to ONE attempt: reverting
+    // relayProbeSendAttempts 1 → 2 makes sendCallCount 2 and turns this RED.
+    test(
+      'probe-connected but post-probe send fails attempts exactly once (P5)',
+      () async {
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          sendMessageResult: false,
+          storeInInboxResult: true,
+        );
+        p2pService.probeRelayResult = RelayProbeResult.connected;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello with failing post-probe send',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        // The probe connected and dialed, but the live send never landed, so the
+        // message is durably handed off to the inbox.
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(p2pService.probeRelayCallCount, 1);
+        // Load-bearing: exactly ONE post-probe send attempt (P5: 2 → 1). This is
+        // the only sendMessageWithReply caller on this path (direct leg missed
+        // via useNullDiscover), so the count is the attempt count verbatim.
+        expect(p2pService.sendCallCount, relayProbeSendAttempts);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
   });
 
   // ─── Phase 1: Interactive Send Path Tests ─────────────────────────
@@ -2719,40 +2761,27 @@ void main() {
       expect(sw.elapsedMilliseconds, lessThan(120));
     });
 
-    // U2 — sticky/learned (happy): a peer last delivered over 'direct'. The
-    // learned head-start lets the direct leg win the close tie while the local
-    // leg is held back, so when local is NOT on the LAN there is no wasted
-    // local discovery and the message is delivered via the learned transport.
-    test('U2 sticky: learned direct delivers via direct, fewer local attempts',
+    // U2 — sticky SHORT-CIRCUIT (the real latency win, R3). A learned+valid
+    // transport REUSES the known-good path and SKIPS discover/dial entirely.
+    // The assertion is load-bearing and mutation-resistant: a sticky 'direct'
+    // send must do ZERO discover and ZERO dial (it goes straight to
+    // sendMessageWithReply), while the paired cold send (no learned transport)
+    // pays exactly ONE discover + ONE dial. Deleting the short-circuit block in
+    // send_chat_message_use_case.dart makes the sticky send fall into the full
+    // race → discoverCallCount/dialCallCount become 1 → this test goes RED.
+    test('U2 sticky short-circuit: learned direct skips discover+dial',
         () async {
-      // Cold baseline: no learned transport, peer not local. The local
-      // discover-on-send leg fires once (cold).
-      final coldP2P = FakeP2PService()..discoverLocalPeerResult = false;
-      final (coldResult, coldMessage) = await sendChatMessage(
-        p2pService: coldP2P,
-        messageRepo: FakeMessageRepository(),
-        targetPeerId: 'target-peer',
-        text: 'Cold send',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
-      expect(coldResult, SendChatMessageResult.success);
-      expect(coldMessage!.transport, 'direct');
-      final coldDiscoverLocal = coldP2P.discoverLocalPeerCallCount;
-      expect(coldDiscoverLocal, 1, reason: 'cold send pays local discovery');
-
-      // Sticky run: learned == 'direct'. The direct leg is WIN-eligible
-      // immediately and is decisive (isLearnedWin), so direct commits without
-      // ever depending on the local leg — and the learned transport delivers.
-      final stickyP2P = FakeP2PService()
-        ..discoverLocalPeerResult = false
+      p2pService = FakeP2PService(sendMessageTransport: 'direct')
         ..lastKnownGoodTransportResult = 'direct';
+      // Peer is NOT in connections (reuse block does not fire) and NOT local —
+      // so any discover/dial seen would come from the cold race, not reuse.
+      expect(p2pService.currentState.connections, isEmpty);
 
       final (result, message) = await sendChatMessage(
-        p2pService: stickyP2P,
+        p2pService: p2pService,
         messageRepo: messageRepo,
         targetPeerId: 'target-peer',
-        text: 'Sticky direct',
+        text: 'Reuse the learned direct path',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
       );
@@ -2760,12 +2789,62 @@ void main() {
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
       expect(message!.transport, 'direct');
-      expect(stickyP2P.discoverCallCount, 1);
-      expect(stickyP2P.dialCallCount, 1);
-      // Sticky 'direct' wins immediately on the learned leg — the local leg's
-      // win-eligibility is gated, so the learned transport is honored without
-      // burning a SECOND discovery beyond the cold baseline.
-      expect(stickyP2P.discoverCallCount, lessThanOrEqualTo(coldDiscoverLocal));
+      // The short-circuit sent directly over the learned transport: no
+      // re-discovery, no re-dial.
+      expect(p2pService.discoverCallCount, 0);
+      expect(p2pService.dialCallCount, 0);
+      expect(p2pService.sendCallCount, 1);
+    });
+
+    // U2 — sticky SHORT-CIRCUIT for 'local': a learned+valid local transport
+    // sends straight over LAN with NO discover-on-send and NO direct
+    // discover/dial. Pairs the direct case above for the other live transport.
+    test('U2 sticky short-circuit: learned local skips local discover + direct',
+        () async {
+      p2pService = FakeP2PService()
+        ..localPeers.add('target-peer')
+        ..lastKnownGoodTransportResult = 'local';
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Reuse the learned local path',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message!.transport, 'local');
+      expect(p2pService.localSendCallCount, 1);
+      // No re-resolve on the LAN, and the direct race never started.
+      expect(p2pService.discoverLocalPeerCallCount, 0);
+      expect(p2pService.discoverCallCount, 0);
+      expect(p2pService.dialCallCount, 0);
+    });
+
+    // COLD control paired with U2: with NO learned transport, the same send
+    // pays the full discover + dial. This is the counter-baseline that makes
+    // the U2 short-circuit assertions (==0) meaningful rather than vacuous.
+    test('U2 cold baseline: no learned transport pays one discover + one dial',
+        () async {
+      p2pService = FakeP2PService(sendMessageTransport: 'direct');
+      expect(p2pService.lastKnownGoodTransport('target-peer'), isNull);
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Cold send pays full discovery',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message!.transport, 'direct');
+      // Full cold race: the direct leg discovered once and dialed once.
+      expect(p2pService.discoverCallCount, 1);
+      expect(p2pService.dialCallCount, 1);
     });
 
     // U2 (write half) — the LIVE transport that delivered is RECORDED so the
@@ -2791,14 +2870,16 @@ void main() {
       expect(p2pService.lastRecordedTransportPeerId, 'target-peer');
     });
 
-    // U-N2 — sticky NEGATIVE control (a): the learned transport FAILS. The full
-    // race must still run and deliver — the head-start gates win-eligibility
-    // only, never the leg's work, so a dead learned leg can never trap the
-    // send. Here learned == 'direct' but the direct leg fails (discover miss);
-    // the local leg becomes eligible after the head-start and delivers.
+    // U-N2 — sticky NEGATIVE control (a): the learned transport FAILS at the
+    // short-circuit. The send must NOT be trapped on the dead learned path: it
+    // falls THROUGH to today's full parallel race and the surviving local leg
+    // delivers. Here learned == 'direct' but the direct send returns sent:false
+    // (the learned connection is gone), so the sticky short-circuit fails and
+    // the local leg carries the message. Proves the short-circuit is a pure
+    // fast-path: on any miss it degrades to the cold race, never blocks.
     test('U-N2 sticky neg: learned transport fails → full race still delivers',
         () async {
-      p2pService = FakeP2PService(useNullDiscover: true) // direct leg fails
+      p2pService = FakeP2PService(sendMessageResult: false) // direct send fails
         ..localPeers.add('target-peer') // local can carry it
         ..lastKnownGoodTransportResult = 'direct';
 
@@ -2813,7 +2894,8 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      // The learned (direct) leg failed; the surviving local leg delivered.
+      // The learned (direct) short-circuit failed; the surviving local leg
+      // delivered via the full race fallback.
       expect(message!.transport, 'local');
       expect(p2pService.localSendCallCount, 1);
     });

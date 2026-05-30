@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
@@ -81,6 +82,7 @@ typedef SendChatMessageFn =
       String? quotedMessageId,
       List<MediaAttachment>? mediaAttachments,
       MediaAttachmentRepository? mediaAttachmentRepo,
+      TransportMetrics? transportMetrics,
     });
 
 typedef SendVoiceMessageFn =
@@ -201,6 +203,7 @@ class ConversationWired extends StatefulWidget {
   final SendVoiceMessageFn sendVoiceMessageFn;
   final DateTime? notificationTappedAt;
   final AppShellController? appShellController;
+  final TransportMetrics? transportMetrics;
 
   const ConversationWired({
     super.key,
@@ -236,6 +239,7 @@ class ConversationWired extends StatefulWidget {
     this.sendVoiceMessageFn = sendVoiceMessage,
     this.notificationTappedAt,
     this.appShellController,
+    this.transportMetrics,
   });
 
   @override
@@ -1914,6 +1918,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           quotedMessageId: quotedMessageId,
           mediaAttachments: uploadedAttachments,
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          transportMetrics: widget.transportMetrics,
         );
 
         if (preparedUploads.isNotEmpty &&
@@ -2676,6 +2681,7 @@ class _ConversationWiredState extends State<ConversationWired> {
             quotedMessageId: quotedMessageId,
             mediaAttachments: [voiceAttachment],
             mediaAttachmentRepo: widget.mediaAttachmentRepo,
+            transportMetrics: widget.transportMetrics,
           );
 
           if (mounted) {

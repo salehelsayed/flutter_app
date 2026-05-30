@@ -102,8 +102,27 @@ bool _isSensitiveKey(String key) {
 
 bool _isPeerIdKey(String key) {
   final normalized = key.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-  return normalized == 'peerid' || normalized.endsWith('peerid');
+  if (normalized == 'peerid' || normalized.endsWith('peerid')) return true;
+  // Keys that conventionally carry a peer identifier on transport/pubsub
+  // events. Redaction must not depend on the caller using a '...peerId'
+  // suffix, so cover the common alternative names explicitly. Note: callers
+  // that intentionally log a short prefix (e.g. `from: ...length > 10 ? ...`)
+  // are unaffected because the >12-char length gate in _sanitizeDiagnosticValue
+  // leaves short prefixes intact.
+  return _peerIdentifierKeys.contains(normalized);
 }
+
+const _peerIdentifierKeys = <String>{
+  'remotepeer',
+  'frompeer',
+  'topeer',
+  'peer',
+  'from',
+  'to',
+  'sender',
+  'recipient',
+  'topic',
+};
 
 String _redactSensitiveText(String value) {
   final withoutPemSecrets = value.replaceAll(
@@ -120,9 +139,23 @@ String _redactSensitiveText(String value) {
     ),
     '[redacted:multiaddr]',
   );
+  // Redact bare base58 libp2p peer IDs. A bare peer ID is NOT multiaddr-shaped
+  // (no leading '/'), so the multiaddr pass above will not catch it. This
+  // value-level backstop ensures a peer ID is redacted regardless of which key
+  // it appears under — e.g. a future transport/pubsub event that emits a peer
+  // ID under 'remotePeer'/'from'/'topic' — so redaction no longer depends on
+  // the key name alone. CIDv1 Ed25519 ('12D3Koo' + base58) and CIDv0 sha256
+  // ('Qm' + 44 base58 chars) are both covered; anchored at token boundaries so
+  // ordinary words are not affected.
+  final withoutBarePeerIds = withoutMultiaddrs.replaceAll(
+    RegExp(
+      r'\b(?:12D3Koo[1-9A-HJ-NP-Za-km-z]{40,}|Qm[1-9A-HJ-NP-Za-km-z]{44})\b',
+    ),
+    '[redacted:peerid]',
+  );
   final sensitiveKeys = _sensitiveDiagnosticKeys.join('|');
   final withoutEscapedJsonDoubleQuotedValues = _redactSensitiveAssignments(
-    withoutMultiaddrs,
+    withoutBarePeerIds,
     RegExp(
       '\\\\\\"($sensitiveKeys)\\\\\\"\\s*:\\s*\\\\\\"[^\\\\"]*\\\\\\"',
       caseSensitive: false,

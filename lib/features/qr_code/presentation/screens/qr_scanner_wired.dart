@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -85,6 +86,7 @@ class QRScannerWired extends StatelessWidget {
   final AppShellController? appShellController;
   final PendingPostTargetStore? pendingPostTargetStore;
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
+  final TransportMetrics? transportMetrics;
 
   const QRScannerWired({
     super.key,
@@ -119,6 +121,7 @@ class QRScannerWired extends StatelessWidget {
     this.appShellController,
     this.pendingPostTargetStore,
     this.postsPrivacySettingsRepository,
+    this.transportMetrics,
   });
 
   @override
@@ -372,6 +375,7 @@ class QRScannerWired extends StatelessWidget {
                         postsPrivacySettingsRepository:
                             postsPrivacySettingsRepository ??
                             _missingPostsPrivacySettingsRepository(),
+                        transportMetrics: transportMetrics,
                       ),
                     ),
                     (route) => false,

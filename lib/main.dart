@@ -140,6 +140,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
@@ -1633,43 +1634,13 @@ void main() async {
   // fallback: only act while the attachment is still a pending download; if the
   // relay path already completed it ('done'), skip so we don't clobber it.
   if (localMediaServer != null) {
+    final mediaServer = localMediaServer;
     p2pService.incomingLocalMediaStream.listen((media) async {
-      try {
-        final pending = await mediaAttachmentRepository.getPendingDownloads();
-        final stillPending = pending.any((a) => a.id == media.id);
-        if (!stillPending) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'LOCAL_MEDIA_RECEIVE_SKIP_NOT_PENDING',
-            details: {'id': media.id},
-          );
-          return;
-        }
-        final persistedPath = await localMediaServer.persistMedia(
-          media.id,
-          media.from,
-        );
-        if (persistedPath == null) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'LOCAL_MEDIA_RECEIVE_PERSIST_FAILED',
-            details: {'id': media.id},
-          );
-          return;
-        }
-        await mediaAttachmentRepository.updateLocalPath(media.id, persistedPath);
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'LOCAL_MEDIA_RECEIVE_ATTACHMENT_LINKED',
-          details: {'id': media.id, 'path': persistedPath},
-        );
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'LOCAL_MEDIA_RECEIVE_ERROR',
-          details: {'id': media.id, 'error': e.toString()},
-        );
-      }
+      await linkIncomingLocalMedia(
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        persistMedia: mediaServer.persistMedia,
+      );
     });
   }
 
@@ -2877,6 +2848,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         pendingPostTargetStore: widget.pendingPostTargetStore,
         postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
         initialFilterTab: 'intros',
+        transportMetrics: widget.transportMetrics,
       ),
     );
   }

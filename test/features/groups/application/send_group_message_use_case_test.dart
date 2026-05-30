@@ -945,6 +945,71 @@ void main() {
     expect(timing['details']['elapsedMs'], isA<int>());
   });
 
+  test(
+    'group send diagnostics expose fanout evidence without transport identity labels',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: testGroup.id,
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'safe-group-metrics-proof',
+        'topicPeers': 1,
+      };
+
+      final events = await captureFlowEvents(() async {
+        await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Sensitive group body must not become diagnostics',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          senderTransportPeerId: '12D3KooUnsafeGroupTransportPeer',
+          messageId: 'safe-group-metrics-proof',
+        );
+      });
+
+      final success = events.firstWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+      );
+      final details = success['details'] as Map<String, dynamic>;
+      expect(details['topicPeers'], 1);
+      expect(details['expectedRecipientCount'], 1);
+      expect(details['liveFanoutState'], 'full_peers');
+      expect(details['inboxStored'], isTrue);
+      expect(details['inboxPending'], isFalse);
+      expect(details['recipientReceiptClaimed'], isFalse);
+      expect(details, isNot(contains('transport')));
+      expect(details, isNot(contains('transportPeerId')));
+      expect(details, isNot(contains('senderTransportPeerId')));
+
+      _expectNoForbiddenKeys(events, {
+        'transport',
+        'transportPeerId',
+        'senderTransportPeerId',
+        'recipientPeerId',
+        'recipientPeerIds',
+        'senderPeerId',
+      });
+      _expectNoProtectedFragments(jsonEncode(events), const [
+        'Sensitive group body must not become diagnostics',
+        '12D3KooUnsafeGroupTransportPeer',
+        'textPreview',
+      ]);
+    },
+  );
+
   test('returns groupNotFound for unknown group', () async {
     final (result, message) = await sendGroupMessage(
       bridge: bridge,

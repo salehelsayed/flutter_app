@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -179,6 +180,7 @@ class FeedWired extends StatefulWidget {
   final EditChatMessageFn editChatMessageFn;
   final DeleteMessageForMeFn deleteMessageForMeFn;
   final DeleteMessageForEveryoneFn deleteMessageForEveryoneFn;
+  final TransportMetrics? transportMetrics;
 
   const FeedWired({
     super.key,
@@ -216,6 +218,7 @@ class FeedWired extends StatefulWidget {
     this.editChatMessageFn = editChatMessage,
     this.deleteMessageForMeFn = deleteMessageForMe,
     this.deleteMessageForEveryoneFn = deleteMessageForEveryone,
+    this.transportMetrics,
   });
 
   @override
@@ -1425,6 +1428,7 @@ class _FeedWiredState extends State<FeedWired>
               reactionListener: widget.reactionListener,
               introductionRepository: widget.introductionRepository,
               appShellController: widget.appShellController,
+              transportMetrics: widget.transportMetrics,
             ),
           ),
         )
@@ -1461,6 +1465,7 @@ class _FeedWiredState extends State<FeedWired>
               reactionListener: widget.reactionListener,
               introductionRepository: widget.introductionRepository,
               appShellController: widget.appShellController,
+              transportMetrics: widget.transportMetrics,
             ),
           ),
         )
@@ -1655,6 +1660,7 @@ class _FeedWiredState extends State<FeedWired>
         bridge: widget.bridge,
         recipientMlKemPublicKey: contact.mlKemPublicKey,
         quotedMessageId: quotedMsgId,
+        transportMetrics: widget.transportMetrics,
       );
 
       if (!mounted) return;
@@ -1872,6 +1878,7 @@ class _FeedWiredState extends State<FeedWired>
                 reactionListener: widget.reactionListener,
                 introductionRepository: widget.introductionRepository,
                 appShellController: widget.appShellController,
+                transportMetrics: widget.transportMetrics,
               ),
             ),
           )
@@ -2584,6 +2591,7 @@ class _FeedWiredState extends State<FeedWired>
                   widget.postsPrivacySettingsRepository,
               introductionRepository: widget.introductionRepository,
               nearbyLocationService: widget.nearbyLocationService,
+              transportMetrics: widget.transportMetrics,
             ),
           ),
         )
@@ -2866,6 +2874,7 @@ class _FeedWiredState extends State<FeedWired>
       onEmbeddedExit: _onOrbitEmbeddedExit,
       onEmbeddedExitActionChanged: _registerOrbitEmbeddedExitAction,
       onRowActionOpenChanged: _onOrbitRowActionOpenChanged,
+      transportMetrics: widget.transportMetrics,
     );
   }
 

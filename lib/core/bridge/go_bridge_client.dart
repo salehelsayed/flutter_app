@@ -25,6 +25,12 @@ import '../utils/push_diagnostics_logger.dart';
 class GoBridgeClient extends Bridge {
   static const _methodChannel = MethodChannel('com.mknoon/go_bridge');
   static const _eventChannel = EventChannel('com.mknoon/go_bridge_events');
+  static const _transportDiagnosticEvents = <String>{
+    'holepunch:attempt',
+    'holepunch:success',
+    'holepunch:failure',
+    'transport:upgraded',
+  };
   static const _rawFlowPassthroughEvents = <String>{
     'node:startup_timing',
     'relay:warm_timing',
@@ -46,6 +52,10 @@ class GoBridgeClient extends Bridge {
     'group:publish_debug',
     'group:dispatcher_pressure',
     'group:dispatcher_overflow',
+    'holepunch:attempt',
+    'holepunch:success',
+    'holepunch:failure',
+    'transport:upgraded',
   };
 
   bool _initialized = false;
@@ -295,6 +305,9 @@ class GoBridgeClient extends Bridge {
     String eventName,
     Map<String, dynamic> eventData,
   ) {
+    if (_transportDiagnosticEvents.contains(eventName)) {
+      return sanitizeTransportDiagnosticEventData(eventName, eventData);
+    }
     if (eventName != 'group_message:received') return eventData;
 
     final text = eventData['text'];
@@ -692,6 +705,25 @@ class GoBridgeClient extends Bridge {
               );
             }
           }
+          break;
+
+        // NET-REL-02 Option A: forward DCUtR hole-punch / relay->direct
+        // telemetry to FLOW logs (HOLEPUNCH_ATTEMPT / HOLEPUNCH_SUCCESS /
+        // HOLEPUNCH_FAILURE / TRANSPORT_UPGRADED).
+        case 'holepunch:attempt':
+        case 'holepunch:success':
+        case 'holepunch:failure':
+        case 'transport:upgraded':
+          final safeEventData = sanitizeTransportDiagnosticEventData(
+            eventName,
+            eventData,
+          );
+          emitTransportDiagnosticEvent(eventName, safeEventData);
+          emitFlowEvent(
+            layer: 'GO',
+            event: eventName.replaceAll(':', '_').toUpperCase(),
+            details: safeEventData,
+          );
           break;
 
         // Forward Go diagnostic events to FLOW logs for debugging.

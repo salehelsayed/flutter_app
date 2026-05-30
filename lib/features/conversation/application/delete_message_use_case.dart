@@ -708,9 +708,8 @@ Future<_DeleteRaceResult> _tryRelayProbeDeleteSend(
             );
           }
         } catch (_) {}
-        if (attempt < relayProbeSendAttempts) {
-          await Future<void>.delayed(relayProbeRetryBackoff);
-        }
+        // NET-REL-05 P5: single post-probe send attempt
+        // ([relayProbeSendAttempts] == 1); no inter-attempt backoff.
       }
       return _DeleteRaceResult.failed('send_failed');
     case RelayProbeResult.noReservation:

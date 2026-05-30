@@ -48,6 +48,7 @@ dependencies:
   just_audio: ^0.9.39
   flutter_image_compress: ^2.4.0
   crypto: ^3.0.6
+  clock: ^1.1.1
   url_launcher: ^6.2.5
   video_compress: ^3.1.4
   video_player: ^2.9.5

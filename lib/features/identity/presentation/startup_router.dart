@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -105,6 +106,9 @@ class StartupRouter extends StatefulWidget {
   /// The P2P service for networking operations.
   final P2PService p2pService;
 
+  /// NET-REL-04: session-scoped, aggregate-only transport diagnostics.
+  final TransportMetrics? transportMetrics;
+
   /// The media file manager for local file operations.
   final MediaFileManager mediaFileManager;
 
@@ -191,6 +195,7 @@ class StartupRouter extends StatefulWidget {
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
+    this.transportMetrics,
     required this.mediaFileManager,
     required this.secureKeyStore,
     required this.imageProcessor,
@@ -271,6 +276,7 @@ class _StartupRouterState extends State<StartupRouter> {
       final mediaAttachmentRepository = widget.mediaAttachmentRepository;
       final chatMessageListener = widget.chatMessageListener;
       final p2pService = widget.p2pService;
+      final transportMetrics = widget.transportMetrics;
 
       switch (decision) {
         case StartupDecision.hasIdentityWithContacts:
@@ -287,6 +293,7 @@ class _StartupRouterState extends State<StartupRouter> {
             chatMessageListener: chatMessageListener,
             bridge: bridge,
             p2pService: p2pService,
+            transportMetrics: transportMetrics,
             mediaFileManager: widget.mediaFileManager,
             secureKeyStore: widget.secureKeyStore,
             imageProcessor: widget.imageProcessor,
@@ -483,6 +490,7 @@ class _StartupRouterState extends State<StartupRouter> {
                       contactPresenceSnapshotRepository:
                           widget.contactPresenceSnapshotRepository,
                       nearbyLocationService: widget.nearbyLocationService,
+                      transportMetrics: widget.transportMetrics,
                     ),
                   ),
                   (_) => false,
@@ -801,6 +809,7 @@ class _StartupRouterState extends State<StartupRouter> {
         contactPresenceSnapshotRepository:
             widget.contactPresenceSnapshotRepository,
         nearbyLocationService: widget.nearbyLocationService,
+        transportMetrics: widget.transportMetrics,
       ),
     );
 

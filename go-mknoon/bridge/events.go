@@ -16,5 +16,9 @@ type EventCallback interface {
 	//   "relay:state"             — { relayState, healthyRelayCount, watchdogRestartCount, ... }
 	//   "media:upload_progress"   — { id, sentBytes, totalBytes, toPeerId }
 	//   "group_message:received"  — { groupId, senderId, transportPeerId, senderUsername, keyEpoch, text, timestamp }
+	//   "holepunch:attempt"       — { step, attempt, rttMs?, remotePeerShort }
+	//   "holepunch:success"       — { step, fromTransport, toTransport, elapsedMs, remotePeerShort }
+	//   "holepunch:failure"       — { step, error, elapsedMs?, remotePeerShort }
+	//   "transport:upgraded"      — { fromTransport, toTransport, elapsedMs, remotePeerShort }
 	OnEvent(jsonString string)
 }

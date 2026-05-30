@@ -1,16 +1,22 @@
 # NAT Traversal & DCUtR Hole-Punching — Problem & Tracking Doc
 
 Prepared on: 2026-05-29
-Status: Proposed (investigation complete, no code changed)
+Status: Evidence accepted; product decision baseline-gated (Go tracer, Dart
+aggregate diagnostics, and relay-only/no-upgrade evidence present; production
+reachability unchanged; production mobile DCUtR unproven)
 Tracking ID: NET-REL-02
 
 ## Executive Summary
 
-`libp2p.EnableHolePunching()` is configured (`go-mknoon/node/node.go:313`),
-which wires the DCUtR (Direct Connection Upgrade through Relay) protocol into
-the host. In principle this lets two NAT'd peers upgrade a relayed connection
-into a direct one. **In practice, DCUtR upgrades are neither observed, triggered,
-nor (for most cross-network cases) achievable in this app**, for two reasons:
+`libp2p.EnableHolePunching()` is configured (`go-mknoon/node/node.go`) with a
+Go hole-punch tracer seam in the current working tree, and Dart now has
+aggregate, privacy-safe diagnostics for accepted hole-punch and upgrade events.
+In principle this lets two NAT'd peers upgrade a relayed connection into a
+direct one and lets the app observe attempts, successes, failures, and
+relay-to-direct upgrade events.
+**In practice, production DCUtR upgrades are still not triggered by default and
+are not proven by local loopback, LAN, simulator, or label-mapping evidence**,
+for two reasons:
 
 1. **It's self-suppressed.** `libp2p.ForceReachabilityPrivate()`
    (`node.go:315`) hard-pins the host as private for its entire lifetime, so it
@@ -21,21 +27,22 @@ nor (for most cross-network cases) achievable in this app**, for two reasons:
    classic configuration where hole-punching cannot succeed regardless of
    protocol.
 
-On top of that, nothing in the app **observes** outcomes: the only EventBus
-subscription is `EvtPeerConnectednessChanged` + `EvtLocalAddressesUpdated`
-(`node.go:365-368`), the connection watcher records a connection's address
-**once** and never re-samples (`watchConnectionEvents`, `~1612-1690`), and
-`classifyStreamTransport` samples direct/relay per-send only (`node.go:111-124`)
-for labeling, not behavior. There is **no metric** for the direct/relay split,
-and Dart even **defaults a missing transport label to `'relay'`**
-(`p2p_service_impl.dart:159`), biasing any post-hoc tally.
+The current Go/Dart evidence observes libp2p hole-punch outcomes and surfaces
+them as aggregate diagnostics without changing connection policy, but it does
+not by itself prove that production mobile pairs will upgrade.
+`classifyStreamTransport` still samples direct/relay per-send only for labeling,
+not behavior. The old missing-transport default-to-`relay` bias has been
+replaced by `unknown`; that improves measurement honesty, but it is still not a
+valid production mobile DCUtR harvest.
 
-The honest conclusion: for cross-network mobile-to-mobile, **relay is the
-realistic steady state**, and the "direct" transport we occasionally observe
-comes from the LAN pre-relay address dial (NET-REL-01), not DCUtR. This doc
-documents the feasibility envelope precisely so we can decide whether chasing
-DCUtR is worth it, or whether effort belongs in LAN (NET-REL-01) and relay
-quality instead.
+The honest conclusion remains evidence-gated: for many cross-network
+mobile-to-mobile pairs, **relay is the realistic steady state**, and the
+"direct" transport we occasionally observe can come from the LAN pre-relay
+address dial (NET-REL-01), not DCUtR. A production mobile relay-to-direct DCUtR
+success must not be claimed until a valid real-device, discovery-enabled,
+debug-mode baseline harvest proves it. This doc documents the feasibility
+envelope precisely so we can decide whether chasing DCUtR is worth it, or
+whether effort belongs in LAN (NET-REL-01) and relay quality instead.
 
 go-libp2p version in use: **v0.39.1** (`go-mknoon/go.mod`).
 
@@ -50,12 +57,29 @@ go-libp2p version in use: **v0.39.1** (`go-mknoon/go.mod`).
 - `go-mknoon/node/pubsub.go` — the actual source of observed "direct":
   `connectGroupPeerPreferDirect` (defined at `:1878`) and
   `dialKnownGroupMembersDirectOnly` (`:2404-2486`, calls the former).
-- `lib/core/services/p2p_service_impl.dart` — `transport` consumption,
-  default-to-`'relay'` at `:159` (note: dir is `core/services`).
-- `go-relay-server/main.go` — circuit-relay-v2 only. **Footnote:** `pion/stun`,
-  `pion/turn`, `pion/ice`, `pion/webrtc` appear as `// indirect` deps in
-  `go-relay-server/go.mod` (pulled transitively via go-libp2p) but are **not
-  imported by any relay source file** — there is no STUN/TURN service.
+- `lib/core/services/p2p_service_impl.dart` and
+  `lib/core/debug/transport_metrics.dart` — `transport` consumption, aggregate
+  counters, accepted upgrade inference, and `unknown` fallback for missing or
+  unrecognized inbound labels (note: dir is `core/services`).
+- `go-relay-server/main.go` — circuit-relay-v2 only. The host advertises the
+  reservation/hop protocol `ProtoIDv2Hop = "/libp2p/circuit/relay/0.2.0/hop"`
+  via `libp2p.EnableRelayService(...)` (`main.go:72`); its listen addresses are
+  TCP / WS / QUIC only (`main.go:64-67`) — no WebRTC listen address.
+- **R1 build-graph footnote (verified 2026-05-29, NET-REL-02 Option A).** The
+  pion stack is **not directly imported by any relay source file** (`grep
+  -rn "pion/" go-relay-server/*.go` → no hits), but it IS reachable in the
+  transitive build graph via go-libp2p's default WebRTC transport, NOT via any
+  relay code path. Confirmed with `cd go-relay-server && go mod why`:
+  - `go mod why github.com/pion/webrtc/v3` →
+    `relay-server → go-libp2p → .../p2p/transport/webrtc → pion/webrtc/v3`
+  - `go mod why github.com/pion/stun` / `pion/turn/v2` / `pion/ice/v2` →
+    all route `relay-server → go-libp2p → .../p2p/transport/webrtc[/udpmux] →
+    pion/{stun,ice/v2,turn/v2}`.
+  i.e. every pion dependency is pulled by go-libp2p's bundled WebRTC transport,
+  never by relay-server source. The relay neither imports nor listens on
+  WebRTC and provides no STUN/TURN service — circuit-relay-v2 (ProtoIDv2Hop) +
+  store-and-forward inbox only. This is a build-graph fact recorded here per
+  the R1 directive, NOT a runtime assertion.
 - `go-mknoon/node/relay_session.go` — relay reservation health (relay is steady state).
 - `go-mknoon/integration/relay_test.go` — direct dial falls back to relay; no upgrade assertion.
 - `go-mknoon/node/transport_label_test.go` — only checks the label fn on stub conns.
@@ -63,18 +87,23 @@ go-libp2p version in use: **v0.39.1** (`go-mknoon/go.mod`).
 
 ## Current Behavior (Evidence)
 
-- **Hole punching enabled but unobserved:** `EnableHolePunching()` (`node.go:313`).
-  Only EventBus subscription is `EvtPeerConnectednessChanged` +
-  `EvtLocalAddressesUpdated` (`node.go:366`). No subscription to libp2p's
-  hole-punch event/tracer types. No `network.Notifiee` registered in app code
-  (`grep` for `Notify|Notifiee|holepunch` finds matches only inside vendored
-  pubsub, never in `node/` or `bridge/`).
-- **One-shot connection recording:** `watchConnectionEvents` records
-  `conns[0].RemoteMultiaddr()` and `conns[0].Stat().Limited` once when a peer
-  becomes `Connected`/`Limited` (`node.go:1620-1648`). libp2p does **not** re-fire
-  `EvtPeerConnectednessChanged` when a relayed `Limited` conn is upgraded to
-  direct (the peer was already Connected), so the upgrade is invisible and the
-  recorded address stays relay indefinitely.
+- **Hole punching enabled and observed at the Go node seam:**
+  `EnableHolePunching()` is wired with `holepunch.WithTracer`. Production uses
+  the real emitting tracer; tests may inject a collector before `Start()`.
+  The tracer emits `holepunch:attempt`, `holepunch:success`,
+  `holepunch:failure`, and `transport:upgraded`.
+- **Dart aggregate diagnostics consume the accepted seam:** the bridge forwards
+  sanitized hole-punch and upgrade events, `TransportMetrics` records aggregate
+  attempt/success/failure and relay-to-direct upgrade counters, and settings
+  diagnostics surface aggregate counts without message content, full peer IDs,
+  conversation IDs, or raw multiaddrs.
+- **Connection recording is corrected only on tracer success:**
+  `watchConnectionEvents` records `conns[0].RemoteMultiaddr()` and
+  `conns[0].Stat().Limited` when a peer becomes `Connected`/`Limited`. libp2p
+  does **not** re-fire `EvtPeerConnectednessChanged` when a relayed `Limited`
+  conn is upgraded to direct (the peer was already Connected), so the tracer's
+  successful `EndHolePunchEvt` path now clears stale `Limited` state and
+  best-effort re-samples a non-circuit address.
 - **Transport label is telemetry, not control:** `classifyStreamTransport`
   inspects one stream's multiaddrs for `/p2p-circuit` → `"relay"` else
   `"direct"` (`node.go:111-124`), called at send (`:1308`) and inbound (`:1510`)
@@ -92,17 +121,42 @@ go-libp2p version in use: **v0.39.1** (`go-mknoon/go.mod`).
   WithBootDelay(0), WithBackoff(~1s), WithMinInterval(~1s))` (`node.go:320-327`)
   with the explicit comment that `ForceReachabilityPrivate` tells AutoRelay to
   always seek relay reservations (`node.go:306-307`).
-- **Tests assert relay, not upgrade:** `relay_test.go` tries a direct dial then
-  explicitly falls back to the circuit address and asserts delivery
-  (`~411-418`); recovery tests assert circuit addresses return.
-  `transport_label_test.go` checks the label fn on fabricated streams. No test
-  exercises a real relay→direct upgrade.
+- **Tests distinguish mapping, feasibility, and relay-only safety:**
+  `transport_label_test.go` checks multiaddr label mapping only and warns that
+  it is not upgrade proof. Tracer unit tests cover attempts, successes,
+  failures, `transport:upgraded`, and stale limited-state repair. The loopback
+  feasibility test may skip when DCUtR does not materialize. The relay-only
+  negative control is the production-shaped safety case.
+
+## DCUTR-004 Closure Status
+
+Recorded: 2026-05-30 CEST
+
+- Closed as stable evidence: Go tracer/event contract, Dart aggregate
+  diagnostics/counters, missing inbound `unknown` behavior, relay-only
+  no-upgrade negative control, and relay failover/recovery liveness without
+  manufactured upgrade events.
+- Still evidence-gated: production mobile relay-to-direct DCUtR success. No
+  concrete repo-local real-device, discovery-enabled, debug-mode
+  `baselineReport()`/decision-gate artifact was found that proves a production
+  mobile upgrade.
+- Proof boundaries: simulator, CLI, loopback, LAN direct, and classifier-label
+  evidence are liveness, recovery, protocol-feasibility, or mapping evidence.
+  They are not physical NAT traversal proof.
+- Residual carried forward: DCUTR-003 `run_transport_e2e.dart` was attempted
+  twice; Flutter reported `33/33 passed`; the orchestrator downloaded the
+  69-byte blob; the external summary was `29/30 passed` with
+  `messageSeen=false`, `attachmentReferenced=false`, and `blobInList=false`.
+  This remains an external orchestrator media-metadata residual unless concrete
+  later evidence ties it to relay-only/no-upgrade behavior.
 
 ## Problems Identified
 
-**P1 — Hole-punch outcomes are never observed.** No event subscription, tracer,
-or notifiee for DCUtR. We literally cannot tell if an upgrade ever happens.
-*Impact:* zero visibility; can't measure or improve.
+**P1 — Hole-punch outcomes are now observed, but only as evidence.** The
+current working tree installs a hole-punch tracer, accepted Go events, and Dart
+aggregate metrics/reporting. This remains observation only until a valid
+baseline harvest is captured. *Impact:* production reachability behavior is
+unchanged; measurement is possible, but product decisions remain evidence-gated.
 
 **P2 — Upgrades are never triggered or awaited.** Sends ride whatever connection
 exists; self-heal re-dials relay. *Impact:* even where DCUtR could succeed, we
@@ -116,9 +170,13 @@ advertising observed/reachable addresses, which DCUtR coordination needs.
 symmetric/carrier-grade NAT cannot hole-punch. *Impact:* even with everything
 else fixed, a large fraction of cross-network pairs will never go direct.
 
-**P5 — No direct/relay metric; biased label.** No counter/ratio; Dart defaults
-missing transport to `'relay'` (`p2p_service_impl.dart:159`). *Impact:* we can't
-even quantify how often we're on relay (see NET-REL-04).
+**P5 — Baseline harvest still missing.** The direct/relay/wifi/inbox/unknown
+census and hole-punch counters now exist as aggregate diagnostics, and missing
+inbound transport falls back to `unknown`. The remaining gap is that no valid
+real-device, discovery-enabled, debug-mode baseline harvest has been captured
+for the production mobile relay-to-direct question. *Impact:* we still cannot
+quantify real cross-network mobile DCUtR success or use the decision gate to
+reorder NET-REL-01/02/03/05.
 
 ## NAT Traversal Feasibility Analysis
 
@@ -161,17 +219,19 @@ circuit relay + store-and-forward inbox; it is not a STUN/TURN server).
 
 - **Latency & cost:** cross-network 1:1 traffic traverses `mknoun.xyz` for the
   conversation lifetime, adding a relay round-trip and consuming relay egress.
-- **Decision risk:** without P5 (metrics), we might invest in DCUtR plumbing
-  (NET-REL-03) that yields little because P4 dominates our actual user
+- **Decision risk:** without a valid baseline harvest, we might invest in DCUtR
+  plumbing (NET-REL-03) that yields little because P4 dominates our actual user
   population. Measuring first prevents wasted effort.
 
 ## Proposed Directions (options, NOT implementation)
 
-**Option A — Instrument first (cheap, do regardless).** Subscribe to libp2p
-hole-punch events / install a holepunch tracer (`holepunch.WithTracer` is
-available in go-libp2p v0.39.1) and add relay→direct transition telemetry
-(coordinate with NET-REL-04). This tells us whether upgrades ever happen and on
-what fraction of pairs **before** we change connection policy. Lowest risk.
+**Option A — Instrument first (cheap, do regardless).** The Go tracer and Dart
+aggregate diagnostics are accepted evidence in the current working tree:
+`holepunch.WithTracer` observes attempts/outcomes, and relay-to-direct
+transition telemetry is available to NET-REL-04. This tells us whether upgrades
+ever happen and on what fraction of pairs **before** we change connection
+policy. The remaining Option A work is harvesting a valid baseline, not changing
+routing policy.
 
 **Option B — Adaptive reachability.** Replace `ForceReachabilityPrivate()` with
 AutoNAT-driven reachability so peers advertise reachable addresses when they
@@ -198,7 +258,7 @@ This is partly a *measurement* problem, so "fixed" means we can answer:
 1. What fraction of cross-network 1:1 connections are relay vs direct, over time
    (NET-REL-04)?
 2. Of relayed connections, how many *attempt* a hole punch and how many succeed
-   (requires Option A instrumentation)?
+   (requires the accepted instrumentation plus a valid baseline harvest)?
 3. For the WiFi-cone-NAT case specifically, do upgrades occur when expected
    (integration test with public/cone reachability)?
 4. A documented, data-backed decision: pursue DCUtR (Option B) vs accept relay
@@ -212,7 +272,7 @@ symmetric NAT) **cannot** be hole-punched — so the controls that prove "we
 correctly do NOT upgrade" matter as much as the success cases. Note there is no
 NAT-type emulation today (only the structural NW002 "must relay" pattern).
 
-### Instrumentation tests (Go) — the prerequisite (BUILD)
+### Instrumentation tests (Go) — accepted prerequisite to preserve
 - **U1 (happy):** with a holepunch tracer (`holepunch.WithTracer`, go-libp2p
   v0.39.1) wired, assert a hole-punch attempt and a success outcome are captured
   and surfaced as a telemetry event/counter.
@@ -227,18 +287,19 @@ NAT-type emulation today (only the structural NW002 "must relay" pattern).
 
 ### E2E feasibility — read this first (QA round 2)
 A real relay→direct DCUtR **upgrade is NOT exercisable through the production node
-path.** Production hard-codes `ForceReachabilityPrivate()` with no tracer option
-(`node.go:313,315`), there is no seam to vary peer reachability, and there is no
-NAT emulation. The in-process harness's `ForceReachabilityPublic()` is on the
+path.** Production still defaults to `ForceReachabilityPrivate()`, so the
+tracer may correctly observe zero attempts/successes in the production-shaped
+relay-only case. The current test-only seam can vary peer reachability for
+protocol-feasibility tests, but there is still no NAT emulation. The
+in-process harness's historical `ForceReachabilityPublic()` is on the
 *relay* host, not the peers (`local_relay_harness_test.go:185`), and NW002
 deliberately *destroys* direct addresses — so neither produces a peer that can be
-upgraded. The **only** way to show a real upgrade is a **component test** mirroring
-go-libp2p's own `holepunch_test.go` (inject a public addr + mock Identify on
-loopback) — which proves the *protocol*, not that *our app* (which suppresses
-reachability) would ever trigger it. So:
-- The happy upgrade case (I1/U1-success) is **component/protocol-feasibility**, gated
-  on first BUILDING a test-only reachability + `holepunch.WithTracer` seam in `node`
-  (NET-REL-06 §5 item 8). It is not an app-E2E guarantee.
+upgraded. The **only** local success-style evidence is a **component/protocol
+feasibility** path on loopback — which proves the protocol can be observed, not
+that the production app would ever trigger it. So:
+- The happy upgrade case (I1/U1-success) is **component/protocol-feasibility**,
+  using the test-only reachability + `holepunch.WithTracer` seam in `node`. It is
+  not an app-E2E guarantee.
 - The **stay-on-relay negative control is the first-class E2E test** — it IS achievable
   today with real hosts via NW002.
 
@@ -255,7 +316,7 @@ reachability) would ever trigger it. So:
   (expected count is **0** — without a reachable address DCUtR never initiates; assert
   `== 0`, not "bounded > 0"), and (3) the connection identity to the peer is stable
   (`ConnsToPeer` count doesn't oscillate → no thrash). NOTE: assertions (2)/(3) depend
-  on U1's tracer counter existing — they cannot be written until the seam is built.
+  on the accepted tracer counters and are part of the relay-only negative-control proof.
 - **I2 (unhappy — relay drop):** `watchdog_failover_test.go` relay-drop is a *failover*
   harness, not an upgrade harness — there is no upgrade in flight to disrupt. As an
   upgrade test I2 is not implementable; scope it instead to "relay drop with
@@ -281,9 +342,9 @@ reachability) would ever trigger it. So:
 ### Anti-false-result notes specific to this doc
 - Do NOT accept the `{direct, relay}` set for an upgrade-success test — that would
   pass even if no upgrade ever happened. Pin `direct` AND `Limited == false`.
-- Beware the `p2p_service_impl.dart:159` default-to-`'relay'`: a "we're on relay"
-  assertion must distinguish a true relay conn (`Limited == true`) from an
-  unknown-label defaulted to relay.
+- Preserve the fixed `unknown` fallback: a "we're on relay" assertion must
+  distinguish a true relay conn (`Limited == true`) from a missing or
+  unrecognized label that should remain `unknown`.
 
 ## Open Questions
 

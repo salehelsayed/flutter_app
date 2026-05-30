@@ -52,8 +52,28 @@ final StreamController<Map<String, dynamic>> _mediaUploadProgressController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
 final StreamController<Map<String, dynamic>> _groupDiagnosticEventController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
+final StreamController<Map<String, dynamic>>
+_transportDiagnosticEventController =
+    StreamController<Map<String, dynamic>>.broadcast(sync: true);
 
 const groupPushLossDetectedEvent = 'group:push_loss_detected';
+const _transportDiagnosticPayloadKeys = <String, Set<String>>{
+  'holepunch:attempt': {'step', 'attempt', 'rttMs', 'remotePeerShort'},
+  'holepunch:success': {
+    'step',
+    'fromTransport',
+    'toTransport',
+    'elapsedMs',
+    'remotePeerShort',
+  },
+  'holepunch:failure': {'step', 'error', 'elapsedMs', 'remotePeerShort'},
+  'transport:upgraded': {
+    'fromTransport',
+    'toTransport',
+    'elapsedMs',
+    'remotePeerShort',
+  },
+};
 
 /// Broadcast stream for relay media-upload progress events emitted by the
 /// active bridge implementation.
@@ -64,6 +84,12 @@ Stream<Map<String, dynamic>> get mediaUploadProgressStream =>
 Stream<Map<String, dynamic>> get groupDiagnosticEventStream =>
     _groupDiagnosticEventController.stream;
 
+/// Broadcast stream for NET-REL-02 transport diagnostic events
+/// (holepunch:attempt/success/failure, transport:upgraded) emitted by the
+/// active bridge.
+Stream<Map<String, dynamic>> get transportDiagnosticEventStream =>
+    _transportDiagnosticEventController.stream;
+
 /// Publishes a media-upload progress event to Flutter listeners.
 void emitMediaUploadProgressEvent(Map<String, dynamic> data) {
   _mediaUploadProgressController.add(Map<String, dynamic>.from(data));
@@ -73,6 +99,28 @@ void emitMediaUploadProgressEvent(Map<String, dynamic> data) {
 void emitGroupDiagnosticEvent(String eventName, Map<String, dynamic> data) {
   final safeData = sanitizeFlowEventDetails(data);
   _groupDiagnosticEventController.add({'event': eventName, ...safeData});
+}
+
+/// Publishes a transport diagnostic event (NET-REL-02 hole-punch /
+/// relay->direct upgrade telemetry) to Flutter listeners.
+void emitTransportDiagnosticEvent(String eventName, Map<String, dynamic> data) {
+  final safeData = sanitizeTransportDiagnosticEventData(eventName, data);
+  _transportDiagnosticEventController.add({'event': eventName, ...safeData});
+}
+
+Map<String, dynamic> sanitizeTransportDiagnosticEventData(
+  String eventName,
+  Map<String, dynamic> data,
+) {
+  final allowedKeys = _transportDiagnosticPayloadKeys[eventName];
+  if (allowedKeys == null) {
+    return const <String, dynamic>{};
+  }
+  final safeData = sanitizeFlowEventDetails(data);
+  return {
+    for (final key in allowedKeys)
+      if (safeData.containsKey(key)) key: safeData[key],
+  };
 }
 
 /// Calls the bridge to generate a new identity.

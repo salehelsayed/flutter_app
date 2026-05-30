@@ -1,7 +1,8 @@
 # Transport Reliability — Improvement Tracking Index
 
 Prepared on: 2026-05-29
-Status: Proposed (investigation complete, no code changed)
+Status: Living tracker; DCUTR evidence closure folded in, product decisions
+baseline-gated
 Owner: TBD
 
 ## Purpose
@@ -13,8 +14,9 @@ problems identified, impact, proposed directions (options only — no
 implementation), acceptance criteria, and a test plan. They are intended to be
 living tracking docs as we improve each area.
 
-These docs are **analysis only**. No production code was changed to produce
-them.
+These docs are living analysis and closure trackers. This DCUTR-004 pass changed
+documentation only; production transport behavior remains governed by the
+underlying implementation and the baseline decision gate.
 
 ## How transport & channel selection works today (one-paragraph primer)
 
@@ -34,15 +36,15 @@ lifetime; true direct connections only occur on the **same LAN** today.
 
 ## Documents
 
-| ID | Document | Problem |
-|----|----------|---------|
-| NET-REL-01 | [01-lan-wifi-reliability.md](01-lan-wifi-reliability.md) | Same-WiFi/LAN delivery: discovery requires prior discovery, no TTL on peer map, local media transfer dead in prod |
-| NET-REL-02 | [02-nat-traversal-dcutr.md](02-nat-traversal-dcutr.md) | DCUtR hole-punching never observed/triggered; cross-network direct connections not happening; cellular CGNAT reality |
-| NET-REL-03 | [03-relay-springboard.md](03-relay-springboard.md) | Relay is a permanent resting state, not a springboard to direct |
-| NET-REL-04 | [04-transport-observability.md](04-transport-observability.md) | No aggregate visibility into which transport messages use — every other fix is unmeasurable (foundational) |
-| NET-REL-05 | [05-send-orchestration.md](05-send-orchestration.md) | 1:1 send-path ladder: sequential relay-probe tail, no grace window, no sticky/learned per-peer transport, inbox as last rung |
-| NET-REL-06 | [06-test-and-simulation-strategy.md](06-test-and-simulation-strategy.md) | **Cross-cutting test doctrine:** harness inventory, the negative-control principle, transport-proof primitives, happy/unhappy taxonomy, what to build. How we prove success without false results. |
-| NET-REL-07 | [07-relay-backward-compatibility.md](07-relay-backward-compatibility.md) | **Binding constraint:** the relay is a single shared host hard-coded into shipped apps with no version negotiation — a breaking change hits all un-updated users instantly. SAFE vs BREAKING change taxonomy; additive-only + multi-relay-migration rules. |
+| ID | Document | Status | Problem |
+|----|----------|--------|---------|
+| NET-REL-04 | [04-transport-observability.md](04-transport-observability.md) | ✅ **Done** (Option A+D; per-leg attempt tracking added) — baseline harvest pending (needs 2 real debug devices) | No aggregate visibility into which transport messages use — every other fix is unmeasurable (foundational) |
+| NET-REL-01 | [01-lan-wifi-reliability.md](01-lan-wifi-reliability.md) | 🔄 **In progress** (build order: P2 TTL → P1 discover-on-send → P3 two-part media) | Same-WiFi/LAN delivery: discovery requires prior discovery, no TTL on peer map, local media transfer dead in prod |
+| NET-REL-05 | [05-send-orchestration.md](05-send-orchestration.md) | ⬜ Not started | 1:1 send-path ladder: sequential relay-probe tail, no grace window, no sticky/learned per-peer transport, inbox as last rung |
+| NET-REL-02 | [02-nat-traversal-dcutr.md](02-nat-traversal-dcutr.md) | 🧾 Evidence accepted; product decision baseline-gated (production mobile DCUtR unproven) | DCUtR hole-punching is observable and relay-only safety is accepted; production mobile relay-to-direct success and routing policy remain gated on a valid baseline harvest |
+| NET-REL-03 | [03-relay-springboard.md](03-relay-springboard.md) | Evidence-gated / deferred (RSD-001 no-proceed; awaits valid baseline harvest) | Relay is a permanent resting state, not a springboard to direct |
+| NET-REL-06 | [06-test-and-simulation-strategy.md](06-test-and-simulation-strategy.md) | 📋 Doctrine (applies to all) | **Cross-cutting test doctrine:** harness inventory, the negative-control principle, transport-proof primitives, happy/unhappy taxonomy, what to build. How we prove success without false results. |
+| NET-REL-07 | [07-relay-backward-compatibility.md](07-relay-backward-compatibility.md) | 📋 Constraint (binding) | **Binding constraint:** the relay is a single shared host hard-coded into shipped apps with no version negotiation — a breaking change hits all un-updated users instantly. SAFE vs BREAKING change taxonomy; additive-only + multi-relay-migration rules. |
 
 ## Dependency graph
 
@@ -97,6 +99,22 @@ or Go `conn.Stat().Limited == true/false`), never the set.
 
 ## Changelog
 
+- **2026-05-30 — NET-REL-03 RSD-001 no-proceed decision recorded.**
+  The relay-springboard evidence gate found physical devices available but no
+  copied real-device, discovery-enabled, debug-mode 1:1 `baselineReport()` or
+  filled decision-gate artifact with the required transport and hole-punch
+  counts. NET-REL-03 implementation remains deferred; RSD-002/RSD-003 stay
+  prerequisite-blocked until a valid baseline harvest exists.
+- **2026-05-30 — NET-REL-02 DCUTR evidence closure folded into stable docs.**
+  DCUTR-001/002/003 evidence is now reflected in the NAT/DCUtR tracking doc,
+  baseline decision gate, source evidence doc, and this index: Go hole-punch
+  tracing, Dart aggregate diagnostics, and relay-only/no-upgrade behavior are
+  accepted. Production mobile relay-to-direct DCUtR success remains unproven and
+  evidence-gated until a concrete real-device, discovery-enabled, debug-mode
+  baseline harvest exists. Simulator/CLI proof remains relay/recovery liveness
+  evidence, not physical NAT traversal proof, and the repeated
+  `run_transport_e2e.dart` E8 media metadata residual remains an external
+  orchestrator residual.
 - **2026-05-29 — Relay backward-compatibility constraint added (NET-REL-07) + test
   environment facts.** Investigated (a) iOS-simulator/real-network test usage and (b)
   relay change safety for un-updated users. Findings: the 4-sim harness + real-network
