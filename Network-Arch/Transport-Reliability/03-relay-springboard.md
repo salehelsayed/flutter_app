@@ -1,7 +1,7 @@
 # Relay as Springboard, Not Resting State — Problem & Tracking Doc
 
 Prepared on: 2026-05-29
-Status: Proposed (investigation complete, no code changed)
+Status: Evidence-gated; implementation deferred pending a valid NET-REL-02/04 baseline harvest
 Tracking ID: NET-REL-03
 
 ## Executive Summary
@@ -34,6 +34,21 @@ This doc maps the relay lifecycle and state machine, performs a step-by-step gap
 analysis of what "springboard" requires, and proposes bounded options — honest
 that feasibility depends on NAT traversal actually succeeding, which is gated by
 NET-REL-02 (`ForceReachabilityPrivate` tension) and measured by NET-REL-04.
+
+## RSD-001 Decision Gate
+
+Recorded: 2026-05-30 CEST.
+
+RSD-001 reran the proceed/defer decision for this tracking item. The run found
+live physical devices available to Flutter, but no repo-local copied
+real-device, discovery-enabled, debug-mode, 1:1-focused `baselineReport()` or
+filled decision-gate artifact with the required transport counts,
+hole-punch counts, relay-to-direct upgrade count, and cross-network metadata.
+
+Decision: do not proceed to NET-REL-03 relay springboard implementation yet.
+RSD-002/RSD-003 remain prerequisite-blocked. The next safe action is to capture
+a valid NET-REL-04 baseline harvest, then revisit whether cross-network 1:1
+relay-to-direct escalation is justified.
 
 ## Document Basis
 

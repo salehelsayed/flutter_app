@@ -38,12 +38,6 @@ const Duration interactiveInboxBudget = Duration(seconds: 3);
 /// `05-send-orchestration-IMPLEMENTATION-PLAN.md` U-P5.)
 const int relayProbeSendAttempts = 1;
 
-/// Inter-attempt backoff for the post-probe send loop. With
-/// [relayProbeSendAttempts] == 1 this is no longer exercised (the loop's
-/// `attempt < relayProbeSendAttempts` guard skips it); retained so a future
-/// re-widening of the loop keeps a defined backoff.
-const Duration relayProbeRetryBackoff = Duration(milliseconds: 250);
-
 /// NET-REL-05 P2 (grace window): after a non-preferred leg succeeds, wait this
 /// long for a better-ranked transport (local > direct > relay) to land before
 /// committing the worse one. Modest because the front race already starts both
@@ -435,19 +429,81 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final isLocalPeer = p2pService.isLocalPeer(targetPeerId);
 
   // NET-REL-05 P3 (sticky transport): the last-known-good LIVE transport for
-  // this peer, or null if none/expired/stale. U-P3 lands only this MEMORY layer
-  // (read + record + TTL/invalidate); the race-WEIGHTING that consumes [learned]
-  // as a head-start is implemented in U-P2 where the completer is rewritten, so
-  // here [learned] is read and surfaced for observability but does not yet
-  // reorder the completer. Reading it never blocks: it returns null (full race,
-  // identical to today) when expired or — for 'local' — no longer LAN-visible,
-  // so a stale/dead preference can never trap the send.
+  // this peer, or null if none/expired/stale. Returning non-null is a VALIDITY
+  // guarantee, not a hint: `lastKnownGoodTransport` only survives if the entry
+  // is within TTL AND (for 'local') the peer is still LAN-visible, and the
+  // P2PServiceImpl invalidation paths (disconnect / relay-health transition /
+  // addresses-updated) drop the entry the moment the path could have gone stale
+  // (see p2p_service_learned_transport_invalidation_test.dart). That guarantee
+  // is what lets the SHORT-CIRCUIT below skip discover/dial entirely. Reading it
+  // never blocks: null (expired/stale/absent) degenerates to the full cold race,
+  // identical to today, so a stale/dead preference can never trap the send.
   final learned = p2pService.lastKnownGoodTransport(targetPeerId);
   if (learned != null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_STICKY_TRANSPORT',
       details: {'targetPeerId': targetPrefix, 'learned': learned},
+    );
+
+    // NET-REL-05 P3 short-circuit: a fresh+valid learned transport lets us REUSE
+    // the known-good path WITHOUT re-paying discovery/dial. Send directly over
+    // that transport (sendLocalMessage for 'local' — the peer is still LAN-
+    // visible per the read-time revalidation; sendMessageWithReply for
+    // 'direct'/'relay' — the connection-reuse path, no discover/dial). This is
+    // the only place that skips discover/dial on a NON-connected peer; it is
+    // gated behind the now-tested invalidation so a stale entry never reaches
+    // here. On ANY miss/failure of this attempt we fall THROUGH to today's full
+    // PARALLEL race (NOT a serial try-then-timeout-then-race), so the unhappy
+    // path is never slower than a cold send.
+    final shortCircuit = await _tryLearnedShortCircuit(
+      p2pService,
+      targetPeerId,
+      jsonString,
+      senderPeerId,
+      learned: learned,
+      transportMetrics: transportMetrics,
+    );
+    if (shortCircuit != null && shortCircuit.success) {
+      sendPath = 'sticky';
+      stepTimings = shortCircuit.stepTimings;
+      // The sticky short-circuit reuses the learned known-good path WITHOUT
+      // re-discovery/dial — the same census semantics as connection 'reuse', so
+      // it lands in the 'reuse' rung. The 'sticky' label is preserved in the
+      // FLOW timing/observability event below (sendPath) for diagnosis.
+      recordMetrics(transport: shortCircuit.via, rung: 'reuse');
+      return _completeSuccessfulSend(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        payload: payload,
+        targetPeerId: targetPeerId,
+        jsonString: jsonString,
+        acknowledged: shortCircuit.acknowledged,
+        via: shortCircuit.via!,
+        resolvedMessageId: resolvedMessageId,
+        text: sanitizedText,
+        createdAt: createdAt,
+        editedAt: resolvedEditedAt,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        attachments: normalizedAttachments,
+        sendStopwatch: sendStopwatch,
+        emitTimingEvent: emitTimingEvent,
+        extraTimingDetails: {
+          'connectionReused': false,
+          'sendPath': 'sticky',
+          'learned': learned,
+          ...shortCircuit.stepTimings,
+        },
+      );
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_STICKY_FALLBACK',
+      details: {
+        'targetPeerId': targetPrefix,
+        'learned': learned,
+        'reason': shortCircuit?.reason ?? 'unknown',
+      },
     );
   }
 
@@ -1135,6 +1191,88 @@ Future<_RaceResult> _tryLocalSend(
   return _RaceResult.failed('local_send_failed', stepTimings: timings);
 }
 
+/// NET-REL-05 P3 short-circuit: attempt the LEARNED transport directly, WITHOUT
+/// re-paying discovery/dial, reusing the known-good path.
+///
+/// - `'local'`: send over LAN via [sendLocalMessage] (no `discoverLocalPeer`).
+///   The read-time revalidation in `lastKnownGoodTransport` already confirmed
+///   the peer is still LAN-visible, so a fresh resolve would be redundant.
+/// - `'direct'` / `'relay'`: send via [sendMessageWithReply] over the existing
+///   known-good connection (no `discoverPeer` / `dialPeer`).
+///
+/// Returns a successful [_RaceResult] on delivery, or a FAILED result (never
+/// null on a reached attempt) so the caller falls through to the full parallel
+/// race. Returns null only for an unrecognized learned label (defensive — the
+/// memory layer only stores local/direct/relay). Self-bounded so a stalled
+/// learned path cannot make the fallback slower than a cold send.
+Future<_RaceResult?> _tryLearnedShortCircuit(
+  P2PService p2pService,
+  String targetPeerId,
+  String jsonString,
+  String senderPeerId, {
+  required String learned,
+  TransportMetrics? transportMetrics,
+}) async {
+  if (learned == 'local') {
+    try {
+      return await _tryLocalSend(
+        p2pService,
+        targetPeerId,
+        jsonString,
+        senderPeerId,
+        timeoutMs: interactiveLocalBudget.inMilliseconds,
+        transportMetrics: transportMetrics,
+      ).timeout(
+        interactiveLocalBudget,
+        onTimeout: () => _RaceResult.failed('sticky_local_timeout'),
+      );
+    } catch (e) {
+      return _RaceResult.failed('sticky_local_error:$e');
+    }
+  }
+
+  if (learned == 'direct' || learned == 'relay') {
+    try {
+      final sw = Stopwatch()..start();
+      final sendResult = await p2pService
+          .sendMessageWithReply(
+            targetPeerId,
+            jsonString,
+            timeoutMs: interactiveDirectBudget.inMilliseconds,
+          )
+          .timeout(
+            interactiveDirectBudget,
+            onTimeout: () => const SendMessageResult(sent: false),
+          );
+      sw.stop();
+      final timings = {
+        'stickySendMs': sw.elapsedMilliseconds,
+        if (sendResult.streamOpenMs != null)
+          'streamOpenMs': sendResult.streamOpenMs!,
+        if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
+        if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
+      };
+      // Sticky short-circuit = reuse of the learned known-good path; censused
+      // under the 'reuse' leg (no separate sticky leg exists). The 'local'
+      // branch above already recorded its own 'local' leg inside _tryLocalSend.
+      transportMetrics?.recordAttempt(leg: 'reuse', succeeded: sendResult.sent);
+      if (sendResult.sent) {
+        return _RaceResult.succeeded(
+          via: _resolveGoSendTransport(p2pService, targetPeerId, sendResult),
+          acknowledged: sendResult.acknowledged,
+          stepTimings: timings,
+        );
+      }
+      return _RaceResult.failed('sticky_send_failed', stepTimings: timings);
+    } catch (e) {
+      transportMetrics?.recordAttempt(leg: 'reuse', succeeded: false);
+      return _RaceResult.failed('sticky_send_error:$e');
+    }
+  }
+
+  return null;
+}
+
 /// Try direct discover → dial → send path, recording one `direct` attempt
 /// outcome for the transport census regardless of which leg ultimately wins the
 /// race. Records exactly once, on the real outcome of the inner attempt.
@@ -1314,10 +1452,6 @@ Future<_RaceResult> _tryRelayProbeSend(
               'error': e.toString(),
             },
           );
-        }
-
-        if (attempt < relayProbeSendAttempts) {
-          await Future<void>.delayed(relayProbeRetryBackoff);
         }
       }
       relayProbeStopwatch.stop();

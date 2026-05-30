@@ -25,6 +25,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -94,6 +95,15 @@ type Node struct {
 	pendingConfirmsMu            sync.Mutex
 	pendingDirectConfirms        map[string]chan bool
 	directConfirmTimeoutOverride time.Duration // test seam
+
+	// NET-REL-02 Option A test seams (instrument-only).
+	// holePunchTracerForTests injects a test-controlled holepunch.EventTracer;
+	// nil in production (the real emitting tracer is installed instead).
+	holePunchTracerForTests holepunch.EventTracer
+	// forcePublicReachabilityForTests swaps ForceReachabilityPrivate() for
+	// ForceReachabilityPublic() so PROTOCOL-feasibility tests can drive a real
+	// loopback hole punch; false in production (private reachability untouched).
+	forcePublicReachabilityForTests bool
 }
 
 type connectionInfo struct {
@@ -302,6 +312,24 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		}
 	}
 
+	// NET-REL-02 Option A (instrument-only): install a holepunch EventTracer so
+	// DCUtR attempt/success/failure telemetry flows through emitEvent. In
+	// production we default to the real emitting tracer (pure observation — it
+	// changes no connection policy); tests may inject their own collector via
+	// SetHolePunchTracerForTests. n.mu is held here (Lock at top of Start).
+	holeOpts := []holepunch.Option{}
+	if n.holePunchTracerForTests != nil {
+		holeOpts = append(holeOpts, holepunch.WithTracer(n.holePunchTracerForTests))
+	} else {
+		holeOpts = append(holeOpts, holepunch.WithTracer(newNodeHolePunchTracer(n)))
+	}
+	// Reachability stays ForceReachabilityPrivate() in production; the test seam
+	// may swap to ForceReachabilityPublic() for PROTOCOL-feasibility tests only.
+	reachabilityOpt := libp2p.ForceReachabilityPrivate()
+	if n.forcePublicReachabilityForTests {
+		reachabilityOpt = libp2p.ForceReachabilityPublic()
+	}
+
 	// Create the libp2p host with AutoRelay for circuit address management.
 	// ForceReachabilityPrivate tells AutoRelay to always seek relay reservations,
 	// which is correct for mobile devices that are always behind NAT.
@@ -310,9 +338,9 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.ConnectionManager(cm),
 		libp2p.EnableRelay(),
-		libp2p.EnableHolePunching(),
+		libp2p.EnableHolePunching(holeOpts...),
 		libp2p.NATPortMap(),
-		libp2p.ForceReachabilityPrivate(),
+		reachabilityOpt,
 		libp2p.AddrsFactory(filterAddresses),
 	}
 	if len(relayInfos) > 0 {
@@ -1801,6 +1829,24 @@ func (n *Node) emitEvent(eventName string, data map[string]interface{}) {
 	}
 
 	n.eventCallback.OnEvent(string(jsonBytes))
+}
+
+// SetHolePunchTracerForTests injects a test-controlled holepunch.EventTracer.
+// NET-REL-02 Option A: production leaves this nil and installs the real
+// emitting tracer; tests inject their own collector before Start().
+func (n *Node) SetHolePunchTracerForTests(t holepunch.EventTracer) {
+	n.mu.Lock()
+	n.holePunchTracerForTests = t
+	n.mu.Unlock()
+}
+
+// SetForcePublicReachabilityForTests forces ForceReachabilityPublic() in place
+// of the production ForceReachabilityPrivate(). NET-REL-02 Option A: used only
+// by PROTOCOL-feasibility tests; false in production.
+func (n *Node) SetForcePublicReachabilityForTests(v bool) {
+	n.mu.Lock()
+	n.forcePublicReachabilityForTests = v
+	n.mu.Unlock()
 }
 
 // Host returns the underlying libp2p host (for protocol implementations).

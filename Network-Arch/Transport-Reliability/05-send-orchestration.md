@@ -176,11 +176,21 @@ within N ms of a worse one. *Tradeoffs:* choosing N (too high → adds latency;
 too low → no effect). Only helps when multiple paths are close; modest win.
 
 **P3 — Sticky / learned per-peer transport.** Record last-known-good transport
-per peer (we already have `messages.transport` and a connection map) and try it
-first / weight the race toward it, falling back to the full race on failure.
-*Tradeoffs:* must expire/invalidate stale preferences (peer changed networks);
-pairs well with NET-REL-01 TTL thinking. Likely the biggest everyday-latency win
-for repeat conversations.
+per peer (we already have `messages.transport` and a connection map) and reuse it
+first, falling back to the full race on failure.
+*Current state (LANDED):* a learned transport is recorded on every live success
+and, on a repeat send, the learned path is **reused directly via a short-circuit**
+that SKIPS re-discovery and re-dialing — for `'local'` it calls `sendLocalMessage`
+with no `discoverLocalPeer`, for `'direct'`/`'relay'` it calls `sendMessageWithReply`
+with no `discoverPeer`/`dialPeer`. On any miss/failure it falls THROUGH to the full
+parallel race (never slower than a cold send). The short-circuit is gated behind the
+`P2PServiceImpl` invalidation paths (disconnect / relay-health transition / TTL), so
+a stale path is dropped before it can be reused. *Tradeoffs:* must expire/invalidate
+stale preferences (peer changed networks); pairs well with NET-REL-01 TTL thinking.
+This is the biggest everyday-latency win for repeat conversations — proven by the
+mutation-resistant U2 short-circuit tests (`discoverCallCount==0`/`dialCallCount==0`
+on a sticky send vs `==1`/`==1` on the cold baseline; deleting the short-circuit
+call makes the sticky run pay discovery again → RED).
 
 **P5 — Consolidate the relay attempt.** Decide whether relay is owned by Dart
 (probe + explicit send) or Go (inside `message:send`) and remove the redundant
@@ -193,9 +203,19 @@ layer, simplifying the ladder and making NET-REL-04 instrumentation cleaner.
 1. **Offline-peer send:** durable custody (inbox accepted) within ~1.5s of hitting
    send (vs several seconds today), via concurrent fallback for low-confidence
    sends.
-2. **Repeat send to a recently-direct peer:** uses the learned transport on the
-   first attempt without re-running full discovery (measurable: fewer
-   discover/dial calls; faster median first-message latency).
+2. **Repeat send to a recently-direct peer (LANDED — fewer discover/dial → faster):**
+   the learned transport is **reused directly via a short-circuit**: the repeat
+   send issues STRICTLY FEWER discover/dial calls than a cold send — zero, vs the
+   cold baseline's one discover + one dial — because it skips re-discovery and
+   re-dialing entirely and sends straight over the known-good path. Proven by the
+   mutation-resistant U2 short-circuit tests in
+   `send_chat_message_use_case_test.dart`: a sticky `'direct'` send asserts
+   `discoverCallCount==0 && dialCallCount==0` and a sticky `'local'` send asserts
+   `discoverLocalPeerCallCount==0` (paired with a cold-baseline test asserting
+   `==1`/`==1`). Deleting the short-circuit invocation makes the sticky run fall
+   into the full race and pay discovery again → the U2 tests go RED (verified by
+   mutation). On a learned-path miss the send falls through to the full race, so
+   the unhappy path is never slower than cold.
 3. **Transport preference honored:** when local and direct both succeed within
    the grace window, local is chosen (assert in test).
 4. **No double-delivery:** concurrent fallback never shows the user two copies
@@ -216,11 +236,19 @@ and (b) a "sticky path" test that passes because the full race ran anyway.
 - **U1 (grace window, happy):** local and direct both succeed within N ms → assert
   `message.transport == 'local'` (preference honored). NEGATIVE CONTROL: direct
   succeeds and local fails → `direct` chosen, not a hung wait for local.
-- **U2 (sticky/learned, happy):** a peer last delivered over `direct` → next send tries
-  direct FIRST; assert FEWER `discoverCallCount`/`dialCallCount` than a cold send
-  (use the existing call counters). NEGATIVE CONTROL U-N2: when the learned transport
-  FAILS, assert the full race still runs and delivers (sticky must not trap us on a
-  dead path); and assert an expired/stale preference is ignored.
+- **U2 (sticky/learned) — LANDED & mutation-resistant:** the real short-circuit
+  reuses the learned path and skips re-discovery/re-dialing. U2 asserts the sticky
+  run does STRICTLY FEWER discover/dial calls than the cold baseline: a sticky
+  `'direct'` send asserts `discoverCallCount==0 && dialCallCount==0 &&
+  sendCallCount==1`; a sticky `'local'` send asserts `discoverLocalPeerCallCount==0
+  && discoverCallCount==0 && dialCallCount==0`; a paired cold-baseline send asserts
+  `discoverCallCount==1 && dialCallCount==1`. Proven by mutation: replacing the
+  `_tryLearnedShortCircuit(...)` call with a null result makes the sticky run fall
+  into the full race and pay discovery again → both U2 short-circuit tests go RED
+  (Expected `0` / Actual `1`). NEGATIVE CONTROL U-N2: when the learned transport
+  FAILS at the short-circuit, the full race still runs and delivers (`'local'`),
+  so sticky never traps us on a dead path; and an expired/stale preference is
+  ignored (`P2PServiceImpl` drops it before it can be read).
 - **U3 (concurrent durable fallback, happy):** a low-confidence send fires inbox
   concurrently with the live attempt → assert `storeInInboxCallCount == 1` AND the
   live attempt also fired (`sendMessageCallCount == 1`). NEGATIVE CONTROL U-N3: a
@@ -262,14 +290,16 @@ use. Build I2/budget-cut tests on `fake_p2p_service_integration.dart` (or port t
   `fake_p2p_service_integration.dart`'s `*Delay` knobs set ABOVE the budget and assert
   the path is abandoned at the budget. The in-file `FakeP2PService` has no delay knob.
 
-### Real-stack concurrent-fallback liveness (BUILD — closes the key false positive)
-- **E2 (NEW):** the host U3 proves `sendMessageCallCount == 1 && storeInInboxCallCount == 1`
-  but only against a fake. To GUARANTEE the new concurrent fallback end-to-end, add a
-  `transport_e2e`-style real-stack scenario: send one low-confidence message and assert
-  (via Go FLOW events/counters) that BOTH a live stream attempt AND an `InboxStore`
-  actually occurred over the wire, and the receiver got **exactly one**. This guards the
-  false positive "test passes via dedup even though the live path silently never fired"
-  — which a T1 fake cannot catch.
+### Real-stack concurrent-fallback liveness (DEFERRED — device/wire proof pending)
+- **E2 (DEFERRED — proven against host fakes; device/wire proof pending):** the host
+  U3 proves `sendMessageCallCount == 1 && storeInInboxCallCount == 1`, but only against
+  a fake. The wire-level guarantee — a `transport_e2e`-style real-stack scenario that
+  sends one low-confidence message and asserts (via Go FLOW events/counters) that BOTH
+  a live stream attempt AND an `InboxStore` actually occurred over the wire, with the
+  receiver getting **exactly one** — is **NOT built**. The concurrent-fallback liveness
+  is therefore proven only at the host-fake layer; the over-the-Go-wire proof that
+  closes the false positive "test passes via dedup even though the live path silently
+  never fired" is explicitly DEFERRED, not done.
 
 ### Retrier interaction (regression)
 - **R1:** retriers still prefer inbox-only re-store from the persisted `wireEnvelope`

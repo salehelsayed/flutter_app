@@ -570,9 +570,8 @@ Future<_RaceResult> _tryRelayProbeSend(
             );
           }
         } catch (_) {}
-        if (attempt < relayProbeSendAttempts) {
-          await Future<void>.delayed(relayProbeRetryBackoff);
-        }
+        // NET-REL-05 P5: single post-probe send attempt
+        // ([relayProbeSendAttempts] == 1); no inter-attempt backoff.
       }
       return const _RaceResult.failed('send_failed');
     case RelayProbeResult.noReservation:

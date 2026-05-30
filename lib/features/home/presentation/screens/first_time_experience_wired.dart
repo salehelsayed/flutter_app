@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -92,6 +93,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
+  final TransportMetrics? transportMetrics;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -127,6 +129,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.postsPrivacySettingsRepository,
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
+    this.transportMetrics,
   });
 
   @override
@@ -268,6 +271,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             nearbyLocationService: widget.nearbyLocationService,
+            transportMetrics: widget.transportMetrics,
           ),
         ),
       );
@@ -563,6 +567,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           appShellController: widget.appShellController,
           pendingPostTargetStore: widget.pendingPostTargetStore,
           postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+          transportMetrics: widget.transportMetrics,
         ),
       ),
     );

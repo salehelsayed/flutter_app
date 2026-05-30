@@ -1535,6 +1535,142 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
     });
 
     test(
+      'DCUTR-002 forwards Go hole-punch events to transport diagnostics',
+      () async {
+        final eventsFuture = transportDiagnosticEventStream
+            .take(4)
+            .toList()
+            .timeout(const Duration(seconds: 1));
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'holepunch:attempt',
+            'data': {
+              'step': 'attempt',
+              'attempt': 1,
+              'rttMs': 12,
+              'remotePeerShort': 'abcd1234',
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'holepunch:success',
+            'data': {
+              'step': 'succeeded',
+              'fromTransport': 'relay',
+              'toTransport': 'direct',
+              'elapsedMs': 34,
+              'remotePeerShort': 'abcd1234',
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'holepunch:failure',
+            'data': {
+              'step': 'failed',
+              'error': 'timeout',
+              'elapsedMs': 56,
+              'remotePeerShort': 'wxyz7890',
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'transport:upgraded',
+            'data': {
+              'fromTransport': 'relay',
+              'toTransport': 'direct',
+              'elapsedMs': 78,
+              'remotePeerShort': 'abcd1234',
+            },
+          }),
+        );
+
+        final events = await eventsFuture;
+        expect(
+          events.map((event) => event['event']).toList(),
+          orderedEquals([
+            'holepunch:attempt',
+            'holepunch:success',
+            'holepunch:failure',
+            'transport:upgraded',
+          ]),
+        );
+        expect(events[0], containsPair('step', 'attempt'));
+        expect(events[0], containsPair('attempt', 1));
+        expect(events[0], containsPair('remotePeerShort', 'abcd1234'));
+        expect(events[1], containsPair('toTransport', 'direct'));
+        expect(events[1], containsPair('elapsedMs', 34));
+        expect(events[2], containsPair('error', 'timeout'));
+        expect(events[3], containsPair('fromTransport', 'relay'));
+
+        final malformedEvents = <Map<String, dynamic>>[];
+        final malformedSub = transportDiagnosticEventStream.listen(
+          malformedEvents.add,
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({'event': 'holepunch:attempt', 'data': 'not-a-map'}),
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(malformedEvents, isEmpty);
+        expect(client.debugMalformedPushEventCountForTest, 1);
+        await malformedSub.cancel();
+      },
+    );
+
+    test(
+      'DCUTR-002 transport diagnostic events redact identifiers in stream and flow logs',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink((payload) {
+          flowEvents.add(Map<String, dynamic>.from(payload));
+        });
+
+        const fullPeerId =
+            '12D3KooWTransportDiagnosticPeerIdAbcdefghijklmnop1234567890';
+        const conversationId = 'conversation-dcutr-002-secret';
+        const multiaddr =
+            '/ip4/10.2.0.1/tcp/4001/p2p/12D3KooWRelayNodeForDcutr002';
+        const messageText = 'DCUTR-002 private message body';
+
+        final eventFuture = transportDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'holepunch:attempt',
+            'data': {
+              'step': 'attempt',
+              'attempt': 3,
+              'remotePeerShort': 'safe1234',
+              'remotePeer': fullPeerId,
+              'conversationId': conversationId,
+              'multiaddr': multiaddr,
+              'text': messageText,
+            },
+          }),
+        );
+
+        final streamEvent = await eventFuture;
+        expect(streamEvent, containsPair('event', 'holepunch:attempt'));
+        expect(streamEvent, containsPair('step', 'attempt'));
+        expect(streamEvent, containsPair('remotePeerShort', 'safe1234'));
+
+        final streamPayload = jsonEncode(streamEvent);
+        final flowPayload = jsonEncode(flowEvents);
+        for (final payload in [streamPayload, flowPayload]) {
+          expect(payload, isNot(contains(fullPeerId)));
+          expect(payload, isNot(contains(conversationId)));
+          expect(payload, isNot(contains('/ip4/10.2.0.1')));
+          expect(payload, isNot(contains(messageText)));
+        }
+      },
+    );
+
+    test(
       'OB-003 publish debug and validator reject expose branch diagnostics',
       () async {
         final flowEvents = <Map<String, dynamic>>[];

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -127,6 +128,7 @@ class OrbitWired extends StatefulWidget {
   final String? initialFilterTab;
   final VoidCallback? debugOnHeaderBuild;
   final VoidCallback? debugOnListBuild;
+  final TransportMetrics? transportMetrics;
 
   const OrbitWired({
     super.key,
@@ -169,6 +171,7 @@ class OrbitWired extends StatefulWidget {
     this.initialFilterTab,
     this.debugOnHeaderBuild,
     this.debugOnListBuild,
+    this.transportMetrics,
   });
 
   @override
@@ -1677,6 +1680,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               pendingPostTargetStore: widget.pendingPostTargetStore,
               postsPrivacySettingsRepository:
                   widget.postsPrivacySettingsRepository,
+              transportMetrics: widget.transportMetrics,
             ),
           ),
         )

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
 import '../bridge/bridge.dart';
@@ -2745,6 +2746,18 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     final wasHealthy = _stateHasHealthyRelay(previousState);
     final nowHealthy = _stateHasHealthyRelay(updatedState);
 
+    // NET-REL-05 P3: the relay:state push is the modern, preferred relay-health
+    // transition signal (the addresses-updated path is a legacy fallback). A
+    // health transition signals a likely network change, so drop non-local
+    // learned transports here too ('direct'/'relay' may no longer be
+    // reachable). 'local' keeps its own 30s/isLocalPeer revalidation and
+    // self-corrects, so leave it intact. Without this, a transition delivered
+    // only via relay:state (the common path) would leave a stale 'direct'/
+    // 'relay' preference in place.
+    if (wasHealthy != nowHealthy) {
+      _learnedTransport.removeWhere((_, v) => v.transport != 'local');
+    }
+
     if (kDebugMode) {
       debugPrint(
         '[RELAY] relay:state push event → '
@@ -3140,7 +3153,9 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   String? lastKnownGoodTransport(String peerId) {
     final e = _learnedTransport[peerId];
     if (e == null) return null;
-    final age = DateTime.now().difference(e.at);
+    // clock.now() (defaults to DateTime.now() in production) so the read-time
+    // TTL eviction below is directly testable via withClock().
+    final age = clock.now().difference(e.at);
     // 'local' shares NET-REL-01's 30s LAN TTL; 'direct'/'relay' last longer.
     final ttl = e.transport == 'local'
         ? const Duration(seconds: 30)
@@ -3162,7 +3177,7 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   @override
   void recordSuccessfulTransport(String peerId, String transport) {
     if (transport == 'local' || transport == 'direct' || transport == 'relay') {
-      _learnedTransport[peerId] = _LearnedTransport(transport, DateTime.now());
+      _learnedTransport[peerId] = _LearnedTransport(transport, clock.now());
     }
   }
 

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_introduction_debug_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
 import 'settings_screen.dart';
 
 /// Wired widget connecting SettingsScreen to business logic.
@@ -44,6 +46,7 @@ class SettingsWired extends StatefulWidget {
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
   final IntroductionRepository? introductionRepository;
   final NearbyLocationService? nearbyLocationService;
+  final TransportMetrics? transportMetrics;
   final bool showNavigationBar;
 
   const SettingsWired({
@@ -58,6 +61,7 @@ class SettingsWired extends StatefulWidget {
     required this.postsPrivacySettingsRepository,
     this.introductionRepository,
     this.nearbyLocationService,
+    this.transportMetrics,
     this.showNavigationBar = true,
   });
 
@@ -480,6 +484,46 @@ class _SettingsWiredState extends State<SettingsWired> {
     Navigator.of(context).pop();
   }
 
+  /// Builds the debug-only settings section. Only rendered in [kDebugMode].
+  ///
+  /// Composes the introduction debug card and the transport diagnostics card
+  /// (whichever dependencies are available) into a single column so they can
+  /// share the screen's single `debugSection` slot.
+  Widget? _buildDebugSection() {
+    if (!kDebugMode) {
+      return null;
+    }
+
+    final cards = <Widget>[];
+
+    if (widget.introductionRepository != null) {
+      cards.add(
+        SettingsIntroductionDebugCard(
+          introductions: _debugIntroductions,
+          isLoading: _isLoadingDebugIntroductions,
+          errorText: _debugIntroductionsError,
+          onRefresh: () => _loadDebugIntroductions(),
+          onDeleteIntroduction: _deleteDebugIntroduction,
+          onDeletePair: _deleteDebugPair,
+        ),
+      );
+    }
+
+    final transportMetrics = widget.transportMetrics;
+    if (transportMetrics != null) {
+      if (cards.isNotEmpty) {
+        cards.add(const SizedBox(height: 16));
+      }
+      cards.add(SettingsTransportDiagnosticsCard(metrics: transportMetrics));
+    }
+
+    if (cards.isEmpty) {
+      return null;
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: cards);
+  }
+
   @override
   void dispose() {
     _peerIdCopyTimer?.cancel();
@@ -516,16 +560,7 @@ class _SettingsWiredState extends State<SettingsWired> {
         onVideoQualityChanged: _onVideoQualityChanged,
         isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
         onNearbySharingChanged: _onNearbySharingChanged,
-        debugSection: kDebugMode && widget.introductionRepository != null
-            ? SettingsIntroductionDebugCard(
-                introductions: _debugIntroductions,
-                isLoading: _isLoadingDebugIntroductions,
-                errorText: _debugIntroductionsError,
-                onRefresh: () => _loadDebugIntroductions(),
-                onDeleteIntroduction: _deleteDebugIntroduction,
-                onDeletePair: _deleteDebugPair,
-              )
-            : null,
+        debugSection: _buildDebugSection(),
         onSwitchView: _onSwitchView,
         activeTab: widget.appShellController.activeTab,
         showNavigationBar: widget.showNavigationBar,

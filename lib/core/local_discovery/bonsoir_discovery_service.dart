@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:bonsoir/bonsoir.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -179,6 +180,15 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   @override
   bool isLocalPeer(String peerId) => getLocalPeer(peerId) != null;
+
+  /// Test-only seam: seed the discovered-peers map directly so the real
+  /// read-time staleness eviction in [getLocalPeer] can be exercised against a
+  /// known [LocalPeer] (e.g. one with a back-dated `discoveredAt`). Production
+  /// code never calls this — peers only enter via the mDNS resolved path.
+  @visibleForTesting
+  void debugSeedPeer(LocalPeer peer) {
+    _peers[peer.peerId] = peer;
+  }
 
   @override
   LocalPeer? getLocalPeer(String peerId) {

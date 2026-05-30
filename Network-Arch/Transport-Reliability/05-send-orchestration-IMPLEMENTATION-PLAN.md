@@ -17,7 +17,7 @@ Depends on / coordinates with: `01-lan-wifi-IMPLEMENTATION-PLAN.md` (LAN TTL = *
 
 | Problem | Decision | Rationale (short) |
 |---|---|---|
-| **P3** (sticky/learned transport) | **In-memory session cache** of last-known-good transport, keyed by full peerId, on `P2PServiceImpl` (sibling to `_peersUpgradedToDirect`). Read once before the race to grant a small **head-start** to the learned leg; NEVER removes or delays the direct leg. **TTL: 'local' = 30s** (matches NET-REL-01 LAN TTL, re-validated via `isLocalPeer`), **'direct'/'relay' = 10min**, invalidated on disconnect / addresses-updated. Falls back to the FULL race on any sticky-leg failure. | Biggest everyday-latency win for repeat conversations. In-memory (not DB) is simplest, safe, and avoids the "latest message ≠ last successful outgoing" trap. Coordinating 'local' TTL with the 30s LAN TTL means a stale sticky-local self-corrects inside the 1500ms budget. |
+| **P3** (sticky/learned transport) | **In-memory session cache** of last-known-good transport, keyed by full peerId, on `P2PServiceImpl` (sibling to `_peersUpgradedToDirect`). Read once before the race; on a hit, a **short-circuit reuses the learned path** (sends directly, SKIPS re-discovery/re-dialing) before the race is built; on any miss/failure it falls THROUGH to the FULL parallel race (never removes/delays the direct leg). **TTL: 'local' = 30s** (matches NET-REL-01 LAN TTL, re-validated via `isLocalPeer`), **'direct'/'relay' = 10min**, invalidated on disconnect / relay-health transition (both the modern relay:state push and legacy addresses path). **CURRENT STATE (LANDED): the real short-circuit skips discover/dial — STRICTLY fewer discover/dial than a cold send (zero vs one), proven mutation-resistant by U2.** | The biggest everyday-latency win for repeat conversations — now realized: repeat sends skip discovery entirely. The short-circuit is gated behind the (now directly-tested) `P2PServiceImpl` invalidation paths, so a stale path is dropped before reuse. In-memory (not DB) is simplest, safe, and avoids the "latest message ≠ last successful outgoing" trap. Coordinating 'local' TTL with the 30s LAN TTL means a stale sticky-local self-corrects inside the 1500ms budget. |
 | **P2** (grace window) | **N = 150ms**, preference order **local > direct > relay**. On first success, if it is not the top rank AND a higher-rank leg is still in budget, arm a single 150ms timer; commit the best result seen when it fires or as soon as a top-rank success lands. Hard-capped by `interactiveDirectBudget` (2s). | The front race already starts both legs simultaneously, so the only window where a "worse" leg beats a "better" one is the few-ms ack-timing gap. 150ms covers a typical LAN-vs-relay ack delta while being imperceptible and well inside budget. |
 | **P1/P4** (concurrent durable fallback) | Fire `storeInInbox` **concurrently** with the live race for **low-confidence sends only**, as a fire-and-forget durability side-effect (NOT a race participant for the transport label). Low-confidence heuristic = **signal #1: last-attempt recency** (see below). High-confidence sends stay strictly single-path. Receive-side messageId dedup discards the duplicate. | Narrow, correct lesson from the group path — not "always send twice". Last-attempt recency is the one signal with an existing data source (`getLatestMessageForContact`); peer-presence is folded in as a gate, network-type is unavailable (no `connectivity_plus`). |
 | **P5** (relay consolidation) | **Dart-only, host-testable consolidation.** In `_tryRelayProbeSend`, KEEP `probeRelay` as the cheap `NO_RESERVATION` offline detector but **reduce the post-probe send loop from 2 attempts to 1** (`relayProbeSendAttempts: 2 → 1`). Full relay-ownership-into-Go is **OUT OF SCOPE** this run (requires `make all` + `pod install`, not host-verifiable) — DOCUMENTED below. | The direct race leg already invokes the same relay-capable `message:send` (Go rides `WithAllowLimitedConn`), so the 2× probe-send loop is the redundant layer. Dropping one attempt halves the offline-path tail latency while preserving the unique offline signal. No native edits. |
@@ -56,12 +56,17 @@ and host-tests green before the next begins.
 
 ---
 
-## U-P3-sticky — learned per-peer transport, head-start (not short-circuit)
+## U-P3-sticky — learned per-peer transport, short-circuit reuse
 
 **Goal (P3):** a repeat send to a peer we recently reached over `direct` (or
-`local`/`relay`) grants that leg a small head-start so it tends to win the race
-without re-paying full discovery — while the full race still runs underneath and
-takes over on any sticky-leg failure or stale preference.
+`local`/`relay`) **reuses that path directly via a short-circuit**, skipping
+re-discovery and re-dialing — while the full race remains the fall-through on any
+sticky-leg miss or stale preference. **CURRENT STATE (LANDED): the short-circuit
+skips discover/dial, so a repeat send issues STRICTLY FEWER discover/dial calls
+than a cold send (zero vs one). Acceptance #2's "fewer discover/dial → faster"
+win is realized and proven by the mutation-resistant U2 tests (sticky
+`discoverCallCount==0`/`dialCallCount==0` vs cold `==1`/`==1`; deleting the
+short-circuit invocation makes the sticky run pay discovery again → RED).**
 
 ### Files & changes
 
@@ -181,14 +186,28 @@ takes over on any sticky-leg failure or stale preference.
   transport traps the send.
 
 ### Tests enabled → **U2**, **U-N2**, **I2 (P3 half)**; acceptance #2
-- **U2 (sticky happy):** seed `lastKnownGoodTransport`→'direct' via a fake field;
-  assert FEWER `discoverCallCount`/`dialCallCount` than a cold baseline run
-  (compare two runs; cold==1, sticky favors direct). (Full assertion completes
-  after U-P2 supplies weighting.)
-- **U-N2 (neg controls):** (a) learned 'direct' but the direct leg FAILS → assert
-  full race still delivers (local/relay/inbox) and `message` non-null; (b) an
-  EXPIRED preference (age > TTL) returns null → cold race runs (`discoverCallCount==1`);
-  (c) learned 'local' but `isLocalPeer==false` → null → not trusted.
+> **HISTORY (R1 → R3):** R1 DELETED the original tautological U2, which asserted
+> `expect(stickyP2P.discoverCallCount, lessThanOrEqualTo(coldDiscoverLocal))`,
+> comparing mismatched counters (`1 <= 1`) and staying GREEN even with sticky
+> removed. R3 then LANDED the real short-circuit and replaced U2 with two
+> mutation-resistant tests below. The "fewer discover/dial → faster" win is now
+> true and proven.
+- **U2 (sticky happy) — LANDED:** the short-circuit reuses the learned path and
+  skips re-discovery/re-dialing. Two tests pin it: `'U2 sticky short-circuit:
+  learned direct skips discover+dial'` seeds `lastKnownGoodTransportResult='direct'`
+  and asserts `discoverCallCount==0 && dialCallCount==0 && sendCallCount==1`;
+  `'U2 sticky short-circuit: learned local skips local discover + direct'` seeds
+  `='local'` and asserts `discoverLocalPeerCallCount==0 && discoverCallCount==0 &&
+  dialCallCount==0`. Paired cold-baseline test `'U2 cold baseline: no learned
+  transport pays one discover + one dial'` asserts `==1`/`==1`. Proven by mutation:
+  replacing `_tryLearnedShortCircuit(...)` with a null result → both sticky tests
+  RED (Expected `0` / Actual `1`); restore → GREEN.
+- **U-N2 (neg controls):** (a) learned transport FAILS at the short-circuit
+  (`sendMessageResult:false`) → the full race still runs and delivers (`'local'`),
+  `message` non-null — sticky never traps us on a dead path; (b) an EXPIRED
+  preference (age > TTL) returns null from `P2PServiceImpl.lastKnownGoodTransport`
+  → cold race runs (`discoverCallCount==1`); (c) learned 'local' but
+  `isLocalPeer==false` → null → not trusted.
 - Inline-fake additions: `String? lastKnownGoodTransportResult;` +
   `lastRecordedTransport`/`recordSuccessfulTransportCallCount` counters.
 
@@ -445,7 +464,7 @@ documented here, not attempted in this run.**
 | Criterion | Unit(s) | How proven |
 |---|---|---|
 | #1 offline durable custody within ~1.5s via concurrent fallback | U-P1P4 (+U-P5 trims tail) | U3, U5, I1, E2 (device) |
-| #2 repeat send uses learned transport, fewer discover/dial | U-P3 (+U-P2 head-start) | U2, U-N2, I2 |
+| #2 repeat send reuses learned transport — **LANDED, fewer discover/dial → faster** (short-circuit skips re-discovery/re-dialing; STRICTLY fewer discover/dial than cold: zero vs one). | U-P3 short-circuit | U2 short-circuit (sticky `discoverCallCount==0`/`dialCallCount==0` vs cold `==1`/`==1`, mutation-proven); U-N2; I2 |
 | #3 transport preference honored (local within grace) | U-P2 | U1, U-N1 |
 | #4 no double-delivery (dedup) | U-P1P4 + receive dedup | U4, U-N4, E1 (D1/D3/D4), E2 |
 | #5 no regression; high-confidence single-path; crash-safe + retriers unchanged | U-P1P4 (gate) + all | U-N3, R1, crash-persist untouched |

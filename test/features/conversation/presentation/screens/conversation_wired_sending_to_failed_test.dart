@@ -14,6 +14,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../../core/bridge/fake_bridge.dart';
@@ -262,6 +263,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendChatMessage({
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  TransportMetrics? transportMetrics,
 }) async {
   return (SendChatMessageResult.success, null);
 }

@@ -307,6 +307,99 @@ func TestHandleIncomingMessage_DeferredDirectAck_TimesOutWithoutConfirm(t *testi
 	}
 }
 
+// newClassifierStubStream builds a stub stream whose Conn() rides the given
+// remote multiaddr. NOTE: stubStreamConn.Stat() returns an empty
+// network.ConnStats, so conn.Stat().Limited is ALWAYS false for this stub.
+// These tests therefore exercise classifyStreamTransport's MULTIADDR mapping
+// ONLY; they are NOT proof of a real relay->direct upgrade. The Limited==true
+// half (a genuinely relay-routed connection) is covered by I1-NC using a real
+// NW002 circuit conn (see holepunch_negative_control_test.go).
+func newClassifierStubStream(t *testing.T, remoteMultiaddr string) *stubTransportStream {
+	t.Helper()
+	return newStubTransportStream(
+		t,
+		[]byte(`{"id":"classify","text":"x"}`),
+		generatePeerIDStr(t),
+		remoteMultiaddr,
+	)
+}
+
+// U2: the classifier maps a /p2p-circuit remote multiaddr to "relay" and a
+// plain /ip4 remote multiaddr to "direct".
+func TestClassifyStreamTransport_CircuitToNonCircuitFlipsRelayToDirect(t *testing.T) {
+	remotePeerID := generatePeerIDStr(t)
+	relayPeerID := generatePeerIDStr(t)
+
+	circuit := newClassifierStubStream(
+		t,
+		fmt.Sprintf(
+			"/ip4/203.0.113.10/tcp/4001/p2p/%s/p2p-circuit/p2p/%s",
+			relayPeerID,
+			remotePeerID,
+		),
+	)
+	if got := classifyStreamTransport(circuit); got != "relay" {
+		t.Fatalf("circuit stream classifyStreamTransport = %q, want relay", got)
+	}
+	// Stub Stat() is empty => Limited is always false here; this is label
+	// mapping only, not upgrade proof.
+	if circuit.Conn().Stat().Limited {
+		t.Fatal("stub conn unexpectedly reported Limited=true; stub Stat() should be empty")
+	}
+
+	direct := newClassifierStubStream(t, "/ip4/192.168.1.55/tcp/4001")
+	if got := classifyStreamTransport(direct); got != "direct" {
+		t.Fatalf("non-circuit stream classifyStreamTransport = %q, want direct", got)
+	}
+}
+
+// U2-mixed: mixed-conn race guard. WithAllowLimitedConn means a stream can ride
+// either a circuit conn or a direct conn even when both exist to the same peer.
+// classifyStreamTransport must classify purely from the STREAM'S OWN conn
+// multiaddr — so a stream whose conn is non-circuit is "direct" regardless of a
+// separately-existing circuit conn. Guards the real mislabel/double-count false
+// positive. Stub-level; pairs with I1-NC for the Limited==true real-conn half.
+func TestClassifyStreamTransport_MixedConns_UsesStreamOwnConn(t *testing.T) {
+	remotePeerID := generatePeerIDStr(t)
+	relayPeerID := generatePeerIDStr(t)
+
+	// A circuit conn to the same peer also exists "conceptually" — represented
+	// here as an independent stream we do NOT pass to the classifier. The
+	// classifier only ever sees the stream handed to it.
+	circuitSibling := newClassifierStubStream(
+		t,
+		fmt.Sprintf(
+			"/ip4/203.0.113.10/tcp/4001/p2p/%s/p2p-circuit/p2p/%s",
+			relayPeerID,
+			remotePeerID,
+		),
+	)
+	if got := classifyStreamTransport(circuitSibling); got != "relay" {
+		t.Fatalf("sanity: circuit sibling should classify relay, got %q", got)
+	}
+
+	// The stream under test rides a NON-circuit conn to the SAME remote peer.
+	directStream := newStubTransportStream(
+		t,
+		[]byte(`{"id":"mixed","text":"x"}`),
+		remotePeerID,
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+	// Force the same remote peer ID onto the direct stream's conn so the only
+	// distinguishing factor is the conn's own multiaddr, not the peer.
+	if sc, ok := directStream.conn.(*stubStreamConn); ok {
+		decoded, err := peer.Decode(remotePeerID)
+		if err != nil {
+			t.Fatalf("decode remote peer: %v", err)
+		}
+		sc.remotePeer = decoded
+	}
+
+	if got := classifyStreamTransport(directStream); got != "direct" {
+		t.Fatalf("mixed-conn: stream over non-circuit conn = %q, want direct (must use stream's own conn, not the circuit sibling)", got)
+	}
+}
+
 func TestHandleIncomingMessage_DeferredDirectAck_IgnoresDuplicateConfirm(t *testing.T) {
 	cb := &directConfirmCallback{confirmResults: []bool{true, false}}
 	n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)

@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -13,8 +14,10 @@ func TestSecondRelayAvailablePreventsWatchdogRestart(t *testing.T) {
 	relayA, relayB := startLocalRelayPair(t)
 	relayAddrs := []string{relayA.addr(), relayB.addr()}
 
-	nodeA, peerIDA := startNodeWithRelays(t, relayAddrs, nil, nil)
-	nodeB, peerIDB := startNodeWithRelays(t, relayAddrs, nil, nil)
+	nodeAEvents := &eventCollector{}
+	nodeBEvents := &eventCollector{}
+	nodeA, peerIDA := startNodeWithRelays(t, relayAddrs, nodeAEvents, nil)
+	nodeB, peerIDB := startNodeWithRelays(t, relayAddrs, nodeBEvents, nil)
 
 	waitForNodeStatus(t, nodeA, 10*time.Second, func(status map[string]interface{}) bool {
 		return statusConnectionCount(status) >= 1
@@ -51,13 +54,16 @@ func TestSecondRelayAvailablePreventsWatchdogRestart(t *testing.T) {
 	if got := statusString(status, "relayState"); got == "watchdog_restart" {
 		t.Fatalf("second relay should prevent watchdog restart, status=%+v", status)
 	}
+	assertNoRelayUpgradeEvents(t, "nodeA", nodeAEvents)
+	assertNoRelayUpgradeEvents(t, "nodeB", nodeBEvents)
 }
 
 func TestAllRelaysUnavailableEnterDegradedStateAndRecover(t *testing.T) {
 	relayA, relayB := startLocalRelayPair(t)
 	relayAddrs := []string{relayA.addr(), relayB.addr()}
 
-	n, peerID := startNodeWithRelays(t, relayAddrs, nil, nil)
+	nodeEvents := &eventCollector{}
+	n, peerID := startNodeWithRelays(t, relayAddrs, nodeEvents, nil)
 
 	waitForNodeStatus(t, n, 10*time.Second, func(status map[string]interface{}) bool {
 		return statusConnectionCount(status) >= 1
@@ -89,7 +95,8 @@ func TestAllRelaysUnavailableEnterDegradedStateAndRecover(t *testing.T) {
 	}
 
 	relayB.start()
-	nodePeer, peerIDPeer := startNodeWithRelays(t, []string{relayB.addr()}, nil, nil)
+	peerEvents := &eventCollector{}
+	nodePeer, peerIDPeer := startNodeWithRelays(t, []string{relayB.addr()}, peerEvents, nil)
 
 	namespace := randomNamespace()
 	waitForRendezvousRegister(t, n, namespace, 15*time.Second)
@@ -106,6 +113,8 @@ func TestAllRelaysUnavailableEnterDegradedStateAndRecover(t *testing.T) {
 	if n.PeerId() != peerID {
 		t.Fatalf("peerId changed across degraded/recovered cycle: got %s want %s", n.PeerId(), peerID)
 	}
+	assertNoRelayUpgradeEvents(t, "node", nodeEvents)
+	assertNoRelayUpgradeEvents(t, "peer", peerEvents)
 }
 
 func TestPersonalNamespaceRecovery_ReRegistersAfterWatchdogRestart(t *testing.T) {
@@ -146,8 +155,10 @@ func TestRendezvousAndInboxStillWorkAfterRelayRestart(t *testing.T) {
 	relayA, relayB := startLocalRelayPair(t)
 	relayAddrs := []string{relayA.addr(), relayB.addr()}
 
-	nodeA, peerIDA := startNodeWithRelays(t, relayAddrs, nil, nil)
-	nodeB, peerIDB := startNodeWithRelays(t, relayAddrs, nil, nil)
+	nodeAEvents := &eventCollector{}
+	nodeBEvents := &eventCollector{}
+	nodeA, peerIDA := startNodeWithRelays(t, relayAddrs, nodeAEvents, nil)
+	nodeB, peerIDB := startNodeWithRelays(t, relayAddrs, nodeBEvents, nil)
 
 	waitForNodeStatus(t, nodeA, 10*time.Second, func(status map[string]interface{}) bool {
 		return statusConnectionCount(status) >= 1
@@ -170,8 +181,10 @@ func TestRendezvousAndInboxStillWorkAfterRelayRestart(t *testing.T) {
 	relayB.stop()
 
 	postRestartRelayAddrs := []string{relayA.addr()}
-	nodeC, peerIDC := startNodeWithRelays(t, postRestartRelayAddrs, nil, nil)
-	nodeD, peerIDD := startNodeWithRelays(t, postRestartRelayAddrs, nil, nil)
+	nodeCEvents := &eventCollector{}
+	nodeDEvents := &eventCollector{}
+	nodeC, peerIDC := startNodeWithRelays(t, postRestartRelayAddrs, nodeCEvents, nil)
+	nodeD, peerIDD := startNodeWithRelays(t, postRestartRelayAddrs, nodeDEvents, nil)
 
 	namespaceAfterRestart := randomNamespace()
 	waitForRendezvousRegister(t, nodeC, namespaceAfterRestart, 15*time.Second)
@@ -180,6 +193,11 @@ func TestRendezvousAndInboxStillWorkAfterRelayRestart(t *testing.T) {
 	msgAfterRestart := "message via restarted relayA"
 	waitForInboxStore(t, nodeC, peerIDD, msgAfterRestart, 15*time.Second)
 	waitForInboxMessage(t, nodeD, peerIDC, msgAfterRestart, 15*time.Second)
+
+	assertNoRelayUpgradeEvents(t, "nodeA", nodeAEvents)
+	assertNoRelayUpgradeEvents(t, "nodeB", nodeBEvents)
+	assertNoRelayUpgradeEvents(t, "nodeC", nodeCEvents)
+	assertNoRelayUpgradeEvents(t, "nodeD", nodeDEvents)
 }
 
 func TestNodeStatusIncludesWatchdogMetrics(t *testing.T) {
@@ -279,6 +297,23 @@ func waitForInboxMessage(t *testing.T, n *node.Node, fromPeerID, message string,
 
 	messages, err := n.InboxRetrieve()
 	t.Fatalf("message %q from %s not retrieved within %v (last err=%v messages=%v)", message, fromPeerID, timeout, err, messages)
+}
+
+func assertNoRelayUpgradeEvents(t *testing.T, label string, collector *eventCollector) {
+	t.Helper()
+
+	for _, raw := range collector.snapshot() {
+		var envelope struct {
+			Event string `json:"event"`
+		}
+		if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+			t.Fatalf("%s captured invalid event JSON %q: %v", label, raw, err)
+		}
+		switch envelope.Event {
+		case "holepunch:success", "transport:upgraded":
+			t.Fatalf("%s captured %s during relay recovery, want no DCUtR upgrade evidence: %s", label, envelope.Event, raw)
+		}
+	}
 }
 
 func statusInt(status map[string]interface{}, key string) int {
