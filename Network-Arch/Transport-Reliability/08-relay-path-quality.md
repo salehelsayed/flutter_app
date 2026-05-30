@@ -164,6 +164,81 @@ any response key or `status` value, changing rendezvous protobuf field numbers, 
 changing the 4-byte framing. Any of these must go via the **multi-relay migration
 path**, never as an in-place change to the live relay.
 
+## Implementation Split — headless vs device/relay-bound (2026-05-31)
+
+Splitting the directions above by what can be **built + host-tested with no
+hardware** versus what needs a **real relay / real network** to produce numbers.
+Key fact: **NET-REL-07 constrains only the relay *wire contract*** (protocol IDs,
+response keys, status, framing) — **not which relay the client prefers**. So all
+client-side selection logic is additive-safe and headless.
+
+| Item | Lane | Why |
+|---|---|---|
+| **Phase 1 Option A** — client `RelaySelector` health/latency scoring + parallel failover | **HEADLESS** | Pure client-side selection ordering; host-testable with an injected clock + RTT/health source (mirror NET-REL-05 `clock.now()`). Can land + be mutation-tested now; *activation* is inert until ≥2 relays exist. |
+| **M3** — failover & reservation-cost benchmarks → hard gates | **HEADLESS** (Go, no hardware) | `integration/local_relay_harness_test.go` runs in-process (no external relay); convert `benchmark_relay_recovery_test.go` `t.Logf`→`t.Fatalf` gates. |
+| **M1** — client relay-path latency decomposition | **DEVICE/RELAY-BOUND** | The instrumentation (timestamps around reserve/dial/first-byte) is headless to *add*; the *numbers* need real relay RTT over a real network. |
+| **M2** — relay-side per-stage histograms | **DEVICE/RELAY-BOUND** | Additive Prometheus on the deployed relay; readings need the live relay. |
+| **Phase 1 Option B** — 2nd/faster relay via migration path | **DEVICE/RELAY-BOUND (ops)** | Deploy + drain; the multi-relay client plumbing (`buildRelaySelector` + shared Redis) already exists. |
+| **Phase 1 Option C** — relay-side latency tuning | **DEVICE/RELAY-BOUND (ops)** | Server config on the live relay. |
+
+**Next headless lane = Phase 1 Option A** (designed below). M1/M2/B/C are the
+device/relay-bound measurement+ops lane, sequenced after a relay is available to
+measure.
+
+## Phase 1 Option A — Client-side `RelaySelector` scoring (headless design)
+
+Grounded in `go-mknoon/node/relay_selector.go` as it stands today:
+`RelaySelector{relays []RelayInfo}` orders relays by **insertion order**;
+`First()`/`ForEach()`/`FanOut()`/`ForEachWithResult[T]()` all iterate that raw
+slice; there is **no health/RTT state and no reordering**. The design adds health
+scoring **additively** behind the existing iterators.
+
+**Additive data model (no wire change):**
+- Per-relay health keyed by `peer.ID`:
+  `{ewmaRTT time.Duration; successes, failures int; cooldownUntil time.Time}`,
+  held as `map[peer.ID]*relayHealth` on `RelaySelector` under the existing `mu`.
+- Inject `now func() time.Time` (default `time.Now`) for deterministic host tests
+  (mirror the NET-REL-05 `clock.now()` pattern).
+
+**Scoring / order (additive method; iterators switch to it):**
+- `scoredOrder()` returns the relays sorted by: (1) not-in-cooldown before
+  in-cooldown; (2) lower `ewmaRTT`; (3) higher success ratio; (4) **original
+  insertion order as the stable tiebreaker**. Tiebreaker (4) is the load-bearing
+  safety: with no signal, `scoredOrder()` == today's order (the negative control).
+- `ForEach`/`FanOut`/`ForEachWithResult` iterate `scoredOrder()` instead of the
+  raw slice — a one-line change each, semantics otherwise identical.
+
+**Feedback (additive method; called at the existing `fn` wrap points):**
+- `recordResult(id peer.ID, ok bool, rtt time.Duration)` updates the EWMA + counts;
+  on failure sets `cooldownUntil = now() + backoff` (capped, e.g. 30 s). The inbox/
+  media/rendezvous call sites already wrap `fn(candidate)`; time the call and
+  `recordResult` after it.
+
+**Parallel failover (optional, additive):**
+- `FanOutParallel(k int, fn)` dials the top-`k` scored relays concurrently and takes
+  the first success (cancel the rest), bounded by `k`. Default `k=1` (== today's
+  sequential behavior) until ≥2 relays.
+
+**NET-REL-07 safety:** 100% client-side. The relay receives byte-identical requests
+(possibly in a different order); no protocol-ID, response-key, status, or framing
+change. **SAFE / additive.**
+
+**Activation gate:** with one relay, `scoredOrder()` == `[relay0]` (a no-op), so the
+code is **inert until ≥2 relays ship** via the migration path (Option B). It can
+therefore **land + be host-tested now**, dormant and ready.
+
+**Host test plan (mutation-resistant — NET-REL-06):**
+- *Happy:* 2 relays; relay B fed a lower `ewmaRTT` via injected `now` + recorded
+  RTTs → `scoredOrder()[0] == B`; assert `ForEach` tries B first. **Mutation:** delete
+  the RTT sort key → reverts to insertion order (A first) → RED.
+- *Cooldown:* `recordResult(A, false, _)` → A in cooldown → `scoredOrder()[0] == B`;
+  advance injected `now` past cooldown → A re-eligible. **Mutation:** drop cooldown →
+  A stays first → RED.
+- *Negative control (no signal):* equal health/RTT → `scoredOrder()` == insertion
+  order. Proves scoring is **not always-reorder** (the tiebreaker holds).
+- *Parallel:* `FanOutParallel(2)` with B fast / A slow → returns B, both attempted,
+  A cancelled; **negative control** `k=1` → only the top relay attempted.
+
 ## Acceptance Criteria / How We'll Know It's Fixed
 
 1. **Decomposition:** we can attribute cross-network send latency to relay sub-
@@ -271,3 +346,9 @@ claim; never accept the `{direct, relay, inbox}` set for a relay-path assertion.
   NET-REL-04 baseline harvest is done (cross-network ~100% relay @ ~1.1s), so 08 is
   now justified-by-baseline rather than gated on it. NET-REL-08 row + dependency-graph
   edge + changelog applied to `00-INDEX.md`.
+- **2026-05-31 — Implementation split + Phase 1 Option A design.** Added the
+  headless-vs-device/relay-bound split (the next headless lane = client-side
+  `RelaySelector` scoring) and a grounded, additive, host-testable design for it
+  (per-relay health/EWMA-RTT + cooldown behind the existing `ForEach`/`FanOut`
+  iterators, injected clock, mutation-resistant test plan, inert until ≥2 relays).
+  NET-REL-07-safe (client-side only).
