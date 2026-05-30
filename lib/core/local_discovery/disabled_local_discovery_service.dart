@@ -35,6 +35,10 @@ class DisabledLocalDiscoveryService implements LocalDiscoveryService {
   LocalPeer? getLocalPeer(String peerId) => null;
 
   @override
+  Future<LocalPeer?> resolvePeer(String peerId, {required Duration timeout}) async =>
+      null;
+
+  @override
   void dispose() {
     _peersController.close();
   }

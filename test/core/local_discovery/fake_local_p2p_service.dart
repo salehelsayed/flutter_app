@@ -31,6 +31,12 @@ class FakeLocalP2PService implements LocalP2PService {
     _peersController.add(Map.unmodifiable(_localPeers));
   }
 
+  /// Remove a previously-registered peer and emit the updated set.
+  void removeLocalPeer(String peerId) {
+    _localPeers.remove(peerId);
+    _peersController.add(Map.unmodifiable(_localPeers));
+  }
+
   /// Simulate receiving a message from a local peer.
   void emitLocalMessage(LocalChatMessage msg) {
     _messageController.add(msg);
@@ -62,6 +68,31 @@ class FakeLocalP2PService implements LocalP2PService {
 
   @override
   bool isLocalPeer(String peerId) => _localPeers.containsKey(peerId);
+
+  /// When set, [discoverLocalPeer] registers this peer after [resolveDelay],
+  /// simulating a bounded mDNS resolve at send time. Cleared after use.
+  LocalPeer? resolvesTo;
+  Duration resolveDelay = Duration.zero;
+  int discoverLocalPeerCallCount = 0;
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async {
+    discoverLocalPeerCallCount++;
+    if (_localPeers.containsKey(peerId)) return true;
+    final pending = resolvesTo;
+    if (pending == null) return false;
+    resolvesTo = null;
+    final completer = Completer<bool>();
+    Timer(resolveDelay, () {
+      _localPeers[pending.peerId] = pending;
+      _peersController.add(Map.unmodifiable(_localPeers));
+      if (!completer.isCompleted) completer.complete(true);
+    });
+    return completer.future.timeout(timeout, onTimeout: () => false);
+  }
 
   @override
   Future<bool> sendMessage(

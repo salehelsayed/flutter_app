@@ -1,8 +1,30 @@
 # LAN / Same-WiFi Delivery Reliability — Problem & Tracking Doc
 
 Prepared on: 2026-05-29
-Status: Proposed (investigation complete, no code changed)
+Status: **In progress** (implementation started 2026-05-29; NET-REL-04 observability shipped first)
 Tracking ID: NET-REL-01
+
+## Implementation Notes (2026-05-29)
+
+- **Build order:** P2 (TTL/freshness — cheapest, lowest risk) → P1 (discover-on-send)
+  → P3 (local media, the two-part fix). See "Proposed Directions" below for each.
+- **Measurement is now available.** NET-REL-04 (transport census) is implemented,
+  including per-leg send-attempt tracking (failed/losing legs are counted, not just
+  delivered transport). So the success signal for this work is concrete: the census's
+  `wifi` bucket and LAN-availability signal should rise for same-WiFi pairs after the
+  fixes land. Use it as the before/after proof.
+- **Proving it needs real devices on a debug build (hard constraint):**
+  - Simulators **cannot** validate the LAN path — they share the host's single
+    Bonjour/mDNS stack and every sim run sets `DISABLE_LOCAL_DISCOVERY=true`. A sim
+    `wifi=0%` is "not measured," not "LAN unused."
+  - The census is **not readable on TestFlight/release builds** (diagnostics card is
+    `kDebugMode`-gated; `baselineReport()` isn't logged). So the I3 proof = **two real
+    physical iOS devices, debug build, same WiFi, local discovery ON**, assert receiver
+    stored `transport == 'local'` + the census `wifi` count moved.
+- **P3 reminder:** the media fix is **two parts** — wire `configureMediaServer` AND add
+  a `mediaReadyStream` consumer in `P2PServiceImpl`. The send side already fires; both
+  halves are required or media stays broken. Sequence the U4 media test *after* the P3
+  implementation (the production receive half doesn't exist yet).
 
 ## Executive Summary
 

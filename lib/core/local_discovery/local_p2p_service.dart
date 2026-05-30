@@ -75,6 +75,15 @@ class LocalP2PService {
   /// Returns true if the given peerId is visible on the local network.
   bool isLocalPeer(String peerId) => _discovery.isLocalPeer(peerId);
 
+  /// Bounded on-demand discovery at send time. Returns true if the peer
+  /// became visible on the LAN within [timeout]. Lets a not-yet-discovered
+  /// same-WiFi peer join the send race during the cold-open window.
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      (await _discovery.resolvePeer(peerId, timeout: timeout)) != null;
+
   /// Stream of media files received via local WiFi transfer.
   Stream<LocalMediaReady>? get mediaReadyStream => _wsServer.mediaReadyStream;
 

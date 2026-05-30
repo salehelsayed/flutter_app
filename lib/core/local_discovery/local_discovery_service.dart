@@ -12,6 +12,18 @@ class LocalPeer {
     required this.discoveredAt,
   });
 
+  /// Time after which a discovered entry is considered stale and skipped.
+  ///
+  /// 30s comfortably spans a typical mDNS announce cadence on home/office
+  /// WiFi while expiring a peer that walked away within ~1 conversation turn.
+  static const Duration ttl = Duration(seconds: 30);
+
+  /// True when this entry is older than [ttl] relative to [nowUtc].
+  ///
+  /// Compare against `DateTime.now().toUtc()` to match the UTC write in
+  /// [BonsoirDiscoveryService].
+  bool isStale(DateTime nowUtc) => nowUtc.difference(discoveredAt) > ttl;
+
   @override
   String toString() =>
       'LocalPeer(peerId: $peerId, host: $host, port: $port)';
@@ -146,6 +158,14 @@ abstract class LocalDiscoveryService {
 
   /// Returns the [LocalPeer] for the given peerId, or null if not found.
   LocalPeer? getLocalPeer(String peerId);
+
+  /// On-demand bounded resolve at send time.
+  ///
+  /// Returns the peer once it resolves on the LAN within [timeout], or null if
+  /// it does not. Implementations must complete within [timeout] so the caller
+  /// (the send race) stays inside its local budget. This lets a not-yet-
+  /// discovered same-WiFi peer join the race during the cold-open window.
+  Future<LocalPeer?> resolvePeer(String peerId, {required Duration timeout});
 
   /// Release all resources.
   void dispose();

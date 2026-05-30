@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_media_server.dart';
@@ -221,6 +222,73 @@ void main() {
 
       await sub.cancel();
     });
+
+    test(
+      'I1 production-wiring: inbound media reaches mediaReadyStream and '
+      'persists under the local WS server (real stack)',
+      () async {
+        // Receiver side: configure a media server on the service's own WS
+        // server so PUT /media/<id> is served (production wiring half #1).
+        final recvTemp = await Directory.systemTemp.createTemp(
+          'local_p2p_recv_media_',
+        );
+        final recvMediaServer = LocalMediaServer(
+          tempDir: '${recvTemp.path}/local_media_tmp',
+          mediaDir: '${recvTemp.path}/local_media',
+        );
+        wsServer.configureMediaServer(recvMediaServer);
+
+        await service.start('myPeerId');
+
+        // Consume the service's mediaReadyStream and persist, exactly as the
+        // production incomingLocalMediaStream consumer does (wiring half #2).
+        final persistedPaths = <String>[];
+        final sub = service.mediaReadyStream?.listen((media) async {
+          final persisted = await recvMediaServer.persistMedia(
+            media.id,
+            media.from,
+          );
+          if (persisted != null) persistedPaths.add(persisted);
+        });
+        expect(sub, isNotNull, reason: 'mediaReadyStream must be live');
+
+        // Sender side: a second WS server uploads a file to us.
+        final senderServer = LocalWsServer();
+        await senderServer.start();
+        final senderTemp = await Directory.systemTemp.createTemp(
+          'local_p2p_sender_media_',
+        );
+        final bytes = List<int>.generate(2048, (i) => (i * 3) % 256);
+        final file = File('${senderTemp.path}/image.jpg');
+        await file.writeAsBytes(bytes);
+        final expectedHash = sha256.convert(bytes).toString();
+
+        final sent = await senderServer.sendMedia(
+          host: 'localhost',
+          port: wsServer.port!,
+          toPeerId: 'myPeerId',
+          filePath: file.path,
+          mediaId: 'i1-stack-media-1',
+          mime: 'image/jpeg',
+          fromPeerId: 'senderPeer',
+        );
+        expect(sent, isTrue);
+
+        await Future.delayed(const Duration(milliseconds: 300));
+
+        expect(persistedPaths, hasLength(1));
+        final persistedFile = File(persistedPaths.first);
+        expect(await persistedFile.exists(), isTrue);
+        final persistedHash =
+            sha256.convert(await persistedFile.readAsBytes()).toString();
+        expect(persistedHash, expectedHash);
+
+        await sub?.cancel();
+        senderServer.dispose();
+        await senderTemp.delete(recursive: true);
+        await recvTemp.delete(recursive: true);
+      },
+    );
 
     test('localMessageStream emits messages received by WS server', () async {
       await service.start('myPeerId');
