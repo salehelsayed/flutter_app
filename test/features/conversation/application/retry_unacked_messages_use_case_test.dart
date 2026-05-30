@@ -325,6 +325,57 @@ void main() {
       expect(saved.wireEnvelope, isNull);
     });
 
+    // --- NET-REL-05 R1: concurrent-fallback interaction (regression) ---
+    //
+    // A low-confidence send whose concurrent durable copy took custody settles
+    // as delivered/inbox/null-envelope. The unacked retrier filters on
+    // status=='sent' AND a non-empty wireEnvelope, so such a row must never be
+    // selected — it cannot be re-stored a second time alongside the concurrent
+    // fallback.
+    test(
+      'concurrently-inboxed message (delivered/inbox/null-envelope) is NOT '
+      're-stored by the unacked retrier',
+      () async {
+        final concurrentlyInboxed = ConversationMessage(
+          id: 'msg-concurrent-inbox-unacked-001',
+          contactPeerId: 'peer-target',
+          senderPeerId: 'my-peer-id',
+          text: 'Low-confidence send',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          transport: 'inbox',
+          wireEnvelope: null,
+        );
+        // Seeded WITHOUT an unackedOutgoingOverride so the real fake query
+        // (status=='sent' && wireEnvelope non-empty) decides selection — proving
+        // the durable copy is naturally excluded, not forced out by the test.
+        messageRepo.seed([concurrentlyInboxed]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+
+        // NEGATIVE CONTROL: not selected, not re-stored, not re-saved.
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(
+          (await messageRepo.getMessage(
+            'msg-concurrent-inbox-unacked-001',
+          ))?.status,
+          'delivered',
+        );
+      },
+    );
+
     test('continues on storeInInbox error and tries next message', () async {
       final msg1 = _makeSentMessage(id: 'msg-1', contactPeerId: 'peer-a');
       final msg2 = _makeSentMessage(id: 'msg-2', contactPeerId: 'peer-b');

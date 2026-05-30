@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
@@ -124,6 +125,22 @@ class _HalfOpenP2PService implements P2PService {
   bool isLocalPeer(String peerId) => _inner.isLocalPeer(peerId);
 
   @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
+
+  @override
   Future<bool> sendLocalMessage(
     String peerId,
     String msg,
@@ -231,6 +248,22 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
 
   @override
   bool isLocalPeer(String peerId) => _inner.isLocalPeer(peerId);
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
   Future<bool> sendLocalMessage(

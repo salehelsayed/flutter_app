@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
@@ -59,6 +60,29 @@ class FakeP2PService implements P2PService {
   /// Can be 'wifi', 'relay', or 'inbox'. Defaults to 'relay'.
   String transportMode = 'relay';
 
+  /// When true, [sendMessageWithReply] reports [transportMode] as the
+  /// `SendMessageResult.transport`, so a send-path test can deterministically
+  /// drive the resolved transport label ('direct'/'relay'). Defaults to false
+  /// to preserve the historical inference behaviour relied on by the existing
+  /// resilience suite (which expects `direct` from address inference).
+  bool reportTransportMode = false;
+
+  /// NET-REL-05 P3 (sticky transport) memory, faithful to the production
+  /// `P2PServiceImpl` implementation: records the last-known-good LIVE transport
+  /// per peer with a TTL (30s for 'local', 10min for 'direct'/'relay'), drops a
+  /// stale-by-departure 'local' preference (no longer LAN-visible), and ignores
+  /// 'inbox' (custody, not a live transport). Exposed so I2 (transport-switch)
+  /// can assert the learned preference INVALIDATES on a real switch.
+  ///
+  /// OPT-IN via [stickyTransportEnabled]: when false (default), the service
+  /// behaves like the historical no-op fake ([lastKnownGoodTransport] always
+  /// null, [recordSuccessfulTransport] a no-op) so the existing resilience suite
+  /// — which asserts pure per-send transport following, written before P3 —
+  /// stays unchanged. Tests that exercise the sticky/learned layer (I2) flip
+  /// this true.
+  bool stickyTransportEnabled = false;
+  final Map<String, ({String transport, DateTime at})> learnedTransport = {};
+
   /// Peers that we consider "connected" for [isConnectedToPeer].
   final Set<String> connectedPeers = {};
 
@@ -70,13 +94,19 @@ class FakeP2PService implements P2PService {
   bool get isOnline => network.hasPeer(peerId);
 
   /// Simulate a transport switch. Updates [transportMode] and adjusts
-  /// [localPeers] accordingly.
+  /// [localPeers] accordingly. Mirrors the production invalidation on a network
+  /// change (`_handleAddressesUpdated`): non-'local' learned preferences are
+  /// cleared because the route likely changed, while a learned 'local' is left
+  /// to self-correct via its own LAN-visibility revalidation — so when we switch
+  /// AWAY from wifi (clearing [localPeers]) that local preference also stops
+  /// being returned by [lastKnownGoodTransport].
   void simulateTransportSwitch(String newTransport) {
     transportMode = newTransport;
     // When switching away from wifi, clear local peers to reflect reality
     if (newTransport != 'wifi') {
       localPeers.clear();
     }
+    learnedTransport.removeWhere((_, v) => v.transport != 'local');
   }
 
   FakeP2PService({required this.peerId, required this.network}) {
@@ -156,6 +186,7 @@ class FakeP2PService implements P2PService {
     return SendMessageResult(
       sent: delivered,
       reply: delivered ? 'received: $message' : null,
+      transport: (delivered && reportTransportMode) ? transportMode : null,
     );
   }
 
@@ -214,6 +245,45 @@ class FakeP2PService implements P2PService {
 
   @override
   bool isLocalPeer(String peerId) => localPeers.contains(peerId);
+
+  @override
+  String? lastKnownGoodTransport(String peerId) {
+    if (!stickyTransportEnabled) return null;
+    final e = learnedTransport[peerId];
+    if (e == null) return null;
+    final age = DateTime.now().difference(e.at);
+    final ttl = e.transport == 'local'
+        ? const Duration(seconds: 30)
+        : const Duration(minutes: 10);
+    if (age > ttl) {
+      learnedTransport.remove(peerId);
+      return null;
+    }
+    // A learned 'local' must still be backed by live LAN visibility.
+    if (e.transport == 'local' && !isLocalPeer(peerId)) {
+      learnedTransport.remove(peerId);
+      return null;
+    }
+    return e.transport;
+  }
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {
+    if (!stickyTransportEnabled) return;
+    if (transport == 'local' || transport == 'direct' || transport == 'relay') {
+      learnedTransport[peerId] = (transport: transport, at: DateTime.now());
+    }
+  }
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      localPeers.contains(peerId);
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
   Future<bool> sendLocalMessage(

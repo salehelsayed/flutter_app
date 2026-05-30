@@ -7,6 +7,7 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
@@ -215,6 +216,22 @@ class _WifiFirstVoiceP2PService implements P2PService {
       _localPeerIds.contains(peerId) || _inner.isLocalPeer(peerId);
 
   @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
+
+  @override
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
@@ -329,6 +346,22 @@ class _WidgetVoiceP2PService implements P2PService {
 
   @override
   bool isLocalPeer(String peerId) => _localPeerIds.contains(peerId);
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
   Future<bool> sendLocalMessage(
@@ -1120,6 +1153,7 @@ void main() {
                 quotedMessageId,
                 mediaAttachments,
                 mediaAttachmentRepo,
+                transportMetrics,
               }) async {
                 final savedBeforeSend = await messageRepo.getMessage(
                   messageId!,

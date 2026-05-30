@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -23,11 +24,61 @@ const Duration interactiveDirectBudget = Duration(seconds: 2);
 /// Interactive send budget for the inbox store fallback path.
 const Duration interactiveInboxBudget = Duration(seconds: 3);
 
-/// After a successful relay probe, allow one immediate retry before inbox
-/// fallback. This targets stale-discoverability recovery without slowing the
-/// normal foreground send race.
-const int relayProbeSendAttempts = 2;
+/// NET-REL-05 U-P5 (relay consolidation, Dart-only): after a successful relay
+/// probe, make a SINGLE post-probe send attempt before inbox fallback.
+/// Consolidated from 2 → 1: the direct race leg already invokes the same
+/// relay-capable `message:send` (Go rides `WithAllowLimitedConn`), so the
+/// second post-probe attempt was the redundant layer. The single retained
+/// attempt still covers the online-relay-only peer whose address the direct
+/// leg didn't discover (`peer_not_found` → relayProbeEligible) but who becomes
+/// reachable once the probe establishes the circuit. The probe's unique value
+/// — the `NO_RESERVATION` fast offline signal — is preserved.
+/// (Moving full relay ownership into Go is OUT OF SCOPE this run: it requires
+/// `make all` + `pod install` and is not host-verifiable; see
+/// `05-send-orchestration-IMPLEMENTATION-PLAN.md` U-P5.)
+const int relayProbeSendAttempts = 1;
+
+/// Inter-attempt backoff for the post-probe send loop. With
+/// [relayProbeSendAttempts] == 1 this is no longer exercised (the loop's
+/// `attempt < relayProbeSendAttempts` guard skips it); retained so a future
+/// re-widening of the loop keeps a defined backoff.
 const Duration relayProbeRetryBackoff = Duration(milliseconds: 250);
+
+/// NET-REL-05 P2 (grace window): after a non-preferred leg succeeds, wait this
+/// long for a better-ranked transport (local > direct > relay) to land before
+/// committing the worse one. Modest because the front race already starts both
+/// legs simultaneously — only the ack-timing crossover matters. Hard-capped by
+/// [interactiveDirectBudget] so the grace can never push past the direct budget.
+const Duration transportGraceWindow = Duration(milliseconds: 150);
+
+/// NET-REL-05 P3 head-start (consumed here in U-P2): hold a NON-learned leg's
+/// win-eligibility this long so a recently-good (learned) transport tends to win
+/// close ties without re-paying full discovery. Delays WIN-eligibility only —
+/// never the leg's actual transport work — so a dead learned leg cannot stall
+/// the send (the other leg still completes the race after the grace window).
+/// Slightly under [transportGraceWindow] so a genuinely-alive learned leg wins
+/// before the grace fires.
+const Duration kStickyHeadStart = Duration(milliseconds: 120);
+
+/// NET-REL-05 P1/P4 (concurrent durable fallback): a send is "low confidence"
+/// when the most recent OUTGOING message to this peer terminally failed or was
+/// only delivered via the inbox (peer was offline) within this window. For such
+/// sends we fire [P2PService.storeInInbox] CONCURRENTLY with the live race (as
+/// the group path does) so durable custody lands fast instead of waiting out the
+/// sequential tail — receive-side messageId dedup discards the duplicate. Shares
+/// the 30s horizon of NET-REL-01 `LocalPeer.ttl` so the reliability layers agree
+/// on "recently failed/offline".
+const Duration kLowConfidenceWindow = Duration(seconds: 30);
+
+/// Transport preference rank for the grace window: higher wins. 'reuse' ranks
+/// with 'direct' (both are a non-relay live connection); unknown ranks lowest.
+int _transportRank(String? via) => switch (via) {
+  'local' => 3,
+  'direct' => 2,
+  'reuse' => 2,
+  'relay' => 1,
+  _ => 0,
+};
 
 void _recordSuccessfulSendReadinessProof(
   P2PService p2pService,
@@ -111,13 +162,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
+  TransportMetrics? transportMetrics,
 }) async {
   final sendStopwatch = Stopwatch()..start();
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
       : targetPeerId;
   final sanitizedText = sanitizeMessageText(text);
-  final textPreview = buildTextPreview(sanitizedText);
   final hasAttachments =
       mediaAttachments != null && mediaAttachments.isNotEmpty;
   var connectionReused = false;
@@ -143,10 +194,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
   }
 
+  // NET-REL-04: record aggregate-only transport diagnostics at each terminal
+  // send exit. Called exactly once per invocation (one rung per send).
+  void recordMetrics({required String? transport, required String rung}) {
+    transportMetrics?.recordRung(rung);
+    transportMetrics?.recordSendLatency(
+      transport: transport,
+      latencyMs: sendStopwatch.elapsedMilliseconds,
+    );
+    if (transport != null) transportMetrics?.recordTransport(transport);
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_START',
-    details: {'targetPeerId': targetPrefix, 'textPreview': textPreview},
+    details: {'targetPeerId': targetPrefix},
   );
 
   // 1. Validate
@@ -328,6 +390,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
       };
       if (sendResult.sent) {
+        final reuseVia = _resolveGoSendTransport(
+          p2pService,
+          targetPeerId,
+          sendResult,
+          preserveLocalPeerLabel: true,
+        );
+        transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
+        recordMetrics(transport: reuseVia, rung: 'reuse');
         return _completeSuccessfulSend(
           p2pService: p2pService,
           messageRepo: messageRepo,
@@ -335,14 +405,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           targetPeerId: targetPeerId,
           jsonString: jsonString,
           acknowledged: sendResult.acknowledged,
-          via: _resolveGoSendTransport(
-            p2pService,
-            targetPeerId,
-            sendResult,
-            preserveLocalPeerLabel: true,
-          ),
+          via: reuseVia,
           resolvedMessageId: resolvedMessageId,
-          textPreview: textPreview,
           text: sanitizedText,
           createdAt: createdAt,
           editedAt: resolvedEditedAt,
@@ -360,6 +424,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     } catch (_) {
       // Connection reuse failed — fall through to race
     }
+    transportMetrics?.recordAttempt(leg: 'reuse', succeeded: false);
     connectionReused = false;
     sendPath = 'unknown';
     stepTimings = {};
@@ -369,95 +434,291 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // The first successful path wins and is the only one to persist.
   final isLocalPeer = p2pService.isLocalPeer(targetPeerId);
 
-  // Build race futures
-  final raceFutures = <Future<_RaceResult>>[];
-
-  // Local WiFi path (bounded by interactiveLocalBudget)
-  if (isLocalPeer) {
-    raceFutures.add(
-      _tryLocalSend(
-        p2pService,
-        targetPeerId,
-        jsonString,
-        senderPeerId,
-        timeoutMs: interactiveLocalBudget.inMilliseconds,
-      ),
+  // NET-REL-05 P3 (sticky transport): the last-known-good LIVE transport for
+  // this peer, or null if none/expired/stale. U-P3 lands only this MEMORY layer
+  // (read + record + TTL/invalidate); the race-WEIGHTING that consumes [learned]
+  // as a head-start is implemented in U-P2 where the completer is rewritten, so
+  // here [learned] is read and surfaced for observability but does not yet
+  // reorder the completer. Reading it never blocks: it returns null (full race,
+  // identical to today) when expired or — for 'local' — no longer LAN-visible,
+  // so a stale/dead preference can never trap the send.
+  final learned = p2pService.lastKnownGoodTransport(targetPeerId);
+  if (learned != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_STICKY_TRANSPORT',
+      details: {'targetPeerId': targetPrefix, 'learned': learned},
     );
   }
 
-  // Direct discover/dial/send path (bounded by interactiveDirectBudget)
+  // NET-REL-05 P1/P4 (concurrent durable fallback): decide whether this send is
+  // "low confidence" — the peer is not connected (no live or reuse path), not on
+  // the LAN, AND the most recent PRIOR outgoing message to this peer terminally
+  // failed or only landed via the inbox within [kLowConfidenceWindow]. Such a
+  // peer was recently unreachable, so we fire the durable inbox copy in parallel
+  // with the live race below (instead of waiting out the sequential tail).
+  //
+  // Trap guarded: the optimistic 'sending' row for THIS message already exists
+  // (created by the UI). The `last.id != resolvedMessageId` check plus the
+  // terminal-status requirement ensure we inspect the PRIOR attempt, never the
+  // in-flight row. High-confidence sends skip this entirely and stay single-path.
+  var lowConfidence = false;
+  if (!isAlreadyConnected &&
+      !isLocalPeer &&
+      !p2pService.isConnectedToPeer(targetPeerId)) {
+    try {
+      final last = await messageRepo.getLatestMessageForContact(targetPeerId);
+      if (last != null &&
+          !last.isIncoming &&
+          last.id != resolvedMessageId &&
+          (last.status == 'failed' || last.transport == 'inbox')) {
+        final lastAt = DateTime.tryParse(last.createdAt);
+        if (lastAt != null) {
+          final age = DateTime.now().toUtc().difference(lastAt.toUtc());
+          lowConfidence = !age.isNegative && age < kLowConfidenceWindow;
+        }
+      }
+    } catch (_) {
+      // A failed recency lookup must never block the send: stay high-confidence
+      // (single-path) and let the live race + sequential tail carry it.
+      lowConfidence = false;
+    }
+  }
+
+  // Fire the durable inbox copy CONCURRENTLY (fire-and-forget) for low-confidence
+  // sends only. This is a parallel durability side-effect, NOT a race
+  // participant: it never feeds the transport-label completer and never calls a
+  // terminal `recordMetrics(rung:...)` — only `recordAttempt(leg:'inbox')`. The
+  // SAME [jsonString] envelope (identical payload.id) is used, so a duplicate
+  // arrival is discarded by the receiver's messageId dedup. `concurrentInboxOk`
+  // is awaited later (race-failure tail / unacked handoff) to short-circuit the
+  // redundant sequential store and avoid a double relay write.
+  Future<bool>? concurrentInbox;
+  if (lowConfidence) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
+      details: {'targetPeerId': targetPrefix},
+    );
+    concurrentInbox = p2pService
+        .storeInInbox(
+          targetPeerId,
+          jsonString,
+          timeoutMs: interactiveInboxBudget.inMilliseconds,
+        )
+        .then((ok) {
+          transportMetrics?.recordAttempt(leg: 'inbox', succeeded: ok);
+          return ok;
+        })
+        .catchError((_) => false);
+  }
+
+  // Build race futures
+  final raceFutures = <Future<_RaceResult>>[];
+
+  // Local WiFi path (bounded by interactiveLocalBudget). Added unconditionally:
+  // when the peer is not yet in the discovered map we run a bounded
+  // discover-on-send resolve first, so a cold-open same-WiFi peer can still
+  // join the race within budget. If the peer is genuinely not on the LAN the
+  // resolve times out to false and the parallel direct leg carries the message
+  // (negative control: transport never becomes 'local').
   raceFutures.add(
-    _tryDirectSend(p2pService, targetPeerId, jsonString).timeout(
+    _tryLocalSendWithDiscovery(
+      p2pService,
+      targetPeerId,
+      jsonString,
+      senderPeerId,
+      alreadyLocal: isLocalPeer,
+      budget: interactiveLocalBudget,
+      transportMetrics: transportMetrics,
+    ).timeout(
+      interactiveLocalBudget,
+      onTimeout: () => _RaceResult.failed('local_discover_timeout'),
+    ),
+  );
+
+  // Direct discover/dial/send path (bounded by interactiveDirectBudget).
+  // Records its own attempt outcome inside the helper (at each terminal
+  // return): the race completes on the first success, so a losing direct leg
+  // may still be pending here and the caller cannot observe its result. The
+  // outer timeout below does not record — the inner future resolves via its own
+  // per-step budgets and records the real outcome exactly once (slightly later
+  // on a slow path, which is fine for an aggregate session counter).
+  raceFutures.add(
+    _tryDirectSend(
+      p2pService,
+      targetPeerId,
+      jsonString,
+      transportMetrics: transportMetrics,
+    ).timeout(
       interactiveDirectBudget,
       onTimeout: () => _RaceResult.failed('direct_timeout'),
     ),
   );
 
-  // Race: first successful result wins.
-  // We use a completer to commit only the first success.
+  // Race: best successful result within a grace window wins (NET-REL-05 P2).
+  //
+  // Unlike a pure first-wins completer, we prefer a better-ranked transport
+  // (local > direct > relay) when it lands within [transportGraceWindow] of a
+  // worse one: the front race already starts both legs simultaneously, so the
+  // only window where a "worse" leg beats a "better" one is the few-ms
+  // ack-timing crossover. On the first non-top success we arm a single grace
+  // timer and commit the best result seen when it fires (or immediately on a
+  // top-rank success / once all legs have resolved).
+  //
+  // U-P3 head-start consumption (P3 weighting): when [learned] names a
+  // transport, the matching leg's success is offered to `best` immediately
+  // while the OTHER leg's success is held back by [kStickyHeadStart] so a
+  // genuinely-alive learned transport tends to win close ties. The head-start
+  // gates WIN-eligibility only — the leg's transport work always proceeds — so
+  // a dead learned leg can never stall the send (the other leg still completes
+  // the race after the grace window). When [learned] is null every leg is
+  // immediately eligible (degenerates to grace-only behavior).
   final completer = Completer<_RaceResult>();
   var pendingCount = raceFutures.length;
   final failures = <_RaceResult>[];
+  _RaceResult? best;
+  Timer? graceTimer;
+  // Tracks whether a leg with WIN-eligibility strictly better than the current
+  // [best] could still arrive. The local leg (raceFutures[0], rank 3) is the
+  // only transport that can outrank a 'direct'/'reuse' best; while its
+  // head-start delay is in flight a local win is still possible, so we keep it
+  // "pending" until that delay (or its failure) resolves.
+  var localLegEligibilityPending = true;
+  // Number of SUCCESSFUL leg results that have resolved but whose win-offer is
+  // still buffered behind a [kStickyHeadStart] delay. A leg counts here once it
+  // has decremented [pendingCount] but not yet been offered to [best]. The
+  // failure path must NOT settle the race as a failure while such a buffered
+  // success exists — otherwise a learned-leg failure that resolves first would
+  // drop a genuinely-alive non-learned success (U-N2: dead learned leg must not
+  // trap the send).
+  var deferredSuccessOffers = 0;
 
-  for (final future in raceFutures) {
-    future
-        .then((result) {
-          if (result.success && !completer.isCompleted) {
-            completer.complete(result);
-          } else {
-            failures.add(result);
-            pendingCount--;
-            if (pendingCount <= 0 && !completer.isCompleted) {
-              var failureReason = failures.isNotEmpty
-                  ? failures.first.reason ?? 'unknown'
-                  : 'unknown';
-              var relayProbeEligible = false;
-              for (final failure in failures) {
-                if (failure.relayProbeEligible) {
-                  failureReason = failure.reason ?? failureReason;
-                  relayProbeEligible = true;
-                  break;
-                }
-              }
-              completer.complete(
-                _RaceResult.failed(
-                  failureReason,
-                  relayProbeEligible: relayProbeEligible,
-                ),
-              );
-            }
-          }
-        })
-        .catchError((Object e) {
-          failures.add(_RaceResult.failed(e.toString()));
-          pendingCount--;
-          if (pendingCount <= 0 && !completer.isCompleted) {
-            var failureReason = failures.isNotEmpty
-                ? failures.first.reason ?? 'unknown'
-                : 'unknown';
-            var relayProbeEligible = false;
-            for (final failure in failures) {
-              if (failure.relayProbeEligible) {
-                failureReason = failure.reason ?? failureReason;
-                relayProbeEligible = true;
-                break;
-              }
-            }
-            completer.complete(
-              _RaceResult.failed(
-                failureReason,
-                relayProbeEligible: relayProbeEligible,
-              ),
-            );
-          }
+  void completeWithBest() {
+    if (best != null && !completer.isCompleted) {
+      graceTimer?.cancel();
+      completer.complete(best);
+    }
+  }
+
+  void completeWithFailure() {
+    if (completer.isCompleted) return;
+    var failureReason = failures.isNotEmpty
+        ? failures.first.reason ?? 'unknown'
+        : 'unknown';
+    var relayProbeEligible = false;
+    for (final failure in failures) {
+      if (failure.relayProbeEligible) {
+        failureReason = failure.reason ?? failureReason;
+        relayProbeEligible = true;
+        break;
+      }
+    }
+    graceTimer?.cancel();
+    completer.complete(
+      _RaceResult.failed(failureReason, relayProbeEligible: relayProbeEligible),
+    );
+  }
+
+  // True when no still-eligible leg could outrank the current [best].
+  bool noPendingLegCanBeatBest() {
+    if (best == null) return false;
+    if (pendingCount <= 0 && !localLegEligibilityPending) return true;
+    // The only transport that can exceed 'direct'/'reuse'/'relay' is local.
+    return !localLegEligibilityPending || _transportRank(best!.via) >= 3;
+  }
+
+  // Offers a successful leg result (now WIN-eligible) to the best-within-grace
+  // accumulator. May be invoked after a [kStickyHeadStart] head-start delay;
+  // guards against a completer that already settled (e.g. grace fired, or a
+  // learned-leg win already committed).
+  void offerSuccess(_RaceResult result) {
+    if (completer.isCompleted) return;
+    if (best == null ||
+        _transportRank(result.via) > _transportRank(best!.via)) {
+      best = result;
+    }
+    // A learned-transport win is decisive: it is both the preferred transport
+    // and confirmed alive, so commit it immediately (the head-start delayed the
+    // other leg's eligibility precisely so this can win the close tie).
+    final isLearnedWin = learned != null && best!.via == learned;
+    if (isLearnedWin || noPendingLegCanBeatBest()) {
+      completeWithBest();
+      return;
+    }
+    // A worse leg landed first and a better-ranked leg is still in play: arm a
+    // single grace timer, hard-capped so the total never exceeds the direct
+    // budget (fire immediately if the budget is nearly spent).
+    if (graceTimer == null) {
+      final remaining = interactiveDirectBudget - sendStopwatch.elapsed;
+      final graceDuration = remaining <= Duration.zero
+          ? Duration.zero
+          : (remaining < transportGraceWindow
+                ? remaining
+                : transportGraceWindow);
+      graceTimer = Timer(graceDuration, completeWithBest);
+    }
+  }
+
+  // Wire each leg. Index 0 is the local leg (see [localLegEligibilityPending]).
+  for (var i = 0; i < raceFutures.length; i++) {
+    final isLocalLeg = i == 0;
+    void onResolved(_RaceResult result) {
+      pendingCount--;
+      if (!result.success) {
+        failures.add(result);
+        // A failed local leg can no longer produce a top-rank win.
+        if (isLocalLeg) localLegEligibilityPending = false;
+        if (best != null) {
+          if (noPendingLegCanBeatBest()) completeWithBest();
+        } else if (pendingCount <= 0 && deferredSuccessOffers <= 0) {
+          // Only a failure when no leg succeeded AND none is buffered behind a
+          // head-start. A buffered success will offer itself (and complete the
+          // race) when its delay fires.
+          completeWithFailure();
+        }
+        return;
+      }
+
+      // Head-start (U-P3 consumption): the learned leg's success is WIN-eligible
+      // immediately; a non-learned leg is held back by [kStickyHeadStart] so a
+      // genuinely-alive learned transport wins close ties. The head-start gates
+      // WIN-eligibility ONLY — the leg's transport work already completed — so a
+      // dead learned leg can never stall the send (the surviving leg becomes
+      // eligible after the delay and the race proceeds normally). When
+      // [learned] is null every leg is immediately eligible (grace-only).
+      final isLearnedLeg = learned != null && result.via == learned;
+      if (learned != null && !isLearnedLeg) {
+        // Buffer this success behind the head-start. Tracked so a concurrent
+        // failure of the other leg cannot prematurely settle the race as failed
+        // and drop this still-alive success.
+        deferredSuccessOffers++;
+        Future<void>.delayed(kStickyHeadStart, () {
+          deferredSuccessOffers--;
+          if (isLocalLeg) localLegEligibilityPending = false;
+          offerSuccess(result);
+          // After this (final) offer, if the race has fully resolved with no
+          // better leg possible, commit the best now rather than wait out grace.
+          if (best != null && noPendingLegCanBeatBest()) completeWithBest();
         });
+      } else {
+        if (isLocalLeg) localLegEligibilityPending = false;
+        offerSuccess(result);
+      }
+    }
+
+    raceFutures[i]
+        .then(onResolved)
+        .catchError((Object e) => onResolved(_RaceResult.failed(e.toString())));
   }
 
   final raceResult = await completer.future;
+  graceTimer?.cancel();
 
   if (raceResult.success) {
     sendPath = raceResult.via == 'local' ? 'local' : 'direct';
     stepTimings = raceResult.stepTimings;
+    recordMetrics(transport: raceResult.via, rung: sendPath);
     return _completeSuccessfulSend(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -467,7 +728,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       acknowledged: raceResult.acknowledged,
       via: raceResult.via!,
       resolvedMessageId: resolvedMessageId,
-      textPreview: textPreview,
       text: sanitizedText,
       createdAt: createdAt,
       editedAt: resolvedEditedAt,
@@ -475,6 +735,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       attachments: normalizedAttachments,
       sendStopwatch: sendStopwatch,
       emitTimingEvent: emitTimingEvent,
+      // A live leg won the transport label. If a concurrent inbox copy was
+      // fired for this low-confidence send, hand its future to the unacked
+      // branch so the sequential unacked->inbox handoff is skipped when the
+      // durable copy already succeeded (avoids a second relay write for one
+      // message). When acked, the future is ignored (no handoff runs).
+      concurrentInbox: concurrentInbox,
       extraTimingDetails: {
         'connectionReused': false,
         'sendPath': sendPath,
@@ -484,6 +750,78 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   var failureReason = raceResult.reason ?? 'unknown';
+
+  // Persist a durable-custody (inbox) success. Shared by the concurrent-fallback
+  // short-circuit below and the sequential inbox tail so the terminal
+  // `recordMetrics(rung:'inbox')` and status write stay identical and fire
+  // exactly once.
+  Future<(SendChatMessageResult, ConversationMessage)> persistInboxDelivered({
+    required bool recordInboxAttempt,
+  }) async {
+    sendPath = 'inbox';
+    if (recordInboxAttempt) {
+      transportMetrics?.recordAttempt(leg: 'inbox', succeeded: true);
+    }
+    recordMetrics(transport: 'inbox', rung: 'inbox');
+    final deliveredMessage = payload.toConversationMessage(
+      contactPeerId: targetPeerId,
+      isIncoming: false,
+      status: 'delivered',
+      createdAt: createdAt,
+      editedAt: resolvedEditedAt,
+      transport: 'inbox',
+    );
+    await messageRepo.saveMessage(deliveredMessage);
+    await _persistOutgoingMedia(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: normalizedAttachments,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_SUCCESS',
+      details: {
+        'id': resolvedMessageId.substring(0, 8),
+        'status': 'delivered',
+        'via': 'inbox',
+      },
+    );
+    emitSendTiming(
+      outcome: 'success',
+      details: {'status': 'delivered', 'via': 'inbox'},
+    );
+    logChatOutgoing(
+      messageId: resolvedMessageId,
+      toPeerId: targetPeerId,
+      status: 'delivered',
+      text: sanitizedText,
+    );
+    _recordSuccessfulSendReadinessProof(p2pService, deliveredMessage);
+    return (
+      SendChatMessageResult.success,
+      deliveredMessage.copyWith(media: normalizedAttachments ?? const []),
+    );
+  }
+
+  // NET-REL-05 P1/P4: the live race failed. If a concurrent durable copy was
+  // fired for this low-confidence send, wait for it before paying for the
+  // sequential relay-probe + inbox tail. If it already took custody, commit
+  // 'delivered'/'inbox' and SKIP the redundant tail entirely (no relay probe,
+  // no second `storeInInbox`) — this is the latency win: durable custody lands
+  // at ~inbox budget instead of after the full sequential tail. The inbox
+  // `recordAttempt` already fired inside the concurrent future, so we do NOT
+  // record it again here.
+  if (concurrentInbox != null) {
+    final concurrentOk = await concurrentInbox;
+    if (concurrentOk) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY',
+        details: {'reason': failureReason},
+      );
+      return persistInboxDelivered(recordInboxAttempt: false);
+    }
+  }
+
   if (raceResult.relayProbeEligible) {
     final relayProbeResult = await _tryRelayProbeSend(
       p2pService,
@@ -491,9 +829,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       jsonString,
       failureReason: failureReason,
     );
+    transportMetrics?.recordAttempt(
+      leg: 'relay_probe',
+      succeeded: relayProbeResult.success,
+    );
     if (relayProbeResult.success) {
       sendPath = 'relay';
       stepTimings = {...stepTimings, ...relayProbeResult.stepTimings};
+      recordMetrics(transport: relayProbeResult.via, rung: 'relay');
       return _completeSuccessfulSend(
         p2pService: p2pService,
         messageRepo: messageRepo,
@@ -503,7 +846,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         acknowledged: relayProbeResult.acknowledged,
         via: relayProbeResult.via!,
         resolvedMessageId: resolvedMessageId,
-        textPreview: textPreview,
         text: sanitizedText,
         createdAt: createdAt,
         editedAt: resolvedEditedAt,
@@ -511,6 +853,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         attachments: normalizedAttachments,
         sendStopwatch: sendStopwatch,
         emitTimingEvent: emitTimingEvent,
+        concurrentInbox: concurrentInbox,
         extraTimingDetails: {
           'connectionReused': false,
           'sendPath': 'relay',
@@ -538,45 +881,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     inboxStopwatch.stop();
     stepTimings['inboxMs'] = inboxStopwatch.elapsedMilliseconds;
     if (storedInInbox) {
-      sendPath = 'inbox';
-      final deliveredMessage = payload.toConversationMessage(
-        contactPeerId: targetPeerId,
-        isIncoming: false,
-        status: 'delivered',
-        createdAt: createdAt,
-        editedAt: resolvedEditedAt,
-        transport: 'inbox',
-      );
-      await messageRepo.saveMessage(deliveredMessage);
-      await _persistOutgoingMedia(
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        attachments: normalizedAttachments,
-      );
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_SUCCESS',
-        details: {
-          'id': resolvedMessageId.substring(0, 8),
-          'status': 'delivered',
-          'via': 'inbox',
-          'textPreview': textPreview,
-        },
-      );
-      emitSendTiming(
-        outcome: 'success',
-        details: {'status': 'delivered', 'via': 'inbox'},
-      );
-      logChatOutgoing(
-        messageId: resolvedMessageId,
-        toPeerId: targetPeerId,
-        status: 'delivered',
-        text: sanitizedText,
-      );
-      _recordSuccessfulSendReadinessProof(p2pService, deliveredMessage);
-      return (
-        SendChatMessageResult.success,
-        deliveredMessage.copyWith(media: normalizedAttachments ?? const []),
-      );
+      return persistInboxDelivered(recordInboxAttempt: true);
     }
   } catch (e) {
     emitFlowEvent(
@@ -601,14 +906,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     attachments: normalizedAttachments,
   );
 
+  // Reached only after an inbox store attempt that did not succeed (returned
+  // false or threw): count the failed inbox attempt before the terminal rung.
+  transportMetrics?.recordAttempt(leg: 'inbox', succeeded: false);
+  recordMetrics(transport: null, rung: 'failed');
+
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_FAILED',
-    details: {
-      'id': resolvedMessageId.substring(0, 8),
-      'reason': failureReason,
-      'textPreview': textPreview,
-    },
+    details: {'id': resolvedMessageId.substring(0, 8), 'reason': failureReason},
   );
   emitSendTiming(
     outcome: 'failed',
@@ -639,6 +945,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
   String? recipientMlKemPublicKey,
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
+  TransportMetrics? transportMetrics,
 }) {
   if (originalMessage.isIncoming) {
     return Future.value((SendChatMessageResult.invalidMessage, null));
@@ -669,6 +976,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
     bridge: bridge,
     recipientMlKemPublicKey: recipientMlKemPublicKey,
     emitTimingEvent: emitTimingEvent,
+    transportMetrics: transportMetrics,
   );
 }
 
@@ -757,6 +1065,47 @@ String _resolveGoSendTransport(
   return _inferDirectVsRelayForConnectedPeer(p2pService, peerId);
 }
 
+/// Try sending via local WiFi, running a bounded discover-on-send resolve first
+/// when the peer was not already in the discovered map.
+///
+/// Self-bounded to [budget] (the caller also `.timeout`-wraps it), so this leg
+/// can never delay the unconditional direct leg beyond the local budget. A peer
+/// genuinely not on the LAN resolves to false and returns a failed result —
+/// the direct leg then wins and transport is never `local`.
+Future<_RaceResult> _tryLocalSendWithDiscovery(
+  P2PService p2pService,
+  String targetPeerId,
+  String jsonString,
+  String senderPeerId, {
+  required bool alreadyLocal,
+  required Duration budget,
+  TransportMetrics? transportMetrics,
+}) async {
+  final sw = Stopwatch()..start();
+  if (!alreadyLocal) {
+    final found = await p2pService.discoverLocalPeer(
+      targetPeerId,
+      timeout: budget,
+    );
+    if (!found) {
+      transportMetrics?.recordAttempt(leg: 'local', succeeded: false);
+      return _RaceResult.failed(
+        'local_not_discovered',
+        stepTimings: {'localDiscoverMs': sw.elapsedMilliseconds},
+      );
+    }
+  }
+  final remaining = budget.inMilliseconds - sw.elapsedMilliseconds;
+  return _tryLocalSend(
+    p2pService,
+    targetPeerId,
+    jsonString,
+    senderPeerId,
+    timeoutMs: remaining > 0 ? remaining : 1,
+    transportMetrics: transportMetrics,
+  );
+}
+
 /// Try sending via local WiFi.
 Future<_RaceResult> _tryLocalSend(
   P2PService p2pService,
@@ -764,6 +1113,7 @@ Future<_RaceResult> _tryLocalSend(
   String jsonString,
   String senderPeerId, {
   required int timeoutMs,
+  TransportMetrics? transportMetrics,
 }) async {
   final localStopwatch = Stopwatch()..start();
   final localSent = await p2pService.sendLocalMessage(
@@ -774,6 +1124,7 @@ Future<_RaceResult> _tryLocalSend(
   );
   localStopwatch.stop();
   final timings = {'localSendMs': localStopwatch.elapsedMilliseconds};
+  transportMetrics?.recordAttempt(leg: 'local', succeeded: localSent);
   if (localSent) {
     return _RaceResult.succeeded(
       via: 'local',
@@ -784,8 +1135,21 @@ Future<_RaceResult> _tryLocalSend(
   return _RaceResult.failed('local_send_failed', stepTimings: timings);
 }
 
-/// Try direct discover → dial → send path.
+/// Try direct discover → dial → send path, recording one `direct` attempt
+/// outcome for the transport census regardless of which leg ultimately wins the
+/// race. Records exactly once, on the real outcome of the inner attempt.
 Future<_RaceResult> _tryDirectSend(
+  P2PService p2pService,
+  String targetPeerId,
+  String jsonString, {
+  TransportMetrics? transportMetrics,
+}) async {
+  final result = await _tryDirectSendInner(p2pService, targetPeerId, jsonString);
+  transportMetrics?.recordAttempt(leg: 'direct', succeeded: result.success);
+  return result;
+}
+
+Future<_RaceResult> _tryDirectSendInner(
   P2PService p2pService,
   String targetPeerId,
   String jsonString,
@@ -1030,7 +1394,6 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required bool acknowledged,
   required String via,
   required String resolvedMessageId,
-  required String textPreview,
   required String text,
   required String? createdAt,
   required String? editedAt,
@@ -1038,6 +1401,7 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required List<MediaAttachment>? attachments,
   required Stopwatch sendStopwatch,
   required bool emitTimingEvent,
+  Future<bool>? concurrentInbox,
   Map<String, dynamic> extraTimingDetails = const {},
 }) async {
   final message = await _persistOutgoingSendResult(
@@ -1049,6 +1413,7 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
     createdAt: createdAt,
     editedAt: editedAt,
     via: via,
+    concurrentInbox: concurrentInbox,
   );
   await messageRepo.saveMessage(message);
   await _persistOutgoingMedia(
@@ -1062,7 +1427,6 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
       'id': resolvedMessageId.substring(0, 8),
       'status': message.status,
       'via': message.transport,
-      'textPreview': textPreview,
     },
   );
   if (emitTimingEvent) {
@@ -1087,6 +1451,16 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
     text: text,
   );
   _recordSuccessfulSendReadinessProof(p2pService, message);
+  // NET-REL-05 P3 (sticky transport): remember the LIVE transport that just
+  // delivered so a repeat send to this peer can be weighted toward it (head-
+  // start consumed in U-P2). Only acked LIVE deliveries qualify — 'inbox' is a
+  // custody handoff, not a live transport, and `recordSuccessfulTransport`
+  // ignores it anyway. This single success funnel covers connection reuse,
+  // race-win, and relay-probe-win; the dedicated inbox tail and the
+  // unacked->inbox handoff intentionally do not record.
+  if (message.status == 'delivered' && message.transport != 'inbox') {
+    p2pService.recordSuccessfulTransport(targetPeerId, message.transport ?? '');
+  }
   return (
     SendChatMessageResult.success,
     message.copyWith(media: attachments ?? const []),
@@ -1110,6 +1484,7 @@ Future<ConversationMessage> _persistOutgoingSendResult({
   required String? createdAt,
   required String? editedAt,
   required String via,
+  Future<bool>? concurrentInbox,
 }) async {
   if (acknowledged) {
     return payload.toConversationMessage(
@@ -1120,6 +1495,31 @@ Future<ConversationMessage> _persistOutgoingSendResult({
       editedAt: editedAt,
       transport: via,
     );
+  }
+
+  // NET-REL-05 P1/P4: the live write was unacked. If a concurrent durable copy
+  // was fired for this low-confidence send and already took custody, settle as
+  // 'delivered'/'inbox' WITHOUT a second sequential `storeInInbox` — one message
+  // must never produce two relay writes (R1 guard). `concurrentInbox` resolves
+  // to false on failure/timeout, in which case we fall through to the normal
+  // sequential handoff below.
+  if (concurrentInbox != null) {
+    final concurrentOk = await concurrentInbox;
+    if (concurrentOk) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_UNACKED_CONCURRENT_INBOX_CUSTODY',
+        details: {'via': via},
+      );
+      return payload.toConversationMessage(
+        contactPeerId: targetPeerId,
+        isIncoming: false,
+        status: 'delivered',
+        createdAt: createdAt,
+        editedAt: editedAt,
+        transport: 'inbox',
+      );
+    }
   }
 
   emitFlowEvent(

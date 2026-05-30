@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -209,6 +210,30 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
 
   @override
   bool isLocalPeer(String peerId) => false;
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  // NET-REL-05 P3 (sticky transport): configurable learned-transport memory.
+  String? lastKnownGoodTransportResult;
+  String? lastRecordedTransport;
+  int recordSuccessfulTransportCallCount = 0;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => lastKnownGoodTransportResult;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {
+    recordSuccessfulTransportCallCount++;
+    lastRecordedTransport = transport;
+  }
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
   Future<bool> sendLocalMessage(

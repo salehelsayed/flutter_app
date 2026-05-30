@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -110,6 +111,22 @@ class _FakeP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
   @override
   bool isLocalPeer(String peerId) => false;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
   @override
   Future<bool> sendLocalMessage(
     String peerId,

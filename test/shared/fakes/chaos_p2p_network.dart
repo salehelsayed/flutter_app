@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import 'fake_p2p_network.dart';
-import 'fake_p2p_service_integration.dart';
 
 /// Configuration for chaos injection.
 class ChaosConfig {

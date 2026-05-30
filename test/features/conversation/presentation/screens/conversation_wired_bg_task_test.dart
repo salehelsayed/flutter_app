@@ -8,6 +8,7 @@
 // ignore_for_file: unused_element_parameter
 
 import 'dart:async';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -16,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -325,6 +327,22 @@ class _FakeP2PService implements P2PService {
   bool isConnectedToPeer(String peerId) => false;
   @override
   bool isLocalPeer(String peerId) => localPeer;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
   @override
   Future<bool> sendLocalMessage(
     String peerId,
@@ -421,6 +439,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  TransportMetrics? transportMetrics,
 }) async {
   final ts = timestamp ?? DateTime.now().toUtc().toIso8601String();
   final delivered = ConversationMessage(
@@ -593,6 +612,7 @@ void main() {
                 String? quotedMessageId,
                 List<MediaAttachment>? mediaAttachments,
                 MediaAttachmentRepository? mediaAttachmentRepo,
+                TransportMetrics? transportMetrics,
               }) async {
                 sendCalled = true;
                 operationLog.add('sendChatMessageFn');
@@ -709,6 +729,7 @@ void main() {
                 String? quotedMessageId,
                 List<MediaAttachment>? mediaAttachments,
                 MediaAttachmentRepository? mediaAttachmentRepo,
+                TransportMetrics? transportMetrics,
               }) async {
                 sendCalled = true;
                 operationLog.add('sendChatMessageFn');
@@ -782,6 +803,7 @@ void main() {
                 String? quotedMessageId,
                 List<MediaAttachment>? mediaAttachments,
                 MediaAttachmentRepository? mediaAttachmentRepo,
+                TransportMetrics? transportMetrics,
               }) async {
                 operationLog.add('sendChatMessageFn');
                 return _instantSuccessSendFn(

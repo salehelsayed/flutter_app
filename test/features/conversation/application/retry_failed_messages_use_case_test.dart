@@ -950,5 +950,132 @@ void main() {
 
       expect(messageRepo.getFailedOutgoingCallCount, 1);
     });
+
+    // --- NET-REL-05 R1: concurrent-fallback interaction (regression) ---
+    //
+    // The new concurrent durable fallback (U-P1P4) settles a low-confidence send
+    // as a row with status='delivered', transport='inbox', wireEnvelope=null once
+    // the relay takes custody. This is the SAME terminal shape the existing inbox
+    // tail produces. These tests pin that such a row is invisible to the failed
+    // retrier so the concurrent copy is never sent a SECOND time.
+    test(
+      'concurrently-inboxed message (delivered/inbox/null-envelope) is NOT '
+      'picked up by the failed retrier',
+      () async {
+        identityRepo.seed(makeIdentity());
+        // The exact row shape persistInboxDelivered writes for a concurrent
+        // fallback that took custody: terminal delivered, transport inbox,
+        // wireEnvelope cleared.
+        messageRepo.seed([
+          ConversationMessage(
+            id: 'msg-concurrent-inbox-001',
+            contactPeerId: 'peer-target',
+            senderPeerId: 'my-peer-id',
+            text: 'Low-confidence send',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            transport: 'inbox',
+            wireEnvelope: null,
+          ),
+        ]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        // NEGATIVE CONTROL: the durable copy must NOT be re-sent. No live send,
+        // no second inbox store, nothing retried.
+        expect(count, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        // Row is untouched / still delivered (no resave that could regress it).
+        expect(
+          (await messageRepo.getMessage('msg-concurrent-inbox-001'))?.status,
+          'delivered',
+        );
+      },
+    );
+
+    test(
+      'failed retrier still prefers inbox-only re-store from persisted '
+      'wireEnvelope and does not double-send live alongside concurrent fallback',
+      () async {
+        identityRepo.seed(makeIdentity());
+        // A genuinely failed row that DID persist a safe v2 envelope. The
+        // retrier must re-store it via inbox ONLY (one storeInInbox, no live
+        // sendMessageWithReply), proving the inbox-first preference is intact
+        // and never escalates to a duplicate live send.
+        messageRepo.seed([
+          ConversationMessage(
+            id: 'msg-failed-with-envelope-001',
+            contactPeerId: 'peer-target',
+            senderPeerId: 'my-peer-id',
+            text: 'Hello',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            status: 'failed',
+            isIncoming: false,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{}}',
+          ),
+        ]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        expect(count, 1);
+        // Inbox-only re-store: exactly one store, ZERO live sends.
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        // Settled terminal: delivered/inbox/null-envelope — now itself
+        // invisible to any future retry cycle.
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'delivered');
+        expect(saved.transport, 'inbox');
+        expect(saved.wireEnvelope, isNull);
+      },
+    );
   });
 }

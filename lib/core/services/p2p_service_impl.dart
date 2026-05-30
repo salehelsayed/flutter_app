@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
 import '../bridge/bridge.dart';
 import '../bridge/p2p_bridge_client.dart';
+import '../debug/transport_metrics.dart';
 import '../inbox/inbox_staging_entry.dart';
 import '../inbox/inbox_staging_repository.dart';
 import '../local_discovery/local_discovery_service.dart';
@@ -33,6 +34,15 @@ typedef ReplayRecoveredInboxChatMessage =
 typedef ReplayRecoveredInboxIntroductionMessage =
     Future<RecoveredInboxReplayOutcome> Function(ChatMessage message);
 
+/// NET-REL-05 P3: a learned per-peer LIVE transport plus the time it was
+/// recorded, for TTL-based expiry. `transport` is one of `'local'`, `'direct'`,
+/// or `'relay'`.
+class _LearnedTransport {
+  final String transport;
+  final DateTime at;
+  const _LearnedTransport(this.transport, this.at);
+}
+
 /// Implementation of P2PService backed by the Go native bridge.
 class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   final Bridge _bridge;
@@ -42,10 +52,31 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxChatMessage;
   final ReplayRecoveredInboxIntroductionMessage?
   _replayRecoveredInboxIntroductionMessage;
+  final TransportMetrics? _transportMetrics;
   StreamSubscription<LocalChatMessage>? _localMessageSub;
+  StreamSubscription<Map<String, LocalPeer>>? _localPeersSub;
+  StreamSubscription<LocalMediaReady>? _localMediaSub;
+  StreamSubscription<Map<String, dynamic>>? _transportDiagnosticSub;
+
+  /// NET-REL-02 Option A: short peer IDs (last 8 chars, matching the Go
+  /// tracer's `remotePeerShort`) that genuinely upgraded relay->direct via a
+  /// DCUtR hole punch. Session-scoped telemetry only — never used for any
+  /// security/routing decision.
+  final Set<String> _peersUpgradedToDirect = {};
+
+  /// NET-REL-05 P3 (sticky transport): last-known-good LIVE transport per peer,
+  /// keyed by FULL peerId. Session-scoped, in-memory only (never authoritative).
+  /// Consulted by the send race to weight toward a recently-good path; expired
+  /// via TTL (`'local'` = 30s to match NET-REL-01 LAN TTL, re-validated against
+  /// live LAN visibility; `'direct'`/`'relay'` = 10min) and invalidated on
+  /// disconnect / addresses-updated. The race always falls back to the full
+  /// race on any sticky-leg failure, so a stale entry can never trap a send.
+  final Map<String, _LearnedTransport> _learnedTransport = {};
 
   final _stateController = StreamController<NodeState>.broadcast();
   final _messageController = StreamController<ChatMessage>.broadcast();
+  final _incomingLocalMediaController =
+      StreamController<LocalMediaReady>.broadcast();
 
   NodeState _currentState = NodeState.stopped;
   Timer? _healthCheckTimer;
@@ -58,6 +89,14 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   bool _isHealthChecking = false;
   int _consecutiveHealthCheckExceptions = 0;
   bool _stopped = true; // starts stopped; cleared when node starts
+  bool _localDiscoveryActive = false;
+
+  /// P4: one-shot heuristic timer for suspected iOS Local-Network permission
+  /// denial. Started on discovery activation; fires after 12s with zero peers
+  /// to re-record the snapshot with `suspectedPermissionDenied: true`. Cancelled
+  /// (and the flag cleared) the moment any peer appears or discovery stops.
+  /// Never authoritative — bonsoir 5.1.0 surfaces no permission status.
+  Timer? _lanPermProbeTimer;
 
   /// Phase 5: Completer-based recovery coalescing.
   /// When non-null, a recovery is in progress and concurrent callers
@@ -146,17 +185,20 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxChatMessage,
     ReplayRecoveredInboxIntroductionMessage?
     replayRecoveredInboxIntroductionMessage,
+    TransportMetrics? transportMetrics,
   }) : _bridge = bridge,
        _localP2P = localP2PService,
        _pushTokenStore = pushTokenStore,
        _inboxStagingRepository = inboxStagingRepository,
        _replayRecoveredInboxChatMessage = replayRecoveredInboxChatMessage,
        _replayRecoveredInboxIntroductionMessage =
-           replayRecoveredInboxIntroductionMessage {
+           replayRecoveredInboxIntroductionMessage,
+       _transportMetrics = transportMetrics {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
       final transport =
-          msg.transport ?? _inferTransportForPeer(msg.from) ?? 'relay';
+          msg.transport ?? _inferTransportForPeer(msg.from) ?? 'unknown';
+      _transportMetrics?.recordTransport(transport);
       _handleMessageReceived(msg.copyWith(transport: transport));
     };
     _bridge.onPeerConnected = _handlePeerConnected;
@@ -164,8 +206,16 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     _bridge.onAddressesUpdated = _handleAddressesUpdated;
     _bridge.onRelayStateChanged = _handleRelayStateChanged;
 
+    // NET-REL-02 Option A: observe DCUtR hole-punch / relay->direct telemetry
+    // emitted by the Go tracer to drive TransportMetrics counters and the
+    // upgraded-peer set used to keep _inferTransportForPeer honest.
+    _transportDiagnosticSub = transportDiagnosticEventStream.listen(
+      _handleTransportDiagnosticEvent,
+    );
+
     // Merge local WiFi messages into the unified message stream
     _localMessageSub = _localP2P?.localMessageStream.listen((localMsg) {
+      _transportMetrics?.recordTransport('wifi');
       _handleMessageReceived(
         ChatMessage(
           from: localMsg.from,
@@ -177,6 +227,29 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
         ),
       );
     });
+    // Merge inbound local WiFi media onto a typed stream (NOT messageStream —
+    // ChatMessage has no media fields). Null when the media server is
+    // unconfigured (e.g. test builds), so use ?.listen.
+    _localMediaSub = _localP2P?.mediaReadyStream?.listen((media) {
+      _transportMetrics?.recordTransport('wifi');
+      _incomingLocalMediaController.add(media);
+    });
+    _localPeersSub = _localP2P?.discoveredPeersStream.listen((peers) {
+      // P4: a peer appearing clears any suspected-permission-denied state and
+      // stops the heuristic timer (a peer was seen → permission is not denied).
+      if (peers.isNotEmpty) {
+        _lanPermProbeTimer?.cancel();
+        _lanPermProbeTimer = null;
+      }
+      _recordLanAvailability(
+        discoveryActive: _localDiscoveryActive,
+        discoveredPeerCount: peers.length,
+      );
+    });
+    _recordLanAvailability(
+      discoveryActive: false,
+      discoveredPeerCount: _localP2P?.discoveredPeers.length ?? 0,
+    );
 
     unawaited(_restorePersistedPushTokenIfNeeded());
   }
@@ -189,6 +262,10 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
 
   @override
   Stream<ChatMessage> get messageStream => _messageController.stream;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream =>
+      _incomingLocalMediaController.stream;
 
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async {
@@ -392,10 +469,9 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     final localPeerId = _currentState.peerId;
     if (_localP2P != null && localPeerId != null) {
       futures.add(
-        _localP2P
-            .start(localPeerId)
-            .timeout(warmTaskTimeout)
-            .catchError((_) {}),
+        _startLocalDiscovery(
+          localPeerId,
+        ).timeout(warmTaskTimeout).catchError((_) {}),
       );
     }
 
@@ -405,6 +481,76 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       layer: 'FL',
       event: 'P2P_SERVICE_WARM_BACKGROUND_COMPLETE',
       details: {},
+    );
+  }
+
+  Future<void> _startLocalDiscovery(String localPeerId) async {
+    final localP2P = _localP2P;
+    if (localP2P == null) return;
+
+    try {
+      await localP2P.start(localPeerId);
+      _setLocalDiscoveryActive();
+    } catch (_) {
+      _setLocalDiscoveryInactive();
+      rethrow;
+    }
+  }
+
+  void _setLocalDiscoveryActive() {
+    _localDiscoveryActive = true;
+    _recordLanAvailability(
+      discoveryActive: true,
+      discoveredPeerCount: _localP2P?.discoveredPeers.length ?? 0,
+    );
+    _startLanPermProbe();
+  }
+
+  void _setLocalDiscoveryInactive() {
+    _localDiscoveryActive = false;
+    // P4: discovery stopping clears any suspected-denied state (the heuristic
+    // only holds while discovery is active).
+    _lanPermProbeTimer?.cancel();
+    _lanPermProbeTimer = null;
+    _recordLanAvailability(discoveryActive: false, discoveredPeerCount: 0);
+  }
+
+  /// P4: (re)arm the one-shot suspected-permission-denied heuristic. Cancels any
+  /// in-flight timer and starts a fresh 12s probe; if discovery is still active
+  /// with zero discovered peers when it fires, re-records the snapshot with
+  /// `suspectedPermissionDenied: true`. Labelled "suspected" because a user
+  /// genuinely alone on the LAN produces the same zero-peers signal.
+  void _startLanPermProbe() {
+    _lanPermProbeTimer?.cancel();
+    _lanPermProbeTimer = Timer(const Duration(seconds: 12), () {
+      _lanPermProbeTimer = null;
+      final peerCount = _localP2P?.discoveredPeers.length ?? 0;
+      if (_localDiscoveryActive && peerCount == 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MDNS_SUSPECTED_PERMISSION_DENIED',
+          details: {'discoveryActive': true, 'discoveredPeerCount': 0},
+        );
+        _recordLanAvailability(
+          discoveryActive: true,
+          discoveredPeerCount: 0,
+          suspectedPermissionDenied: true,
+        );
+      }
+    });
+  }
+
+  void _recordLanAvailability({
+    required bool discoveryActive,
+    required int discoveredPeerCount,
+    bool suspectedPermissionDenied = false,
+  }) {
+    _transportMetrics?.updateLanAvailability(
+      LanAvailabilitySnapshot(
+        discoveryActive: discoveryActive,
+        discoveredPeerCount: discoveryActive ? discoveredPeerCount : 0,
+        suspectedPermissionDenied: suspectedPermissionDenied,
+      ),
     );
   }
 
@@ -1083,8 +1229,10 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       // Stop local WiFi discovery before stopping the relay node
       try {
         await _localP2P?.stop();
+        _setLocalDiscoveryInactive();
       } catch (e) {
         if (kDebugMode) debugPrint('[P2PService] Local P2P stop failed: $e');
+        _setLocalDiscoveryInactive();
       }
 
       _stopHealthCheck();
@@ -2112,7 +2260,51 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     return state.circuitAddresses.isEmpty;
   }
 
+  /// NET-REL-02 Option A: short peer ID (last 8 chars) matching the Go tracer's
+  /// `remotePeerShort`, for correlating upgrade telemetry against a peer ID.
+  String _shortId(String peerId) =>
+      peerId.length <= 8 ? peerId : peerId.substring(peerId.length - 8);
+
+  /// Handles DCUtR hole-punch / relay->direct telemetry from the Go tracer.
+  void _handleTransportDiagnosticEvent(Map<String, dynamic> event) {
+    final eventName = event['event'] as String?;
+    switch (eventName) {
+      case 'holepunch:attempt':
+        // Only HolePunchAttemptEvt (`step: attempt`) is a counted attempt;
+        // `started` and `direct_dial` are breadcrumbs.
+        final step = event['step'] as String?;
+        if (step == 'attempt') {
+          _transportMetrics?.recordHolePunchAttempt();
+        }
+        break;
+      case 'holepunch:success':
+        _transportMetrics?.recordHolePunchSuccess();
+        _recordPeerUpgrade(event['remotePeerShort'] as String?);
+        break;
+      case 'holepunch:failure':
+        _transportMetrics?.recordHolePunchFailure();
+        break;
+      case 'transport:upgraded':
+        _transportMetrics?.recordRelayToDirectUpgrade();
+        _recordPeerUpgrade(event['remotePeerShort'] as String?);
+        break;
+    }
+  }
+
+  void _recordPeerUpgrade(String? remotePeerShort) {
+    if (remotePeerShort != null && remotePeerShort.isNotEmpty) {
+      _peersUpgradedToDirect.add(remotePeerShort);
+    }
+  }
+
   String? _inferTransportForPeer(String peerId) {
+    // A peer that genuinely upgraded relay->direct (observed via the DCUtR
+    // tracer) is direct, even if _currentState still holds a stale
+    // /p2p-circuit multiaddr for it (libp2p does not re-fire connectedness on
+    // an upgrade).
+    if (_peersUpgradedToDirect.contains(_shortId(peerId))) {
+      return 'direct';
+    }
     var sawDirectConnection = false;
     for (final connection in _currentState.connections) {
       if (connection.peerId != peerId) continue;
@@ -2420,6 +2612,11 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
         .where((c) => c.peerId != conn.peerId)
         .toList();
 
+    // NET-REL-05 P3: a disconnected peer's learned transport is no longer
+    // trustworthy — drop it so the next send re-races instead of weighting a
+    // dead path.
+    _learnedTransport.remove(conn.peerId);
+
     _emitState(_currentState.copyWith(connections: updatedConnections));
   }
 
@@ -2442,6 +2639,14 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     final nowHealthy = _stateHasHealthyRelay(updatedState);
     final wasConnecting = !wasHealthy;
     final nowOnline = nowHealthy;
+
+    // NET-REL-05 P3: a relay-health transition signals a likely network change,
+    // so drop non-local learned transports ('direct'/'relay' may no longer be
+    // reachable). 'local' keeps its own 30s/isLocalPeer revalidation and
+    // self-corrects, so leave it intact.
+    if (wasHealthy != nowHealthy) {
+      _learnedTransport.removeWhere((_, v) => v.transport != 'local');
+    }
 
     if (kDebugMode) {
       debugPrint(
@@ -2881,10 +3086,12 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       // Restart mDNS advertising (e.g. after iOS returns from background)
       try {
         await _localP2P?.restartAdvertising();
+        _setLocalDiscoveryActive();
       } catch (e) {
         if (kDebugMode) {
           debugPrint('[P2PService] Local P2P restart advertising failed: $e');
         }
+        _setLocalDiscoveryInactive();
       }
     } finally {
       final completer = _recoveryInProgress;
@@ -2928,6 +3135,46 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
 
   @override
   bool isLocalPeer(String peerId) => _localP2P?.isLocalPeer(peerId) ?? false;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) {
+    final e = _learnedTransport[peerId];
+    if (e == null) return null;
+    final age = DateTime.now().difference(e.at);
+    // 'local' shares NET-REL-01's 30s LAN TTL; 'direct'/'relay' last longer.
+    final ttl = e.transport == 'local'
+        ? const Duration(seconds: 30)
+        : const Duration(minutes: 10);
+    if (age > ttl) {
+      _learnedTransport.remove(peerId);
+      return null;
+    }
+    // A learned 'local' transport must still be backed by live LAN visibility:
+    // the peer may have left WiFi inside the TTL. Never trust a stale-by-
+    // departure local preference.
+    if (e.transport == 'local' && !isLocalPeer(peerId)) {
+      _learnedTransport.remove(peerId);
+      return null;
+    }
+    return e.transport;
+  }
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {
+    if (transport == 'local' || transport == 'direct' || transport == 'relay') {
+      _learnedTransport[peerId] = _LearnedTransport(transport, DateTime.now());
+    }
+  }
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async {
+    final localP2P = _localP2P;
+    if (localP2P == null) return false;
+    return localP2P.discoverLocalPeer(peerId, timeout: timeout);
+  }
 
   @override
   Future<bool> sendLocalMessage(
@@ -2975,6 +3222,11 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     _currentState = NodeState.stopped;
     _stopHealthCheck();
     _localMessageSub?.cancel();
+    _localPeersSub?.cancel();
+    _localMediaSub?.cancel();
+    _transportDiagnosticSub?.cancel();
+    _lanPermProbeTimer?.cancel();
+    _setLocalDiscoveryInactive();
     _localP2P?.dispose();
 
     // Phase 5: Complete any pending recovery so awaiters don't hang.
@@ -2985,6 +3237,9 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
 
     if (!_stateController.isClosed) _stateController.close();
     if (!_messageController.isClosed) _messageController.close();
+    if (!_incomingLocalMediaController.isClosed) {
+      _incomingLocalMediaController.close();
+    }
 
     // Clear event handlers
     _bridge.onMessageReceived = null;

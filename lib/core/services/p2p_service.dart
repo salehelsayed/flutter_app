@@ -2,6 +2,7 @@ import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
 import '../../features/p2p/domain/models/send_message_result.dart';
+import '../local_discovery/local_discovery_service.dart';
 
 /// Result of a relay probe attempt.
 enum RelayProbeResult {
@@ -49,6 +50,13 @@ abstract class P2PService {
 
   /// Stream of incoming chat messages.
   Stream<ChatMessage> get messageStream;
+
+  /// Stream of media files received over the local WiFi path.
+  ///
+  /// Kept separate from [messageStream] because [ChatMessage] carries no
+  /// media fields. Defaults to an empty stream so non-local implementations
+  /// (fakes/mocks) need no override.
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   /// Start the P2P node with the given identity.
   ///
@@ -167,6 +175,25 @@ abstract class P2PService {
 
   /// Returns true if the peer is visible on the local WiFi network.
   bool isLocalPeer(String peerId);
+
+  /// Bounded on-demand local discovery at send time. Returns true if the peer
+  /// became visible on the LAN within [timeout]. Default no-op for non-local
+  /// implementations (fakes/mocks) so they never report `local`.
+  Future<bool> discoverLocalPeer(String peerId, {required Duration timeout}) async =>
+      false;
+
+  /// NET-REL-05 P3 (sticky transport): the last successful LIVE transport
+  /// (`'local'` | `'direct'` | `'relay'`) for [peerId], or null if none is
+  /// known or it has expired/become stale. Session-scoped and never
+  /// authoritative — callers consult it only to weight the send race toward a
+  /// recently-good path and ALWAYS fall back to the full race on failure.
+  /// Default null so every fake/mock compiles unchanged.
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  /// NET-REL-05 P3 (sticky transport): record a successful LIVE [transport]
+  /// (`'local'` | `'direct'` | `'relay'`) for [peerId]. `'inbox'` is a custody
+  /// handoff, not a live transport, and is ignored. Default no-op.
+  void recordSuccessfulTransport(String peerId, String transport) {}
 
   /// Try to send a message to a local peer via WiFi WebSocket.
   /// Returns true if the peer acknowledged receipt.

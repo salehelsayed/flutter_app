@@ -5,6 +5,8 @@ import 'dart:ui' show VoidCallback;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
@@ -120,6 +122,9 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
     int? timeoutMs,
   }) async {
     if (shouldThrow) throw Exception('Send failed');
+    if (sendDelay > Duration.zero) {
+      await Future<void>.delayed(sendDelay);
+    }
     lastSentPeerId = peerId;
     lastSentMessage = message;
     lastSentPayload = message;
@@ -181,6 +186,71 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
   @override
   bool isLocalPeer(String peerId) => localPeers.contains(peerId);
 
+  int discoverLocalPeerCallCount = 0;
+  Duration? lastDiscoverLocalPeerTimeout;
+
+  /// Optional override for the discover-on-send result. When non-null this is
+  /// returned instead of the default `localPeers.contains` behavior; setting it
+  /// to true (without seeding [localPeers]) simulates an unknown-but-LAN-present
+  /// peer that mDNS resolves at send time (U3).
+  bool? discoverLocalPeerResult;
+
+  /// When > 0, [discoverLocalPeer] delays this long before resolving (still
+  /// bounded by the caller's timeout) to model a bounded resolve that joins the
+  /// race within budget.
+  Duration discoverLocalPeerDelay = Duration.zero;
+
+  /// NET-REL-05 U-P3 (sticky): seeds the learned-per-peer transport read at the
+  /// top of the race. Null (default) means a cold send — full race, no
+  /// head-start (matches today). When set, the matching leg gets a head-start.
+  String? lastKnownGoodTransportResult;
+
+  /// NET-REL-05 U-P3: records of `recordSuccessfulTransport` writes so a test
+  /// can assert the live transport that delivered was remembered.
+  int recordSuccessfulTransportCallCount = 0;
+  String? lastRecordedTransport;
+  String? lastRecordedTransportPeerId;
+
+  /// NET-REL-05 U-P2 (grace) / U-P5 (budget): per-leg artificial latency so a
+  /// test can model a transport landing slightly behind another (grace) or a
+  /// leg overrunning its budget. [sendDelay] gates the direct/reuse/relay
+  /// `sendMessageWithReply`; [localSendDelay] gates `sendLocalMessage`.
+  Duration sendDelay = Duration.zero;
+  Duration localSendDelay = Duration.zero;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => lastKnownGoodTransportResult;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {
+    recordSuccessfulTransportCallCount++;
+    lastRecordedTransport = transport;
+    lastRecordedTransportPeerId = peerId;
+  }
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async {
+    discoverLocalPeerCallCount++;
+    lastDiscoverLocalPeerTimeout = timeout;
+    if (discoverLocalPeerDelay > Duration.zero) {
+      await Future<void>.delayed(discoverLocalPeerDelay);
+    }
+    final resolved = discoverLocalPeerResult ?? localPeers.contains(peerId);
+    // A successful discover-on-send makes the peer reachable for the
+    // subsequent sendLocalMessage call, mirroring the production map write.
+    if (resolved) {
+      localPeers.add(peerId);
+    }
+    // Negative-control default: not discovered unless the peer is already local.
+    return resolved;
+  }
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
+
   @override
   Future<bool> sendLocalMessage(
     String peerId,
@@ -190,6 +260,9 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
   }) async {
     localSendCallCount++;
     lastLocalSendTimeoutMs = timeoutMs;
+    if (localSendDelay > Duration.zero) {
+      await Future<void>.delayed(localSendDelay);
+    }
     lastSentPeerId = peerId;
     lastSentMessage = message;
     return localSendResult;
@@ -280,10 +353,19 @@ class FakeMessageRepository implements MessageRepository {
     String contactPeerId,
   ) async => [];
 
+  /// NET-REL-05 U-P1P4 (concurrent fallback): seeds the prior-attempt the
+  /// low-confidence heuristic inspects. Null (default) = no prior attempt =
+  /// high-confidence (single-path).
+  ConversationMessage? latestMessageForContact;
+  int getLatestMessageForContactCallCount = 0;
+
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
     String contactPeerId,
-  ) async => null;
+  ) async {
+    getLatestMessageForContactCallCount++;
+    return latestMessageForContact;
+  }
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {}
@@ -403,6 +485,38 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
       .toList();
 }
 
+void expectSendFlowEventsOmitMessagePreview(
+  List<Map<String, dynamic>> events, {
+  required String terminalEvent,
+  required Iterable<String> forbiddenFragments,
+}) {
+  final sendEvents = events
+      .where(
+        (event) =>
+            (event['event'] as String?)?.startsWith('CHAT_MSG_SEND_') ?? false,
+      )
+      .toList();
+  final sendEventNames = sendEvents.map((event) => event['event']).toList();
+  expect(sendEventNames, contains('CHAT_MSG_SEND_START'));
+  expect(sendEventNames, contains(terminalEvent));
+
+  for (final event in sendEvents) {
+    final details = event['details'];
+    if (details is Map) {
+      expect(
+        details.containsKey('textPreview'),
+        isFalse,
+        reason: '${event['event']} exposed a textPreview detail',
+      );
+    }
+  }
+
+  final serializedPayload = jsonEncode(sendEvents);
+  for (final fragment in forbiddenFragments) {
+    expect(serializedPayload, isNot(contains(fragment)));
+  }
+}
+
 const testRecipientMlKemPublicKey = 'recipient-mlkem-public-key';
 
 Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
@@ -423,6 +537,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
+  TransportMetrics? transportMetrics,
 }) {
   return chat_use_case.sendChatMessage(
     p2pService: p2pService,
@@ -443,6 +558,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     mediaAttachments: mediaAttachments,
     mediaAttachmentRepo: mediaAttachmentRepo,
     emitTimingEvent: emitTimingEvent,
+    transportMetrics: transportMetrics,
   );
 }
 
@@ -965,6 +1081,80 @@ void main() {
       },
     );
 
+    test('send flow events omit message-derived previews', () async {
+      const directBody =
+          'TOM001_DIRECT_BODY_FRAGMENT_ALPHA private direct message';
+      final directP2P = FakeP2PService();
+      final directRepo = FakeMessageRepository();
+      final directEvents = await captureFlowEvents(() async {
+        final (result, message) = await sendChatMessage(
+          p2pService: directP2P,
+          messageRepo: directRepo,
+          targetPeerId: 'target-peer',
+          text: directBody,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'direct');
+      });
+      expectSendFlowEventsOmitMessagePreview(
+        directEvents,
+        terminalEvent: 'CHAT_MSG_SEND_SUCCESS',
+        forbiddenFragments: const [directBody, 'TOM001_DIRECT_BODY_FRAGMENT'],
+      );
+
+      const inboxBody =
+          'TOM001_INBOX_FALLBACK_BODY_FRAGMENT_BETA private inbox message';
+      final inboxP2P = FakeP2PService(
+        sendMessageResult: false,
+        storeInInboxResult: true,
+      );
+      final inboxRepo = FakeMessageRepository();
+      final inboxEvents = await captureFlowEvents(() async {
+        final (result, message) = await sendChatMessage(
+          p2pService: inboxP2P,
+          messageRepo: inboxRepo,
+          targetPeerId: 'target-peer',
+          text: inboxBody,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'inbox');
+      });
+      expectSendFlowEventsOmitMessagePreview(
+        inboxEvents,
+        terminalEvent: 'CHAT_MSG_SEND_SUCCESS',
+        forbiddenFragments: const [
+          inboxBody,
+          'TOM001_INBOX_FALLBACK_BODY_FRAGMENT',
+        ],
+      );
+
+      const failedBody =
+          'TOM001_FAILED_BODY_FRAGMENT_GAMMA private failed message';
+      final failedP2P = FakeP2PService(sendMessageResult: false);
+      final failedRepo = FakeMessageRepository();
+      final failedEvents = await captureFlowEvents(() async {
+        final (result, message) = await sendChatMessage(
+          p2pService: failedP2P,
+          messageRepo: failedRepo,
+          targetPeerId: 'target-peer',
+          text: failedBody,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message!.status, 'failed');
+      });
+      expectSendFlowEventsOmitMessagePreview(
+        failedEvents,
+        terminalEvent: 'CHAT_MSG_SEND_FAILED',
+        forbiddenFragments: const [failedBody, 'TOM001_FAILED_BODY_FRAGMENT'],
+      );
+    });
+
     test(
       'returns sendFailed and persists with failed status when send returns false',
       () async {
@@ -1280,6 +1470,184 @@ void main() {
       expect(p2pService.localSendCallCount, 0);
       // Relay path used directly
       expect(p2pService.discoverCallCount, 1);
+      expect(p2pService.sendCallCount, 1);
+    });
+
+    // U-P2-ttl / doc U2: a stale discovered peer is treated as NOT local by
+    // the read-time freshness filter (getLocalPeer/isLocalPeer return false).
+    // The send path must therefore skip the local leg entirely and let the
+    // direct leg carry the message WITHOUT burning the 1500ms local budget.
+    test(
+      'stale peer skips local send and does not burn the local budget',
+      () async {
+        // Mirror production: a stale entry makes isLocalPeer() return false, so
+        // localPeers stays empty here (the freshness filter already dropped it).
+        p2pService = FakeP2PService();
+        expect(p2pService.isLocalPeer('target-peer'), isFalse);
+
+        final sw = Stopwatch()..start();
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello stale!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        sw.stop();
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // No local send attempted for a stale (non-fresh) peer.
+        expect(p2pService.localSendCallCount, 0);
+        // Direct leg carried it — never reports the outbound 'local' label.
+        expect(message!.transport, isNot('local'));
+        // Far under interactiveLocalBudget (1500ms): no stale host:port burn.
+        expect(
+          sw.elapsedMilliseconds,
+          lessThan(interactiveLocalBudget.inMilliseconds),
+        );
+      },
+    );
+  });
+
+  // ─── NET-REL-01 (LAN/WiFi reliability) — labeled coverage ──────────
+  // U1 happy / U2 TTL-degraded / U3 discover-on-send / U-N1 negative control.
+  // These pin the exact transport label so a future regression that hard-codes
+  // 'local' (U1) or drops the discover-on-send leg (U3) is caught, while U-N1
+  // proves U1 is not just always reporting 'local'.
+  group('NET-REL-01 LAN transport', () {
+    // U1 — happy path: peer already in localPeers → the message uses the LAN
+    // path (transport=='local'), the local leg fires exactly once, and the
+    // relay probe is never reached because local wins the race.
+    test('U1 happy: discovered local peer delivers via local transport',
+        () async {
+      // useNullDiscover makes the parallel direct leg miss, so only the local
+      // leg can win — proving 'local' is the path actually taken.
+      p2pService = FakeP2PService(useNullDiscover: true)
+        ..localPeers.add('target-peer');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello on the LAN',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.transport, 'local');
+      expect(p2pService.localSendCallCount, 1);
+      expect(p2pService.probeRelayCallCount, 0);
+      // Already-local: no discover-on-send resolve needed.
+      expect(p2pService.discoverLocalPeerCallCount, 0);
+    });
+
+    // U2 — TTL / degraded: a stale entry is dropped by the read-time freshness
+    // filter, so isLocalPeer is false and discoverLocalPeer also fails (the peer
+    // is genuinely gone). The local leg must NOT deliver and must NOT burn the
+    // full 1500ms budget before the direct leg carries it. (Complements the
+    // 'stale peer skips local send' test above, which covers the already-local
+    // false path; here we assert the discover-on-send leg also fails fast.)
+    test('U2 TTL-degraded: stale/absent peer fails local fast, direct carries',
+        () async {
+      // Not in localPeers and discover-on-send resolves false (peer departed).
+      p2pService = FakeP2PService()..discoverLocalPeerResult = false;
+      expect(p2pService.isLocalPeer('target-peer'), isFalse);
+
+      final sw = Stopwatch()..start();
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello departed peer',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+      sw.stop();
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // Discover-on-send was attempted but resolved false, so no LAN send.
+      expect(p2pService.discoverLocalPeerCallCount, 1);
+      expect(p2pService.localSendCallCount, 0);
+      expect(message!.transport, isNot('local'));
+      // The discover-on-send leg returns false promptly — it must not consume
+      // the full local budget before the direct leg wins.
+      expect(
+        sw.elapsedMilliseconds,
+        lessThan(interactiveLocalBudget.inMilliseconds),
+      );
+    });
+
+    // U3 — discover-on-send: peer is unknown at send time (not in localPeers)
+    // but IS present on the LAN. The bounded resolve succeeds within budget, so
+    // the local leg joins the race and delivers via 'local'.
+    test('U3 discover-on-send: unknown-but-LAN-present peer joins via local',
+        () async {
+      // Direct leg misses (useNullDiscover) so only the freshly-resolved local
+      // leg can win. discoverLocalPeerResult=true models mDNS resolving at send
+      // time; a small bounded delay proves it still lands inside the budget.
+      p2pService = FakeP2PService(useNullDiscover: true)
+        ..discoverLocalPeerResult = true
+        ..discoverLocalPeerDelay = const Duration(milliseconds: 50);
+      // Precondition: peer is NOT already known as local.
+      expect(p2pService.isLocalPeer('target-peer'), isFalse);
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello just-foregrounded peer',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // Bounded resolve ran, then the local leg delivered within budget.
+      expect(p2pService.discoverLocalPeerCallCount, 1);
+      expect(
+        p2pService.lastDiscoverLocalPeerTimeout,
+        interactiveLocalBudget,
+      );
+      expect(p2pService.localSendCallCount, 1);
+      expect(message!.transport, 'local');
+    });
+
+    // U-N1 — NEGATIVE CONTROL: peer NOT on the LAN and the LAN send is forced to
+    // fail. discover-on-send resolves false, the local leg is never reached, and
+    // the message is delivered by a non-local transport. This is what proves U1
+    // isn't hard-coding 'local'.
+    test('U-N1 negative control: non-LAN peer never uses local transport',
+        () async {
+      p2pService = FakeP2PService()
+        ..discoverLocalPeerResult = false // not discoverable on the LAN
+        ..localSendResult = false; // and the LAN send would fail anyway
+      expect(p2pService.isLocalPeer('target-peer'), isFalse);
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello over relay/direct',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // The won transport is anything but local (direct/relay/inbox).
+      expect(message!.transport, isNot('local'));
+      expect(
+        const ['direct', 'relay', 'inbox'],
+        contains(message.transport),
+      );
+      // sendLocalMessage was never reached: the LAN leg lost the race outright.
+      expect(p2pService.localSendCallCount, 0);
+      // The direct leg carried the message.
       expect(p2pService.sendCallCount, 1);
     });
   });
@@ -2176,6 +2544,540 @@ void main() {
       },
     );
   });
+
+  group('NET-REL-04 — per-leg send-attempt census', () {
+    test(
+      'direct leg failure is recorded even when the relay probe delivers '
+      '(the delivered-only mix cannot show this)',
+      () async {
+        // Direct race leg fails (discover miss → peer_not_found), then the
+        // relay probe connects and delivers.
+        p2pService = FakeP2PService(useNullDiscover: true);
+        p2pService.probeRelayResult = RelayProbeResult.connected;
+        final metrics = TransportMetrics();
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello through probe',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          transportMetrics: metrics,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+
+        // The direct attempt failed, the relay probe attempt succeeded.
+        expect(metrics.attemptCounts()['direct'], 1);
+        expect(metrics.attemptFailureCounts()['direct'], 1);
+        expect(metrics.attemptCounts()['relay_probe'], 1);
+        expect(metrics.attemptFailureCounts()['relay_probe'], 0);
+        // The terminal rung is relay_probe, not failed.
+        expect(metrics.rungDistribution()['relay_probe'], 1);
+        expect(metrics.rungDistribution()['failed'], 0);
+        // Inbox was never reached.
+        expect(metrics.attemptCounts()['inbox'], 0);
+      },
+    );
+
+    test('connection reuse success records exactly one successful reuse attempt '
+        'and no race-leg attempts', () async {
+      p2pService = FakeP2PService(
+        sendMessageResult: true,
+        currentState: NodeState(
+          isStarted: true,
+          connections: [
+            const p2p.ConnectionState(
+              peerId: 'target-peer',
+              multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+              direction: 'outbound',
+              status: 'connected',
+            ),
+          ],
+        ),
+      );
+      final metrics = TransportMetrics();
+
+      final (result, _) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Reuse hello',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        transportMetrics: metrics,
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(metrics.attemptCounts()['reuse'], 1);
+      expect(metrics.attemptFailureCounts()['reuse'], 0);
+      expect(metrics.attemptCounts()['direct'], 0);
+      expect(metrics.attemptCounts()['local'], 0);
+      expect(metrics.rungDistribution()['reuse'], 1);
+    });
+
+    test('total send failure records failed attempts for every leg it tried',
+        () async {
+      // No reuse (not connected), discover miss, relay probe errors, inbox
+      // store fails → terminal failure.
+      p2pService = FakeP2PService(useNullDiscover: true);
+      p2pService.probeRelayResult = RelayProbeResult.error;
+      p2pService.storeInInboxResult = false;
+      final metrics = TransportMetrics();
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Doomed send',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        transportMetrics: metrics,
+      );
+
+      expect(result, isNot(SendChatMessageResult.success));
+      expect(message!.status, 'failed');
+      expect(metrics.attemptFailureCounts()['direct'], 1);
+      expect(metrics.attemptFailureCounts()['relay_probe'], 1);
+      expect(metrics.attemptFailureCounts()['inbox'], 1);
+      expect(metrics.rungDistribution()['failed'], 1);
+      // No transport bucket incremented for a failed send.
+      expect(metrics.totalTransportSamples, 0);
+    });
+  });
+
+  // ─── NET-REL-05 — send orchestration (grace, sticky, concurrent, dedup) ──
+  //
+  // Each happy case is paired with the negative control the doc names so a weak
+  // test cannot pass falsely. U1/U-N1 prove the grace window prefers the better
+  // transport WITHOUT hanging on a failed leg. U2/U-N2 prove the learned-sticky
+  // head-start saves discovery work WITHOUT trapping the send on a dead path or
+  // honoring a stale preference. U3/U-N3 prove the concurrent inbox fires for a
+  // low-confidence send only, NOT a blanket dual-write. U4/U-N4 prove send-side
+  // single-row dedup (same id → 1, different ids → 2). U5 + its budget control
+  // prove the offline tail is bounded and a budget is actually ENFORCED.
+  group('NET-REL-05 send orchestration', () {
+    // U1 — grace window (happy): local and direct BOTH succeed; direct lands
+    // first (local is delayed slightly, but well within the 150ms grace), yet
+    // the better-ranked 'local' transport is preferred. Proves the grace
+    // window honors local > direct, not pure first-wins.
+    test('U1 grace: local lands within grace of direct → transport == local',
+        () async {
+      p2pService = FakeP2PService()
+        ..localPeers.add('target-peer')
+        // Direct resolves immediately; local lands ~40ms later — inside the
+        // 150ms grace window, so it must still preempt the worse direct leg.
+        ..localSendDelay = const Duration(milliseconds: 40);
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Grace prefers local',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // Direct succeeded first but local won the grace → local is committed.
+      expect(message!.transport, 'local');
+      expect(p2pService.localSendCallCount, 1);
+      expect(p2pService.sendCallCount, 1);
+    });
+
+    // U-N1 — grace NEGATIVE control: local FAILS, direct succeeds. The grace
+    // timer must NOT be armed to wait out the (now impossible) local win — the
+    // send commits 'direct' promptly with no hung wait. Proves U1's preference
+    // logic does not block on a leg that can never land.
+    test('U-N1 grace neg: local fails → direct chosen with no hung wait',
+        () async {
+      p2pService = FakeP2PService()
+        ..localPeers.add('target-peer')
+        ..localSendResult = false; // local leg fails outright
+
+      final sw = Stopwatch()..start();
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Local fails, direct carries',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+      sw.stop();
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.transport, 'direct');
+      expect(p2pService.localSendCallCount, 1);
+      // No grace wait: the resolved/failed local leg clears the only leg that
+      // could outrank direct, so the completer settles immediately. Far under
+      // the grace window (150ms) — proves it is not parked on a timer.
+      expect(sw.elapsedMilliseconds, lessThan(120));
+    });
+
+    // U2 — sticky/learned (happy): a peer last delivered over 'direct'. The
+    // learned head-start lets the direct leg win the close tie while the local
+    // leg is held back, so when local is NOT on the LAN there is no wasted
+    // local discovery and the message is delivered via the learned transport.
+    test('U2 sticky: learned direct delivers via direct, fewer local attempts',
+        () async {
+      // Cold baseline: no learned transport, peer not local. The local
+      // discover-on-send leg fires once (cold).
+      final coldP2P = FakeP2PService()..discoverLocalPeerResult = false;
+      final (coldResult, coldMessage) = await sendChatMessage(
+        p2pService: coldP2P,
+        messageRepo: FakeMessageRepository(),
+        targetPeerId: 'target-peer',
+        text: 'Cold send',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+      expect(coldResult, SendChatMessageResult.success);
+      expect(coldMessage!.transport, 'direct');
+      final coldDiscoverLocal = coldP2P.discoverLocalPeerCallCount;
+      expect(coldDiscoverLocal, 1, reason: 'cold send pays local discovery');
+
+      // Sticky run: learned == 'direct'. The direct leg is WIN-eligible
+      // immediately and is decisive (isLearnedWin), so direct commits without
+      // ever depending on the local leg — and the learned transport delivers.
+      final stickyP2P = FakeP2PService()
+        ..discoverLocalPeerResult = false
+        ..lastKnownGoodTransportResult = 'direct';
+
+      final (result, message) = await sendChatMessage(
+        p2pService: stickyP2P,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Sticky direct',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.transport, 'direct');
+      expect(stickyP2P.discoverCallCount, 1);
+      expect(stickyP2P.dialCallCount, 1);
+      // Sticky 'direct' wins immediately on the learned leg — the local leg's
+      // win-eligibility is gated, so the learned transport is honored without
+      // burning a SECOND discovery beyond the cold baseline.
+      expect(stickyP2P.discoverCallCount, lessThanOrEqualTo(coldDiscoverLocal));
+    });
+
+    // U2 (write half) — the LIVE transport that delivered is RECORDED so the
+    // next send can be weighted toward it. Proves the memory layer is written
+    // on a successful live (acked) delivery.
+    test('U2 sticky write: a delivered live send records its transport',
+        () async {
+      p2pService = FakeP2PService(sendMessageTransport: 'direct');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Record me',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message!.status, 'delivered');
+      expect(p2pService.recordSuccessfulTransportCallCount, 1);
+      expect(p2pService.lastRecordedTransport, 'direct');
+      expect(p2pService.lastRecordedTransportPeerId, 'target-peer');
+    });
+
+    // U-N2 — sticky NEGATIVE control (a): the learned transport FAILS. The full
+    // race must still run and deliver — the head-start gates win-eligibility
+    // only, never the leg's work, so a dead learned leg can never trap the
+    // send. Here learned == 'direct' but the direct leg fails (discover miss);
+    // the local leg becomes eligible after the head-start and delivers.
+    test('U-N2 sticky neg: learned transport fails → full race still delivers',
+        () async {
+      p2pService = FakeP2PService(useNullDiscover: true) // direct leg fails
+        ..localPeers.add('target-peer') // local can carry it
+        ..lastKnownGoodTransportResult = 'direct';
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Dead learned leg',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // The learned (direct) leg failed; the surviving local leg delivered.
+      expect(message!.transport, 'local');
+      expect(p2pService.localSendCallCount, 1);
+    });
+
+    // U-N2 — sticky NEGATIVE control (b): a fake that reports NO learned
+    // transport (the production behavior for an expired/stale preference, which
+    // returns null) runs the FULL cold race — discover fires exactly once. This
+    // pins that a null/ignored preference does not change the race shape.
+    test('U-N2 sticky neg: absent/expired preference runs the full cold race',
+        () async {
+      p2pService = FakeP2PService(); // lastKnownGoodTransportResult == null
+      expect(p2pService.lastKnownGoodTransport('target-peer'), isNull);
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Stale ignored',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // Full race ran exactly as a cold send would.
+      expect(p2pService.discoverCallCount, 1);
+    });
+
+    // U3 — concurrent durable fallback (happy): a LOW-confidence send (peer not
+    // connected/local AND a recent prior outgoing attempt terminally failed)
+    // fires the inbox copy CONCURRENTLY with the live race. Assert BOTH fired:
+    // the live send (sendCallCount == 1) AND the concurrent inbox
+    // (storeInInboxCallCount == 1). The live send wins the label here.
+    test('U3 concurrent: low-confidence send fires inbox AND live in parallel',
+        () async {
+      p2pService = FakeP2PService(); // direct live send succeeds with ack
+      messageRepo.latestMessageForContact = ConversationMessage(
+        id: 'prior-attempt-id',
+        contactPeerId: 'target-peer',
+        senderPeerId: 'my-peer',
+        text: 'Earlier failed message',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        status: 'failed', // terminal failure → low confidence
+        isIncoming: false,
+        createdAt: DateTime.now()
+            .toUtc()
+            .subtract(const Duration(seconds: 5))
+            .toIso8601String(),
+      );
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Low-confidence retry',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // BOTH paths fired: the concurrent durable copy AND the live send.
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.sendCallCount, 1);
+      // The live race won the transport label (concurrent inbox is a durability
+      // side-effect, not the label).
+      expect(message!.transport, 'direct');
+    });
+
+    // U-N3 — concurrent NEGATIVE control: a HIGH-confidence send (no prior
+    // failed/inbox attempt) does NOT fire the inbox. Proves the change is not a
+    // blanket dual-write of every send (acceptance #5). The live send succeeds
+    // with no inbox call at all.
+    test('U-N3 concurrent neg: high-confidence send does NOT fire inbox',
+        () async {
+      p2pService = FakeP2PService();
+      // No prior attempt → high confidence.
+      expect(messageRepo.latestMessageForContact, isNull);
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'High-confidence send',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'direct');
+      // Strictly single-path: no concurrent inbox.
+      expect(p2pService.storeInInboxCallCount, 0);
+    });
+
+    // U-N3 (gate detail) — a prior attempt that is STALE (older than the 30s
+    // low-confidence window) stays high-confidence: no concurrent inbox. Proves
+    // the recency gate, not merely the presence of a failed prior attempt.
+    test('U-N3 concurrent neg: stale prior failure stays high-confidence',
+        () async {
+      p2pService = FakeP2PService();
+      messageRepo.latestMessageForContact = ConversationMessage(
+        id: 'old-attempt-id',
+        contactPeerId: 'target-peer',
+        senderPeerId: 'my-peer',
+        text: 'Ancient failed message',
+        timestamp: '2020-01-01T00:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        // Well outside kLowConfidenceWindow (30s).
+        createdAt: DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 10))
+            .toIso8601String(),
+      );
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Send after an old failure',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message!.transport, 'direct');
+      // Stale prior failure → still single-path.
+      expect(p2pService.storeInInboxCallCount, 0);
+    });
+
+    // U4 — dedup (happy): the same messageId winning on more than one path
+    // persists exactly ONE outgoing row. Local + direct both succeed for the
+    // same id; only one message is saved.
+    test('U4 dedup: same messageId across paths persists exactly one row',
+        () async {
+      p2pService = FakeP2PService()..localPeers.add('target-peer');
+      const fixedId = 'msg-nr05-dedup-001';
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Dedup one row',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: fixedId,
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(messageRepo.saved, hasLength(1));
+      expect(messageRepo.saved.single.id, fixedId);
+    });
+
+    // U-N4 — dedup NEGATIVE control: two DIFFERENT messageIds persist TWO rows.
+    // Proves the single-row behavior is keyed on identity, not swallowing
+    // distinct messages.
+    test('U-N4 dedup neg: two different messageIds persist two rows', () async {
+      p2pService = FakeP2PService();
+
+      final (r1, m1) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'First distinct',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: 'msg-nr05-distinct-A',
+      );
+      final (r2, m2) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Second distinct',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: 'msg-nr05-distinct-B',
+      );
+
+      expect(r1, SendChatMessageResult.success);
+      expect(r2, SendChatMessageResult.success);
+      expect(messageRepo.saved, hasLength(2));
+      expect(
+        messageRepo.saved.map((m) => m.id),
+        containsAll(<String>['msg-nr05-distinct-A', 'msg-nr05-distinct-B']),
+      );
+      expect(m1!.id, isNot(m2!.id));
+    });
+
+    // U5 — worst-case timeline (offline peer): discover misses, the relay probe
+    // returns NO_RESERVATION (peer offline), so the tail goes STRAIGHT to inbox
+    // and durable custody is taken. Assert the bounded sequential tail: probe
+    // fired once, NO post-probe live send (NO_RESERVATION short-circuits), and
+    // inbox took custody → delivered.
+    test('U5 worst-case: offline peer → NO_RESERVATION → durable inbox custody',
+        () async {
+      p2pService = FakeP2PService(
+        useNullDiscover: true, // direct leg: peer_not_found (relay-eligible)
+        storeInInboxResult: true, // inbox accepts custody
+      );
+      p2pService.probeRelayResult = RelayProbeResult.noReservation;
+
+      final sw = Stopwatch()..start();
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Offline peer durable',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+      sw.stop();
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'inbox');
+      // Probe ran once and detected offline; no post-probe live send fired
+      // (NO_RESERVATION skips the relay send loop straight to inbox).
+      expect(p2pService.probeRelayCallCount, 1);
+      expect(p2pService.sendCallCount, 0);
+      // Inbox took custody exactly once.
+      expect(p2pService.storeInInboxCallCount, 1);
+      // The whole offline path stays comfortably bounded.
+      expect(sw.elapsedMilliseconds, lessThan(2000));
+    });
+
+    // U5 — budget ENFORCEMENT (negative control): a deliberately slow local leg
+    // (overruns the 1500ms interactiveLocalBudget) must be CUT at its budget,
+    // not allowed to run to completion. The fast direct leg carries the
+    // message, and the local timeout is the budget — proving the cutoff fires,
+    // not luck. Patterned after the lastLocalSendTimeoutMs assertion.
+    test('U5 budget: a slow local leg is cut at the local budget', () async {
+      p2pService = FakeP2PService()
+        ..localPeers.add('target-peer')
+        // Local send overruns the 1500ms budget by a wide margin.
+        ..localSendDelay = const Duration(seconds: 5);
+
+      final sw = Stopwatch()..start();
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Slow local cut at budget',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+      sw.stop();
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      // The over-budget local leg lost — direct carried it.
+      expect(message!.transport, 'direct');
+      // The local leg was invoked with the local budget as its timeout
+      // (enforced cutoff), and the overall send did NOT wait out the 5s local
+      // send (it is cut well before that).
+      expect(
+        p2pService.lastLocalSendTimeoutMs,
+        interactiveLocalBudget.inMilliseconds,
+      );
+      expect(sw.elapsedMilliseconds, lessThan(3000));
+    });
+  });
 }
 
 /// P2P service where discover/dial succeed but storeInInbox throws.
@@ -2251,6 +3153,22 @@ class _ThrowOnInboxP2PService implements P2PService {
 
   @override
   bool isLocalPeer(String peerId) => false;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
   Future<bool> sendLocalMessage(
@@ -2357,6 +3275,22 @@ class _ThrowOnSendP2PService implements P2PService {
 
   @override
   bool isLocalPeer(String peerId) => false;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
   Future<bool> sendLocalMessage(
@@ -2469,6 +3403,22 @@ class _FlakyDiscoverP2PService implements P2PService {
   bool isLocalPeer(String peerId) => false;
 
   @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      false;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
+
+  @override
   Future<bool> sendLocalMessage(
     String peerId,
     String message,
@@ -2572,6 +3522,22 @@ class _SlowLocalFastDirectP2PService implements P2PService {
 
   @override
   bool isLocalPeer(String peerId) => true;
+
+  @override
+  String? lastKnownGoodTransport(String peerId) => null;
+
+  @override
+  void recordSuccessfulTransport(String peerId, String transport) {}
+
+  @override
+  Future<bool> discoverLocalPeer(
+    String peerId, {
+    required Duration timeout,
+  }) async =>
+      true;
+
+  @override
+  Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
   Future<bool> sendLocalMessage(
