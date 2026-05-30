@@ -41,10 +41,11 @@ lifetime; true direct connections only occur on the **same LAN** today.
 | NET-REL-04 | [04-transport-observability.md](04-transport-observability.md) | ✅ **Done** (Option A+D; per-leg attempt tracking added) — baseline harvest pending (needs 2 real debug devices) | No aggregate visibility into which transport messages use — every other fix is unmeasurable (foundational) |
 | NET-REL-01 | [01-lan-wifi-reliability.md](01-lan-wifi-reliability.md) | 🔄 **In progress** (build order: P2 TTL → P1 discover-on-send → P3 two-part media) | Same-WiFi/LAN delivery: discovery requires prior discovery, no TTL on peer map, local media transfer dead in prod |
 | NET-REL-05 | [05-send-orchestration.md](05-send-orchestration.md) | ⬜ Not started | 1:1 send-path ladder: sequential relay-probe tail, no grace window, no sticky/learned per-peer transport, inbox as last rung |
-| NET-REL-02 | [02-nat-traversal-dcutr.md](02-nat-traversal-dcutr.md) | 🧾 Evidence accepted; product decision baseline-gated (production mobile DCUtR unproven) | DCUtR hole-punching is observable and relay-only safety is accepted; production mobile relay-to-direct success and routing policy remain gated on a valid baseline harvest |
-| NET-REL-03 | [03-relay-springboard.md](03-relay-springboard.md) | Evidence-gated / deferred (RSD-001 no-proceed; awaits valid baseline harvest) | Relay is a permanent resting state, not a springboard to direct |
+| NET-REL-02 | [02-nat-traversal-dcutr.md](02-nat-traversal-dcutr.md) | 🚫 **Deprioritized (closed on prior, 2026-05-30)** — baseline harvested: cross-network 100% relay, 0 hole-punch attempts; CGNAT prior adverse, probe not run. Reopen only on a non-zero DCUtR feasibility probe (see 02). | DCUtR hole-punching is observable and relay-only safety is accepted; cross-network direct pursuit + the NET-REL-03 build are closed on the measured baseline + adverse-NAT prior |
+| NET-REL-03 | [03-relay-springboard.md](03-relay-springboard.md) | 🚫 **Deprioritized (closed on prior, 2026-05-30)** — baseline harvested; do NOT build the springboard ladder. Gap analysis retained. | Relay is a permanent resting state, not a springboard to direct |
 | NET-REL-06 | [06-test-and-simulation-strategy.md](06-test-and-simulation-strategy.md) | 📋 Doctrine (applies to all) | **Cross-cutting test doctrine:** harness inventory, the negative-control principle, transport-proof primitives, happy/unhappy taxonomy, what to build. How we prove success without false results. |
 | NET-REL-07 | [07-relay-backward-compatibility.md](07-relay-backward-compatibility.md) | 📋 Constraint (binding) | **Binding constraint:** the relay is a single shared host hard-coded into shipped apps with no version negotiation — a breaking change hits all un-updated users instantly. SAFE vs BREAKING change taxonomy; additive-only + multi-relay-migration rules. |
+| NET-REL-08 | [08-relay-path-quality.md](08-relay-path-quality.md) | 📋 **Proposed (scoping)**; justified by baseline — relay is the cross-network lever (~100% relay @ ~1.1s). Measurement-first, additive-only per NET-REL-07. | Cross-network rests on relay; scope relay-path latency/reliability. Realizes NET-REL-02 Option C; supersedes the deprioritized NET-REL-03. |
 
 ## Dependency graph
 
@@ -53,11 +54,13 @@ NET-REL-06 (test/sim doctrine) ── underpins validation of ALL workstreams
 NET-REL-04 (observability)     ── foundational; gates measuring all others
         │
         ├── NET-REL-01 (LAN reliability)      ── independent win, lowest risk
-        ├── NET-REL-02 (NAT traversal/DCUtR)  ── feasibility gate for NET-REL-03
+        ├── NET-REL-02 (NAT traversal/DCUtR)  ── CLOSED on prior (deprioritized 2026-05-30)
         │        │
-        │        └── NET-REL-03 (relay springboard) ── depends on NET-REL-02 outcome
+        │        └── NET-REL-03 (relay springboard) ── CLOSED on prior (do not build)
         │
-        └── NET-REL-05 (send orchestration)   ── ties LAN + relay + inbox into one UX
+        ├── NET-REL-05 (send orchestration)   ── ties LAN + relay + inbox into one UX
+        │
+        └── NET-REL-08 (relay-path quality)   ── cross-network lever after 02/03 closed; additive-only (NET-REL-07)
 ```
 
 **Testing doctrine (NET-REL-06):** every per-doc Test Plan is grounded in the
@@ -99,6 +102,16 @@ or Go `conn.Stat().Limited == true/false`), never the set.
 
 ## Changelog
 
+- **2026-05-30 — NET-REL-02/03 deprioritized (closed on prior); NET-REL-08 scoped.**
+  Baseline gate (real-device, N=50/condition, cold-start): cross-network 100% relay,
+  0 hole-punch attempts, 0 relay→direct upgrades, relay ≈3.8× same-network (1114 vs
+  297ms median). The DCUtR feasibility probe was NOT run (≈0% expected under cellular
+  CGNAT). Closed: cross-network direct pursuit (NET-REL-02) + the NET-REL-03 springboard
+  build. Reopen only if a future probe (experimentally relax `ForceReachabilityPrivate`
+  on two real devices cross-network, N≥50) shows non-zero relay→direct success.
+  Cross-network energy → **NET-REL-08 (relay-path quality)**, now justified-by-baseline
+  (not gated). Device-validation runbooks added for NET-REL-01 I3 + NET-REL-05 E2
+  (`Test-Flight-Improv/`).
 - **2026-05-30 — NET-REL-03 RSD-001 no-proceed decision recorded.**
   The relay-springboard evidence gate found physical devices available but no
   copied real-device, discovery-enabled, debug-mode 1:1 `baselineReport()` or
