@@ -1,7 +1,10 @@
 # Relay as Springboard, Not Resting State — Problem & Tracking Doc
 
 Prepared on: 2026-05-29
-Status: Evidence-gated; implementation deferred pending a valid NET-REL-02/04 baseline harvest
+Status: **Deprioritized (closed on prior, 2026-05-30)** — baseline harvested;
+decision = do NOT build the relay-springboard ladder. Gap analysis + relay
+state-machine mapping retained for future reference (see RSD-001 below and the
+reopen condition in `02-nat-traversal-dcutr.md`).
 Tracking ID: NET-REL-03
 
 ## Executive Summary
@@ -45,10 +48,17 @@ real-device, discovery-enabled, debug-mode, 1:1-focused `baselineReport()` or
 filled decision-gate artifact with the required transport counts,
 hole-punch counts, relay-to-direct upgrade count, and cross-network metadata.
 
-Decision: do not proceed to NET-REL-03 relay springboard implementation yet.
-RSD-002/RSD-003 remain prerequisite-blocked. The next safe action is to capture
-a valid NET-REL-04 baseline harvest, then revisit whether cross-network 1:1
-relay-to-direct escalation is justified.
+Decision (updated 2026-05-30, post-harvest): the NET-REL-04 baseline has now been
+harvested (real-device, N=50/condition, cold-start). Cross-network is **100%
+relay, 0 hole-punch attempts, 0 relay→direct upgrades**, relay ≈ 3.8×
+same-network latency (1114 vs 297 ms median; see "Baseline Gate Decision" in
+`02-nat-traversal-dcutr.md`). On that measured baseline plus the adverse CGNAT
+prior, the decision is final: **do NOT build the NET-REL-03 relay-springboard
+ladder** — it is **deprioritized on the prior** (not proven impossible).
+RSD-002/RSD-003 are closed as prerequisite-moot. The gap analysis and relay
+state-machine mapping below are **retained for future reference** should the
+reopen condition (in `02-nat-traversal-dcutr.md`) later be met. Cross-network
+energy goes to **NET-REL-08 (relay-path quality)**.
 
 ## Document Basis
 

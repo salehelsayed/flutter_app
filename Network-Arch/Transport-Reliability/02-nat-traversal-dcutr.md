@@ -1,9 +1,12 @@
 # NAT Traversal & DCUtR Hole-Punching — Problem & Tracking Doc
 
 Prepared on: 2026-05-29
-Status: Evidence accepted; product decision baseline-gated (Go tracer, Dart
-aggregate diagnostics, and relay-only/no-upgrade evidence present; production
-reachability unchanged; production mobile DCUtR unproven)
+Status: **Deprioritized (closed on prior, 2026-05-30)** — baseline harvested:
+cross-network is 100% relay and *working*, with 0 hole-punch attempts; the CGNAT
+prior is adverse and the DCUtR feasibility probe was deliberately **NOT** run.
+Evidence (Go tracer, Dart aggregate diagnostics, relay-only/no-upgrade) remains
+accepted; production reachability unchanged. See **Baseline Gate Decision** below
+for the exact closed scope and the reopen condition.
 Tracking ID: NET-REL-02
 
 ## Executive Summary
@@ -45,6 +48,49 @@ envelope precisely so we can decide whether chasing DCUtR is worth it, or
 whether effort belongs in LAN (NET-REL-01) and relay quality instead.
 
 go-libp2p version in use: **v0.39.1** (`go-mknoon/go.mod`).
+
+## Baseline Gate Decision (2026-05-30) — Deprioritized (closed on prior)
+
+The baseline gate is decided: **deprioritize/close the cross-network direct
+pursuit (NET-REL-02) and the NET-REL-03 springboard BUILD**, on the measured
+baseline plus the adverse CGNAT prior. We are **NOT** running the DCUtR
+feasibility probe (expected ≈0% relay→direct success under cellular CGNAT; low
+payoff versus the NET-REL-08 relay-path-quality lever). This is a
+deprioritization **with a reopen condition** — *not* a claim that DCUtR is
+impossible.
+
+### Gate evidence (real-device run, 2026-05-30; N=50/condition, cold-start, sender-vantage)
+- **Same-network cold:** 100% non-relay, 0 relay / 0 inbox / 0 failed. *Caveat:*
+  the receiver was a Go test-peer with no `LocalWsServer`, so "direct" here =
+  libp2p-direct-over-LAN, **not** the app's wifi/WS path.
+- **Cross-network cold:** 100% relay, 0 direct, 0 inbox, 0 failed, **0 hole-punch
+  attempts, 0 relay→direct upgrades**. Relay ≈ **3.8×** same-network latency
+  (1114 vs 297 ms median; 1508 vs 393 ms p95).
+- **Gate-rule reading:** cross-network direct delivered **0%** AND never
+  failed-when-tried — *because it was never attempted* (0 hole-punch). This
+  CONFIRMS "stuck on relay is real"; it does **NOT** prove "DCUtR can't help." We
+  close on the prior anyway.
+
+### What is closed
+- **Cross-network direct pursuit (NET-REL-02):** no production reachability
+  change, no `ForceReachabilityPrivate` relaxation, no DCUtR escape-hatch build.
+- **The NET-REL-03 relay-springboard upgrade ladder BUILD** (see RSD-001 in
+  `03-relay-springboard.md`): do not build it.
+- The instrumentation/feasibility evidence (Go hole-punch tracer, negative
+  controls) is **retained** for future reference — we are closing the *pursuit*,
+  not deleting the *observability*.
+
+### Where the cross-network energy goes instead
+The relay path is **100% of cross-network traffic at ~1.1 s median**, so its
+latency/reliability is the highest-leverage cross-network lever. Effort moves to
+**NET-REL-08 (relay-path quality)** (`08-relay-path-quality.md`).
+
+### REOPEN CONDITION (explicit)
+Reopen NET-REL-02 / NET-REL-03 **only if** a future DCUtR feasibility probe —
+experimentally relax `ForceReachabilityPrivate` on two real devices
+cross-network and measure relay→direct success over **N ≥ 50** — shows **non-zero
+success** (especially on a WiFi / cone-NAT pair). Until then, cross-network
+energy goes to NET-REL-08 (relay-path quality).
 
 ## Document Basis
 
