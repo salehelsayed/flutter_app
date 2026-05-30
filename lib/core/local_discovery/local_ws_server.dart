@@ -25,6 +25,12 @@ class LocalWsServer {
   static const int _maxInboundConnections = 10;
   static const Duration _ackTimeout = Duration(seconds: 5);
 
+  /// Fast connect cap so a stale host:port fails quickly instead of burning
+  /// the caller's full local send budget (1500ms). Paired with the discovery
+  /// TTL: a since-departed peer's WS connect aborts inside the budget, leaving
+  /// the parallel direct leg to carry the message.
+  static const Duration _connectTimeout = Duration(milliseconds: 800);
+
   final Duration idleTimeout;
 
   HttpServer? _server;
@@ -406,9 +412,14 @@ class LocalWsServer {
     // Clean up stale entry if present.
     _removeFromPool(peerId);
 
+    // Cap the connect at the fast _connectTimeout (800ms) so a stale host:port
+    // fails quickly; never exceed the caller's remaining budget if it is
+    // already tighter than the cap.
+    final budget = connectTimeout ?? const Duration(seconds: 5);
+    final connectDeadline = budget < _connectTimeout ? budget : _connectTimeout;
     final ws = await WebSocket.connect(
       'ws://$host:$port',
-    ).timeout(connectTimeout ?? const Duration(seconds: 5));
+    ).timeout(connectDeadline);
 
     // Create a broadcast stream so multiple sends can each listen for acks
     // without hitting the single-subscription limitation of WebSocket streams.

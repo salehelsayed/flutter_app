@@ -47,10 +47,49 @@ class FakeLocalDiscoveryService implements LocalDiscoveryService {
   Map<String, LocalPeer> get discoveredPeers => Map.unmodifiable(_peers);
 
   @override
-  bool isLocalPeer(String peerId) => _peers.containsKey(peerId);
+  bool isLocalPeer(String peerId) => getLocalPeer(peerId) != null;
 
   @override
-  LocalPeer? getLocalPeer(String peerId) => _peers[peerId];
+  LocalPeer? getLocalPeer(String peerId) {
+    final p = _peers[peerId];
+    if (p == null) return null;
+    // Mirror the production freshness filter so the fake exercises the same
+    // stale-skip behaviour the send-path race relies on.
+    if (p.isStale(DateTime.now().toUtc())) {
+      _peers.remove(peerId);
+      _peersController.add(Map.unmodifiable(_peers));
+      return null;
+    }
+    return p;
+  }
+
+  /// When set, [resolvePeer] adds this peer (flipping [isLocalPeer] -> true)
+  /// after [resolveDelay] to simulate discover-on-send. Cleared after use.
+  LocalPeer? resolvesTo;
+  Duration resolveDelay = Duration.zero;
+  int resolvePeerCallCount = 0;
+
+  @override
+  Future<LocalPeer?> resolvePeer(
+    String peerId, {
+    required Duration timeout,
+  }) async {
+    resolvePeerCallCount++;
+    // Fast path: already fresh in the map.
+    final fresh = getLocalPeer(peerId);
+    if (fresh != null) return fresh;
+
+    final pending = resolvesTo;
+    if (pending == null) return null;
+    resolvesTo = null;
+
+    final completer = Completer<LocalPeer?>();
+    Timer(resolveDelay, () {
+      addPeer(pending);
+      if (!completer.isCompleted) completer.complete(pending);
+    });
+    return completer.future.timeout(timeout, onTimeout: () => null);
+  }
 
   @override
   void dispose() {

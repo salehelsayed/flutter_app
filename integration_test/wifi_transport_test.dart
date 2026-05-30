@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -681,6 +682,144 @@ void main() {
       serverB.dispose();
       await tempA.delete(recursive: true);
       await tempB.delete(recursive: true);
+    }
+  });
+
+  // =========================================================================
+  // F11: WiFi media production-wiring variant (I1)
+  //
+  // F10 asserts the *temp* localPath only. F11 drives the full production
+  // receive chain: mediaReadyStream -> persistMedia (temp -> persistent media
+  // dir keyed by sender peerId), mirroring lib/main.dart's
+  // incomingLocalMediaStream consumer, and verifies SHA-256 on the *persisted*
+  // file plus that the temp copy is gone. This is the half that protects the
+  // file from the 5-min pendingTtl GC, which is what production depends on.
+  // =========================================================================
+
+  testWidgets('F11: WiFi media production-wiring (persist + SHA-256)', (
+    tester,
+  ) async {
+    debugPrint('\n========================================');
+    debugPrint('F11: WiFi media production-wiring');
+    debugPrint('========================================\n');
+
+    final tempA = await Directory.systemTemp.createTemp('wifi_media_pw_a_');
+    final tempB = await Directory.systemTemp.createTemp('wifi_media_pw_b_');
+    final serverA = LocalWsServer();
+    final serverB = LocalWsServer();
+    final mediaServerB = LocalMediaServer(
+      tempDir: '${tempB.path}/local_media_tmp',
+      mediaDir: '${tempB.path}/local_media',
+    );
+    serverB.configureMediaServer(mediaServerB);
+
+    try {
+      final portA = await serverA.start();
+      final portB = await serverB.start();
+      debugPrint('[TEST] Server A on port $portA, Server B on port $portB');
+
+      final bytes = List<int>.generate(8192, (i) => (i * 7) % 256);
+      final file = File('${tempA.path}/photo.jpg');
+      await file.writeAsBytes(bytes);
+      final expectedHash = sha256.convert(bytes).toString();
+
+      // Production-wiring consumer: persist on mediaReady (as main.dart does).
+      final persistedPaths = <String>[];
+      final sub = serverB.mediaReadyStream!.listen((media) async {
+        final persisted = await mediaServerB.persistMedia(media.id, media.from);
+        if (persisted != null) persistedPaths.add(persisted);
+      });
+
+      final sent = await serverA.sendMedia(
+        host: 'localhost',
+        port: portB,
+        toPeerId: peerB,
+        filePath: file.path,
+        mediaId: 'wifi-media-pw-001',
+        mime: 'image/jpeg',
+        fromPeerId: peerA,
+      );
+      expect(sent, isTrue, reason: 'Media send should succeed');
+
+      await Future.delayed(const Duration(milliseconds: 300));
+      expect(persistedPaths, hasLength(1), reason: 'persisted exactly once');
+      final persistedPath = persistedPaths.first;
+      expect(
+        persistedPath.startsWith('${tempB.path}/local_media/$peerA'),
+        isTrue,
+        reason: 'persisted under mediaDir/<fromPeerId>',
+      );
+
+      final persistedFile = File(persistedPath);
+      expect(await persistedFile.exists(), isTrue);
+      final persistedHash =
+          sha256.convert(await persistedFile.readAsBytes()).toString();
+      expect(persistedHash, expectedHash);
+
+      // Temp copy must be gone after the rename.
+      final tempCopy = File(
+        '${tempB.path}/local_media_tmp/wifi-media-pw-001.jpg',
+      );
+      expect(await tempCopy.exists(), isFalse);
+
+      debugPrint('[TEST] F11 PASS: media persisted to media dir, hash verified');
+
+      await sub.cancel();
+    } finally {
+      serverA.dispose();
+      serverB.dispose();
+      await tempA.delete(recursive: true);
+      await tempB.delete(recursive: true);
+    }
+  });
+
+  // =========================================================================
+  // F12: WiFi stale host:port connect-fast (I2)
+  //
+  // A since-departed peer's host:port must fail near LocalWsServer's
+  // _connectTimeout (800ms) rather than burning the full 1500ms local budget,
+  // leaving the parallel direct leg to carry the message. Pairs with the
+  // discovery TTL (U-P2-ttl).
+  // =========================================================================
+
+  testWidgets('F12: WiFi stale host:port fails fast within connect cap', (
+    tester,
+  ) async {
+    debugPrint('\n========================================');
+    debugPrint('F12: WiFi stale host:port connect-fast');
+    debugPrint('========================================\n');
+
+    final serverA = LocalWsServer();
+    try {
+      await serverA.start();
+
+      // TEST-NET-1 reserved address — connect hangs/refuses, exercising the cap.
+      final sw = Stopwatch()..start();
+      final sent = await serverA.sendMessage(
+        '192.0.2.1',
+        54321,
+        'to a stale peer',
+        peerA,
+        peerB,
+        timeoutMs: 1500,
+      );
+      sw.stop();
+
+      expect(sent, isFalse, reason: 'stale host:port must fail');
+      expect(
+        sw.elapsedMilliseconds,
+        lessThan(1400),
+        reason:
+            'connect must abort near _connectTimeout (800ms), not burn the '
+            'full 1500ms budget; took ${sw.elapsedMilliseconds}ms',
+      );
+
+      debugPrint(
+        '[TEST] F12 PASS: stale connect failed fast in '
+        '${sw.elapsedMilliseconds}ms',
+      );
+    } finally {
+      serverA.dispose();
     }
   });
 }

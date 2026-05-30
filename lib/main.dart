@@ -184,11 +184,13 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository_impl.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/disabled_local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -1374,6 +1376,20 @@ void main() async {
       ? DisabledLocalDiscoveryService()
       : BonsoirDiscoveryService();
   final localWsServer = LocalWsServer();
+  // NET-REL-01 P3: wire the receive-side media server in production so inbound
+  // local PUT /media/<id> is accepted (token-auth + declared-size + streaming
+  // SHA-256). Gated by the same flag that selects real vs disabled discovery so
+  // test builds stay media-server-free. Dedicated subdirs avoid colliding with
+  // relay-CDN media storage.
+  final LocalMediaServer? localMediaServer = kDisableLocalDiscovery
+      ? null
+      : LocalMediaServer(
+          tempDir: '${appDocDir.path}/local_media_tmp',
+          mediaDir: '${appDocDir.path}/local_media',
+        );
+  if (localMediaServer != null) {
+    localWsServer.configureMediaServer(localMediaServer);
+  }
   final localP2PService = LocalP2PService(
     discovery: localDiscovery,
     wsServer: localWsServer,
@@ -1381,12 +1397,16 @@ void main() async {
   late final ChatMessageListener chatMessageListener;
   late final IntroductionListener introductionListener;
 
+  // NET-REL-04: session-scoped, aggregate-only transport diagnostics.
+  final transportMetrics = TransportMetrics();
+
   // Create P2P service (uses the same bridge + local P2P)
   final p2pService = P2PServiceImpl(
     bridge: bridge,
     localP2PService: localP2PService,
     pushTokenStore: pushTokenStore,
     inboxStagingRepository: inboxStagingRepository,
+    transportMetrics: transportMetrics,
     replayRecoveredInboxChatMessage: (message) async {
       var outcome = await chatMessageListener.processIncomingMessage(
         message,
@@ -1602,6 +1622,56 @@ void main() async {
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
   );
+
+  // NET-REL-01 P3: bridge inbound local-WiFi media into the attachment
+  // pipeline. The bytes arrive over the local media server; the matching
+  // attachment row (keyed by media.id) is already inserted by the text-envelope
+  // receive path (handle_incoming_chat_message_use_case) in 'pending' status.
+  // We move temp->persistent (otherwise the 5-min pendingTtl GC reclaims it)
+  // and point the attachment's local path at the persisted file. Guarded by the
+  // same flag that constructed the media server. Dedupe vs the relay-CDN
+  // fallback: only act while the attachment is still a pending download; if the
+  // relay path already completed it ('done'), skip so we don't clobber it.
+  if (localMediaServer != null) {
+    p2pService.incomingLocalMediaStream.listen((media) async {
+      try {
+        final pending = await mediaAttachmentRepository.getPendingDownloads();
+        final stillPending = pending.any((a) => a.id == media.id);
+        if (!stillPending) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'LOCAL_MEDIA_RECEIVE_SKIP_NOT_PENDING',
+            details: {'id': media.id},
+          );
+          return;
+        }
+        final persistedPath = await localMediaServer.persistMedia(
+          media.id,
+          media.from,
+        );
+        if (persistedPath == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'LOCAL_MEDIA_RECEIVE_PERSIST_FAILED',
+            details: {'id': media.id},
+          );
+          return;
+        }
+        await mediaAttachmentRepository.updateLocalPath(media.id, persistedPath);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MEDIA_RECEIVE_ATTACHMENT_LINKED',
+          details: {'id': media.id, 'path': persistedPath},
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MEDIA_RECEIVE_ERROR',
+          details: {'id': media.id, 'error': e.toString()},
+        );
+      }
+    });
+  }
 
   final postListener = PostListener(
     postCreateStream: messageRouter.postCreateStream,
@@ -2088,6 +2158,7 @@ void main() async {
       keyExchangeRetrier: keyExchangeRetrier,
       bridge: bridge,
       p2pService: p2pService,
+      transportMetrics: transportMetrics,
       mediaFileManager: mediaFileManager,
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
@@ -2167,6 +2238,7 @@ void main() async {
                   reactionListener: reactionListener,
                   introductionRepository: introductionRepository,
                   appShellController: appShellController,
+                  transportMetrics: transportMetrics,
                 ),
               ),
             ),
@@ -2238,6 +2310,7 @@ class MyApp extends StatefulWidget {
   final KeyExchangeRetrier keyExchangeRetrier;
   final Bridge bridge;
   final P2PServiceImpl p2pService;
+  final TransportMetrics? transportMetrics;
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
@@ -2300,6 +2373,7 @@ class MyApp extends StatefulWidget {
     required this.keyExchangeRetrier,
     required this.bridge,
     required this.p2pService,
+    this.transportMetrics,
     required this.mediaFileManager,
     required this.secureKeyStore,
     required this.imageProcessor,
@@ -2831,6 +2905,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           introductionRepository: widget.introductionRepository,
           appShellController: widget.appShellController,
           notificationTappedAt: notificationTappedAt,
+          transportMetrics: widget.transportMetrics,
         ),
       ),
     );
@@ -3170,6 +3245,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         chatMessageListener: widget.chatMessageListener,
         bridge: widget.bridge,
         p2pService: widget.p2pService,
+        transportMetrics: widget.transportMetrics,
         mediaFileManager: widget.mediaFileManager,
         secureKeyStore: widget.secureKeyStore,
         imageProcessor: widget.imageProcessor,
