@@ -39,13 +39,24 @@ lifetime; true direct connections only occur on the **same LAN** today.
 | ID | Document | Status | Problem |
 |----|----------|--------|---------|
 | NET-REL-04 | [04-transport-observability.md](04-transport-observability.md) | ✅ **Done** (Option A+D; per-leg attempt tracking) — **baseline harvested** (real-device, 2026-05-30: cross-network 100% relay @ ~1.1s) | No aggregate visibility into which transport messages use — every other fix is unmeasurable (foundational) |
-| NET-REL-01 | [01-lan-wifi-reliability.md](01-lan-wifi-reliability.md) | ✅ **Code-complete, host-green** (P2 TTL, P1 discover-on-send, P3 media, P4 telemetry) — **device proof pending** (I3, see `Test-Flight-Improv/NET-REL-01-I3-...`) | Same-WiFi/LAN delivery: discovery requires prior discovery, no TTL on peer map, local media transfer dead in prod |
-| NET-REL-05 | [05-send-orchestration.md](05-send-orchestration.md) | ✅ **Code-complete, host-green** (sticky transport, grace window, concurrent durable fallback, relay 2→1) — **wire/device proof pending** (E2 + offline sizing, see `Test-Flight-Improv/NET-REL-05-E2-...`) | 1:1 send-path ladder: sequential relay-probe tail, no grace window, no sticky/learned per-peer transport, inbox as last rung |
+| NET-REL-01 | [01-lan-wifi-reliability.md](01-lan-wifi-reliability.md) | ✅ **Validated** (2026-05-31) — I3 on real iPhone 13 + Pixel 6 (real WiFi + relay): happy same-WiFi path-pinned `local`/`wifi` (sent `via:local`, received `transport:wifi` via real `LOCAL_WS_MESSAGE_RECEIVED`), **0 relay**; negative control (LAN blocked) → `via:relay`, pinned. Nuance: libp2p-direct-over-LAN co-serves/wins *warm* sends — LAN-beats-relay proven, not exclusively the wifi/WS path. | Same-WiFi/LAN delivery: discovery requires prior discovery, no TTL on peer map, local media transfer dead in prod |
+| NET-REL-05 | [05-send-orchestration.md](05-send-orchestration.md) | ✅ **Validated** (2026-05-31) — concurrent durable fallback proven on real wire (E2-A inbox-saves 30/30, path-pinned, NC-1 paired; E2-B offline custody median **176ms** / p95 **845ms**, real Pixel). Sticky/grace/relay-2→1 host-green/mutation-tested. **Residual:** real-wire live-wins unmeasured (sim 1/1) — gated on a device-compatible orchestrator handshake (backlog). | 1:1 send-path ladder: sequential relay-probe tail, no grace window, no sticky/learned per-peer transport, inbox as last rung |
 | NET-REL-02 | [02-nat-traversal-dcutr.md](02-nat-traversal-dcutr.md) | 🚫 **Deprioritized (closed on prior, 2026-05-30)** — baseline harvested: cross-network 100% relay, 0 hole-punch attempts; CGNAT prior adverse, probe not run. Reopen only on a non-zero DCUtR feasibility probe (see 02). | DCUtR hole-punching is observable and relay-only safety is accepted; cross-network direct pursuit + the NET-REL-03 build are closed on the measured baseline + adverse-NAT prior |
 | NET-REL-03 | [03-relay-springboard.md](03-relay-springboard.md) | 🚫 **Deprioritized (closed on prior, 2026-05-30)** — baseline harvested; do NOT build the springboard ladder. Gap analysis retained. | Relay is a permanent resting state, not a springboard to direct |
 | NET-REL-06 | [06-test-and-simulation-strategy.md](06-test-and-simulation-strategy.md) | 📋 Doctrine (applies to all) | **Cross-cutting test doctrine:** harness inventory, the negative-control principle, transport-proof primitives, happy/unhappy taxonomy, what to build. How we prove success without false results. |
 | NET-REL-07 | [07-relay-backward-compatibility.md](07-relay-backward-compatibility.md) | 📋 Constraint (binding) | **Binding constraint:** the relay is a single shared host hard-coded into shipped apps with no version negotiation — a breaking change hits all un-updated users instantly. SAFE vs BREAKING change taxonomy; additive-only + multi-relay-migration rules. |
 | NET-REL-08 | [08-relay-path-quality.md](08-relay-path-quality.md) | 📋 **Proposed (scoping)**; justified by baseline — relay is the cross-network lever (~100% relay @ ~1.1s). Measurement-first, additive-only per NET-REL-07. | Cross-network rests on relay; scope relay-path latency/reliability. Realizes NET-REL-02 Option C; supersedes the deprioritized NET-REL-03. |
+
+## Device-validation phase — ✅ COMPLETE (2026-05-31)
+
+Both device proofs passed on real hardware. Artifacts:
+- **Schedule:** [`Test-Flight-Improv/device-run-schedule.md`](../../Test-Flight-Improv/device-run-schedule.md)
+- **NET-REL-01 I3:** `Test-Flight-Improv/NET-REL-01-I3-lan-pinning-device-runbook.md` §8b — ✅ pass (iPhone 13 + Pixel 6).
+- **NET-REL-05 E2:** `Test-Flight-Improv/NET-REL-05-E2-concurrent-fallback-device-runbook.md` §8b — ✅ pass (Pixel + relay).
+
+**Transport-reliability v1 is fully validated/closed:** 04 done · 01 validated · 05 validated · 02/03 closed on prior.
+Open backlog (non-blocking): real-wire live-wins (device-compatible orchestrator handshake). Next workstream:
+NET-REL-08 (relay-path quality), gated on the 2nd-relay ops decision.
 
 ## Dependency graph
 
@@ -102,6 +113,25 @@ or Go `conn.Stat().Limited == true/false`), never the set.
 
 ## Changelog
 
+- **2026-05-31 — NET-REL-01 I3 validated on real devices; device-validation phase COMPLETE.**
+  I3 on iPhone 13 + Pixel 6 (real WiFi + relay). Happy same-WiFi: path-pinned `local`/`wifi` — Pixel
+  sent `via:local` ×3, received `transport:wifi` via real `LOCAL_WS_MESSAGE_RECEIVED`; warm sends rode
+  libp2p-direct-over-LAN; **0 relay**. Negative control (Android LAN blocked → cellular):
+  `local_not_discovered` → `via:relay`, pinned. Nuance recorded: libp2p-direct-over-LAN co-serves and
+  wins warm sends, so LAN-beats-relay is proven but isn't *exclusively* the wifi/WS transport. Results
+  in I3 runbook §8b (commit `342086df`). NET-REL-01 → validated. **Transport-reliability v1 fully
+  validated/closed** (04 done · 01 ✅ · 05 ✅ · 02/03 closed). Next: NET-REL-08, gated on the 2nd-relay
+  ops decision.
+- **2026-05-31 — NET-REL-05 E2 validated on real device.** E2-A per-id concurrent-fallback
+  correlation (`BEGIN(id)+CUSTODY(id)`, `via=='inbox'`, path-pinned) held **30/30** on real Pixel +
+  relay; **NC-1** negative control holds (high-confidence → `firedConcurrentInbox=false`, so the
+  concurrent arm is proven not always-on); **NC-2** holds (two ids → two messages). **E2-B** sized
+  the offline tail at **median 176ms / p95 845ms** (real device, N=30; absolute baseline — no
+  pre-feature sequential number was captured). Fidelity split (explicit): E2-A correlation + E2-B
+  latency = real device; NC-1/NC-2/live-wins = simulator (logic controls). **Residual:** real-wire
+  live-wins unmeasured (sim 1/1) — needs a device-compatible orchestrator handshake (adb push/pull
+  or relay-based) to exercise the CLI-peer path on the Pixel; backlogged, not blocking. Results in
+  E2 runbook §8b (commit `64a2595c`). NET-REL-05 → validated.
 - **2026-05-30 — NET-REL-02/03 deprioritized (closed on prior); NET-REL-08 scoped.**
   Baseline gate (real-device, N=50/condition, cold-start): cross-network 100% relay,
   0 hole-punch attempts, 0 relay→direct upgrades, relay ≈3.8× same-network (1114 vs
