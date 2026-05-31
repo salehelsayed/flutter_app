@@ -554,7 +554,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
-      details: {'targetPeerId': targetPrefix},
+      details: {
+        'id': resolvedMessageId.substring(0, 8),
+        'targetPeerId': targetPrefix,
+      },
     );
     concurrentInbox = p2pService
         .storeInInbox(
@@ -872,7 +875,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY',
-        details: {'reason': failureReason},
+        details: {
+          'id': resolvedMessageId.substring(0, 8),
+          'reason': failureReason,
+        },
       );
       return persistInboxDelivered(recordInboxAttempt: false);
     }
@@ -884,6 +890,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       targetPeerId,
       jsonString,
       failureReason: failureReason,
+      messageId: resolvedMessageId,
     );
     transportMetrics?.recordAttempt(
       leg: 'relay_probe',
@@ -1359,6 +1366,7 @@ Future<_RaceResult> _tryRelayProbeSend(
   String targetPeerId,
   String jsonString, {
   required String failureReason,
+  required String messageId,
 }) async {
   final relayProbeStopwatch = Stopwatch()..start();
   emitFlowEvent(
@@ -1388,7 +1396,7 @@ Future<_RaceResult> _tryRelayProbeSend(
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_RELAY_PROBE_CONNECTED',
-        details: {},
+        details: {'id': messageId.substring(0, 8)},
       );
       try {
         final dialed = await p2pService.dialPeer(

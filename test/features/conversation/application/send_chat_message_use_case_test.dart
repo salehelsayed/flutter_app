@@ -2965,6 +2965,106 @@ void main() {
       expect(message!.transport, 'direct');
     });
 
+    // NET-REL-05 E2 correlation: the send-path FLOW events the device runbook
+    // correlates by messageId ("live attempt AND inbox store fired") previously
+    // omitted the id. These pin that BEGIN / CUSTODY / RELAY_PROBE_CONNECTED now
+    // carry it. Mutation: drop the 'id' from any of the three events → the
+    // matching expectation goes RED.
+    group('E2 correlation: send-path FLOW events carry the message id', () {
+      ConversationMessage priorFailedAttempt() => ConversationMessage(
+            id: 'prior-attempt-id',
+            contactPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            text: 'Earlier failed message',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            status: 'failed', // terminal failure → low confidence
+            isIncoming: false,
+            createdAt: DateTime.now()
+                .toUtc()
+                .subtract(const Duration(seconds: 5))
+                .toIso8601String(),
+          );
+
+      Map<String, dynamic>? detailsOf(
+        List<Map<String, dynamic>> events,
+        String name,
+      ) {
+        for (final e in events) {
+          if (e['event'] == name) {
+            return e['details'] as Map<String, dynamic>;
+          }
+        }
+        return null;
+      }
+
+      test('BEGIN + CUSTODY carry the id (low-confidence, inbox takes custody)',
+          () async {
+        final p2p = FakeP2PService(
+          sendMessageResult: false, // live race fails
+          storeInInboxResult: true, // concurrent inbox takes custody
+        );
+        final repo = FakeMessageRepository();
+        repo.latestMessageForContact = priorFailedAttempt();
+
+        late ConversationMessage sent;
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2p,
+            messageRepo: repo,
+            targetPeerId: 'target-peer',
+            text: 'low-confidence retry',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+          expect(result, SendChatMessageResult.success);
+          sent = message!;
+        });
+
+        final idPrefix = sent.id.substring(0, 8);
+        final begin = detailsOf(events, 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN');
+        final custody =
+            detailsOf(events, 'CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY');
+        expect(begin, isNotNull,
+            reason: 'low-confidence send must fire the inbox arm');
+        expect(custody, isNotNull,
+            reason: 'inbox must take custody when the live race fails');
+        expect(begin!['id'], idPrefix);
+        expect(custody!['id'], idPrefix);
+      });
+
+      test('RELAY_PROBE_CONNECTED carries the id (relay-probe recovery)',
+          () async {
+        // useNullDiscover → the live race fails with peer_not_found, which makes
+        // the relay probe eligible (mirrors the Phase 3 relay-probe tests).
+        final p2p = FakeP2PService(
+          useNullDiscover: true,
+          sendMessageTransport: 'relay',
+        );
+        p2p.probeRelayResult = RelayProbeResult.connected;
+        final repo = FakeMessageRepository();
+
+        late ConversationMessage sent;
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2p,
+            messageRepo: repo,
+            targetPeerId: 'target-peer',
+            text: 'relay probe recovery',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+          expect(result, SendChatMessageResult.success);
+          sent = message!;
+        });
+
+        final connected =
+            detailsOf(events, 'CHAT_MSG_SEND_RELAY_PROBE_CONNECTED');
+        expect(connected, isNotNull,
+            reason: 'relay probe must run on a peer_not_found live race');
+        expect(connected!['id'], sent.id.substring(0, 8));
+      });
+    });
+
     // U-N3 — concurrent NEGATIVE control: a HIGH-confidence send (no prior
     // failed/inbox attempt) does NOT fire the inbox. Proves the change is not a
     // blanket dual-write of every send (acceptance #5). The live send succeeds
