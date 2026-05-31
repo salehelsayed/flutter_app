@@ -504,8 +504,11 @@ class TestPeer {
 
   /// Starts the node and waits for relay + circuit address.
   Future<void> startNode() async {
-    await commandOk('start');
-    _log('NODE', 'started, waiting for relay...');
+    // autoConfirmDirectAck: the peer confirms direct-ack nonces automatically so
+    // the Flutter sender's direct-confirm does not time out (which would falsely
+    // push live-capable sends to inbox — breaks NET-REL-05 E2-A live-wins / NC-1).
+    await commandOk('start', {'autoConfirmDirectAck': true});
+    _log('NODE', 'started (autoConfirmDirectAck=on), waiting for relay...');
 
     await commandWithRetry('wait_relay', {'timeoutSec': 30}, 3);
     _log('NODE', 'relay connected, waiting for circuit...');

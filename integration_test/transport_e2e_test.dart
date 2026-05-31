@@ -55,10 +55,12 @@ import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
@@ -537,6 +539,63 @@ class _ScenarioResult {
   final bool passed;
   final String detail;
   _ScenarioResult(this.name, this.passed, this.detail);
+}
+
+// ---------------------------------------------------------------------------
+// NET-REL-05 E2 helpers — in-process FLOW capture + percentiles
+// ---------------------------------------------------------------------------
+
+/// Captures emitted FLOW events in-process via the test sink so a scenario can
+/// correlate send-path events to a specific messageId. Works on-device because
+/// the sink fires regardless of debugPrint logging.
+class _FlowCapture {
+  final List<Map<String, dynamic>> events = <Map<String, dynamic>>[];
+
+  void install() =>
+      debugSetFlowEventSink((p) => events.add(Map<String, dynamic>.from(p)));
+  void uninstall() => debugSetFlowEventSink(null);
+  void clear() => events.clear();
+
+  /// FLOW event names whose `details.id` matches the first 8 chars of [messageId]
+  /// (the prefix the production send path emits, e.g. `resolvedMessageId[:8]`).
+  List<String> namesForId(String messageId) {
+    final prefix =
+        messageId.length >= 8 ? messageId.substring(0, 8) : messageId;
+    return events
+        .where((e) => (e['details'] as Map?)?['id'] == prefix)
+        .map((e) => e['event'] as String)
+        .toList();
+  }
+}
+
+int _percentileMs(List<int> sortedMs, double p) {
+  if (sortedMs.isEmpty) return -1;
+  final idx = ((sortedMs.length - 1) * p).round();
+  return sortedMs[idx];
+}
+
+/// Builds a prior outgoing attempt to [contactPeerId] that trips the production
+/// low-confidence gate (`status=='failed'` OR `transport=='inbox'`), stamped now
+/// so it is the latest message for that contact.
+ConversationMessage _priorAttempt({
+  required String contactPeerId,
+  required String senderPeerId,
+  required String status,
+  String? transport,
+  required int seq,
+}) {
+  final now = DateTime.now().toUtc().toIso8601String();
+  return ConversationMessage(
+    id: 'e2-prior-$seq-${DateTime.now().microsecondsSinceEpoch}',
+    contactPeerId: contactPeerId,
+    senderPeerId: senderPeerId,
+    text: 'prior attempt',
+    timestamp: now,
+    status: status,
+    transport: transport,
+    isIncoming: false,
+    createdAt: now,
+  );
 }
 
 Future<bool> _waitForSignalFile(
@@ -1928,6 +1987,303 @@ void main() {
         } catch (e) {
           results.add(_ScenarioResult('B1', false, 'error: $e'));
           print('[TEST] B1 FAIL: $e');
+        }
+
+        // ==== E2-A: per-id concurrent-fallback correlation (NET-REL-05) ====
+        // DETERMINISTIC core (offline peer): a low-confidence send whose live race
+        // cannot succeed must show the e7f9d1b5 id-tagged inbox-saves pair for the
+        // SAME messageId — BEGIN(id) + CUSTODY(id), terminal via == 'inbox'.
+        // PATH-PINNED: assert the specific via, never the {direct,relay,inbox} set.
+        // OPPORTUNISTIC: probe the reachable CLI peer for the live-wins pair
+        // BEGIN(id) + SUCCESS(id, via in {direct,relay,reuse}); reported, NOT gated
+        // (live-wins needs the peer not-currently-connected — device-state dependent).
+        print('\n--- E2-A: per-id concurrent-fallback correlation (N>=30) ---');
+        {
+          final capture = _FlowCapture()..install();
+          try {
+            final offlineA = await _generateUnreachableContact(
+              bridge: stack.bridge,
+              username: 'E2AOffline',
+            );
+            await stack.contactRepo.addContact(offlineA);
+            const n = 30;
+            var inboxSavesCorrelated = 0;
+            final viol = <String>[];
+            for (var i = 0; i < n; i++) {
+              await stack.messageRepo.saveMessage(
+                _priorAttempt(
+                  contactPeerId: offlineA.peerId,
+                  senderPeerId: stack.ownPeerId,
+                  status: 'failed',
+                  seq: i,
+                ),
+              );
+              capture.clear();
+              final (r, m) = await sendChatMessage(
+                p2pService: stack.p2pService,
+                messageRepo: stack.messageRepo,
+                targetPeerId: offlineA.peerId,
+                text: 'E2A:$i',
+                senderPeerId: stack.ownPeerId,
+                senderUsername: 'FlutterE2E',
+                bridge: stack.bridge,
+                recipientMlKemPublicKey: offlineA.mlKemPublicKey,
+              );
+              if (m == null) {
+                viol.add('i=$i null-msg');
+                continue;
+              }
+              final names = capture.namesForId(m.id);
+              final began = names.contains(
+                'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
+              );
+              final custody = names.contains(
+                'CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY',
+              );
+              if (began &&
+                  custody &&
+                  r == SendChatMessageResult.success &&
+                  m.transport == 'inbox') {
+                inboxSavesCorrelated++;
+              } else if (viol.length < 3) {
+                viol.add(
+                  'i=$i began=$began custody=$custody via=${m.transport} r=${r.name}',
+                );
+              }
+            }
+            // Opportunistic live-wins probe vs the reachable CLI peer.
+            var liveWins = 0;
+            var liveProbes = 0;
+            if (hasCli && stack.cliMlKemPublicKey != null) {
+              for (var i = 0; i < 10; i++) {
+                await stack.messageRepo.saveMessage(
+                  _priorAttempt(
+                    contactPeerId: stack.cliPeerId!,
+                    senderPeerId: stack.ownPeerId,
+                    status: 'failed',
+                    seq: 1000 + i,
+                  ),
+                );
+                capture.clear();
+                final (r, m) = await sendChatMessage(
+                  p2pService: stack.p2pService,
+                  messageRepo: stack.messageRepo,
+                  targetPeerId: stack.cliPeerId!,
+                  text: 'E2A-live:$i',
+                  senderPeerId: stack.ownPeerId,
+                  senderUsername: 'FlutterE2E',
+                  bridge: stack.bridge,
+                  recipientMlKemPublicKey: stack.cliMlKemPublicKey,
+                );
+                if (m == null) continue;
+                if (capture
+                    .namesForId(m.id)
+                    .contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN')) {
+                  liveProbes++;
+                  final via = m.transport;
+                  if (r == SendChatMessageResult.success &&
+                      (via == 'direct' || via == 'relay' || via == 'reuse')) {
+                    liveWins++;
+                  }
+                }
+              }
+            }
+            // PASS = every deterministic offline send showed the inbox-saves pair
+            // for its own id. (Live-wins is opportunistic — reported, not gated.)
+            final pass = inboxSavesCorrelated == n && viol.isEmpty;
+            results.add(
+              _ScenarioResult(
+                'E2-A',
+                pass,
+                'inboxSaves=$inboxSavesCorrelated/$n '
+                    'liveWins=$liveWins/$liveProbes(opportunistic) '
+                    '${viol.isEmpty ? '' : viol}',
+              ),
+            );
+            print(
+              '[TEST] E2-A: inboxSaves=$inboxSavesCorrelated/$n '
+              'liveWins=$liveWins/$liveProbes',
+            );
+          } catch (e) {
+            results.add(_ScenarioResult('E2-A', false, 'error: $e'));
+            print('[TEST] E2-A FAIL: $e');
+          } finally {
+            capture.uninstall();
+          }
+        }
+
+        // ==== E2-B: offline-tail custody sizing (NET-REL-05) ====
+        // Low-confidence sends to a fresh OFFLINE peer; time send->durable custody
+        // (the concurrent inbox store completing). Reports median/p95 — the number
+        // that finally SIZES the NET-REL-05 offline tail.
+        print('\n--- E2-B: offline send->custody sizing (median/p95, N>=30) ---');
+        try {
+          final offlineB = await _generateUnreachableContact(
+            bridge: stack.bridge,
+            username: 'E2BOffline',
+          );
+          await stack.contactRepo.addContact(offlineB);
+          const n = 30;
+          final custodyMs = <int>[];
+          for (var i = 0; i < n; i++) {
+            await stack.messageRepo.saveMessage(
+              _priorAttempt(
+                contactPeerId: offlineB.peerId,
+                senderPeerId: stack.ownPeerId,
+                status: 'delivered',
+                transport: 'inbox',
+                seq: i,
+              ),
+            );
+            final sw = Stopwatch()..start();
+            final (r, m) = await sendChatMessage(
+              p2pService: stack.p2pService,
+              messageRepo: stack.messageRepo,
+              targetPeerId: offlineB.peerId,
+              text: 'E2B:$i',
+              senderPeerId: stack.ownPeerId,
+              senderUsername: 'FlutterE2E',
+              bridge: stack.bridge,
+              recipientMlKemPublicKey: offlineB.mlKemPublicKey,
+            );
+            sw.stop();
+            if (r == SendChatMessageResult.success && m?.transport == 'inbox') {
+              custodyMs.add(sw.elapsedMilliseconds);
+            }
+          }
+          custodyMs.sort();
+          final median = _percentileMs(custodyMs, 0.5);
+          final p95 = _percentileMs(custodyMs, 0.95);
+          final pass = custodyMs.length == n;
+          results.add(
+            _ScenarioResult(
+              'E2-B',
+              pass,
+              'N=$n delivered=${custodyMs.length} '
+                  'custody median=${median}ms p95=${p95}ms',
+            ),
+          );
+          print(
+            '[TEST] E2-B: median=${median}ms p95=${p95}ms '
+            'delivered=${custodyMs.length}/$n',
+          );
+        } catch (e) {
+          results.add(_ScenarioResult('E2-B', false, 'error: $e'));
+          print('[TEST] E2-B FAIL: $e');
+        }
+
+        // ==== NC-1: high-confidence negative control (no concurrent inbox) ====
+        // A high-confidence send (latest prior is a delivered-DIRECT message, not
+        // failed/inbox) must NOT fire the concurrent inbox arm — proves E2-A's arm
+        // is not a blanket dual-write of every send.
+        if (hasCli && stack.cliMlKemPublicKey != null) {
+          print('\n--- NC-1: high-confidence -> no concurrent inbox ---');
+          final capture = _FlowCapture()..install();
+          try {
+            await stack.messageRepo.saveMessage(
+              _priorAttempt(
+                contactPeerId: stack.cliPeerId!,
+                senderPeerId: stack.ownPeerId,
+                status: 'delivered',
+                transport: 'direct',
+                seq: 9999,
+              ),
+            );
+            capture.clear();
+            final (r, m) = await sendChatMessage(
+              p2pService: stack.p2pService,
+              messageRepo: stack.messageRepo,
+              targetPeerId: stack.cliPeerId!,
+              text: 'NC1:${DateTime.now().microsecondsSinceEpoch}',
+              senderPeerId: stack.ownPeerId,
+              senderUsername: 'FlutterE2E',
+              bridge: stack.bridge,
+              recipientMlKemPublicKey: stack.cliMlKemPublicKey,
+            );
+            final firedInbox =
+                m != null &&
+                capture
+                    .namesForId(m.id)
+                    .contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN');
+            final pass = r == SendChatMessageResult.success && !firedInbox;
+            results.add(
+              _ScenarioResult(
+                'NC-1',
+                pass,
+                'firedConcurrentInbox=$firedInbox via=${m?.transport} r=${r.name}',
+              ),
+            );
+            print(
+              '[TEST] NC-1: firedConcurrentInbox=$firedInbox via=${m?.transport}',
+            );
+          } catch (e) {
+            results.add(_ScenarioResult('NC-1', false, 'error: $e'));
+            print('[TEST] NC-1 FAIL: $e');
+          } finally {
+            capture.uninstall();
+          }
+        }
+
+        // ==== NC-2: two distinct ids -> two messages (dedup not swallowing) ====
+        // Two DIFFERENT messages (distinct ids) to the CLI peer must persist as two
+        // distinct delivered outgoing messages — complements D3 (same-id dedup -> 1),
+        // proving dedup collapses only true duplicates. (Receiver-side two-message
+        // surfacing is corroborated by the orchestrator per the runbook.)
+        if (hasCli && stack.cliMlKemPublicKey != null) {
+          print('\n--- NC-2: two distinct ids -> two messages ---');
+          try {
+            final tag = DateTime.now().microsecondsSinceEpoch;
+            final (ra, ma) = await sendChatMessage(
+              p2pService: stack.p2pService,
+              messageRepo: stack.messageRepo,
+              targetPeerId: stack.cliPeerId!,
+              text: 'NC2-A:$tag',
+              senderPeerId: stack.ownPeerId,
+              senderUsername: 'FlutterE2E',
+              bridge: stack.bridge,
+              recipientMlKemPublicKey: stack.cliMlKemPublicKey,
+            );
+            final (rb, mb) = await sendChatMessage(
+              p2pService: stack.p2pService,
+              messageRepo: stack.messageRepo,
+              targetPeerId: stack.cliPeerId!,
+              text: 'NC2-B:$tag',
+              senderPeerId: stack.ownPeerId,
+              senderUsername: 'FlutterE2E',
+              bridge: stack.bridge,
+              recipientMlKemPublicKey: stack.cliMlKemPublicKey,
+            );
+            final stored = await stack.messageRepo.getMessagesForContact(
+              stack.cliPeerId!,
+            );
+            final ids = stored
+                .where(
+                  (m) =>
+                      !m.isIncoming &&
+                      m.text.contains('NC2-') &&
+                      m.text.endsWith('$tag'),
+                )
+                .map((m) => m.id)
+                .toSet();
+            final pass =
+                ma != null &&
+                mb != null &&
+                ma.id != mb.id &&
+                ids.length == 2 &&
+                ra == SendChatMessageResult.success &&
+                rb == SendChatMessageResult.success;
+            results.add(
+              _ScenarioResult(
+                'NC-2',
+                pass,
+                'distinctIds=${ids.length} ra=${ra.name} rb=${rb.name}',
+              ),
+            );
+            print('[TEST] NC-2: distinctIds=${ids.length}');
+          } catch (e) {
+            results.add(_ScenarioResult('NC-2', false, 'error: $e'));
+            print('[TEST] NC-2 FAIL: $e');
+          }
         }
 
         // ==== SUMMARY ====
