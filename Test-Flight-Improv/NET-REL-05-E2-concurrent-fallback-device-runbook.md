@@ -195,3 +195,38 @@ NEGATIVE CONTROLS:
 VERDICT: PASS / FAIL
 Notes / anomalies: __________________________________________________
 ```
+
+## 8b. Recorded run — 2026-05-31 (executor; verdict deferred to monitor)
+
+Run in two parts per the fidelity split. Both `dart run` invocations exited 1 on
+**orchestrator-side residuals** (Pixel: cross-device `/tmp` handshake → no CLI peer;
+sim: the known **E8 media-metadata** orchestrator residual) — the **Flutter test passed
+in both** (Pixel 4/4 self-contained; sim 37/37). Build under test: `e7f9d1b5`.
+
+**FIDELITY SPLIT (do not overclaim):**
+- **E2-A correlation + E2-B latency = REAL DEVICE** (Pixel `21071FDF600CSC`, real relay `mknoun.xyz`).
+- **NC-1 / NC-2 / E2-A live-wins = SIMULATOR** (iPhone 17 Pro) — logic controls only.
+- The sim E2-B latency is **not** a fidelity number; the offline-tail size is the Pixel's.
+
+```
+REAL DEVICE — Pixel 21071FDF600CSC, relay mknoun.xyz:
+  E2-A: inboxSaves = 30/30 correlated  [BEGIN(id)+CUSTODY(id), via==inbox, path-pinned]   PASS
+        liveWins  = 0/0  (CLI peer absent on device — file handshake is sim-only)
+  E2-B: send->custody  median = 176 ms , p95 = 845 ms , delivered = 30/30                 PASS
+        (sizes the NET-REL-05 offline tail; no pre-NET-REL-05 sequential baseline captured)
+
+SIMULATOR — iPhone 17 Pro, relay mknoun.xyz (logic controls):
+  E2-A: inboxSaves = 30/30 ; liveWins = 1/1  [BEGIN(id)+SUCCESS(id, via=direct)]          PASS
+  NC-1: firedConcurrentInbox = false , via = direct , r = success                         PASS
+        (high-confidence send did NOT fire the concurrent inbox — negative control holds)
+  NC-2: distinctIds = 2 , ra = success , rb = success  (two ids -> two messages)          PASS
+  E2-B (sim latency, NON-fidelity): median = 54 ms , p95 = 58 ms , 30/30
+```
+
+**Doctrine (NET-REL-06):** E2-A's positive (30/30 real wire + 1/1 sim live-wins) is now
+paired with its negative control **NC-1** (sim) → the concurrent-fallback arm is proven
+**not** always-on; **NC-2** proves dedup collapses only true duplicates. All four scenarios PASS.
+
+**Not in this run:** I3 (separate two-phone manual session); an exact `relay_inbox_stored_total`
+delta / receiver==1 relay-scrape cross-check (the harness asserts via sender FLOW + transport
+label, which is sufficient for the per-id correlation but a relay scrape remains possible hardening).
