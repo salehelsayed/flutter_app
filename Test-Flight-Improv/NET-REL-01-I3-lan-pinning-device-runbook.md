@@ -165,6 +165,50 @@ VERDICT: PASS / FAIL   (PASS requires happy all-'local' + control all-not-'local
 Notes / anomalies: __________________________________________________
 ```
 
+## 8b. Recorded run — 2026-05-31 (executor; verdict deferred to monitor)
+
+Real devices: **iPhone 13** (`00008110`, iOS 26.4.2) + **Pixel 6** (`21071FDF600CSC`,
+Android 16), **same WiFi** (192.168.0.x), **debug** builds (commit `fb1bcca2` — adds the
+greppable `MSG_RECEIVED_TRANSPORT` log), **discovery ON**, iOS **Local Network permission
+ALLOWED**. Read via the **Pixel** (`adb logcat`); the iPhone was launched by tap (logs not
+piped), so the Pixel was the readable endpoint.
+
+**KEY FINDING (refines the strict `wifi`-only criterion):** on the same physical LAN,
+libp2p **also** forms a direct connection over the LAN, and once warm it **wins the send
+race** vs the WS path. So same-WiFi delivery is **non-relay** but split between `local`/
+`wifi` (WS) and `direct` (libp2p-over-LAN); a clean N≥20 `wifi`-only run is **not
+achievable** without disabling the direct leg. Send- and receive-side labels can also
+**diverge** (sender logs `local`, receiver logs `direct`) — both legs fire in parallel and
+the receiver dedups to whichever arrives first.
+
+```
+HAPPY (same WiFi) — LAN path demonstrably used, 0 relay:
+  Pixel SEND-side via "local":      3/3  (f63d5dc0,d1edd8ef,1a508f53; proofSource=chat_send_local, sendPath=local/reuse)
+  Pixel RECV-side transport "wifi": observed (13:58:43, with LOCAL_WS_MESSAGE_RECEIVED = real WebSocket)
+  Warm RECV-side transport:         "direct" (libp2p-over-LAN, non-relay)  [3 warm sends]
+  relay during same-WiFi sends:     0
+  FLOW: local WS receive event (not relay)?  YES (LOCAL_WS_MESSAGE_RECEIVED)
+
+NEGATIVE CONTROL (Android on cellular = LAN blocked, relay reachable):
+  transport != local/wifi for all?  YES — local path reported local_not_discovered, delivery via "relay"
+    1st send: CHAT_MSG_SEND_RACE_ALL_FAILED reason=local_not_discovered (transition failure → retry)
+    retry:    CHAT_MSG_SEND_SUCCESS via "relay" x2 (c8e92321, 7bfc3cf2)
+  local/wifi transport during LAN-blocked?  NO
+```
+
+**VERDICT (executor read; monitor decides):** **PASS** under the accepted *"same-WiFi =
+non-relay LAN"* framing — the local/WiFi (WS) transport is path-pinned-proven on **both**
+send (`via:local`) and receive (`transport:wifi` + `LOCAL_WS_MESSAGE_RECEIVED`) on the same
+WiFi, and blocking the LAN forces **relay** (path-pinned negative control). **Not** a strict
+`wifi`-only-N≥20 pass (direct-over-LAN dominates warm — recorded as the finding). Fidelity:
+**real device, real WiFi, real relay.**
+
+**Deploy notes (for the next runner):** iPhone debug deploy was flaky — needed `flutter
+clean` (+ DerivedData wipe) for a stale-simulator-native-assets `EXC_BAD_ACCESS` crash, then
+an **iPhone reboot** to clear a hung debug-VM-service connection; first launch required
+granting the **Local Network** prompt. Android logs benign `failed to resolve local
+interface addresses (permission denied)` warnings on cellular.
+
 ---
 
 ## 9. Trust caveats (doctrine)
