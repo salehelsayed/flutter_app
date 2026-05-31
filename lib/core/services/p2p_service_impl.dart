@@ -200,6 +200,17 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       final transport =
           msg.transport ?? _inferTransportForPeer(msg.from) ?? 'unknown';
       _transportMetrics?.recordTransport(transport);
+      // NET-REL-01 I3: greppable receiver-side transport readout (replaces having
+      // to read the kDebugMode diagnostics card). LAN messages arrive on the local
+      // path below ('wifi'); direct/relay/unknown arrive here.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MSG_RECEIVED_TRANSPORT',
+        details: {
+          'from': msg.from.length > 10 ? msg.from.substring(0, 10) : msg.from,
+          'transport': transport,
+        },
+      );
       _handleMessageReceived(msg.copyWith(transport: transport));
     };
     _bridge.onPeerConnected = _handlePeerConnected;
@@ -217,6 +228,18 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     // Merge local WiFi messages into the unified message stream
     _localMessageSub = _localP2P?.localMessageStream.listen((localMsg) {
       _transportMetrics?.recordTransport('wifi');
+      // NET-REL-01 I3: this is the LAN path — a same-WiFi received message. The
+      // 'wifi' transport here is the path-pinned proof I3 looks for.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MSG_RECEIVED_TRANSPORT',
+        details: {
+          'from': localMsg.from.length > 10
+              ? localMsg.from.substring(0, 10)
+              : localMsg.from,
+          'transport': 'wifi',
+        },
+      );
       _handleMessageReceived(
         ChatMessage(
           from: localMsg.from,
