@@ -37,6 +37,7 @@ const (
 	DefaultAutoRelayRetryCadence        = 5 * time.Second
 	ForegroundAutoRelayRetryCadence     = 1 * time.Second
 	ForegroundRelayDialTimeout          = 3 * time.Second
+	ForegroundRelayReserveTimeout       = 3 * time.Second
 	ForegroundCircuitAddressWaitTimeout = 3 * time.Second
 
 	// PubSub.

@@ -276,11 +276,22 @@ void main() {
           name: 'UP-007 Group',
         );
 
+        final createdGroup = await groupRepo.getGroup(groupId);
+        final baseMembershipAt = createdGroup!.lastMembershipEventAt!.toUtc();
+        final charlieJoinAt = baseMembershipAt.add(const Duration(minutes: 1));
+        final charlieRemoveAt = baseMembershipAt.add(
+          const Duration(minutes: 2),
+        );
+        final charlieRejoinAt = baseMembershipAt.add(
+          const Duration(minutes: 3),
+        );
+        final messageAt = baseMembershipAt.add(const Duration(minutes: 4));
+
         await addGroupMember(
           bridge: bridge,
           groupRepo: groupRepo,
           groupId: groupId,
-          newMember: charlie,
+          newMember: charlie.copyWith(joinedAt: charlieJoinAt),
           selfPeerId: identity.peerId,
         );
 
@@ -290,16 +301,14 @@ void main() {
           groupId: groupId,
           memberPeerId: charlie.peerId,
           selfPeerId: identity.peerId,
-          eventAt: now.add(const Duration(minutes: 1)),
+          eventAt: charlieRemoveAt,
         );
 
         await addGroupMember(
           bridge: bridge,
           groupRepo: groupRepo,
           groupId: groupId,
-          newMember: charlie.copyWith(
-            joinedAt: now.add(const Duration(minutes: 2)),
-          ),
+          newMember: charlie.copyWith(joinedAt: charlieRejoinAt),
           selfPeerId: identity.peerId,
         );
 
@@ -314,7 +323,7 @@ void main() {
           senderPrivateKey: identity.privateKey,
           senderUsername: identity.username,
           messageId: 'up007-message-1',
-          timestamp: now.add(const Duration(minutes: 3)),
+          timestamp: messageAt,
         );
 
         expect(sendResult, SendGroupMessageResult.success);

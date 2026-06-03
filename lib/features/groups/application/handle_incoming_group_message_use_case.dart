@@ -16,6 +16,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 const _maxIncomingMessageFutureClockSkew = Duration(minutes: 5);
+const _incomingMediaRetrySearchLimit = 200;
 
 /// Handles an incoming group message.
 ///
@@ -510,6 +511,50 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     }
   }
 
+  final isSelfDelivery = _isLocalSelfDelivery(
+    senderId: senderId,
+    senderTransportPeerId: resolvedTransportPeerId,
+    localRecipientPeerId: localRecipientPeerId,
+    localRecipientAccountPeerId: localRecipientAccountPeerId,
+  );
+  if (stableMessageId != null &&
+      !isSelfDelivery &&
+      media != null &&
+      media.isNotEmpty &&
+      mediaAttachmentRepo != null) {
+    final canonicalMessageId = await _findCanonicalIncomingMediaRetryMessageId(
+      msgRepo: msgRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      groupId: groupId,
+      senderId: senderId,
+      resolvedTransportPeerId: resolvedTransportPeerId,
+      sanitizedText: sanitizedText,
+      normalizedTimestamp: normalizedTimestamp,
+      quotedMessageId: quotedMessageId,
+      duplicateMessageId: stableMessageId,
+      media: media,
+    );
+    if (canonicalMessageId != null) {
+      await _enrichExistingDuplicateMessage(
+        msgRepo: msgRepo,
+        messageId: canonicalMessageId,
+        quotedMessageId: quotedMessageId,
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'dedupeBy': 'logicalMediaRetry',
+        },
+      );
+      return null;
+    }
+  }
+
   if (member != null &&
       sanitizedSenderUsername.isNotEmpty &&
       member.username?.trim() != sanitizedSenderUsername &&
@@ -543,12 +588,6 @@ Future<GroupMessage?> handleIncomingGroupMessage({
 
   // 4. Use wire messageId if provided, otherwise generate one
   final resolvedMessageId = stableMessageId ?? const Uuid().v4();
-  final isSelfDelivery = _isLocalSelfDelivery(
-    senderId: senderId,
-    senderTransportPeerId: resolvedTransportPeerId,
-    localRecipientPeerId: localRecipientPeerId,
-    localRecipientAccountPeerId: localRecipientAccountPeerId,
-  );
 
   // 5. Create GroupMessage (isIncoming: true)
   final message = GroupMessage(
@@ -603,6 +642,207 @@ bool _isConflictingDuplicateMessageId({
   return existing.groupId != groupId || existing.senderPeerId != senderId;
 }
 
+Future<String?> _findCanonicalIncomingMediaRetryMessageId({
+  required GroupMessageRepository msgRepo,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required String groupId,
+  required String senderId,
+  required String resolvedTransportPeerId,
+  required String sanitizedText,
+  required DateTime normalizedTimestamp,
+  required String? quotedMessageId,
+  required String duplicateMessageId,
+  required List<Map<String, dynamic>> media,
+}) async {
+  final incomingMediaIdentity = _strictMediaIdentityFromWireDescriptors(media);
+  if (incomingMediaIdentity == null) {
+    return null;
+  }
+
+  final candidates = await msgRepo.getMessagesPage(
+    groupId,
+    limit: _incomingMediaRetrySearchLimit,
+  );
+  final candidateIds = <String>[];
+  for (final candidate in candidates) {
+    if (_isSameLogicalIncomingMediaRetryEnvelope(
+      existing: candidate,
+      groupId: groupId,
+      senderId: senderId,
+      resolvedTransportPeerId: resolvedTransportPeerId,
+      sanitizedText: sanitizedText,
+      normalizedTimestamp: normalizedTimestamp,
+      quotedMessageId: quotedMessageId,
+      duplicateMessageId: duplicateMessageId,
+    )) {
+      candidateIds.add(candidate.id);
+    }
+  }
+  if (candidateIds.isEmpty) {
+    return null;
+  }
+
+  final attachmentsByMessage = await mediaAttachmentRepo
+      .getAttachmentsForMessages(candidateIds);
+  for (final candidateId in candidateIds) {
+    final candidateMediaIdentity = _strictMediaIdentityFromSavedAttachments(
+      attachmentsByMessage[candidateId],
+    );
+    if (_sameStrictMediaIdentity(
+      incomingMediaIdentity,
+      candidateMediaIdentity,
+    )) {
+      return candidateId;
+    }
+  }
+  return null;
+}
+
+bool _isSameLogicalIncomingMediaRetryEnvelope({
+  required GroupMessage existing,
+  required String groupId,
+  required String senderId,
+  required String resolvedTransportPeerId,
+  required String sanitizedText,
+  required DateTime normalizedTimestamp,
+  required String? quotedMessageId,
+  required String duplicateMessageId,
+}) {
+  final existingTransportPeerId =
+      existing.transportPeerId?.trim().isNotEmpty == true
+      ? existing.transportPeerId!.trim()
+      : existing.senderPeerId;
+  return existing.id != duplicateMessageId &&
+      existing.groupId == groupId &&
+      existing.senderPeerId == senderId &&
+      existingTransportPeerId == resolvedTransportPeerId &&
+      existing.isIncoming &&
+      existing.status == 'delivered' &&
+      existing.text == sanitizedText &&
+      existing.timestamp.toUtc().isAtSameMomentAs(
+        normalizedTimestamp.toUtc(),
+      ) &&
+      _normalizedOptionalIdentityString(existing.quotedMessageId) ==
+          _normalizedOptionalIdentityString(quotedMessageId);
+}
+
+List<String>? _strictMediaIdentityFromWireDescriptors(
+  List<Map<String, dynamic>> media,
+) {
+  if (media.isEmpty) {
+    return null;
+  }
+  final signatures = <String>[];
+  for (final rawAttachment in media) {
+    final attachment =
+        GroupMediaMimePolicy.sanitizeWireAttachment(
+          rawAttachment,
+          messageId: '',
+        ).copyWith(
+          contentHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+            _optionalString(rawAttachment, 'contentHash'),
+          ),
+          thumbnailHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+            _optionalString(rawAttachment, 'thumbnailHash'),
+          ),
+        );
+    final signature = _strictMediaAttachmentSignature(attachment);
+    if (signature == null) {
+      return null;
+    }
+    signatures.add(signature);
+  }
+  signatures.sort();
+  return signatures;
+}
+
+List<String>? _strictMediaIdentityFromSavedAttachments(
+  List<MediaAttachment>? attachments,
+) {
+  if (attachments == null || attachments.isEmpty) {
+    return null;
+  }
+  final signatures = <String>[];
+  for (final rawAttachment in attachments) {
+    final attachment = GroupMediaMimePolicy.sanitizeAttachment(
+      rawAttachment.copyWith(
+        contentHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+          rawAttachment.contentHash,
+        ),
+        thumbnailHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+          rawAttachment.thumbnailHash,
+        ),
+      ),
+    );
+    final signature = _strictMediaAttachmentSignature(attachment);
+    if (signature == null) {
+      return null;
+    }
+    signatures.add(signature);
+  }
+  signatures.sort();
+  return signatures;
+}
+
+String? _strictMediaAttachmentSignature(MediaAttachment attachment) {
+  final id = attachment.id.trim();
+  final contentHash = attachment.contentHash?.trim().toLowerCase();
+  final encryptionKeyBase64 = attachment.encryptionKeyBase64?.trim();
+  final encryptionNonce = attachment.encryptionNonce?.trim();
+  final encryptionScheme = attachment.encryptionScheme?.trim();
+  if (id.isEmpty ||
+      contentHash == null ||
+      contentHash.isEmpty ||
+      encryptionKeyBase64 == null ||
+      encryptionKeyBase64.isEmpty ||
+      encryptionNonce == null ||
+      encryptionNonce.isEmpty ||
+      (encryptionScheme != null &&
+          encryptionScheme.isNotEmpty &&
+          encryptionScheme != kMediaAttachmentEncryptionSchemeBlobAesGcmV1)) {
+    return null;
+  }
+
+  final mime = GroupMediaMimePolicy.normalizeMime(attachment.mime);
+  if (mime == null) {
+    return null;
+  }
+  return [
+    id,
+    mime,
+    attachment.mediaType.trim().toLowerCase(),
+    attachment.size.toString(),
+    contentHash,
+    attachment.thumbnailHash?.trim().toLowerCase() ?? '',
+    encryptionKeyBase64,
+    encryptionNonce,
+    encryptionScheme ?? '',
+    attachment.width?.toString() ?? '',
+    attachment.height?.toString() ?? '',
+    attachment.durationMs?.toString() ?? '',
+  ].join('|');
+}
+
+bool _sameStrictMediaIdentity(List<String> left, List<String>? right) {
+  if (right == null || left.length != right.length) {
+    return false;
+  }
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+String? _normalizedOptionalIdentityString(String? value) {
+  final normalized = value?.trim();
+  if (normalized == null || normalized.isEmpty) {
+    return null;
+  }
+  return normalized;
+}
+
 Future<GroupMember?> _findLocalRecipientMemberByDeviceTransport({
   required GroupRepository groupRepo,
   required String groupId,
@@ -648,6 +888,17 @@ bool _isSenderDeviceBound({
   return device != null &&
       device.isActive &&
       device.transportPeerId == transportPeerId;
+}
+
+bool _canReconcileOutgoingSelfEchoStatus(GroupMessage existing) {
+  if (existing.status == 'sending' || existing.status == 'pending') {
+    return true;
+  }
+  if (existing.status != 'failed') {
+    return false;
+  }
+  return existing.wireEnvelope?.isNotEmpty == true ||
+      existing.inboxRetryPayload?.isNotEmpty == true;
 }
 
 void _emitDuplicateMessageIdConflictRejected({
@@ -702,7 +953,7 @@ Future<GroupMessage?> _reconcileOutgoingSelfEchoDuplicate({
       existing.isIncoming) {
     return null;
   }
-  if (existing.status != 'sending' && existing.status != 'pending') {
+  if (!_canReconcileOutgoingSelfEchoStatus(existing)) {
     return null;
   }
   if (existing.text != sanitizedText) {

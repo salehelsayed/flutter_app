@@ -56,8 +56,10 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
   String? ownKeyPackagePublicMaterial,
   DateTime? now,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
-  bool drainAcceptedInboxAllPages = false,
+  bool drainAcceptedInboxAllPages = true,
   int acceptedInboxPageSize = 50,
+  int acceptedInboxDrainMaxAttempts = 1,
+  Duration acceptedInboxDrainRetryDelay = const Duration(milliseconds: 250),
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -292,7 +294,17 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
   switch (result) {
     case HandleGroupInviteResult.success:
       final acceptedId = acceptedGroupId ?? groupId;
-      final inboxDrained = await _drainAcceptedGroupInboxBestEffort(
+      await _retryAcceptedPendingKeyRepairsBestEffort(
+        groupMessageListener: groupMessageListener,
+        groupId: acceptedId,
+        keyEpoch: payload.keyEpoch,
+      );
+      await _flushAcceptedBufferedMessagesBestEffort(
+        groupMessageListener: groupMessageListener,
+        msgRepo: msgRepo,
+        groupId: acceptedId,
+      );
+      final inboxDrained = await _drainAcceptedGroupInboxWithRetry(
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -303,8 +315,34 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         selfPeerId: senderPeerId,
         drainAllPages: drainAcceptedInboxAllPages,
         pageSize: acceptedInboxPageSize,
+        maxAttempts: acceptedInboxDrainMaxAttempts,
+        retryDelay: acceptedInboxDrainRetryDelay,
+      );
+      await _flushAcceptedBufferedMessagesBestEffort(
+        groupMessageListener: groupMessageListener,
+        msgRepo: msgRepo,
+        groupId: acceptedId,
+      );
+      await _retryAcceptedPendingKeyRepairsBestEffort(
+        groupMessageListener: groupMessageListener,
+        groupId: acceptedId,
+        keyEpoch: payload.keyEpoch,
       );
       final group = await groupRepo.getGroup(acceptedId);
+      final acceptedGroupAdvanced =
+          group != null &&
+          _acceptedGroupAdvancedBeyondInviteMetadata(
+            group: group,
+            payload: payload,
+          );
+      if (!inboxDrained && !acceptedGroupAdvanced) {
+        await _rollbackIncompleteAcceptedInviteState(
+          groupRepo: groupRepo,
+          groupId: acceptedId,
+          reason: 'accepted_inbox_not_drained',
+        );
+        return (AcceptPendingGroupInviteResult.bridgeError, null);
+      }
       await _publishAcceptedJoinTimelineBestEffort(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -318,9 +356,6 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         senderTransportPeerId: ownTransportPeerId,
         senderKeyPackageId: ownKeyPackageId,
       );
-      if (!inboxDrained) {
-        return (AcceptPendingGroupInviteResult.bridgeError, group);
-      }
       await _commitAcceptedPendingInvite(
         pendingInviteRepo: pendingInviteRepo,
         invite: invite,
@@ -331,7 +366,55 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
       return (AcceptPendingGroupInviteResult.success, group);
     case HandleGroupInviteResult.bridgeError:
       final acceptedId = acceptedGroupId ?? groupId;
+      await _retryAcceptedPendingKeyRepairsBestEffort(
+        groupMessageListener: groupMessageListener,
+        groupId: acceptedId,
+        keyEpoch: payload.keyEpoch,
+      );
+      await _flushAcceptedBufferedMessagesBestEffort(
+        groupMessageListener: groupMessageListener,
+        msgRepo: msgRepo,
+        groupId: acceptedId,
+      );
+      final inboxDrained = await _drainAcceptedGroupInboxWithRetry(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: acceptedId,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        reactionRepo: reactionRepo,
+        groupMessageListener: groupMessageListener,
+        selfPeerId: senderPeerId,
+        drainAllPages: drainAcceptedInboxAllPages,
+        pageSize: acceptedInboxPageSize,
+        maxAttempts: acceptedInboxDrainMaxAttempts,
+        retryDelay: acceptedInboxDrainRetryDelay,
+      );
+      await _flushAcceptedBufferedMessagesBestEffort(
+        groupMessageListener: groupMessageListener,
+        msgRepo: msgRepo,
+        groupId: acceptedId,
+      );
+      await _retryAcceptedPendingKeyRepairsBestEffort(
+        groupMessageListener: groupMessageListener,
+        groupId: acceptedId,
+        keyEpoch: payload.keyEpoch,
+      );
       final group = await groupRepo.getGroup(acceptedId);
+      final acceptedGroupAdvanced =
+          group != null &&
+          _acceptedGroupAdvancedBeyondInviteMetadata(
+            group: group,
+            payload: payload,
+          );
+      if (!inboxDrained && !acceptedGroupAdvanced) {
+        await _rollbackIncompleteAcceptedInviteState(
+          groupRepo: groupRepo,
+          groupId: acceptedId,
+          reason: 'join_bridge_error_without_fresh_metadata',
+        );
+        return (AcceptPendingGroupInviteResult.bridgeError, null);
+      }
       await _publishAcceptedJoinTimelineBestEffort(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -345,7 +428,19 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         senderTransportPeerId: ownTransportPeerId,
         senderKeyPackageId: ownKeyPackageId,
       );
-      return (AcceptPendingGroupInviteResult.bridgeError, group);
+      if (group != null) {
+        await _commitAcceptedPendingInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          invite: invite,
+          payload: payload,
+          consumedAt: effectiveNow,
+          isSingleUse: isSingleUse,
+        );
+      }
+      if (group != null) {
+        return (AcceptPendingGroupInviteResult.success, group);
+      }
+      return (AcceptPendingGroupInviteResult.bridgeError, null);
     case HandleGroupInviteResult.duplicateGroup:
       return _retryAcceptedMaterializedInvite(
         pendingInviteRepo: pendingInviteRepo,
@@ -362,6 +457,8 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         senderPeerId: senderPeerId,
         drainAcceptedInboxAllPages: drainAcceptedInboxAllPages,
         acceptedInboxPageSize: acceptedInboxPageSize,
+        acceptedInboxDrainMaxAttempts: acceptedInboxDrainMaxAttempts,
+        acceptedInboxDrainRetryDelay: acceptedInboxDrainRetryDelay,
       );
     case HandleGroupInviteResult.invalidPayload:
       emitFlowEvent(
@@ -395,6 +492,8 @@ _retryAcceptedMaterializedInvite({
   String? senderPeerId,
   required bool drainAcceptedInboxAllPages,
   required int acceptedInboxPageSize,
+  required int acceptedInboxDrainMaxAttempts,
+  required Duration acceptedInboxDrainRetryDelay,
 }) async {
   final group = await _compatibleAcceptedRetryGroup(
     groupRepo: groupRepo,
@@ -424,10 +523,45 @@ _retryAcceptedMaterializedInvite({
         'error': e.toString(),
       },
     );
-    return (AcceptPendingGroupInviteResult.bridgeError, group);
+    final recovery = await _drainDuplicateAcceptedGroupForRecovery(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: payload.groupId,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      reactionRepo: reactionRepo,
+      groupMessageListener: groupMessageListener,
+      senderPeerId: senderPeerId,
+      drainAcceptedInboxAllPages: drainAcceptedInboxAllPages,
+      acceptedInboxPageSize: acceptedInboxPageSize,
+      acceptedInboxDrainMaxAttempts: acceptedInboxDrainMaxAttempts,
+      acceptedInboxDrainRetryDelay: acceptedInboxDrainRetryDelay,
+      keyEpoch: payload.keyEpoch,
+    );
+    final latestGroup = recovery.group ?? group;
+    final acceptedGroupAdvanced = _acceptedGroupAdvancedBeyondInviteMetadata(
+      group: latestGroup,
+      payload: payload,
+    );
+    if (!recovery.inboxDrained && !acceptedGroupAdvanced) {
+      await _rollbackIncompleteAcceptedInviteState(
+        groupRepo: groupRepo,
+        groupId: payload.groupId,
+        reason: 'retry_join_bridge_error_without_fresh_metadata',
+      );
+      return (AcceptPendingGroupInviteResult.bridgeError, null);
+    }
+    await _commitAcceptedPendingInvite(
+      pendingInviteRepo: pendingInviteRepo,
+      invite: invite,
+      payload: payload,
+      consumedAt: consumedAt,
+      isSingleUse: isSingleUse,
+    );
+    return (AcceptPendingGroupInviteResult.success, latestGroup);
   }
 
-  final inboxDrained = await _drainAcceptedGroupInboxBestEffort(
+  final recovery = await _drainDuplicateAcceptedGroupForRecovery(
     bridge: bridge,
     groupRepo: groupRepo,
     msgRepo: msgRepo,
@@ -435,12 +569,25 @@ _retryAcceptedMaterializedInvite({
     mediaAttachmentRepo: mediaAttachmentRepo,
     reactionRepo: reactionRepo,
     groupMessageListener: groupMessageListener,
-    selfPeerId: senderPeerId,
-    drainAllPages: drainAcceptedInboxAllPages,
-    pageSize: acceptedInboxPageSize,
+    senderPeerId: senderPeerId,
+    drainAcceptedInboxAllPages: drainAcceptedInboxAllPages,
+    acceptedInboxPageSize: acceptedInboxPageSize,
+    acceptedInboxDrainMaxAttempts: acceptedInboxDrainMaxAttempts,
+    acceptedInboxDrainRetryDelay: acceptedInboxDrainRetryDelay,
+    keyEpoch: payload.keyEpoch,
   );
-  if (!inboxDrained) {
-    return (AcceptPendingGroupInviteResult.bridgeError, group);
+  final latestGroup = recovery.group ?? group;
+  final acceptedGroupAdvanced = _acceptedGroupAdvancedBeyondInviteMetadata(
+    group: latestGroup,
+    payload: payload,
+  );
+  if (!recovery.inboxDrained && !acceptedGroupAdvanced) {
+    await _rollbackIncompleteAcceptedInviteState(
+      groupRepo: groupRepo,
+      groupId: payload.groupId,
+      reason: 'retry_inbox_not_drained_without_fresh_metadata',
+    );
+    return (AcceptPendingGroupInviteResult.bridgeError, null);
   }
 
   await _commitAcceptedPendingInvite(
@@ -450,7 +597,60 @@ _retryAcceptedMaterializedInvite({
     consumedAt: consumedAt,
     isSingleUse: isSingleUse,
   );
-  return (AcceptPendingGroupInviteResult.success, group);
+  return (AcceptPendingGroupInviteResult.success, latestGroup);
+}
+
+Future<({bool inboxDrained, GroupModel? group})>
+_drainDuplicateAcceptedGroupForRecovery({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
+  String? senderPeerId,
+  required bool drainAcceptedInboxAllPages,
+  required int acceptedInboxPageSize,
+  required int acceptedInboxDrainMaxAttempts,
+  required Duration acceptedInboxDrainRetryDelay,
+  required int keyEpoch,
+}) async {
+  await _flushAcceptedBufferedMessagesBestEffort(
+    groupMessageListener: groupMessageListener,
+    msgRepo: msgRepo,
+    groupId: groupId,
+  );
+  await _retryAcceptedPendingKeyRepairsBestEffort(
+    groupMessageListener: groupMessageListener,
+    groupId: groupId,
+    keyEpoch: keyEpoch,
+  );
+  final inboxDrained = await _drainAcceptedGroupInboxWithRetry(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    groupId: groupId,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    groupMessageListener: groupMessageListener,
+    selfPeerId: senderPeerId,
+    drainAllPages: drainAcceptedInboxAllPages,
+    pageSize: acceptedInboxPageSize,
+    maxAttempts: acceptedInboxDrainMaxAttempts,
+    retryDelay: acceptedInboxDrainRetryDelay,
+  );
+  await _flushAcceptedBufferedMessagesBestEffort(
+    groupMessageListener: groupMessageListener,
+    msgRepo: msgRepo,
+    groupId: groupId,
+  );
+  await _retryAcceptedPendingKeyRepairsBestEffort(
+    groupMessageListener: groupMessageListener,
+    groupId: groupId,
+    keyEpoch: keyEpoch,
+  );
+  return (inboxDrained: inboxDrained, group: await groupRepo.getGroup(groupId));
 }
 
 Future<GroupModel?> _compatibleAcceptedRetryGroup({
@@ -550,6 +750,36 @@ Future<void> _commitAcceptedPendingInvite({
   await pendingInviteRepo.deletePendingInvite(invite.groupId);
 }
 
+Future<void> _rollbackIncompleteAcceptedInviteState({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String reason,
+}) async {
+  try {
+    await groupRepo.removeAllKeys(groupId);
+    await groupRepo.removeAllMembers(groupId);
+    await groupRepo.deleteGroup(groupId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_STALE_MATERIALIZATION_ROLLED_BACK',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'reason': reason,
+      },
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_STALE_ROLLBACK_WARNING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'reason': reason,
+        'error': e.toString(),
+      },
+    );
+  }
+}
+
 Future<void> _recordWelcomeKeyPackageTombstone({
   required PendingGroupInviteRepository pendingInviteRepo,
   required GroupInvitePayload payload,
@@ -596,6 +826,85 @@ Future<void> _recordConsumedInvite({
   );
 }
 
+Future<void> _flushAcceptedBufferedMessagesBestEffort({
+  required GroupMessageListener? groupMessageListener,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+}) async {
+  final listener = groupMessageListener;
+  if (listener == null) return;
+  try {
+    await listener.flushPendingMembershipDependentMessagesForGroup(
+      groupId,
+      msgRepoOverride: msgRepo,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_BUFFERED_MESSAGE_FLUSH_WARNING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'error': e.toString(),
+      },
+    );
+  }
+}
+
+Future<void> _retryAcceptedPendingKeyRepairsBestEffort({
+  required GroupMessageListener? groupMessageListener,
+  required String groupId,
+  required int keyEpoch,
+}) async {
+  final listener = groupMessageListener;
+  if (listener == null || keyEpoch <= 0) return;
+  try {
+    final repaired = await listener.retryPendingKeyRepairsForGroupEpoch(
+      groupId: groupId,
+      keyEpoch: keyEpoch,
+    );
+    if (repaired > 0) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_GROUP_INVITE_ACCEPT_PENDING_KEY_REPAIRS_REPLAYED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'keyEpoch': keyEpoch,
+          'count': repaired,
+        },
+      );
+    }
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_PENDING_KEY_REPAIR_WARNING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'keyEpoch': keyEpoch,
+        'error': e.toString(),
+      },
+    );
+  }
+}
+
+bool _acceptedGroupAdvancedBeyondInviteMetadata({
+  required GroupModel group,
+  required GroupInvitePayload payload,
+}) {
+  final inviteMetadataUpdatedAt = _parsePayloadMetadataUpdatedAt(payload);
+  final acceptedMetadataUpdatedAt = group.lastMetadataEventAt?.toUtc();
+  return inviteMetadataUpdatedAt != null &&
+      acceptedMetadataUpdatedAt != null &&
+      acceptedMetadataUpdatedAt.isAfter(inviteMetadataUpdatedAt);
+}
+
+DateTime? _parsePayloadMetadataUpdatedAt(GroupInvitePayload payload) {
+  final raw = payload.groupConfig['metadataUpdatedAt'];
+  if (raw is! String || raw.trim().isEmpty) {
+    return null;
+  }
+  return DateTime.tryParse(raw)?.toUtc();
+}
+
 Future<bool> _drainAcceptedGroupInboxBestEffort({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -633,6 +942,44 @@ Future<bool> _drainAcceptedGroupInboxBestEffort({
     );
     return false;
   }
+}
+
+Future<bool> _drainAcceptedGroupInboxWithRetry({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
+  String? selfPeerId,
+  required bool drainAllPages,
+  required int pageSize,
+  required int maxAttempts,
+  required Duration retryDelay,
+}) async {
+  final attempts = maxAttempts < 1 ? 1 : maxAttempts;
+  for (var attempt = 1; attempt <= attempts; attempt++) {
+    final drained = await _drainAcceptedGroupInboxBestEffort(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: groupId,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      reactionRepo: reactionRepo,
+      groupMessageListener: groupMessageListener,
+      selfPeerId: selfPeerId,
+      drainAllPages: drainAllPages,
+      pageSize: pageSize,
+    );
+    if (drained) {
+      return true;
+    }
+    if (attempt < attempts && retryDelay > Duration.zero) {
+      await Future<void>.delayed(retryDelay);
+    }
+  }
+  return false;
 }
 
 Future<void> _publishAcceptedJoinTimelineBestEffort({

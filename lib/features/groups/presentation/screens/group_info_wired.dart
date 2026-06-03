@@ -27,6 +27,7 @@ import 'package:flutter_app/features/groups/application/group_offline_replay_env
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/refresh_pending_group_invites_for_metadata_change_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
@@ -1626,7 +1627,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           senderDeviceId: senderBinding.deviceId,
           senderTransportPeerId: senderBinding.transportPeerId,
           senderKeyPackageId: senderBinding.keyPackageId,
-          messageId: metadataTimelineMessage.id,
+          messageId: sourceMessageId,
           recipientPeerIds: recipientPeerIds,
         );
         await callGroupInboxStore(
@@ -1656,6 +1657,15 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           );
         }
       }
+
+      await refreshPendingGroupInvitesForMetadataChange(
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+        identity: identity,
+        groupId: _group.id,
+      );
 
       _didMutateGroup = true;
       await _loadGroupInfo();

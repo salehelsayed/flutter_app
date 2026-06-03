@@ -1064,7 +1064,6 @@ func validateGroupConfigPeerIdentity(config *GroupConfig) error {
 		return nil
 	}
 	seenMembers := make(map[string]string, len(config.Members))
-	seenTransportPeers := make(map[string]string)
 	for i, member := range config.Members {
 		memberKey, err := groupPeerIdentityKey(member.PeerId)
 		if err != nil {
@@ -1079,14 +1078,10 @@ func validateGroupConfigPeerIdentity(config *GroupConfig) error {
 			if device.TransportPeerId == "" {
 				continue
 			}
-			deviceKey, err := groupPeerIdentityKey(device.TransportPeerId)
+			_, err := groupPeerIdentityKey(device.TransportPeerId)
 			if err != nil {
 				return fmt.Errorf("member[%d] device[%d] transportPeerId: %w", i, j, err)
 			}
-			if existing, ok := seenTransportPeers[deviceKey]; ok && existing != member.PeerId {
-				return fmt.Errorf("member[%d] device[%d] duplicate transport peer id variant conflicts with member %q", i, j, existing)
-			}
-			seenTransportPeers[deviceKey] = member.PeerId
 		}
 	}
 	return nil

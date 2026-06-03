@@ -3,13 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget buildTestWidget(GroupType type) {
     return MaterialApp(
-      home: Scaffold(
-        body: GroupTypeBadge(type: type),
-      ),
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: GroupTypeBadge(type: type)),
     );
   }
 

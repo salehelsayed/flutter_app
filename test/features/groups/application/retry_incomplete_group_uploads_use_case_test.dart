@@ -1241,5 +1241,83 @@ void main() {
         );
       },
     );
+
+    test(
+      'GIRD-002 incomplete-upload retry aborts final send when another owner settled the row',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-gird002-settled',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Hello',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-gird002-settled',
+            messageId: 'msg-gird002-settled',
+          ),
+        );
+        mediaRepo.onSaveAttachment = (attachment) {
+          if (attachment.messageId == 'msg-gird002-settled' &&
+              attachment.downloadStatus == 'done') {
+            groupMsgRepo.saveMessage(
+              GroupMessage(
+                id: 'msg-gird002-settled',
+                groupId: 'group-1',
+                senderPeerId: 'peer-admin',
+                senderUsername: 'Admin',
+                text: 'Hello',
+                timestamp: DateTime.utc(2026, 1, 1),
+                status: 'sent',
+                isIncoming: false,
+                createdAt: DateTime.utc(2026, 1, 1),
+              ),
+            );
+          }
+        };
+        addTearDown(() {
+          mediaRepo.onSaveAttachment = null;
+        });
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-gird002-settled',
+            messageId: 'msg-gird002-settled',
+          ),
+        );
+
+        final events = await captureFlowEvents(() async {
+          final count = await retryIncompleteGroupUploads(
+            groupRepo: groupRepo,
+            groupMsgRepo: groupMsgRepo,
+            mediaAttachmentRepo: mediaRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            uploadMediaFn: uploadFn.call,
+            mediaFileManager: mediaFileManager,
+          );
+          expect(count, 0);
+        });
+
+        expect(
+          (await groupMsgRepo.getMessage('msg-gird002-settled'))?.status,
+          'sent',
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        final abort = events.lastWhere(
+          (event) =>
+              event['event'] ==
+              'RETRY_INCOMPLETE_GROUP_UPLOAD_ABORT_FINAL_SEND',
+        );
+        expect(abort['details']['reason'], 'message_status_sent');
+      },
+    );
   });
 }

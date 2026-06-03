@@ -798,6 +798,7 @@
   "media_unavailable_now": "Medien sind gerade nicht verfügbar.",
   "media_still_unavailable": "Medien sind weiterhin nicht verfügbar.",
   "failed_media_retry_failed": "Mediennachricht konnte nicht erneut versucht werden.",
+  "failed_media_upload_pending_retry": "Medienupload wird noch abgeschlossen. Er wird bald erneut versucht.",
   "failed_media_delete_unavailable": "Löschen ist gerade nicht verfügbar.",
   "picker_media_library": "Medienbibliothek",
   "picker_record_video": "Video aufnehmen",

@@ -853,6 +853,8 @@ materializeAcceptedGroupInvitePayload({
       ? DateTime.tryParse(metadataUpdatedAtStr)?.toUtc()
       : null;
   final membershipWatermarkAt = _parseInviteMembershipWatermark(payload);
+  final inviteIssuedAt = _parseInviteIssuedAt(payload);
+  final acceptedMembershipWatermarkAt = membershipWatermarkAt ?? inviteIssuedAt;
 
   // 6. Persist GroupModel with myRole = member
   final groupModel = GroupModel(
@@ -867,7 +869,7 @@ materializeAcceptedGroupInvitePayload({
     createdBy: createdBy,
     myRole: GroupRole.member,
     lastMetadataEventAt: metadataUpdatedAt,
-    lastMembershipEventAt: membershipWatermarkAt,
+    lastMembershipEventAt: acceptedMembershipWatermarkAt,
   );
   await groupRepo.saveGroup(groupModel);
 
@@ -881,7 +883,7 @@ materializeAcceptedGroupInvitePayload({
       map: m,
       joinedAt: _acceptedMemberJoinedAt(
         m,
-        membershipWatermarkAt: membershipWatermarkAt,
+        membershipWatermarkAt: acceptedMembershipWatermarkAt,
         materializedAt: materializedAt,
       ),
     );
@@ -904,7 +906,21 @@ materializeAcceptedGroupInvitePayload({
       blobId: avatarBlobId,
     );
     if (avatarPath != null) {
-      await groupRepo.updateGroup(groupModel.copyWith(avatarPath: avatarPath));
+      final refreshedGroup = await groupRepo.getGroup(payload.groupId);
+      final refreshedWatermark = refreshedGroup?.lastMetadataEventAt?.toUtc();
+      final inviteWatermark = metadataUpdatedAt?.toUtc();
+      final inviteMetadataIsCurrent =
+          refreshedWatermark == null ||
+          inviteWatermark == null ||
+          !inviteWatermark.isBefore(refreshedWatermark);
+      if (refreshedGroup != null &&
+          inviteMetadataIsCurrent &&
+          refreshedGroup.avatarBlobId == avatarBlobId &&
+          refreshedGroup.avatarMime == avatarMime) {
+        await groupRepo.updateGroup(
+          refreshedGroup.copyWith(avatarPath: avatarPath),
+        );
+      }
     }
   }
 
@@ -980,6 +996,11 @@ DateTime? _parseInviteMembershipWatermark(GroupInvitePayload payload) {
     return null;
   }
   return DateTime.tryParse(raw)?.toUtc();
+}
+
+DateTime? _parseInviteIssuedAt(GroupInvitePayload payload) {
+  return payload.membershipFreshnessProof?.issuedAt.toUtc() ??
+      DateTime.tryParse(payload.timestamp)?.toUtc();
 }
 
 DateTime _acceptedMemberJoinedAt(

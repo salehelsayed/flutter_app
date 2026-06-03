@@ -246,6 +246,104 @@ final class NotificationPreviewResolverTests: XCTestCase {
     )
   }
 
+  func testGIRD006DuplicateGroupMessageIdKeepsFallbackAndSkipsSecondDecrypt() {
+    let dedupeStore = MemoryPushDedupeStore()
+    let decryptor = MemoryPushDecryptor(
+      groupPlaintext: #"{"senderUsername":"Alice","text":"","media":[{"mediaType":"image"}]}"#
+    )
+    let eventEmitter = MemoryPushPreviewEventEmitter()
+    let resolver = NotificationPreviewResolver(
+      keyReader: MemoryPushKeyReader([
+        PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7): "group-secret",
+      ]),
+      decryptor: decryptor,
+      dedupeStore: dedupeStore,
+      eventEmitter: eventEmitter
+    )
+    let userInfo: [String: Any] = [
+      "type": "group_message",
+      "groupId": "group-team",
+      "message_id": "group-msg-1",
+      "keyEpoch": "7",
+      "ciphertext": "ciphertext",
+      "nonce": "nonce",
+    ]
+
+    let first = resolver.resolve(
+      userInfo: userInfo,
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+    let second = resolver.resolve(
+      userInfo: userInfo,
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(first.didDecrypt)
+    XCTAssertEqual(first.body, "Alice: Photo")
+    XCTAssertEqual(first.threadIdentifier, "group-team")
+    XCTAssertFalse(second.didDecrypt)
+    XCTAssertEqual(second.reason, "duplicate_message")
+    XCTAssertEqual(second.title, "New Message")
+    XCTAssertEqual(second.body, "You have a new message")
+    XCTAssertEqual(decryptor.groupCalls, 1)
+    XCTAssertEqual(eventEmitter.events.count, 2)
+    XCTAssertEqual(eventEmitter.events[0].event, "PUSH_NSE_DECRYPT_OK")
+    XCTAssertEqual(eventEmitter.events[1].event, "PUSH_NSE_DECRYPT_FAIL")
+    XCTAssertEqual(
+      eventEmitter.events[1].details,
+      ["kind": "group", "reason": "duplicate_message"]
+    )
+  }
+
+  func testGIRD006RemintedGroupImageMessageIdDecryptsAsIndependentNotification() {
+    let dedupeStore = MemoryPushDedupeStore()
+    let decryptor = MemoryPushDecryptor(
+      groupPlaintext: #"{"senderUsername":"Alice","text":"","media":[{"mediaType":"image"}]}"#
+    )
+    let resolver = NotificationPreviewResolver(
+      keyReader: MemoryPushKeyReader([
+        PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7): "group-secret",
+      ]),
+      decryptor: decryptor,
+      dedupeStore: dedupeStore
+    )
+
+    let first = resolver.resolve(
+      userInfo: [
+        "type": "group_message",
+        "groupId": "group-team",
+        "message_id": "group-msg-1",
+        "keyEpoch": "7",
+        "ciphertext": "ciphertext",
+        "nonce": "nonce",
+      ],
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+    let reminted = resolver.resolve(
+      userInfo: [
+        "type": "group_message",
+        "groupId": "group-team",
+        "message_id": "group-msg-2",
+        "keyEpoch": "7",
+        "ciphertext": "ciphertext",
+        "nonce": "nonce",
+      ],
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(first.didDecrypt)
+    XCTAssertTrue(reminted.didDecrypt)
+    XCTAssertEqual(first.body, "Alice: Photo")
+    XCTAssertEqual(reminted.body, "Alice: Photo")
+    XCTAssertEqual(first.threadIdentifier, "group-team")
+    XCTAssertEqual(reminted.threadIdentifier, "group-team")
+    XCTAssertEqual(decryptor.groupCalls, 2)
+  }
+
   func testDecryptTelemetryDoesNotIncludePlaintextOrSender() {
     let eventEmitter = MemoryPushPreviewEventEmitter()
     let resolver = NotificationPreviewResolver(

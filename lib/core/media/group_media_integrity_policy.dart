@@ -56,11 +56,14 @@ class GroupMediaIntegrityPolicy {
     return validateRequiredContentHash(attachment.contentHash).isValid;
   }
 
+  static bool hasRequiredVerificationMetadata(MediaAttachment attachment) {
+    return hasValidContentHash(attachment) && attachment.hasEncryptionMetadata;
+  }
+
   static bool canDisplayVerifiedGroupMedia(MediaAttachment attachment) {
     return attachment.downloadStatus == kMediaDownloadStatusDone &&
         attachment.localPath != null &&
-        hasValidContentHash(attachment) &&
-        attachment.hasEncryptionMetadata;
+        hasRequiredVerificationMetadata(attachment);
   }
 
   static bool isQuarantinedGroupMedia(MediaAttachment attachment) {
@@ -86,7 +89,7 @@ class GroupMediaIntegrityPolicy {
 
     if (requireVerifiedContentHash &&
         attachment.downloadStatus == kMediaDownloadStatusDone) {
-      return !canDisplayVerifiedGroupMedia(attachment);
+      return !hasRequiredVerificationMetadata(attachment);
     }
 
     return false;

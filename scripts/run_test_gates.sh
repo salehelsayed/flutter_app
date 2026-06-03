@@ -328,8 +328,23 @@ classify_path() {
     return 0
   fi
 
+  if [[ "$path" =~ ^test/core/debug/.*_test\.dart$ ]]; then
+    printf 'core debug direct suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|local_discovery|media|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
     printf 'core component direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/l10n/.*_test\.dart$ ]]; then
+    printf 'localization integrity direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/shared/fakes/.*_test\.dart$ ]]; then
+    printf 'shared fake harness direct suite'
     return 0
   fi
 

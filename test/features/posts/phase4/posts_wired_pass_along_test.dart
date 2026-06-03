@@ -59,10 +59,9 @@ void main() {
     );
     final avatarsDir = Directory('${documentsDir.path}/media/avatars')
       ..createSync(recursive: true);
-    File('${avatarsDir.path}/peer-alice.jpg').writeAsBytesSync(
-      _testAvatarBytes(),
-      flush: true,
-    );
+    File(
+      '${avatarsDir.path}/peer-alice.jpg',
+    ).writeAsBytesSync(_testAvatarBytes(), flush: true);
     UserAvatar.setDocumentsDir(documentsDir.path);
   });
 
@@ -131,7 +130,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Send pass'));
       await tester.pump();
-      expect(find.text('Sending…'), findsOneWidget);
+      expect(find.text('Sending...'), findsOneWidget);
       await tester.runAsync(() async {
         for (var attempt = 0; attempt < 80; attempt++) {
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -154,36 +153,32 @@ void main() {
     );
   });
 
-  testWidgets(
-    'starts pass delivery from the picker',
-    (tester) async {
-      contactRepository.seed([
-        _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
-        _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
-      ]);
-      await postRepository.savePost(
-        _post(
-          senderPeerId: 'peer-alice',
-          authorPeerId: 'peer-alice',
-          authorUsername: 'Alice',
-        ),
-      );
-      await tester.pumpWidget(buildWidget());
-      await tester.pump();
+  testWidgets('starts pass delivery from the picker', (tester) async {
+    contactRepository.seed([
+      _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
+      _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
+    ]);
+    await postRepository.savePost(
+      _post(
+        senderPeerId: 'peer-alice',
+        authorPeerId: 'peer-alice',
+        authorUsername: 'Alice',
+      ),
+    );
+    await tester.pumpWidget(buildWidget());
+    await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.repeat));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byIcon(Icons.repeat));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
-      await tester.tap(find.text('Cara'));
-      await tester.pump();
-      await tester.tap(find.text('Send pass'));
-      await tester.pump();
+    await tester.tap(find.text('Cara'));
+    await tester.pump();
+    await tester.tap(find.text('Send pass'));
+    await tester.pump();
 
-      expect(find.text('Sending…'), findsOneWidget);
-    },
-  );
-
+    expect(find.text('Sending...'), findsOneWidget);
+  });
 }
 
 Future<List<Map<String, dynamic>>> _captureFlowEvents(

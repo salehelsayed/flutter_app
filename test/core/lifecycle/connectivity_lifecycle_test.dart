@@ -318,8 +318,9 @@ void main() {
         await service.startNodeCore(testBase64Key, testPeerId);
         expect(service.currentState.circuitAddresses, isEmpty);
 
-        // 5. performImmediateHealthCheck() — should NOT call relay:reconnect
-        //    because this is a fresh start, not a recovery from lost circuits
+        // 5. performImmediateHealthCheck() before the startup grace period
+        //    should not call relay:reconnect; a fresh relay can still be
+        //    settling at this point.
         bridge.relayReconnectCallCount = 0;
         await service.performImmediateHealthCheck();
 
@@ -333,6 +334,26 @@ void main() {
         );
       },
     );
+
+    test('fresh startup relay recovery begins after startup grace', () async {
+      bridge.phase = 'degraded';
+
+      await service.startNodeCore(testBase64Key, testPeerId);
+
+      expect(service.currentState.circuitAddresses, isEmpty);
+
+      bridge.relayReconnectCallCount = 0;
+      bridge.pollsUntilCircuitReady = 1;
+      await Future<void>.delayed(
+        P2PServiceImpl.startupRelayRecoveryDelay +
+            const Duration(milliseconds: 100),
+      );
+
+      await service.performImmediateHealthCheck();
+
+      expect(bridge.relayReconnectCallCount, 1);
+      expect(healthFromState(service.currentState), ConnectionHealth.online);
+    });
 
     test(
       'already-started resync sets _hasEverBeenOnline from circuit addresses',
@@ -668,7 +689,6 @@ void main() {
     test(
       'failed in-place recovery escalates to watchdog only after threshold',
       () async {
-
         // Start online
         await service.startNodeCore(testBase64Key, testPeerId);
 
@@ -713,29 +733,28 @@ void main() {
   // ==========================================================================
 
   group('Phase 6: Group recovery on resume and watchdog', () {
-    test('resume recovery schedules group drain when relay recovery succeeds',
-        () async {
-      // Start online
-      await service.startNodeCore(testBase64Key, testPeerId);
-      expect(healthFromState(service.currentState), ConnectionHealth.online);
+    test(
+      'resume recovery schedules group drain when relay recovery succeeds',
+      () async {
+        // Start online
+        await service.startNodeCore(testBase64Key, testPeerId);
+        expect(healthFromState(service.currentState), ConnectionHealth.online);
 
-      // Background
-      bridge.simulateBackground();
-      bridge.pollsUntilCircuitReady = 1;
+        // Background
+        bridge.simulateBackground();
+        bridge.pollsUntilCircuitReady = 1;
 
-      // handleAppResumed with group repos should trigger group drain
-      // (We verify indirectly: handleAppResumed doesn't throw,
-      // and the recovery method is available)
-      await handleAppResumed(
-        bridge: bridge,
-        p2pService: service,
-      );
+        // handleAppResumed with group repos should trigger group drain
+        // (We verify indirectly: handleAppResumed doesn't throw,
+        // and the recovery method is available)
+        await handleAppResumed(bridge: bridge, p2pService: service);
 
-      // After resume, recovery should have succeeded
-      expect(healthFromState(service.currentState), ConnectionHealth.online);
-      // The lastRecoveryMethod should be set (in_place by default)
-      expect(service.lastRecoveryMethod, isNotNull);
-    });
+        // After resume, recovery should have succeeded
+        expect(healthFromState(service.currentState), ConnectionHealth.online);
+        // The lastRecoveryMethod should be set (in_place by default)
+        expect(service.lastRecoveryMethod, isNotNull);
+      },
+    );
 
     test('watchdog restart result schedules group rejoin and drain', () async {
       await service.startNodeCore(testBase64Key, testPeerId);

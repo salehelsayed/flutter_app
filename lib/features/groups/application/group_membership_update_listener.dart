@@ -5,7 +5,10 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -156,15 +159,25 @@ class GroupMembershipUpdateListener {
     required GroupRepository groupRepo,
     required Bridge bridge,
     required GroupMessageListener groupMessageListener,
+    GroupMessageRepository? msgRepo,
+    GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+    RequestGroupKeyRepair? requestGroupKeyRepair,
   }) : _stream = groupMembershipUpdateStream,
        _groupRepo = groupRepo,
        _bridge = bridge,
-       _groupMessageListener = groupMessageListener;
+       _groupMessageListener = groupMessageListener,
+       _msgRepo = msgRepo,
+       _pendingKeyRepairRepo = pendingKeyRepairRepo,
+       _requestGroupKeyRepair =
+           requestGroupKeyRepair ?? emitGroupKeyRepairRequest;
 
   final Stream<ChatMessage> _stream;
   final GroupRepository _groupRepo;
   final Bridge _bridge;
   final GroupMessageListener _groupMessageListener;
+  final GroupMessageRepository? _msgRepo;
+  final GroupPendingKeyRepairRepository? _pendingKeyRepairRepo;
+  final RequestGroupKeyRepair _requestGroupKeyRepair;
   StreamSubscription<ChatMessage>? _subscription;
   Future<void> _messageProcessing = Future<void>.value();
 
@@ -192,6 +205,8 @@ class GroupMembershipUpdateListener {
       (_) => _handleMessage(message),
     );
   }
+
+  Future<void> waitForIdle() => _messageProcessing;
 
   Future<void> _handleMessage(ChatMessage message) async {
     try {
@@ -234,15 +249,31 @@ class GroupMembershipUpdateListener {
         return;
       }
 
-      final plaintext = await decryptGroupOfflineReplayEnvelope(
-        bridge: _bridge,
-        groupRepo: _groupRepo,
-        groupId: groupId,
-        envelope: offlineReplayEnvelope,
-        expectedRelayPeerId: relaySenderPeerId,
-      );
+      late final String plaintext;
+      try {
+        plaintext = await decryptGroupOfflineReplayEnvelope(
+          bridge: _bridge,
+          groupRepo: _groupRepo,
+          groupId: groupId,
+          envelope: offlineReplayEnvelope,
+          expectedRelayPeerId: relaySenderPeerId,
+        );
+      } catch (error) {
+        if (await _queueDeferredReplayIfMaterializationPending(
+          groupId: groupId,
+          relayEnvelope: relayEnvelope,
+          replayEnvelope: offlineReplayEnvelope,
+          error: error,
+        )) {
+          return;
+        }
+        rethrow;
+      }
       final replayPayload = jsonDecode(plaintext) as Map<String, dynamic>;
-      await _groupMessageListener.handleReplayEnvelope(replayPayload);
+      await _groupMessageListener.handleReplayEnvelope(
+        replayPayload,
+        allowMembershipBuffer: true,
+      );
 
       emitFlowEvent(
         layer: 'FL',
@@ -267,8 +298,44 @@ class GroupMembershipUpdateListener {
     _subscription?.cancel();
     _subscription = null;
   }
+
+  Future<bool> _queueDeferredReplayIfMaterializationPending({
+    required String groupId,
+    required Map<String, dynamic> relayEnvelope,
+    required Map<String, dynamic> replayEnvelope,
+    required Object error,
+  }) async {
+    final pendingRepo = _pendingKeyRepairRepo;
+    final messages = _msgRepo;
+    if (pendingRepo == null || messages == null) return false;
+    if (!_isMaterializationPendingReplayError(error)) return false;
+
+    final queued = await queueMissingGroupReplayKeyRepairFromEnvelope(
+      pendingKeyRepairRepo: pendingRepo,
+      msgRepo: messages,
+      groupId: groupId,
+      relayEnvelope: relayEnvelope,
+      replayEnvelope: replayEnvelope,
+      requestGroupKeyRepair: _requestGroupKeyRepair,
+      repairReason: groupKeyRepairReasonDirectMembershipUpdateDeferred,
+    );
+    if (queued) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEMBERSHIP_UPDATE_LISTENER_DEFERRED_REPLAY_QUEUED',
+        details: {'groupId': _safeId(groupId), 'error': error.toString()},
+      );
+    }
+    return queued;
+  }
 }
 
 String _safeId(String value) {
   return value.length > 10 ? value.substring(0, 10) : value;
+}
+
+bool _isMaterializationPendingReplayError(Object error) {
+  if (error.toString().contains('Missing group replay key')) return true;
+  return error is GroupOfflineReplaySignatureException &&
+      error.reason == 'unknown_sender';
 }

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 OrbitFriend _makeFriend({
   int unreadCount = 3,
@@ -26,6 +27,13 @@ OrbitFriend _makeFriend({
 
 void main() {
   group('FriendRow', () {
+    Widget wrap(Widget child) => MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: child),
+    );
+
     Text _textFor(WidgetTester tester, String text) {
       final finder = find.byWidgetPredicate(
         (widget) => widget is Text && widget.data == text,
@@ -35,17 +43,11 @@ void main() {
       return tester.widget<Text>(finder);
     }
 
-    testWidgets('shows unread badge by default when unreadCount > 0',
-        (tester) async {
+    testWidgets('shows unread badge by default when unreadCount > 0', (
+      tester,
+    ) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FriendRow(
-              friend: _makeFriend(unreadCount: 3),
-              onTap: () {},
-            ),
-          ),
-        ),
+        wrap(FriendRow(friend: _makeFriend(unreadCount: 3), onTap: () {})),
       );
       await tester.pumpAndSettle();
 
@@ -53,16 +55,15 @@ void main() {
       expect(find.text('3'), findsOneWidget);
     });
 
-    testWidgets('hides unread badge when hideUnreadBadge is true',
-        (tester) async {
+    testWidgets('hides unread badge when hideUnreadBadge is true', (
+      tester,
+    ) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FriendRow(
-              friend: _makeFriend(unreadCount: 3),
-              hideUnreadBadge: true,
-              onTap: () {},
-            ),
+        wrap(
+          FriendRow(
+            friend: _makeFriend(unreadCount: 3),
+            hideUnreadBadge: true,
+            onTap: () {},
           ),
         ),
       );
@@ -74,14 +75,7 @@ void main() {
 
     testWidgets('shows chevron when no unread messages', (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FriendRow(
-              friend: _makeFriend(unreadCount: 0),
-              onTap: () {},
-            ),
-          ),
-        ),
+        wrap(FriendRow(friend: _makeFriend(unreadCount: 0), onTap: () {})),
       );
       await tester.pumpAndSettle();
 
@@ -92,12 +86,10 @@ void main() {
       const lastActivity = 'مرحبا';
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FriendRow(
-              friend: _makeFriend(lastActivity: lastActivity, unreadCount: 0),
-              onTap: () {},
-            ),
+        wrap(
+          FriendRow(
+            friend: _makeFriend(lastActivity: lastActivity, unreadCount: 0),
+            onTap: () {},
           ),
         ),
       );
@@ -109,12 +101,10 @@ void main() {
       const lastActivity = 'مرحبا Hello 123';
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FriendRow(
-              friend: _makeFriend(lastActivity: lastActivity, unreadCount: 0),
-              onTap: () {},
-            ),
+        wrap(
+          FriendRow(
+            friend: _makeFriend(lastActivity: lastActivity, unreadCount: 0),
+            onTap: () {},
           ),
         ),
       );
@@ -126,12 +116,10 @@ void main() {
       const lastActivity = 'Hello مرحبا 123';
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FriendRow(
-              friend: _makeFriend(lastActivity: lastActivity, unreadCount: 0),
-              onTap: () {},
-            ),
+        wrap(
+          FriendRow(
+            friend: _makeFriend(lastActivity: lastActivity, unreadCount: 0),
+            onTap: () {},
           ),
         ),
       );

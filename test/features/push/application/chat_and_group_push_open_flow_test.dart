@@ -101,6 +101,34 @@ void main() {
     );
 
     test(
+      'GIRD-006 group image push open prepares anchored group route before navigation',
+      () async {
+        await routeRemoteNotificationOpen(
+          data: const <String, dynamic>{
+            'type': 'group_message',
+            'groupId': 'group-gird006',
+            'message_id': 'msg-gird006-image',
+            'payloadType': 'group_message',
+            'kind': 'group_offline_replay',
+          },
+          onBeforeRouteTarget: harness.prepare,
+          onRouteTarget: harness.handleRouteTarget,
+          onMissingRouteTarget: harness.handleMissingRouteTarget,
+        );
+
+        expect(harness.events, <String>[
+          'prepare:group:group-gird006|message:msg-gird006-image',
+          'drain:group:group-gird006',
+          'route:group:group-gird006|message:msg-gird006-image',
+        ]);
+        expect(harness.routedTargets, hasLength(1));
+        expect(harness.routedTargets.single.groupId, 'group-gird006');
+        expect(harness.routedTargets.single.messageId, 'msg-gird006-image');
+        expect(harness.missingRouteTargetCalls, 0);
+      },
+    );
+
+    test(
       'background contact-request push opens only after inbox preparation',
       () async {
         await routeRemoteNotificationOpen(

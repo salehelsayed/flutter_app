@@ -421,6 +421,35 @@ void main() {
       );
     });
 
+    test(
+      'GIRD-006 uses canonical group payload and message identity for fallback dedupe',
+      () {
+        const message = RemoteMessage(
+          messageId: 'fcm-gird006-group-transport',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-gird006',
+            'message_id': 'msg-gird006-group-image',
+            'title': 'Team Chat',
+            'body': 'Alice: Photo',
+          },
+        );
+
+        final fallback = buildBackgroundPushFallbackNotification(message);
+
+        expect(
+          fallback.payload,
+          'group:group-gird006|message:msg-gird006-group-image',
+        );
+        expect(fallback.title, backgroundPushDefaultTitle);
+        expect(fallback.body, backgroundPushDefaultBody);
+        expect(
+          backgroundPushFallbackDedupeKey(message),
+          'payload=group:group-gird006|message:msg-gird006-group-image|id=msg-gird006-group-image',
+        );
+      },
+    );
+
     test('shows fallback for post_create with post payload routing', () {
       const message = RemoteMessage(
         data: {

@@ -2706,6 +2706,40 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       },
     );
 
+    test('relay reservation timing is logged as GO flow diagnostics', () {
+      final flowEvents = <Map<String, dynamic>>[];
+      flowEventLoggingEnabled = true;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null && message.startsWith('[FLOW] ')) {
+          flowEvents.add(
+            jsonDecode(message.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+          );
+        }
+      };
+
+      client.debugHandleEventForTest(
+        jsonEncode({
+          'event': 'relay:reservation_timing',
+          'data': {
+            'elapsedMs': 207,
+            'outcome': 'failed',
+            'relayId': '12D3KooWrelay',
+            'error': 'reservation refused: resource limit',
+          },
+        }),
+      );
+
+      expect(client.debugUnknownPushEventCountForTest, 0);
+      final rawFlow = flowEvents.firstWhere(
+        (event) => event['event'] == 'relay:reservation_timing',
+      );
+      expect(rawFlow['layer'], 'GO');
+      expect(rawFlow['details']['elapsedMs'], 207);
+      expect(rawFlow['details']['outcome'], 'failed');
+      expect(rawFlow['details']['error'], contains('resource limit'));
+    });
+
     test(
       'GO-008 diagnostic flow logs redact JSON-encoded sensitive payload strings',
       () async {

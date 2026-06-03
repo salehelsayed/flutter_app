@@ -16,6 +16,10 @@ class FakeBridge implements Bridge {
   // Pre-canned JSON responses keyed by command name
   final Map<String, Map<String, dynamic>> responses = {};
 
+  // Ordered pre-canned responses keyed by command name. When present, each
+  // command call consumes the next response before falling back to [responses].
+  final Map<String, List<Map<String, dynamic>>> responseSequences = {};
+
   // Call tracking
   int sendCallCount = 0;
   int initializeCallCount = 0;
@@ -161,7 +165,18 @@ class FakeBridge implements Bridge {
       return jsonEncode({'ok': true, 'decryptedPath': decryptedPath});
     }
 
-    // Return pre-canned response or default success
+    // Return pre-canned sequenced response, static response, or default success
+    if (cmd != null) {
+      final sequence = responseSequences[cmd];
+      if (sequence != null && sequence.isNotEmpty) {
+        final next = sequence.removeAt(0);
+        if (sequence.isEmpty) {
+          responseSequences.remove(cmd);
+        }
+        return jsonEncode(next);
+      }
+    }
+
     if (cmd != null && responses.containsKey(cmd)) {
       return jsonEncode(responses[cmd]!);
     }

@@ -89,7 +89,7 @@ void main() {
 
     await _openCommentsSheet(tester);
 
-    expect(find.text('1 comments'), findsOneWidget);
+    expect(find.text('1 comment'), findsOneWidget);
     expect(find.text('I can lend one.'), findsOneWidget);
   });
 
@@ -105,7 +105,7 @@ void main() {
 
       await _openCommentsSheet(tester);
 
-      expect(find.text('0 comments'), findsOneWidget);
+      expect(find.text('No comments'), findsOneWidget);
       expect(find.text('No comments yet'), findsOneWidget);
 
       await postRepository.saveComment(
@@ -124,8 +124,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
       await tester.pump();
 
-      expect(find.text('1 comments'), findsOneWidget);
-      expect(find.text('0 comments'), findsNothing);
+      expect(find.text('1 comment'), findsOneWidget);
+      expect(find.text('No comments'), findsNothing);
       expect(find.text('No comments yet'), findsNothing);
       expect(find.text('I can bring one over.'), findsOneWidget);
 
@@ -170,7 +170,7 @@ void main() {
 
       await _openCommentsSheet(tester, iconIndex: 0);
 
-      expect(find.text('0 comments'), findsOneWidget);
+      expect(find.text('No comments'), findsOneWidget);
       expect(find.text('Need a rope'), findsNWidgets(2));
       expect(find.text('I can lend one.'), findsNothing);
 
@@ -190,7 +190,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
       await tester.pump();
 
-      expect(find.text('0 comments'), findsOneWidget);
+      expect(find.text('No comments'), findsOneWidget);
       expect(find.text('Need a rope'), findsNWidgets(2));
       expect(find.text('I can lend one.'), findsNothing);
       expect(find.text('I can bring one over.'), findsNothing);
@@ -226,8 +226,8 @@ void main() {
       await tester.pump();
 
       expect(_postCommentCount(tester), '1');
-      expect(find.text('1 comments'), findsOneWidget);
-      expect(find.text('0 comments'), findsNothing);
+      expect(find.text('1 comment'), findsOneWidget);
+      expect(find.text('No comments'), findsNothing);
       expect(find.text('No comments yet'), findsNothing);
       expect(find.text('I can bring one over.'), findsOneWidget);
     },
@@ -262,7 +262,7 @@ void main() {
       await tester.pump();
 
       expect(_postCommentCount(tester), '1');
-      expect(find.text('1 comments'), findsOneWidget);
+      expect(find.text('1 comment'), findsOneWidget);
       expect(find.text('I can bring one over.'), findsOneWidget);
     },
   );
@@ -287,7 +287,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('1 comments'), findsOneWidget);
+    expect(find.text('1 comment'), findsOneWidget);
     expect(find.text('I can lend one.'), findsOneWidget);
 
     final comments = await postRepository.loadComments('post-1');
@@ -320,7 +320,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 20));
 
-      expect(find.text('1 comments'), findsOneWidget);
+      expect(find.text('1 comment'), findsOneWidget);
       expect(find.text('I can lend one.'), findsOneWidget);
 
       final comments = await postRepository.loadComments('post-1');

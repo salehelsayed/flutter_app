@@ -25,6 +25,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -75,6 +76,7 @@ type Node struct {
 	// Test seams for startup timing behavior.
 	warmRelayConnectionHook            func(peer.AddrInfo) error
 	warmRelayConnectionWithTimeoutHook func(peer.AddrInfo, time.Duration) error
+	reserveRelaySlotHook               func(context.Context, host.Host, peer.AddrInfo) (*relayclient.Reservation, error)
 	connectRelayHook                   func(context.Context, peer.AddrInfo) error
 	waitForCircuitAddressHook          func(time.Duration) bool
 	rendezvousRegisterHook             func(string, []string) error
@@ -693,6 +695,16 @@ func (n *Node) connectRelay(ctx context.Context, info peer.AddrInfo) error {
 	return n.host.Connect(ctx, info)
 }
 
+func (n *Node) reserveRelaySlot(ctx context.Context, h host.Host, info peer.AddrInfo) (*relayclient.Reservation, error) {
+	if n.reserveRelaySlotHook != nil {
+		return n.reserveRelaySlotHook(ctx, h, info)
+	}
+	if h == nil {
+		return nil, fmt.Errorf("node host not available")
+	}
+	return relayclient.Reserve(ctx, h, info)
+}
+
 func (n *Node) warmRelayConnectionForStart(info peer.AddrInfo) error {
 	return n.warmRelayConnection(info)
 }
@@ -785,6 +797,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 	} else {
 		var refreshErr error
 		var relayWarmMs int64
+		var reserveRpcMs int64
 		var circuitAddressWaitMs int64
 		relayWarmParallelism := 0
 		reservationPath := "poll_fallback"
@@ -852,6 +865,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 
 		warmSucceeded := false
 		var lastWarmErr error
+		successfulWarmInfos := make([]peer.AddrInfo, 0, len(warmInfos))
 		for attempt := range attempts {
 			peerLabel := attempt.peerID.String()[:min(20, len(attempt.peerID.String()))]
 			if attempt.err != nil {
@@ -860,7 +874,66 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 				continue
 			}
 			warmSucceeded = true
+			if info, ok := relayInfoMap[attempt.peerID]; ok {
+				successfulWarmInfos = append(successfulWarmInfos, *info)
+			}
 			log.Printf("[NODE] RefreshRelaySession: warm %s success", peerLabel)
+		}
+
+		reserveSucceeded := false
+		var lastReserveErr error
+		if warmSucceeded && len(successfulWarmInfos) > 0 {
+			reserveStart := time.Now()
+			type reserveAttempt struct {
+				peerID peer.ID
+				err    error
+			}
+			reserveAttempts := make(chan reserveAttempt, len(successfulWarmInfos))
+			var reserveWG sync.WaitGroup
+			for _, info := range successfulWarmInfos {
+				info := info
+				reserveWG.Add(1)
+				go func() {
+					defer reserveWG.Done()
+					reserveCtx, cancel := context.WithTimeout(n.ctx, ForegroundRelayReserveTimeout)
+					defer cancel()
+					_, err := n.reserveRelaySlot(reserveCtx, h, info)
+					reserveAttempts <- reserveAttempt{
+						peerID: info.ID,
+						err:    err,
+					}
+				}()
+			}
+			reserveWG.Wait()
+			close(reserveAttempts)
+			reserveRpcMs = time.Since(reserveStart).Milliseconds()
+
+			for attempt := range reserveAttempts {
+				peerLabel := attempt.peerID.String()[:min(20, len(attempt.peerID.String()))]
+				if attempt.err != nil {
+					lastReserveErr = attempt.err
+					log.Printf("[NODE] RefreshRelaySession: reserve %s failed: %v", peerLabel, attempt.err)
+					if mgr != nil {
+						mgr.OnRequestFailed(attempt.peerID, attempt.err)
+					}
+					n.emitEvent("relay:reservation_timing", map[string]interface{}{
+						"elapsedMs": reserveRpcMs,
+						"outcome":   "failed",
+						"relayId":   peerLabel,
+						"error":     attempt.err.Error(),
+					})
+					continue
+				}
+				reserveSucceeded = true
+				reservationPath = "explicit_reserve"
+				reservationWinnerPeer = attempt.peerID.String()
+				log.Printf("[NODE] RefreshRelaySession: reserve %s success", peerLabel)
+				n.emitEvent("relay:reservation_timing", map[string]interface{}{
+					"elapsedMs": reserveRpcMs,
+					"outcome":   "success",
+					"relayId":   peerLabel,
+				})
+			}
 		}
 
 		// Give the faster foreground path a short chance to win first, then keep
@@ -880,6 +953,8 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 				refreshErr = nil
 			} else if !warmSucceeded && lastWarmErr != nil {
 				refreshErr = lastWarmErr
+			} else if lastReserveErr != nil && !reserveSucceeded {
+				refreshErr = lastReserveErr
 			} else {
 				refreshErr = fmt.Errorf("no circuit addresses after %v wait", CircuitAddressWaitTimeout)
 			}
@@ -901,7 +976,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 			HealthyRelayCount:            mgr.HealthyRelayCount(),
 			ReusedHost:                   true,
 			RelayWarmMs:                  relayWarmMs,
-			ReserveRpcMs:                 0,
+			ReserveRpcMs:                 reserveRpcMs,
 			RelayWarmParallelism:         relayWarmParallelism,
 			ForegroundRecoveryPath:       foregroundRecoveryPath,
 			ForegroundRelayDialTimeoutMs: ForegroundRelayDialTimeout.Milliseconds(),

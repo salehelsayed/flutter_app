@@ -641,6 +641,33 @@ class GroupMessageListener {
       final wireMessageId = data['messageId'] as String?;
       final isSystemPayload = text.startsWith('{"__sys":');
       if (isSystemPayload) {
+        if (allowMembershipBuffer &&
+            await _shouldBufferPreJoinSystemMessage(
+              groupId: groupId,
+              senderId: senderId,
+              messageId: wireMessageId,
+              msgRepo: msgRepo,
+              data: data,
+              text: text,
+            )) {
+          await _bufferMembershipDependentMessage(
+            groupId: groupId,
+            senderId: senderId,
+            messageId: wireMessageId,
+            data: data,
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_PRE_JOIN_SYSTEM_BUFFERED',
+            details: {
+              'groupId': _membershipFlowId(groupId),
+              'senderId': _membershipFlowId(senderId),
+              if (wireMessageId != null && wireMessageId.isNotEmpty)
+                'messageId': _membershipFlowId(wireMessageId),
+            },
+          );
+          return;
+        }
         final bridge = _bridge;
         if (bridge == null) {
           emitFlowEvent(
@@ -849,6 +876,82 @@ class GroupMessageListener {
         },
       );
     }
+  }
+
+  Future<void> flushPendingMembershipDependentMessagesForGroup(
+    String groupId, {
+    GroupMessageRepository? msgRepoOverride,
+  }) async {
+    final members = await _groupRepo.getMembers(groupId);
+    if (members.isEmpty) return;
+    await _flushMembershipDependentMessages(
+      groupId: groupId,
+      memberPeerIds: members.map((member) => member.peerId),
+      msgRepo: msgRepoOverride ?? _msgRepo,
+    );
+  }
+
+  Future<int> retryPendingKeyRepairsForGroupEpoch({
+    required String groupId,
+    required int keyEpoch,
+  }) async {
+    final bridge = _bridge;
+    final pendingRepo = _pendingKeyRepairRepo;
+    if (bridge == null || pendingRepo == null || keyEpoch <= 0) {
+      return 0;
+    }
+    final runner = GroupPendingKeyRepairRunner(
+      bridge: bridge,
+      groupRepo: _groupRepo,
+      msgRepo: _msgRepo,
+      pendingKeyRepairRepo: pendingRepo,
+      mediaAttachmentRepo: _mediaAttachmentRepo,
+      reactionRepo: _reactionRepo,
+      replayGroupEnvelope: (data) =>
+          handleReplayEnvelope(data, allowMembershipBuffer: true),
+    );
+    return runner.retryPendingRepairsForKey(
+      groupId: groupId,
+      keyEpoch: keyEpoch,
+    );
+  }
+
+  Future<bool> _shouldBufferPreJoinSystemMessage({
+    required String groupId,
+    required String senderId,
+    required String? messageId,
+    required GroupMessageRepository msgRepo,
+    required Map<String, dynamic> data,
+    required String text,
+  }) async {
+    if (senderId.isEmpty) return false;
+    final localSenderMember = await _groupRepo.getMember(groupId, senderId);
+    if (localSenderMember != null) return false;
+    if (messageId != null &&
+        messageId.isNotEmpty &&
+        await msgRepo.getMessage(messageId) != null) {
+      return false;
+    }
+
+    final Map<String, dynamic> parsed;
+    try {
+      parsed = jsonDecode(text) as Map<String, dynamic>;
+    } catch (_) {
+      return false;
+    }
+    final sysType = parsed['__sys'] as String?;
+    if (sysType != 'group_metadata_updated' &&
+        sysType != 'members_added' &&
+        sysType != 'member_role_updated') {
+      return false;
+    }
+    final groupConfig = parsed['groupConfig'];
+    if (groupConfig is! Map) return false;
+    return _findGroupConfigMember(
+          Map<String, dynamic>.from(groupConfig),
+          senderId,
+        ) !=
+        null;
   }
 
   Future<bool> _shouldBufferMembershipDependentMessage({
@@ -1801,6 +1904,7 @@ class GroupMessageListener {
             groupId,
             sysType: sysType,
             eventAt: eventAt,
+            parsed: parsed,
           )) {
             return;
           }
@@ -4376,6 +4480,7 @@ class GroupMessageListener {
     String groupId, {
     required String? sysType,
     required DateTime? eventAt,
+    Map<String, dynamic>? parsed,
   }) async {
     if (eventAt == null) {
       return false;
@@ -4384,6 +4489,22 @@ class GroupMessageListener {
     final group = await _groupRepo.getGroup(groupId);
     final watermark = group?.lastMetadataEventAt?.toUtc();
     if (watermark == null || eventAt.isAfter(watermark)) {
+      return false;
+    }
+
+    if (group != null &&
+        eventAt.isAtSameMomentAs(watermark) &&
+        _metadataReplayRepairsVisibleFields(group, parsed)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_METADATA_EVENT_REPAIRING_EQUAL_VERSION',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'type': sysType ?? 'null',
+          'eventAt': eventAt.toIso8601String(),
+          'watermark': watermark.toIso8601String(),
+        },
+      );
       return false;
     }
 
@@ -4418,6 +4539,26 @@ class GroupMessageListener {
       },
     );
     return true;
+  }
+
+  bool _metadataReplayRepairsVisibleFields(
+    GroupModel group,
+    Map<String, dynamic>? parsed,
+  ) {
+    final groupConfig = parsed?['groupConfig'];
+    if (groupConfig is! Map) {
+      return false;
+    }
+    final normalizedGroupConfig = normalizeGroupConfigPayload(
+      groupId: group.id,
+      groupConfig: Map<String, dynamic>.from(groupConfig),
+    );
+    final snapshotName = normalizedGroupConfig['name'] as String?;
+    final snapshotDescription = normalizedGroupConfig.containsKey('description')
+        ? normalizedGroupConfig['description'] as String?
+        : group.description;
+    return (snapshotName != null && snapshotName != group.name) ||
+        snapshotDescription != group.description;
   }
 
   Future<bool> _shouldRetryAcceptedSignedMetadataAvatarRecovery(
@@ -4564,20 +4705,43 @@ class GroupMessageListener {
     final resolvedMetadataUpdatedAt = DateTime.tryParse(
       metadataUpdatedAtValue ?? '',
     )?.toUtc();
+    final currentMetadataWatermark = group.lastMetadataEventAt?.toUtc();
+    final appliesMetadataFields =
+        resolvedMetadataUpdatedAt == null ||
+        currentMetadataWatermark == null ||
+        !resolvedMetadataUpdatedAt.isBefore(currentMetadataWatermark);
+    if (!appliesMetadataFields) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_STALE_CONFIG_METADATA_FIELDS_IGNORED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'metadataUpdatedAt': resolvedMetadataUpdatedAt.toIso8601String(),
+          'watermark': currentMetadataWatermark.toIso8601String(),
+        },
+      );
+    }
     final containsAvatarBlobId = normalizedGroupConfig.containsKey(
       'avatarBlobId',
     );
     final containsAvatarMime = normalizedGroupConfig.containsKey('avatarMime');
-    final resolvedAvatarBlobId = containsAvatarBlobId
+    final snapshotAvatarBlobId = containsAvatarBlobId
         ? normalizedGroupConfig['avatarBlobId'] as String?
         : group.avatarBlobId;
-    final resolvedAvatarMime = containsAvatarMime
+    final snapshotAvatarMime = containsAvatarMime
         ? normalizedGroupConfig['avatarMime'] as String?
+        : group.avatarMime;
+    final resolvedAvatarBlobId = appliesMetadataFields
+        ? snapshotAvatarBlobId
+        : group.avatarBlobId;
+    final resolvedAvatarMime = appliesMetadataFields
+        ? snapshotAvatarMime
         : group.avatarMime;
     final avatarChanged =
         resolvedAvatarBlobId != group.avatarBlobId ||
         resolvedAvatarMime != group.avatarMime;
     final shouldClearAvatar =
+        appliesMetadataFields &&
         (containsAvatarBlobId || containsAvatarMime) &&
         (resolvedAvatarBlobId == null || resolvedAvatarMime == null);
     final nextAvatarPath = shouldClearAvatar || avatarChanged
@@ -4590,29 +4754,36 @@ class GroupMessageListener {
 
     await _groupRepo.updateGroup(
       group.copyWith(
-        name: normalizedGroupConfig['name'] as String? ?? group.name,
-        type: resolvedType,
-        description: normalizedGroupConfig.containsKey('description')
-            ? normalizedGroupConfig['description'] as String?
+        name: appliesMetadataFields
+            ? normalizedGroupConfig['name'] as String? ?? group.name
+            : group.name,
+        type: appliesMetadataFields ? resolvedType : group.type,
+        description: appliesMetadataFields
+            ? (normalizedGroupConfig.containsKey('description')
+                  ? normalizedGroupConfig['description'] as String?
+                  : group.description)
             : group.description,
         avatarBlobId: resolvedAvatarBlobId,
         avatarMime: resolvedAvatarMime,
         avatarPath: nextAvatarPath,
-        createdAt: resolvedCreatedAt,
-        createdBy:
-            normalizedGroupConfig['createdBy'] as String? ?? group.createdBy,
+        createdAt: appliesMetadataFields ? resolvedCreatedAt : group.createdAt,
+        createdBy: appliesMetadataFields
+            ? normalizedGroupConfig['createdBy'] as String? ?? group.createdBy
+            : group.createdBy,
         myRole: selfSnapshotRole == null
             ? group.myRole
             : (selfSnapshotRole == MemberRole.admin
                   ? GroupRole.admin
                   : GroupRole.member),
-        lastMetadataEventAt:
-            resolvedMetadataUpdatedAt ?? group.lastMetadataEventAt,
+        lastMetadataEventAt: appliesMetadataFields
+            ? resolvedMetadataUpdatedAt ?? group.lastMetadataEventAt
+            : group.lastMetadataEventAt,
       ),
     );
 
     final bridge = _bridge;
-    if (bridge != null &&
+    if (appliesMetadataFields &&
+        bridge != null &&
         resolvedAvatarBlobId != null &&
         resolvedAvatarMime != null &&
         (avatarChanged || nextAvatarPath == null)) {

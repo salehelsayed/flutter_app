@@ -39,7 +39,9 @@ import 'package:flutter_app/features/groups/application/group_sender_device_bind
 import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/refresh_pending_group_invites_for_metadata_change_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/revoke_pending_group_invite_use_case.dart';
@@ -52,6 +54,7 @@ import 'package:flutter_app/features/groups/application/signed_group_transition_
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -60,6 +63,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
@@ -92,6 +96,10 @@ const _regressionAdminPermissionsScenario =
     'regression_group_admin_permissions_and_message_reliability_four_users';
 const _regressionAdminPermissionsProofName =
     'regressionGroupAdminPermissionsProof';
+const _scenario7GroupInviteStaleMetadataRecoveryScenario =
+    'scenario7_group_invite_stale_metadata_recovery';
+const _scenario7GroupInviteStaleMetadataRecoveryProofName =
+    'scenario7GroupInviteStaleMetadataRecoveryProof';
 const _restoreMnemonic = String.fromEnvironment(
   'GROUP_MULTI_PARTY_RESTORE_MNEMONIC',
   defaultValue: '',
@@ -110,6 +118,121 @@ const _configuredDbName = String.fromEnvironment(
 );
 const _identityExchangeTimeout = Duration(minutes: 90);
 const _liveTopicLeavePropagationDelay = Duration(seconds: 3);
+
+class _InMemoryGroupInviteDeliveryAttemptRepository
+    implements GroupInviteDeliveryAttemptRepository {
+  final _attempts = <String, GroupInviteDeliveryAttempt>{};
+
+  String _key(String groupId, String peerId) => '$groupId::$peerId';
+
+  @override
+  Future<void> saveAttempt(GroupInviteDeliveryAttempt attempt) async {
+    _attempts[_key(attempt.groupId, attempt.peerId)] = attempt;
+  }
+
+  @override
+  Future<GroupInviteDeliveryAttempt?> getAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => _attempts[_key(groupId, peerId)];
+
+  @override
+  Future<List<GroupInviteDeliveryAttempt>> getAttemptsForGroup(
+    String groupId,
+  ) async => _attempts.values
+      .where((attempt) => attempt.groupId == groupId)
+      .toList(growable: false);
+
+  @override
+  Future<GroupInviteDeliveryStatus> getStatusForMember({
+    required String groupId,
+    required String peerId,
+  }) async =>
+      _attempts[_key(groupId, peerId)]?.status ??
+      GroupInviteDeliveryStatus.unknown;
+
+  @override
+  Future<Map<String, GroupInviteDeliveryStatus>> getStatusesForGroupMembers(
+    String groupId,
+  ) async => {
+    for (final attempt in _attempts.values.where(
+      (attempt) => attempt.groupId == groupId,
+    ))
+      attempt.peerId: attempt.status,
+  };
+
+  @override
+  Future<void> updateStatus({
+    required String groupId,
+    required String peerId,
+    required GroupInviteDeliveryStatus status,
+    DateTime? updatedAt,
+  }) async {
+    final now = (updatedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: status,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: status,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<void> markJoined({
+    required String groupId,
+    required String peerId,
+    String? username,
+    DateTime? joinedAt,
+  }) async {
+    final now = (joinedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<int> deleteAttempt({
+    required String groupId,
+    required String peerId,
+  }) async {
+    return _attempts.remove(_key(groupId, peerId)) == null ? 0 : 1;
+  }
+
+  @override
+  Future<int> deleteAttemptsForGroup(String groupId) async {
+    final keys = _attempts.entries
+        .where((entry) => entry.value.groupId == groupId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final key in keys) {
+      _attempts.remove(key);
+    }
+    return keys.length;
+  }
+}
 
 const _rolesByScenario = <String, List<String>>{
   'ge001': <String>['alice', 'bob', 'charlie'],
@@ -223,6 +346,12 @@ const _rolesByScenario = <String, List<String>>{
     'dana',
   ],
   _regressionAdminPermissionsScenario: <String>[
+    'alice',
+    'bob',
+    'charlie',
+    'dana',
+  ],
+  _scenario7GroupInviteStaleMetadataRecoveryScenario: <String>[
     'alice',
     'bob',
     'charlie',
@@ -689,6 +818,36 @@ Future<void> _addRegressionAdminPermissionsInitialContacts(
       return;
     default:
       throw StateError('Unsupported regression scenario role $_role');
+  }
+}
+
+Future<void> _addScenario7InitialContacts(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  switch (_role) {
+    case 'alice':
+      await _addPeerContactsForRoles(stack, identities, const <String>['bob']);
+      return;
+    case 'bob':
+      await _addPeerContactsForRoles(stack, identities, const <String>[
+        'alice',
+        'charlie',
+      ]);
+      return;
+    case 'charlie':
+      await _addPeerContactsForRoles(stack, identities, const <String>[
+        'bob',
+        'dana',
+      ]);
+      return;
+    case 'dana':
+      await _addPeerContactsForRoles(stack, identities, const <String>[
+        'charlie',
+      ]);
+      return;
+    default:
+      throw StateError('Unsupported Scenario 7 role $_role');
   }
 }
 
@@ -8764,23 +8923,24 @@ Future<GroupModel> _publishGroupMetadataUpdate({
       .toSet()
       .toList(growable: false);
   if (recipientPeerIds.isNotEmpty) {
-    await storeGroupOfflineReplayEnvelope(
+    final inboxPayload = jsonEncode(<String, dynamic>{
+      'groupId': groupId,
+      'senderId': stack.identity.peerId,
+      'senderUsername': stack.identity.username,
+      if (senderBinding.deviceId != null)
+        'senderDeviceId': senderBinding.deviceId,
+      if (senderBinding.transportPeerId != null)
+        'transportPeerId': senderBinding.transportPeerId,
+      'text': signedSysText,
+      'timestamp': effectiveChangedAt.toIso8601String(),
+      'messageId': messageId,
+    });
+    final replayEnvelope = await buildGroupOfflineReplayEnvelope(
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
       groupId: groupId,
       payloadType: groupOfflineReplayPayloadTypeMessage,
-      plaintext: jsonEncode(<String, dynamic>{
-        'groupId': groupId,
-        'senderId': stack.identity.peerId,
-        'senderUsername': stack.identity.username,
-        if (senderBinding.deviceId != null)
-          'senderDeviceId': senderBinding.deviceId,
-        if (senderBinding.transportPeerId != null)
-          'transportPeerId': senderBinding.transportPeerId,
-        'text': signedSysText,
-        'timestamp': effectiveChangedAt.toIso8601String(),
-        'messageId': messageId,
-      }),
+      plaintext: inboxPayload,
       senderPeerId: stack.identity.peerId,
       senderPublicKey: stack.identity.publicKey,
       senderPrivateKey: stack.identity.privateKey,
@@ -8790,6 +8950,32 @@ Future<GroupModel> _publishGroupMetadataUpdate({
       messageId: messageId,
       recipientPeerIds: recipientPeerIds,
     );
+    await callGroupInboxStore(
+      stack.bridge,
+      groupId,
+      replayEnvelope,
+      recipientPeerIds: recipientPeerIds,
+      preserveRecipientPeerIds: true,
+    );
+    final directTargets = groupMembershipUpdateDirectTargets(
+      members: signedMembers,
+      excludingPeerId: stack.identity.peerId,
+    );
+    for (final target in directTargets) {
+      unawaited(
+        sendGroupMembershipUpdateDirect(
+          sendP2PMessage: (peerId, message) async {
+            return stack.p2pService.sendMessage(peerId, message);
+          },
+          recipientPeerId: target.deliveryPeerId,
+          groupId: groupId,
+          senderPeerId: stack.identity.peerId,
+          replayEnvelope: replayEnvelope,
+          timestamp: effectiveChangedAt,
+          messageId: messageId,
+        ),
+      );
+    }
   }
   return updated;
 }
@@ -18282,6 +18468,7 @@ Future<void> _sendRegressionInviteToRole({
   required Map<String, Map<String, dynamic>> identities,
   required String groupId,
   required String recipientRole,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
   final contact = await stack.contactRepo.getContact(
     identities[recipientRole]!['peerId'] as String,
@@ -18310,6 +18497,17 @@ Future<void> _sendRegressionInviteToRole({
     keyEpoch: keyInfo.keyGeneration,
     groupConfig: buildGroupConfigPayload(group, members),
   );
+  await recordGroupInviteDeliveryBatch(
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    groupId: groupId,
+    attempts: <GroupInviteAttempt>[
+      GroupInviteAttempt(
+        peerId: contact.peerId,
+        username: contact.username,
+        result: result,
+      ),
+    ],
+  );
   if (result != SendGroupInviteResult.success &&
       result != SendGroupInviteResult.queued) {
     throw StateError('invite_failed:$result');
@@ -18322,6 +18520,7 @@ Future<Map<String, dynamic>> _regressionAddMemberFromContactAndInvite({
   required String groupId,
   required String recipientRole,
   required String avatarSuffix,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
   final contact = await stack.contactRepo.getContact(
     identities[recipientRole]!['peerId'] as String,
@@ -18365,6 +18564,7 @@ Future<Map<String, dynamic>> _regressionAddMemberFromContactAndInvite({
     identities: identities,
     groupId: groupId,
     recipientRole: recipientRole,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );
   return avatar;
 }
@@ -21437,6 +21637,1019 @@ Future<void> _runPromptCharlie(
   } finally {
     inviteListener.dispose();
   }
+}
+
+const _scenario7MessageKeys = <String>[
+  'aliceScenario7PostDanaAccept',
+  'bobScenario7PostDanaAccept',
+  'charlieScenario7PostDanaAccept',
+  'danaScenario7PostDanaAccept',
+];
+
+String _scenario7MatrixKey(String role) {
+  return switch (role) {
+    'alice' => 'aliceScenario7PostDanaAccept',
+    'bob' => 'bobScenario7PostDanaAccept',
+    'charlie' => 'charlieScenario7PostDanaAccept',
+    'dana' => 'danaScenario7PostDanaAccept',
+    _ => throw StateError('Unsupported Scenario 7 matrix role $role'),
+  };
+}
+
+Future<void> _runScenario7FullMessageMatrixPhase({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, Map<String, dynamic>> identities,
+  required String groupId,
+  required List<Map<String, dynamic>> sentMessages,
+  required List<Map<String, dynamic>> receivedMessages,
+}) async {
+  const activeRoles = <String>['alice', 'bob', 'charlie', 'dana'];
+  if (activeRoles.contains(_role)) {
+    final key = _scenario7MatrixKey(_role);
+    final sent = await _sendProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: key,
+      text: 'Scenario 7 post-Dana accept $_role $_runId',
+    );
+    sentMessages.add(sent);
+    var selfPersistedCount = 0;
+    await waitForCondition(() async {
+      selfPersistedCount = await _proofMessageCount(
+        stack: stack,
+        groupId: groupId,
+        text: sent['text'] as String,
+        senderPeerId: stack.identity.peerId,
+      );
+      return selfPersistedCount == 1;
+    }, timeout: const Duration(seconds: 30));
+    receivedMessages.add(<String, dynamic>{
+      'key': key,
+      'messageId': sent['messageId'],
+      'groupId': groupId,
+      'text': sent['text'],
+      'senderPeerId': stack.identity.peerId,
+      'timestamp': sent['timestamp'],
+      'keyEpoch': sent['keyEpoch'],
+      'isIncoming': false,
+      'selfDelivery': true,
+      'persistedCount': selfPersistedCount,
+    });
+  }
+
+  for (final senderRole in activeRoles) {
+    if (senderRole == _role) continue;
+    final key = _scenario7MatrixKey(senderRole);
+    final sent = await waitForSharedJson(
+      _signalName('${senderRole}_sent_$key.json'),
+    );
+    final received = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: key,
+      text: sent['text'] as String,
+      senderPeerId: identities[senderRole]!['peerId'] as String,
+    );
+    receivedMessages.add(received);
+    writeSharedText(_signalName('${_role}_received_$key'), 'ok');
+  }
+
+  if (activeRoles.contains(_role)) {
+    final key = _scenario7MatrixKey(_role);
+    for (final receiverRole in activeRoles) {
+      if (receiverRole == _role) continue;
+      await waitForSharedSignal(_signalName('${receiverRole}_received_$key'));
+    }
+  }
+}
+
+Future<Map<String, dynamic>> _scenario7AcceptStaleInvite({
+  required GroupMultiDeviceTestStack stack,
+  required InMemoryPendingGroupInviteRepository pendingInviteRepo,
+  required Map<String, dynamic> staleInviteSnapshot,
+  required PendingGroupInvite originalStalePendingInvite,
+  required bool preAcceptDirectMetadataBuffered,
+}) async {
+  final invite = await _waitForMl001PendingInvite(
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  expect(
+    invite.groupId,
+    originalStalePendingInvite.groupId,
+    reason: 'Scenario 7 must accept the same stale pending invite',
+  );
+  expect(
+    invite.groupName,
+    originalStalePendingInvite.groupName,
+    reason: 'Scenario 7 must not pre-refresh Dana pending invite before accept',
+  );
+  expect(
+    invite.groupDescription,
+    originalStalePendingInvite.groupDescription,
+    reason: 'Scenario 7 must accept from the stale invite description',
+  );
+  expect(
+    invite.avatarBlobId,
+    originalStalePendingInvite.avatarBlobId,
+    reason: 'Scenario 7 must accept from the stale invite avatar',
+  );
+  final pendingBeforeAccept = await pendingInviteRepo.getPendingInvites();
+  final storedPendingInvite =
+      await pendingInviteRepo.getPendingInvite(invite.groupId) != null;
+  final (acceptResult, acceptedGroup) = await acceptPendingGroupInvite(
+    pendingInviteRepo: pendingInviteRepo,
+    groupRepo: stack.groupRepo,
+    contactRepo: stack.contactRepo,
+    msgRepo: stack.groupMsgRepo,
+    bridge: stack.bridge,
+    groupId: invite.groupId,
+    groupMessageListener: stack.groupListener,
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    ownDeviceId: stack.p2pService.currentState.peerId,
+    ownTransportPeerId: stack.p2pService.currentState.peerId,
+    ownMlKemPublicKey: stack.identity.mlKemPublicKey,
+    ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+      stack.p2pService.currentState.peerId,
+    ),
+    ownKeyPackagePublicMaterial: stack.identity.mlKemPublicKey,
+    drainAcceptedInboxAllPages: true,
+    acceptedInboxDrainMaxAttempts: 4,
+  );
+  expect(acceptResult, AcceptPendingGroupInviteResult.success);
+  expect(acceptedGroup, isNotNull);
+  final pendingAfterAccept = await pendingInviteRepo.getPendingInvites();
+  final consumedAfterAccept =
+      await pendingInviteRepo.getPendingInvite(invite.groupId) == null;
+  final (retryResult, retryGroup) = await acceptPendingGroupInvite(
+    pendingInviteRepo: pendingInviteRepo,
+    groupRepo: stack.groupRepo,
+    contactRepo: stack.contactRepo,
+    msgRepo: stack.groupMsgRepo,
+    bridge: stack.bridge,
+    groupId: invite.groupId,
+    groupMessageListener: stack.groupListener,
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+    senderUsername: stack.identity.username,
+    ownDeviceId: stack.p2pService.currentState.peerId,
+    ownTransportPeerId: stack.p2pService.currentState.peerId,
+    ownMlKemPublicKey: stack.identity.mlKemPublicKey,
+    ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+      stack.p2pService.currentState.peerId,
+    ),
+    ownKeyPackagePublicMaterial: stack.identity.mlKemPublicKey,
+    drainAcceptedInboxAllPages: true,
+    acceptedInboxDrainMaxAttempts: 4,
+  );
+
+  final staleName = staleInviteSnapshot['staleInviteName'] as String?;
+  final staleDescription =
+      staleInviteSnapshot['staleInviteDescription'] as String?;
+  final staleAvatarBlobId =
+      staleInviteSnapshot['staleInviteAvatarBlobId'] as String?;
+  final staleAvatarMime =
+      staleInviteSnapshot['staleInviteAvatarMime'] as String?;
+  final acceptedGroupAvatarBlobId = acceptedGroup?.avatarBlobId ?? '';
+  final originalStaleAvatarBlobId =
+      originalStalePendingInvite.avatarBlobId ?? '';
+  final pendingInviteStaleAtAccept =
+      invite.groupName == originalStalePendingInvite.groupName &&
+      invite.groupName == (staleName ?? '') &&
+      (invite.groupDescription ?? '') ==
+          (originalStalePendingInvite.groupDescription ?? '') &&
+      (invite.groupDescription ?? '') == (staleDescription ?? '') &&
+      (invite.avatarBlobId ?? '') == originalStaleAvatarBlobId &&
+      originalStaleAvatarBlobId == (staleAvatarBlobId ?? '') &&
+      (invite.avatarMime ?? '') ==
+          (originalStalePendingInvite.avatarMime ?? '');
+  final acceptedGroupMetadataFresh =
+      acceptedGroup?.name == 'test 3' &&
+      acceptedGroup?.description == '333' &&
+      originalStaleAvatarBlobId.isNotEmpty &&
+      acceptedGroupAvatarBlobId.isNotEmpty &&
+      acceptedGroupAvatarBlobId != originalStaleAvatarBlobId;
+  return <String, dynamic>{
+    'groupId': invite.groupId,
+    'pendingInviteVisibleBeforeAccept': storedPendingInvite,
+    'pendingInviteConsumedAfterAccept': consumedAfterAccept,
+    'pendingInviteCountBeforeAccept': pendingBeforeAccept.length,
+    'pendingInviteCountAfterAccept': pendingAfterAccept.length,
+    'acceptResult': acceptResult.name,
+    'acceptedGroupMaterialized': acceptedGroup != null,
+    'preAcceptDirectMetadataBuffered': preAcceptDirectMetadataBuffered,
+    'pendingInviteStaleAtAccept': pendingInviteStaleAtAccept,
+    'pendingInviteRefreshedBeforeAccept': false,
+    'acceptedGroupMetadataFresh': acceptedGroupMetadataFresh,
+    'acceptedGroupName': acceptedGroup?.name ?? '',
+    'acceptedGroupDescription': acceptedGroup?.description ?? '',
+    'acceptedGroupAvatarBlobId': acceptedGroupAvatarBlobId,
+    'acceptedGroupAvatarMime': acceptedGroup?.avatarMime ?? '',
+    'acceptedGroupAvatarPath': acceptedGroup?.avatarPath ?? '',
+    'retryAcceptResult': retryResult.name,
+    'retryGroupMaterialized': retryGroup != null,
+    'staleInviteName': originalStalePendingInvite.groupName,
+    'staleInviteDescription': originalStalePendingInvite.groupDescription ?? '',
+    'staleInviteAvatarBlobId': originalStaleAvatarBlobId,
+    'staleInviteAvatarMime': originalStalePendingInvite.avatarMime ?? '',
+    'staleInviteMatchedCharlieSnapshot':
+        originalStalePendingInvite.groupName == staleName &&
+        (originalStalePendingInvite.groupDescription ?? '') ==
+            (staleDescription ?? '') &&
+        originalStaleAvatarBlobId == (staleAvatarBlobId ?? '') &&
+        (originalStalePendingInvite.avatarMime ?? '') ==
+            (staleAvatarMime ?? ''),
+  };
+}
+
+Future<bool> _scenario7InitialContactGraphProof({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, Map<String, dynamic>> identities,
+}) async {
+  Future<bool> has(String role) =>
+      _hasContactForRole(stack: stack, identities: identities, role: role);
+  switch (_role) {
+    case 'alice':
+      return await has('bob') &&
+          !(await has('charlie')) &&
+          !(await has('dana'));
+    case 'bob':
+      return await has('alice') && await has('charlie') && !(await has('dana'));
+    case 'charlie':
+      return !(await has('alice')) && await has('bob') && await has('dana');
+    case 'dana':
+      return !(await has('alice')) &&
+          !(await has('bob')) &&
+          await has('charlie');
+    default:
+      return false;
+  }
+}
+
+Future<Map<String, dynamic>> _scenario7Proof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required Map<String, dynamic> staleInviteSnapshot,
+  required Map<String, dynamic> danaAcceptanceProof,
+  required Map<String, dynamic> finalState,
+}) async {
+  final group = await stack.groupRepo.getGroup(groupId);
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final expectedPeerIds = <String>{
+    identities['alice']!['peerId'] as String,
+    identities['bob']!['peerId'] as String,
+    identities['charlie']!['peerId'] as String,
+    identities['dana']!['peerId'] as String,
+  };
+  final finalRoles = await _regressionMemberRoleNames(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+  );
+  final adminPeerIds = <String>[];
+  for (final role in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    if (finalRoles[role] == MemberRole.admin.toValue()) {
+      adminPeerIds.add(identities[role]!['peerId'] as String);
+    }
+  }
+  adminPeerIds.sort();
+  final avatarProof =
+      (finalState['avatarProof'] as Map?)?.cast<String, dynamic>() ??
+      const <String, dynamic>{};
+  final staleAvatarBlobId =
+      danaAcceptanceProof['staleInviteAvatarBlobId'] as String? ??
+      staleInviteSnapshot['staleInviteAvatarBlobId'] as String?;
+  final staleAvatarSha256 =
+      staleInviteSnapshot['staleInviteAvatarSha256'] as String?;
+  final finalAvatarSha256 = avatarProof['sha256'] as String?;
+  final staleBlobDiffers =
+      staleAvatarBlobId != null &&
+      staleAvatarBlobId.isNotEmpty &&
+      group?.avatarBlobId != null &&
+      staleAvatarBlobId != group!.avatarBlobId;
+  final staleHashDiffers =
+      staleAvatarSha256 == null ||
+      finalAvatarSha256 == null ||
+      staleAvatarSha256 != finalAvatarSha256;
+  return <String, dynamic>{
+    'rowId': 'SCENARIO-7-GROUP-INVITE-STALE-METADATA-RECOVERY',
+    'scenario': _scenario7GroupInviteStaleMetadataRecoveryScenario,
+    'proofRole': _role,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'proofSource': 'app_peer_core_simulator',
+    'initialContactGraphProof': await _scenario7InitialContactGraphProof(
+      stack: stack,
+      identities: identities,
+    ),
+    'staleInviteCapturedBeforeLatestMetadata':
+        staleInviteSnapshot['staleInviteCapturedBeforeLatestMetadata'] == true,
+    'pendingInviteVisibleBeforeAccept':
+        danaAcceptanceProof['pendingInviteVisibleBeforeAccept'] == true,
+    'pendingInviteConsumedAfterAccept':
+        danaAcceptanceProof['pendingInviteConsumedAfterAccept'] == true,
+    'pendingInviteCountBeforeAccept':
+        danaAcceptanceProof['pendingInviteCountBeforeAccept'] ?? -1,
+    'pendingInviteCountAfterAccept':
+        danaAcceptanceProof['pendingInviteCountAfterAccept'] ?? -1,
+    'acceptResult': danaAcceptanceProof['acceptResult'] ?? '',
+    'acceptedGroupMaterialized':
+        danaAcceptanceProof['acceptedGroupMaterialized'] == true,
+    'preAcceptDirectMetadataBuffered':
+        danaAcceptanceProof['preAcceptDirectMetadataBuffered'] == true,
+    'pendingInviteStaleAtAccept':
+        danaAcceptanceProof['pendingInviteStaleAtAccept'] == true,
+    'pendingInviteRefreshedBeforeAccept':
+        danaAcceptanceProof['pendingInviteRefreshedBeforeAccept'] == true,
+    'acceptedGroupMetadataFresh':
+        danaAcceptanceProof['acceptedGroupMetadataFresh'] == true,
+    'acceptedGroupName': danaAcceptanceProof['acceptedGroupName'] ?? '',
+    'acceptedGroupDescription':
+        danaAcceptanceProof['acceptedGroupDescription'] ?? '',
+    'acceptedGroupAvatarBlobId':
+        danaAcceptanceProof['acceptedGroupAvatarBlobId'] ?? '',
+    'acceptedGroupAvatarMime':
+        danaAcceptanceProof['acceptedGroupAvatarMime'] ?? '',
+    'acceptedGroupAvatarPath':
+        danaAcceptanceProof['acceptedGroupAvatarPath'] ?? '',
+    'retryAcceptResult': danaAcceptanceProof['retryAcceptResult'] ?? '',
+    'retryGroupMaterialized':
+        danaAcceptanceProof['retryGroupMaterialized'] == true,
+    'staleInviteName': danaAcceptanceProof['staleInviteName'] ?? '',
+    'staleInviteDescription':
+        danaAcceptanceProof['staleInviteDescription'] ?? '',
+    'staleInviteAvatarBlobId':
+        danaAcceptanceProof['staleInviteAvatarBlobId'] ?? '',
+    'staleInviteAvatarMime': danaAcceptanceProof['staleInviteAvatarMime'] ?? '',
+    'staleInviteAvatarSha256':
+        staleInviteSnapshot['staleInviteAvatarSha256'] ?? '',
+    'staleInviteAvatarByteLength':
+        staleInviteSnapshot['staleInviteAvatarByteLength'] ?? 0,
+    'staleInviteMatchedCharlieSnapshot':
+        danaAcceptanceProof['staleInviteMatchedCharlieSnapshot'] == true,
+    'latestMetadataPublishedBeforeDanaAccept': true,
+    'latestAvatarDiffersFromStale': staleBlobDiffers && staleHashDiffers,
+    'finalMetadataConverged':
+        group?.name == 'test 3' && group?.description == '333',
+    'finalMetadataName': group?.name ?? '',
+    'finalMetadataDescription': group?.description ?? '',
+    'avatarBytesVisible': avatarProof['bytesVisible'] == true,
+    'finalAvatarBlobId': group?.avatarBlobId ?? '',
+    'finalAvatarMime': group?.avatarMime ?? '',
+    'finalAvatarPath': group?.avatarPath ?? '',
+    'finalAvatarSha256': finalAvatarSha256 ?? '',
+    'finalAvatarByteLength': avatarProof['byteLength'] ?? 0,
+    'allFourMembersActive':
+        memberPeerIds.length == expectedPeerIds.length &&
+        memberPeerIds.toSet().containsAll(expectedPeerIds),
+    'finalRolesConverged':
+        finalRoles['alice'] == MemberRole.admin.toValue() &&
+        finalRoles['bob'] == MemberRole.writer.toValue() &&
+        finalRoles['charlie'] == MemberRole.admin.toValue() &&
+        finalRoles['dana'] == MemberRole.writer.toValue(),
+    'finalActiveMemberPeerIds': memberPeerIds,
+    'finalAdminPeerIds': adminPeerIds,
+    'finalMemberRoles': finalRoles,
+    'finalStateHash': await buildGroupTransitionStateHash(
+      stack.groupRepo,
+      groupId,
+    ),
+    'finalKeyEpoch': await _keyEpoch(stack, groupId),
+    'fullMessageMatrixProofPassed': true,
+    'fullMessageMatrixPhaseKeys': _scenario7MessageKeys,
+  };
+}
+
+Future<void> _writeScenario7Verdict({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required List<Map<String, dynamic>> sentMessages,
+  required List<Map<String, dynamic>> receivedMessages,
+  required Map<String, dynamic> staleInviteSnapshot,
+  required Map<String, dynamic> danaAcceptanceProof,
+  required Map<String, dynamic> finalState,
+}) async {
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+    extra: <String, dynamic>{
+      'activeMemberPeerIds': await _memberPeerIds(stack, groupId),
+      _scenario7GroupInviteStaleMetadataRecoveryProofName:
+          await _scenario7Proof(
+            stack: stack,
+            groupId: groupId,
+            identities: identities,
+            staleInviteSnapshot: staleInviteSnapshot,
+            danaAcceptanceProof: danaAcceptanceProof,
+            finalState: finalState,
+          ),
+    },
+  );
+}
+
+Future<void> _runScenario7Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+
+  await waitForSharedSignal(_signalName('bob_scenario7_initial_invite_ready'));
+  final (groupId, _) = await _createPromptAliceBobGroup(
+    stack: stack,
+    identities: identities,
+  );
+  await waitForSharedSignal(
+    _signalName('bob_scenario7_initial_invite_accepted'),
+  );
+
+  final initialAvatar = await _uploadPromptGroupAvatar(
+    stack: stack,
+    groupId: groupId,
+    blobIdSuffix: 'scenario7-initial-v1',
+  );
+  writeSharedJson(
+    _signalName('alice_scenario7_initial_avatar.json'),
+    initialAvatar,
+  );
+  await _publishGroupMetadataUpdate(
+    stack: stack,
+    groupId: groupId,
+    name: 'test 1',
+    description: '111',
+    avatarBlobId: initialAvatar['blobId'] as String,
+    avatarMime: initialAvatar['mime'] as String,
+    avatarPath: initialAvatar['path'] as String,
+  );
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'scenario7_after_bob_accept',
+    activeRoles: const <String>['alice', 'bob'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+    },
+    expectedName: 'test 1',
+    expectedDescription: '111',
+    expectedAvatar: initialAvatar,
+  );
+
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['bob']!['peerId'] as String,
+    role: MemberRole.admin,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  writeSharedText(_signalName('alice_scenario7_promoted_bob'), 'ok');
+  await waitForSharedSignal(_signalName('bob_scenario7_promoted_admin'));
+  await waitForSharedSignal(_signalName('charlie_scenario7_invite_accepted'));
+  await _waitForMemberInclusion(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['charlie']!['peerId'] as String,
+  );
+
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['bob']!['peerId'] as String,
+    role: MemberRole.writer,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  writeSharedText(_signalName('alice_scenario7_demoted_bob'), 'ok');
+  await _updateMemberRoleAndPublish(
+    stack: stack,
+    groupId: groupId,
+    memberPeerId: identities['charlie']!['peerId'] as String,
+    role: MemberRole.admin,
+    eventAt: DateTime.now().toUtc(),
+    saveLocalTimeline: true,
+  );
+  writeSharedText(_signalName('alice_scenario7_promoted_charlie'), 'ok');
+
+  final staleAvatar = await waitForSharedJson(
+    _signalName('charlie_scenario7_stale_avatar.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_scenario7_stale_metadata_published'),
+  );
+  await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'scenario7_stale_metadata',
+    activeRoles: const <String>['alice', 'bob', 'charlie'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+    },
+    expectedName: 'test 2',
+    expectedDescription: '222',
+    expectedAvatar: staleAvatar,
+  );
+
+  final staleInviteSnapshot = await waitForSharedJson(
+    _signalName('charlie_scenario7_stale_invite_snapshot.json'),
+  );
+  final latestAvatar = await waitForSharedJson(
+    _signalName('charlie_scenario7_latest_avatar.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_scenario7_latest_metadata_published'),
+  );
+  final danaAcceptanceProof = await waitForSharedJson(
+    _signalName('dana_scenario7_acceptance_proof.json'),
+  );
+  final finalState = await _assertRegressionGroupStateConverged(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    stage: 'scenario7_final_after_dana_accept',
+    activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+    expectedRoles: const <String, MemberRole>{
+      'alice': MemberRole.admin,
+      'bob': MemberRole.writer,
+      'charlie': MemberRole.admin,
+      'dana': MemberRole.writer,
+    },
+    expectedName: 'test 3',
+    expectedDescription: '333',
+    expectedAvatar: latestAvatar,
+  );
+  await _runScenario7FullMessageMatrixPhase(
+    stack: stack,
+    identities: identities,
+    groupId: groupId,
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+  );
+  await _writeScenario7Verdict(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    sentMessages: sentMessages,
+    receivedMessages: receivedMessages,
+    staleInviteSnapshot: staleInviteSnapshot,
+    danaAcceptanceProof: danaAcceptanceProof,
+    finalState: finalState,
+  );
+}
+
+Future<void> _runScenario7Bob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = _buildGroupInviteListener(
+    stack: stack,
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  inviteListener.start();
+  try {
+    writeSharedText(_signalName('bob_scenario7_initial_invite_ready'), 'ok');
+    final accepted = await _acceptPromptPendingInvite(
+      stack: stack,
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final groupId = accepted.groupId;
+    writeSharedText(_signalName('bob_scenario7_initial_invite_accepted'), 'ok');
+
+    final initialAvatar = await waitForSharedJson(
+      _signalName('alice_scenario7_initial_avatar.json'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'scenario7_after_bob_accept',
+      activeRoles: const <String>['alice', 'bob'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+      },
+      expectedName: 'test 1',
+      expectedDescription: '111',
+      expectedAvatar: initialAvatar,
+    );
+    await waitForSharedSignal(_signalName('alice_scenario7_promoted_bob'));
+    await _waitForLocalMemberAndGroupRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+      memberRole: MemberRole.admin,
+      groupRole: GroupRole.admin,
+    );
+    writeSharedText(_signalName('bob_scenario7_promoted_admin'), 'ok');
+
+    final charlieAvatar = await _regressionAddMemberFromContactAndInvite(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      recipientRole: 'charlie',
+      avatarSuffix: 'scenario7-charlie',
+    );
+    writeSharedJson(
+      _signalName('bob_scenario7_charlie_avatar.json'),
+      charlieAvatar,
+    );
+    writeSharedText(_signalName('bob_scenario7_charlie_invite_sent'), 'ok');
+    await waitForSharedSignal(_signalName('charlie_scenario7_invite_accepted'));
+
+    await waitForSharedSignal(_signalName('alice_scenario7_demoted_bob'));
+    await _waitForLocalMemberAndGroupRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+      memberRole: MemberRole.writer,
+      groupRole: GroupRole.member,
+    );
+    await waitForSharedSignal(_signalName('alice_scenario7_promoted_charlie'));
+
+    final staleAvatar = await waitForSharedJson(
+      _signalName('charlie_scenario7_stale_avatar.json'),
+    );
+    await waitForSharedSignal(
+      _signalName('charlie_scenario7_stale_metadata_published'),
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'scenario7_stale_metadata',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test 2',
+      expectedDescription: '222',
+      expectedAvatar: staleAvatar,
+    );
+
+    final staleInviteSnapshot = await waitForSharedJson(
+      _signalName('charlie_scenario7_stale_invite_snapshot.json'),
+    );
+    final latestAvatar = await waitForSharedJson(
+      _signalName('charlie_scenario7_latest_avatar.json'),
+    );
+    await waitForSharedSignal(
+      _signalName('charlie_scenario7_latest_metadata_published'),
+    );
+    final danaAcceptanceProof = await waitForSharedJson(
+      _signalName('dana_scenario7_acceptance_proof.json'),
+    );
+    final finalState = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'scenario7_final_after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test 3',
+      expectedDescription: '333',
+      expectedAvatar: latestAvatar,
+    );
+    await _runScenario7FullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+    await _writeScenario7Verdict(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+      staleInviteSnapshot: staleInviteSnapshot,
+      danaAcceptanceProof: danaAcceptanceProof,
+      finalState: finalState,
+    );
+  } finally {
+    inviteListener.dispose();
+  }
+}
+
+Future<void> _runScenario7Charlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteDeliveryAttemptRepo =
+      _InMemoryGroupInviteDeliveryAttemptRepository();
+  final inviteListener = _buildGroupInviteListener(
+    stack: stack,
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  inviteListener.start();
+  try {
+    await waitForSharedSignal(_signalName('bob_scenario7_charlie_invite_sent'));
+    final accepted = await _acceptPromptPendingInvite(
+      stack: stack,
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final groupId = accepted.groupId;
+    final charlieAvatar = await waitForSharedJson(
+      _signalName('bob_scenario7_charlie_avatar.json'),
+    );
+    await _waitForGroupMetadata(
+      stack: stack,
+      groupId: groupId,
+      name: 'test 1',
+      description: '111',
+      avatarBlobId: charlieAvatar['blobId'] as String,
+      avatarMime: charlieAvatar['mime'] as String,
+      avatarPath: charlieAvatar['path'] as String,
+    );
+    writeSharedText(_signalName('charlie_scenario7_invite_accepted'), 'ok');
+
+    await waitForSharedSignal(_signalName('alice_scenario7_demoted_bob'));
+    await _waitForMemberRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: identities['bob']!['peerId'] as String,
+      role: MemberRole.writer,
+    );
+    await waitForSharedSignal(_signalName('alice_scenario7_promoted_charlie'));
+    await _waitForLocalMemberAndGroupRole(
+      stack: stack,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+      memberRole: MemberRole.admin,
+      groupRole: GroupRole.admin,
+    );
+
+    final staleAvatar = await _uploadPromptGroupAvatar(
+      stack: stack,
+      groupId: groupId,
+      blobIdSuffix: 'scenario7-stale-v2',
+    );
+    writeSharedJson(
+      _signalName('charlie_scenario7_stale_avatar.json'),
+      staleAvatar,
+    );
+    await _publishGroupMetadataUpdate(
+      stack: stack,
+      groupId: groupId,
+      name: 'test 2',
+      description: '222',
+      avatarBlobId: staleAvatar['blobId'] as String,
+      avatarMime: staleAvatar['mime'] as String,
+      avatarPath: staleAvatar['path'] as String,
+    );
+    writeSharedText(
+      _signalName('charlie_scenario7_stale_metadata_published'),
+      'ok',
+    );
+    await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'scenario7_stale_metadata',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+      },
+      expectedName: 'test 2',
+      expectedDescription: '222',
+      expectedAvatar: staleAvatar,
+    );
+
+    final danaInviteAvatar = await _regressionAddMemberFromContactAndInvite(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      recipientRole: 'dana',
+      avatarSuffix: 'scenario7-dana-stale',
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    );
+    final staleInviteSnapshot = <String, dynamic>{
+      'staleInviteCapturedBeforeLatestMetadata': true,
+      'staleInviteName': 'test 2',
+      'staleInviteDescription': '222',
+      'staleInviteAvatarBlobId': danaInviteAvatar['blobId'],
+      'staleInviteAvatarMime': danaInviteAvatar['mime'],
+      'staleInviteAvatarSha256': danaInviteAvatar['sha256'],
+      'staleInviteAvatarByteLength': danaInviteAvatar['byteLength'],
+    };
+    writeSharedJson(
+      _signalName('charlie_scenario7_stale_invite_snapshot.json'),
+      staleInviteSnapshot,
+    );
+    writeSharedText(_signalName('charlie_scenario7_dana_invite_sent'), 'ok');
+    await waitForSharedSignal(
+      _signalName('dana_scenario7_pending_invite_seen'),
+    );
+
+    final latestAvatar = await _uploadPromptGroupAvatar(
+      stack: stack,
+      groupId: groupId,
+      blobIdSuffix: 'scenario7-latest-v3',
+    );
+    writeSharedJson(
+      _signalName('charlie_scenario7_latest_avatar.json'),
+      latestAvatar,
+    );
+    await _publishGroupMetadataUpdate(
+      stack: stack,
+      groupId: groupId,
+      name: 'test 3',
+      description: '333',
+      avatarBlobId: latestAvatar['blobId'] as String,
+      avatarMime: latestAvatar['mime'] as String,
+      avatarPath: latestAvatar['path'] as String,
+    );
+    final refreshResult = await refreshPendingGroupInvitesForMetadataChange(
+      p2pService: stack.p2pService,
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      identity: stack.identity,
+      groupId: groupId,
+    );
+    expect(
+      refreshResult.refreshedAny,
+      isTrue,
+      reason: 'Scenario 7 must refresh Dana pending invite after test 3 edit',
+    );
+    writeSharedJson(
+      _signalName('charlie_scenario7_pending_invite_refresh.json'),
+      <String, dynamic>{
+        'attemptCount': refreshResult.attemptCount,
+        'refreshedCount': refreshResult.refreshedCount,
+      },
+    );
+    writeSharedText(
+      _signalName('charlie_scenario7_latest_metadata_published'),
+      'ok',
+    );
+
+    final danaAcceptanceProof = await waitForSharedJson(
+      _signalName('dana_scenario7_acceptance_proof.json'),
+    );
+    final finalState = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'scenario7_final_after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test 3',
+      expectedDescription: '333',
+      expectedAvatar: latestAvatar,
+    );
+    await _runScenario7FullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+    await _writeScenario7Verdict(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+      staleInviteSnapshot: staleInviteSnapshot,
+      danaAcceptanceProof: danaAcceptanceProof,
+      finalState: finalState,
+    );
+  } finally {
+    inviteListener.dispose();
+  }
+}
+
+Future<void> _runScenario7Dana(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final sentMessages = <Map<String, dynamic>>[];
+  final receivedMessages = <Map<String, dynamic>>[];
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = _buildGroupInviteListener(
+    stack: stack,
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  inviteListener.start();
+  final flowEvents = <Map<String, dynamic>>[];
+  debugSetFlowEventSink((payload) {
+    flowEvents.add(Map<String, dynamic>.from(payload));
+  });
+  try {
+    await waitForSharedSignal(
+      _signalName('charlie_scenario7_dana_invite_sent'),
+    );
+    final originalStalePendingInvite = await _waitForMl001PendingInvite(
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    writeSharedText(_signalName('dana_scenario7_pending_invite_seen'), 'ok');
+    inviteListener.stop();
+    final staleInviteSnapshot = await waitForSharedJson(
+      _signalName('charlie_scenario7_stale_invite_snapshot.json'),
+    );
+    await waitForSharedSignal(
+      _signalName('charlie_scenario7_latest_metadata_published'),
+    );
+    final latestAvatar = await waitForSharedJson(
+      _signalName('charlie_scenario7_latest_avatar.json'),
+    );
+    await waitForSharedJson(
+      _signalName('charlie_scenario7_pending_invite_refresh.json'),
+    );
+    await waitForCondition(
+      () async => flowEvents.any(_isScenario7PreAcceptDirectMetadataRetained),
+      timeout: const Duration(seconds: 20),
+      interval: const Duration(milliseconds: 250),
+    );
+    final preAcceptDirectMetadataBuffered = flowEvents.any(
+      _isScenario7PreAcceptDirectMetadataRetained,
+    );
+    final danaAcceptanceProof = await _scenario7AcceptStaleInvite(
+      stack: stack,
+      pendingInviteRepo: pendingInviteRepo,
+      staleInviteSnapshot: staleInviteSnapshot,
+      originalStalePendingInvite: originalStalePendingInvite,
+      preAcceptDirectMetadataBuffered: preAcceptDirectMetadataBuffered,
+    );
+    final groupId = danaAcceptanceProof['groupId'] as String;
+    writeSharedJson(
+      _signalName('dana_scenario7_acceptance_proof.json'),
+      danaAcceptanceProof,
+    );
+    final finalState = await _assertRegressionGroupStateConverged(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      stage: 'scenario7_final_after_dana_accept',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      expectedRoles: const <String, MemberRole>{
+        'alice': MemberRole.admin,
+        'bob': MemberRole.writer,
+        'charlie': MemberRole.admin,
+        'dana': MemberRole.writer,
+      },
+      expectedName: 'test 3',
+      expectedDescription: '333',
+      expectedAvatar: latestAvatar,
+    );
+    await _runScenario7FullMessageMatrixPhase(
+      stack: stack,
+      identities: identities,
+      groupId: groupId,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+    );
+    await _writeScenario7Verdict(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      sentMessages: sentMessages,
+      receivedMessages: receivedMessages,
+      staleInviteSnapshot: staleInviteSnapshot,
+      danaAcceptanceProof: danaAcceptanceProof,
+      finalState: finalState,
+    );
+  } finally {
+    debugSetFlowEventSink(null);
+    inviteListener.dispose();
+  }
+}
+
+bool _isScenario7PreAcceptDirectMetadataRetained(Map<String, dynamic> event) {
+  final name = event['event'];
+  return name == 'GROUP_MESSAGE_LISTENER_PRE_JOIN_SYSTEM_BUFFERED' ||
+      name == 'GROUP_MEMBERSHIP_UPDATE_LISTENER_DEFERRED_REPLAY_QUEUED';
 }
 
 Future<void> _runMl020Alice(
@@ -43296,7 +44509,8 @@ Future<void> _st009SeedSyntheticMembers({
   required String groupId,
   required DateTime joinedAt,
 }) async {
-  for (var index = 0; index < groupMembershipLimit - 3; index++) {
+  final syntheticMemberCount = groupMembershipLimit - 3;
+  for (var index = 0; index < syntheticMemberCount; index++) {
     await addGroupMember(
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
@@ -43305,7 +44519,7 @@ Future<void> _st009SeedSyntheticMembers({
         bridge: stack.bridge,
         groupId: groupId,
         index: index,
-        joinedAt: joinedAt.add(Duration(minutes: index)),
+        joinedAt: joinedAt.add(Duration(milliseconds: index)),
       ),
       selfPeerId: stack.identity.peerId,
       syncBridgeConfig: false,
@@ -43321,11 +44535,22 @@ Future<void> _st009SeedSyntheticMembers({
       'ST-009 expected 50 seeded members, got ${members.length}',
     );
   }
+  final batchMembershipEventAt = joinedAt.add(
+    Duration(milliseconds: syntheticMemberCount - 1),
+  );
+  final groupForConfig = group.copyWith(
+    lastMembershipEventAt: batchMembershipEventAt,
+  );
   await callGroupUpdateConfig(
     stack.bridge,
     groupId: groupId,
-    groupConfig: buildGroupConfigPayload(group, members),
+    groupConfig: buildGroupConfigPayload(
+      groupForConfig,
+      members,
+      configVersionOverride: batchMembershipEventAt,
+    ),
   );
+  await stack.groupRepo.updateGroup(groupForConfig);
 }
 
 Future<GroupKeyInfo> _st009RotateKeyForProof({
@@ -43415,7 +44640,19 @@ Future<void> _runSt009Alice(
   );
   final groupId = (fixture['group'] as Map)['id'] as String;
   final charliePeerId = identities['charlie']!['peerId'] as String;
-  final seededAt = DateTime.now().toUtc().subtract(const Duration(hours: 4));
+  final groupBeforeSeed = await stack.groupRepo.getGroup(groupId);
+  if (groupBeforeSeed == null) {
+    throw StateError('ST-009 missing group before synthetic seed');
+  }
+  final seededAt =
+      (groupBeforeSeed.lastMembershipEventAt ?? groupBeforeSeed.createdAt)
+          .toUtc()
+          .add(const Duration(milliseconds: 1));
+  final overflowAt = seededAt.add(
+    Duration(milliseconds: groupMembershipLimit - 2),
+  );
+  final removeAt = overflowAt.add(const Duration(milliseconds: 1));
+  final readdAt = removeAt.add(const Duration(milliseconds: 1));
   await _st009SeedSyntheticMembers(
     stack: stack,
     groupId: groupId,
@@ -43441,7 +44678,7 @@ Future<void> _runSt009Alice(
         bridge: stack.bridge,
         groupId: groupId,
         index: 99,
-        joinedAt: seededAt.add(const Duration(hours: 1)),
+        joinedAt: overflowAt,
       ),
       selfPeerId: stack.identity.peerId,
     );
@@ -43461,7 +44698,7 @@ Future<void> _runSt009Alice(
     groupId: groupId,
     memberPeerId: charliePeerId,
     selfPeerId: stack.identity.peerId,
-    eventAt: seededAt.add(const Duration(hours: 2)),
+    eventAt: removeAt,
   );
   final removedKey = await _st009RotateKeyForProof(
     stack: stack,
@@ -43499,7 +44736,7 @@ Future<void> _runSt009Alice(
       groupId: groupId,
       identity: identities['charlie']!,
       role: MemberRole.writer,
-      joinedAt: seededAt.add(const Duration(hours: 3)),
+      joinedAt: readdAt,
     ),
     selfPeerId: stack.identity.peerId,
   );
@@ -44913,6 +46150,9 @@ Future<void> _runScenarioRole() async {
     final identities = await _publishIdentityAndWaitForAll(stack, roles);
     if (_scenario == _regressionAdminPermissionsScenario) {
       await _addRegressionAdminPermissionsInitialContacts(stack, identities);
+    } else if (_scenario ==
+        _scenario7GroupInviteStaleMetadataRecoveryScenario) {
+      await _addScenario7InitialContacts(stack, identities);
     } else if (_scenario == 'private_admin_metadata_intro_photo_convergence') {
       await _addPromptScenarioInitialContacts(stack, identities);
     } else if (_scenario != 'private_non_friend_member_delivery' ||
@@ -45732,6 +46972,19 @@ Future<void> _runScenarioRole() async {
         await _runRegressionAdminPermissionsCharlie(stack, identities);
       } else {
         await _runRegressionAdminPermissionsDana(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == _scenario7GroupInviteStaleMetadataRecoveryScenario) {
+      if (_role == 'alice') {
+        await _runScenario7Alice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runScenario7Bob(stack, identities);
+      } else if (_role == 'charlie') {
+        await _runScenario7Charlie(stack, identities);
+      } else {
+        await _runScenario7Dana(stack, identities);
       }
       return;
     }

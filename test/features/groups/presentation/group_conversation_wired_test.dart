@@ -238,6 +238,35 @@ class _GatedPublishBridge extends FakeBridge {
   }
 }
 
+class _SequentialGroupPublishBridge extends FakeBridge {
+  _SequentialGroupPublishBridge(this.publishResponses);
+
+  final List<Map<String, dynamic>> publishResponses;
+  int _publishIndex = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd != 'group:publish') {
+      return super.send(message);
+    }
+
+    sendCallCount++;
+    lastSentMessage = message;
+    sentMessages.add(message);
+    lastCommand = cmd;
+    commandLog.add(cmd!);
+
+    final response =
+        publishResponses[_publishIndex < publishResponses.length
+            ? _publishIndex
+            : publishResponses.length - 1];
+    _publishIndex++;
+    return jsonEncode(response);
+  }
+}
+
 class _DownloadRepairBridge extends FakeBridge {
   _DownloadRepairBridge({
     required this.downloadedBytes,
@@ -3077,6 +3106,339 @@ void main() {
     );
 
     testWidgets(
+      'GIRD-005 active failed group image recovery shows loading before resolving while open',
+      (tester) async {
+        final group = makeChatGroup();
+        final mediaFileManager = FakeMediaFileManager();
+        final encryptedBytes = _md012EncryptedBytes(_tinyPngBytes);
+        final downloadGate = Completer<void>();
+        bridge = _DownloadRepairBridge(
+          downloadedBytes: encryptedBytes,
+          downloadGate: downloadGate,
+        );
+
+        await groupRepo.saveGroup(group);
+        await messageStreamController.close();
+        messageStreamController = StreamController<GroupMessage>.broadcast(
+          sync: true,
+        );
+        final incomingMessage = makeMessage(
+          id: 'msg-gird005-failed-recovery',
+          text: 'retry failed image',
+          groupId: group.id,
+          isIncoming: true,
+          status: 'delivered',
+        );
+        final failedAttachment = MediaAttachment(
+          id: 'att-gird005-failed-recovery',
+          messageId: 'msg-gird005-failed-recovery',
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          width: 1,
+          height: 1,
+          downloadStatus: kMediaDownloadStatusFailed,
+          contentHash: _md012HashBytes(encryptedBytes),
+          encryptionKeyBase64: _md012MediaKey,
+          encryptionNonce: _md012MediaNonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          createdAt: '2026-05-31T10:00:00.000Z',
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        await msgRepo.saveMessage(incomingMessage);
+        await mediaAttachmentRepo.saveAttachment(failedAttachment);
+        await tester.runAsync(() async {
+          messageStreamController.add(incomingMessage);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.mediaMap.containsKey('msg-gird005-failed-recovery') &&
+              bridge.commandLog
+                      .where((cmd) => cmd == 'media:download')
+                      .length ==
+                  1;
+        }, maxPumps: 80);
+
+        int mediaGridBrokenImageCount() => find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byIcon(Icons.broken_image_outlined),
+            )
+            .evaluate()
+            .length;
+
+        int mediaGridLoadingCount() => find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byType(CircularProgressIndicator),
+            )
+            .evaluate()
+            .length;
+
+        final loadingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          loadingScreen
+              .mediaMap['msg-gird005-failed-recovery']!
+              .single
+              .downloadStatus,
+          kMediaDownloadStatusDownloading,
+        );
+        expect(find.text('Media unavailable'), findsNothing);
+        expect(mediaGridBrokenImageCount(), 0);
+        expect(mediaGridLoadingCount(), 1);
+        expect(
+          find.byKey(
+            const ValueKey(
+              'unavailable-media-retry-msg-gird005-failed-recovery-att-gird005-failed-recovery',
+            ),
+          ),
+          findsNothing,
+        );
+
+        final failedRelativePath = mediaFileManager.relativePathForAttachment(
+          contactPeerId: group.id,
+          blobId: failedAttachment.id,
+          mime: failedAttachment.mime,
+        );
+        final failedAbsolutePath = await mediaFileManager.resolveStoredPath(
+          failedRelativePath,
+        );
+        final failedFile = File(failedAbsolutePath);
+        failedFile.parent.createSync(recursive: true);
+        failedFile.writeAsBytesSync(_tinyPngBytes, flush: true);
+        await mediaAttachmentRepo.saveAttachment(
+          failedAttachment.copyWith(
+            localPath: failedRelativePath,
+            downloadStatus: kMediaDownloadStatusDone,
+          ),
+        );
+        await tester.runAsync(() async {
+          messageStreamController.add(incomingMessage);
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+        });
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final media = screen.mediaMap['msg-gird005-failed-recovery'];
+          return media != null &&
+              media.single.downloadStatus == kMediaDownloadStatusDone &&
+              media.single.localPath != null &&
+              mediaGridBrokenImageCount() == 0 &&
+              mediaGridLoadingCount() == 0;
+        }, maxPumps: 80);
+
+        final resolvedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final persistedAfterFailedRecovery = await mediaAttachmentRepo
+            .getAttachmentsForMessage('msg-gird005-failed-recovery');
+        expect(
+          resolvedScreen
+              .mediaMap['msg-gird005-failed-recovery']!
+              .single
+              .localPath,
+          allOf(isNotNull, contains('att-gird005-failed-recovery.png')),
+          reason:
+              'screen=${resolvedScreen.mediaMap['msg-gird005-failed-recovery']?.map((a) => a.toMap()).toList()}, '
+              'persisted=${persistedAfterFailedRecovery.map((a) => a.toMap()).toList()}, '
+              'commands=${bridge.commandLog}',
+        );
+        expect(find.text('Media unavailable'), findsNothing);
+
+        await tester.tap(find.byType(MediaGrid));
+        await pumpFrames(tester, count: 4);
+        expect(find.byType(FullScreenImageViewer), findsOneWidget);
+        if (!downloadGate.isCompleted) {
+          downloadGate.complete();
+        }
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
+      },
+    );
+
+    testWidgets(
+      'GIRD-005 done group image without local path stays resolving and recovers',
+      (tester) async {
+        final group = makeChatGroup();
+        final mediaFileManager = FakeMediaFileManager();
+        final encryptedBytes = _md012EncryptedBytes(_tinyPngBytes);
+        final downloadGate = Completer<void>();
+        bridge = _DownloadRepairBridge(
+          downloadedBytes: encryptedBytes,
+          downloadGate: downloadGate,
+        );
+
+        await groupRepo.saveGroup(group);
+        await messageStreamController.close();
+        messageStreamController = StreamController<GroupMessage>.broadcast(
+          sync: true,
+        );
+        final incomingMessage = makeMessage(
+          id: 'msg-gird005-done-no-path',
+          text: 'hydrate missing path',
+          groupId: group.id,
+          isIncoming: true,
+          status: 'delivered',
+        );
+        final doneAttachment = MediaAttachment(
+          id: 'att-gird005-done-no-path',
+          messageId: 'msg-gird005-done-no-path',
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          width: 1,
+          height: 1,
+          downloadStatus: kMediaDownloadStatusDone,
+          contentHash: _md012HashBytes(encryptedBytes),
+          encryptionKeyBase64: _md012MediaKey,
+          encryptionNonce: _md012MediaNonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          createdAt: '2026-05-31T10:05:00.000Z',
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        await msgRepo.saveMessage(incomingMessage);
+        await mediaAttachmentRepo.saveAttachment(doneAttachment);
+        await tester.runAsync(() async {
+          messageStreamController.add(incomingMessage);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.mediaMap.containsKey('msg-gird005-done-no-path') &&
+              bridge.commandLog
+                      .where((cmd) => cmd == 'media:download')
+                      .length ==
+                  1;
+        }, maxPumps: 80);
+
+        int mediaGridBrokenImageCount() => find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byIcon(Icons.broken_image_outlined),
+            )
+            .evaluate()
+            .length;
+
+        int mediaGridLoadingCount() => find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byType(CircularProgressIndicator),
+            )
+            .evaluate()
+            .length;
+
+        final loadingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          loadingScreen
+              .mediaMap['msg-gird005-done-no-path']!
+              .single
+              .downloadStatus,
+          kMediaDownloadStatusDownloading,
+        );
+        expect(find.text('Media unavailable'), findsNothing);
+        expect(mediaGridBrokenImageCount(), 0);
+        expect(mediaGridLoadingCount(), 1);
+        expect(
+          find.byKey(
+            const ValueKey(
+              'unavailable-media-retry-msg-gird005-done-no-path-att-gird005-done-no-path',
+            ),
+          ),
+          findsNothing,
+        );
+
+        final doneRelativePath = mediaFileManager.relativePathForAttachment(
+          contactPeerId: group.id,
+          blobId: doneAttachment.id,
+          mime: doneAttachment.mime,
+        );
+        final doneAbsolutePath = await mediaFileManager.resolveStoredPath(
+          doneRelativePath,
+        );
+        final doneFile = File(doneAbsolutePath);
+        doneFile.parent.createSync(recursive: true);
+        doneFile.writeAsBytesSync(_tinyPngBytes, flush: true);
+        await mediaAttachmentRepo.saveAttachment(
+          doneAttachment.copyWith(
+            localPath: doneRelativePath,
+            downloadStatus: kMediaDownloadStatusDone,
+          ),
+        );
+        await tester.runAsync(() async {
+          messageStreamController.add(incomingMessage);
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+        });
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final media = screen.mediaMap['msg-gird005-done-no-path'];
+          return media != null &&
+              media.single.downloadStatus == kMediaDownloadStatusDone &&
+              media.single.localPath != null &&
+              mediaGridBrokenImageCount() == 0 &&
+              mediaGridLoadingCount() == 0;
+        }, maxPumps: 80);
+
+        final resolvedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final persistedAfterDoneRecovery = await mediaAttachmentRepo
+            .getAttachmentsForMessage('msg-gird005-done-no-path');
+        expect(
+          resolvedScreen.mediaMap['msg-gird005-done-no-path']!.single.localPath,
+          allOf(isNotNull, contains('att-gird005-done-no-path.png')),
+          reason:
+              'screen=${resolvedScreen.mediaMap['msg-gird005-done-no-path']?.map((a) => a.toMap()).toList()}, '
+              'persisted=${persistedAfterDoneRecovery.map((a) => a.toMap()).toList()}, '
+              'commands=${bridge.commandLog}',
+        );
+        expect(find.text('Media unavailable'), findsNothing);
+
+        await tester.tap(find.byType(MediaGrid));
+        await pumpFrames(tester, count: 4);
+        expect(find.byType(FullScreenImageViewer), findsOneWidget);
+        if (!downloadGate.isCompleted) {
+          downloadGate.complete();
+        }
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
+      },
+    );
+
+    testWidgets(
       'MS003 live stream upsert orders equal timestamps by message id',
       (tester) async {
         final group = makeChatGroup();
@@ -5788,6 +6150,316 @@ void main() {
           1,
         );
         expect(find.text('Could not retry media message.'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'GIRD-002 restored media composer continuation reuses the failed group row id',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        bridge = _SequentialGroupPublishBridge([
+          {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+          {'ok': true, 'messageId': 'retry-published', 'topicPeers': 1},
+        ]);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'gird002-restored-composer-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/image.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final mediaFileManager = FakeMediaFileManager();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: [attachment],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async => MediaAttachment(
+                  id: blobId!,
+                  messageId: '',
+                  mime: mime,
+                  size: _tinyPngBytes.length,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: mediaFileManager?.relativePathForAttachment(
+                    contactPeerId: group.id,
+                    blobId: blobId,
+                    mime: mime,
+                  ),
+                  downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  encryptionKeyBase64: 'key-fixture',
+                  encryptionNonce: 'nonce-fixture',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                ),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final firstScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final firstSend = firstScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await firstSend('GIRD-002 image retry');
+        });
+        await pumpFrames(tester, count: 20);
+
+        final failedRows = (await msgRepo.getMessagesPage(
+          group.id,
+        )).where((message) => message.text == 'GIRD-002 image retry').toList();
+        expect(failedRows, hasLength(1));
+        final originalMessageId = failedRows.single.id;
+        expect(failedRows.single.status, 'failed');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'GIRD-002 image retry',
+        );
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final retrySend = retryScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await retrySend('GIRD-002 image retry');
+        });
+        await pumpFrames(tester, count: 20);
+
+        final storedRows = (await msgRepo.getMessagesPage(
+          group.id,
+        )).where((message) => message.text == 'GIRD-002 image retry').toList();
+        expect(storedRows, hasLength(1));
+        expect(storedRows.single.id, originalMessageId);
+        expect(storedRows.single.status, 'sent');
+        final publishMessageIds = bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:publish')
+            .map((message) {
+              final payload = message['payload'] as Map<String, dynamic>;
+              return payload['messageId'] as String?;
+            })
+            .toList();
+        expect(publishMessageIds, [originalMessageId, originalMessageId]);
+      },
+    );
+
+    testWidgets(
+      'GIRD-002 upload-pending failed-card retry shows pending feedback without publishing',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final mediaFileManager = FakeMediaFileManager();
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-gird002-upload-pending',
+            text: 'Still uploading',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-gird002-upload-pending',
+            messageId: 'msg-gird002-upload-pending',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath:
+                'pending_uploads/msg-gird002-upload-pending/att-gird002.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-05-31T12:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.ownPeerId == testIdentity.peerId &&
+              (screen.mediaMap['msg-gird002-upload-pending']?.isNotEmpty ??
+                  false);
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.onRetryFailedMedia, isNotNull);
+        retryScreen.onRetryFailedMedia!('msg-gird002-upload-pending');
+        await pumpFrames(tester, count: 10);
+
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          (await msgRepo.getMessage('msg-gird002-upload-pending'))?.status,
+          'failed',
+        );
+        expect(
+          (await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-gird002-upload-pending',
+          )).single.downloadStatus,
+          'upload_pending',
+        );
+        expect(
+          find.text('Media upload is still finishing. It will retry soon.'),
+          findsOneWidget,
+        );
+        expect(find.text('Could not retry media message.'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'GIRD-002 already-open group screen reflects resume retry status and media refresh',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final mediaFileManager = FakeMediaFileManager();
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-gird002-refresh',
+            text: 'Resume refreshed media',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-gird002-refresh',
+            messageId: 'msg-gird002-refresh',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath: 'pending_uploads/msg-gird002-refresh/att.jpg',
+            downloadStatus: 'upload_failed',
+            createdAt: '2026-05-31T12:01:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+                (message) =>
+                    message.id == 'msg-gird002-refresh' &&
+                    message.status == 'failed',
+              ) &&
+              (screen.mediaMap['msg-gird002-refresh']?.single.downloadStatus ==
+                  'upload_failed');
+        });
+
+        final mediaPath = await mediaFileManager.localPathForAttachment(
+          contactPeerId: group.id,
+          blobId: 'att-gird002-refresh',
+          mime: 'image/jpeg',
+        );
+        File(mediaPath).writeAsBytesSync(_tinyPngBytes, flush: true);
+        final refreshedMessage = (await msgRepo.getMessage(
+          'msg-gird002-refresh',
+        ))!;
+        await msgRepo.saveMessage(refreshedMessage.copyWith(status: 'sent'));
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-gird002-refresh',
+            messageId: 'msg-gird002-refresh',
+            mime: 'image/jpeg',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: mediaFileManager.relativePathForAttachment(
+              contactPeerId: group.id,
+              blobId: 'att-gird002-refresh',
+              mime: 'image/jpeg',
+            ),
+            downloadStatus: 'done',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-05-31T12:02:00.000Z',
+          ),
+        );
+
+        await tester.runAsync(() async {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.hidden,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+                (message) =>
+                    message.id == 'msg-gird002-refresh' &&
+                    message.status == 'sent',
+              ) &&
+              (screen.mediaMap['msg-gird002-refresh']?.single.downloadStatus ==
+                  'done');
+        });
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.messages
+              .singleWhere((message) => message.id == 'msg-gird002-refresh')
+              .status,
+          'sent',
+        );
+        expect(
+          screen.mediaMap['msg-gird002-refresh']?.single.downloadStatus,
+          'done',
+        );
       },
     );
 

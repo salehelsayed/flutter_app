@@ -224,3 +224,9 @@ abstract class P2PService {
   /// Dispose of the service and clean up resources.
   void dispose();
 }
+
+/// Optional capability for flows that must not proceed until all currently
+/// available offline inbox pages have been replayed.
+abstract class P2PFullInboxDrain {
+  Future<void> drainOfflineInboxFully();
+}

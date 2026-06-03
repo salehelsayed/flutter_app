@@ -23,6 +23,7 @@ import 'package:flutter_app/features/groups/application/group_recovery_gate.dart
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -2748,6 +2749,215 @@ void main() {
     );
 
     testWidgets(
+      'GCA-103 post-invite avatar upload includes late invitee in allowedPeers',
+      (tester) async {
+        final tempDir = await _installPathProviderTempDirForTest();
+        final pickedAvatar = await _writePickedAvatar(tempDir, 'gca103-test3');
+        final mediaPicker = FakeMediaPicker()
+          ..imageResult = XFile(pickedAvatar.path);
+        final group = makeAdminGroup().copyWith(
+          name: 'test 2',
+          description: '222',
+        );
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo, group: group);
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-a', username: 'User A'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-b', username: 'User B'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-d', username: 'User D'),
+        );
+        final memberRows = await groupRepo.getMembers(group.id);
+        expect(
+          memberRows.map((member) => member.peerId),
+          containsAll(['peer-admin', 'peer-a', 'peer-b', 'peer-d']),
+          reason: 'C has A/B/C/D active member rows before avatar upload',
+        );
+
+        var uploadCalls = 0;
+        String? capturedGroupId;
+        String? capturedLocalFilePath;
+        List<String>? capturedAllowedPeers;
+        final UploadGroupAvatarFn captureUpload =
+            ({
+              required Bridge bridge,
+              required String localFilePath,
+              required String groupId,
+              required List<String> allowedPeers,
+              String? blobId,
+              String mime = 'image/jpeg',
+            }) async {
+              uploadCalls += 1;
+              capturedGroupId = groupId;
+              capturedLocalFilePath = localFilePath;
+              capturedAllowedPeers = List<String>.from(allowedPeers);
+              return GroupAvatarUpload(
+                id: 'blob-test-3-avatar',
+                mime: mime,
+                size: File(localFilePath).lengthSync(),
+              );
+            };
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: group,
+          mediaPicker: mediaPicker,
+          imageProcessor: _testAvatarImageProcessor(),
+          uploadGroupAvatarFn: captureUpload,
+        );
+        await _openGroupDetailsEditor(tester);
+        await _pickGroupEditPhoto(tester);
+        await tester.enterText(_groupEditNameField(), 'test 3');
+        await tester.enterText(_groupEditDescriptionField(), '333');
+
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(uploadCalls, 1);
+        expect(capturedGroupId, group.id);
+        expect(capturedLocalFilePath, isNotNull);
+        expect(File(capturedLocalFilePath!).existsSync(), isTrue);
+        expect(capturedAllowedPeers, isNotNull);
+        expect(
+          capturedAllowedPeers,
+          containsAll(['peer-admin', 'peer-a', 'peer-b', 'peer-d']),
+        );
+        expect(
+          capturedAllowedPeers!.toSet(),
+          hasLength(capturedAllowedPeers!.length),
+          reason: 'avatar ACL should not contain duplicate peer ids',
+        );
+        expect(capturedAllowedPeers, contains('peer-d'));
+      },
+    );
+
+    testWidgets(
+      'GCA-103 metadata edit refreshes pending invite payload for late invitee',
+      (tester) async {
+        final group = makeAdminGroup().copyWith(
+          name: 'test 2',
+          description: '222',
+          avatarBlobId: 'avatar-test-3-latest',
+          avatarMime: 'image/jpeg',
+        );
+        final groupRepo = InMemoryGroupRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        await _seedEditableGroup(groupRepo, group: group);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-bob',
+            username: 'Bob',
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-dana',
+            username: 'Dana',
+            publicKey: 'pk-dana',
+            mlKemPublicKey: 'mlkem-pk-dana',
+          ),
+        );
+        await inviteStatusRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            status: GroupInviteDeliveryStatus.joined,
+            attemptedAt: DateTime.utc(2026, 5, 7, 12),
+            updatedAt: DateTime.utc(2026, 5, 7, 12),
+          ),
+        );
+        await inviteStatusRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: group.id,
+            peerId: 'peer-dana',
+            username: 'Dana',
+            status: GroupInviteDeliveryStatus.sent,
+            attemptedAt: DateTime.utc(2026, 5, 7, 12),
+            updatedAt: DateTime.utc(2026, 5, 7, 12),
+          ),
+        );
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: p2pService,
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'test 3');
+        await tester.enterText(_groupEditDescriptionField(), '333');
+
+        await _tapGroupEditSave(tester);
+        var inviteLogs = <({String content, String peerId})>[];
+        for (var i = 0; i < 80; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+          inviteLogs = p2pService.sentMessageLog
+              .where((entry) {
+                final decoded =
+                    jsonDecode(entry.content) as Map<String, dynamic>;
+                return decoded['type'] == 'group_invite';
+              })
+              .toList(growable: false);
+          if (inviteLogs.isNotEmpty) {
+            break;
+          }
+        }
+
+        final sentTypes = p2pService.sentMessageLog
+            .map((entry) {
+              final decoded = jsonDecode(entry.content) as Map<String, dynamic>;
+              return '${entry.peerId}:${decoded['type']}';
+            })
+            .toList(growable: false);
+        expect(
+          inviteLogs.map((entry) => entry.peerId),
+          ['peer-dana'],
+          reason: 'sent p2p messages: $sentTypes',
+        );
+
+        final envelope =
+            jsonDecode(inviteLogs.single.content) as Map<String, dynamic>;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final refreshedPayload = GroupInvitePayload.fromInnerJson(
+          encrypted['ciphertext'] as String,
+        );
+        expect(refreshedPayload, isNotNull);
+        expect(refreshedPayload!.recipientPeerId, 'peer-dana');
+        expect(refreshedPayload.groupConfig['name'], 'test 3');
+        expect(refreshedPayload.groupConfig['description'], '333');
+        expect(
+          refreshedPayload.groupConfig['avatarBlobId'],
+          'avatar-test-3-latest',
+        );
+        expect(refreshedPayload.groupConfig['avatarMime'], 'image/jpeg');
+
+        final danaAttempt = await inviteStatusRepo.getAttempt(
+          groupId: group.id,
+          peerId: 'peer-dana',
+        );
+        expect(danaAttempt!.status, GroupInviteDeliveryStatus.sent);
+      },
+    );
+
+    testWidgets(
       'GDR-001 recovery-blocked removal keeps existing canonical avatar until metadata success',
       (tester) async {
         final tempDir = await _installPathProviderTempDirForTest();
@@ -3037,9 +3247,15 @@ void main() {
         expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
         expect(replayEnvelope['signedPayload'], isA<String>());
         expect(replayEnvelope['signature'], isA<String>());
+        expect(replayEnvelope['messageId'], publishPayload['messageId']);
+        final replaySignedPayload =
+            jsonDecode(replayEnvelope['signedPayload'] as String)
+                as Map<String, dynamic>;
+        expect(replaySignedPayload['messageId'], publishPayload['messageId']);
         final inboxEnvelope = _decodedGroupReplayPayload(
           inboxStorePayload['message'] as String,
         );
+        expect(inboxEnvelope['messageId'], publishPayload['messageId']);
         expect(inboxEnvelope['text'], publishPayload['text']);
         final inboxSysText =
             jsonDecode(inboxEnvelope['text'] as String) as Map<String, dynamic>;

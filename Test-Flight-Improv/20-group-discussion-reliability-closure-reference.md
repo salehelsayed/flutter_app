@@ -486,6 +486,17 @@ There are still narrow residuals worth remembering:
   `UP-001` stale-membership groups-gate residual, not a reason to reopen the
   Report 96 four-user admin-permission checklist unless that exact scenario or
   its criteria proof regresses.
+- Report 102 group image retry/duplicate notification/media rollout is blocked
+  only at final GIRD-007 full-scope group reliability evidence. GIRD-001 through
+  GIRD-006 are accepted, host `feature-host-all` passed through `#484`,
+  `groups` passed, `completeness-check` passed with `767/767`, relay/native Go
+  preservation passed, and group reliability simulator commands `#1` through
+  `#48` passed. The remaining blocker is command `#49`
+  `private_never_member_publish_rejected`, where Dana repeatedly failed online
+  readiness with `relayState=recovering`, zero circuit addresses, and inbox
+  stream failures even after simulator reboot. The narrow provider APNs
+  background/terminated physical-device path is residual-only until a
+  provider-backed TestFlight/device harness exists.
 
 These are **not** reasons to reopen the whole group reliability program. Reopen only if they become real escaped bugs or clearly justified trust gaps.
 

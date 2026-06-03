@@ -1555,6 +1555,24 @@ void main() {
   });
 
   group('callGroupSendReliable', () {
+    test('returns BRIDGE_TIMEOUT map on timeout', () async {
+      final result = await callGroupSendReliable(
+        _SlowBridge(),
+        groupId: 'grp-gird001-timeout',
+        text: 'GIRD-001 reliable timeout',
+        senderPeerId: 'peer-alice',
+        senderPublicKey: 'pk-alice',
+        senderPrivateKey: 'sk-alice',
+        senderUsername: 'Alice',
+        messageId: 'gird001-timeout',
+        timeout: const Duration(milliseconds: 1),
+      );
+
+      expect(result['ok'], isFalse);
+      expect(result['errorCode'], 'BRIDGE_TIMEOUT');
+      expect(result['errorMessage'], contains('group:sendReliable'));
+    });
+
     test(
       'sends one reliable native command and returns delivery evidence',
       () async {

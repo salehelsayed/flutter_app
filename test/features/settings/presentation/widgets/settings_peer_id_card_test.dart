@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_peer_id_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -9,6 +10,9 @@ void main() {
     BackgroundReadableColors readableColors = BackgroundReadableColors.dark,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: ThemeData(extensions: <ThemeExtension<dynamic>>[readableColors]),
       home: Scaffold(body: SingleChildScrollView(child: child)),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/swipeable_friend_row.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   late ValueNotifier<Key?> openRowNotifier;
@@ -20,6 +21,9 @@ void main() {
     VoidCallback? onDelete,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: SwipeableFriendRow(
           key: const ValueKey('test-group-row'),
@@ -42,12 +46,12 @@ void main() {
   }
 
   group('Swipeable Group Row', () {
-    testWidgets('swiping left reveals only Delete + Archive (no Block)',
-        (tester) async {
-      await tester.pumpWidget(buildGroupSwipeableRow(
-        onArchive: () {},
-        onDelete: () {},
-      ));
+    testWidgets('swiping left reveals only Delete + Archive (no Block)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildGroupSwipeableRow(onArchive: () {}, onDelete: () {}),
+      );
 
       final center = tester.getCenter(find.text('Group Content'));
       await tester.dragFrom(center, const Offset(-250, 0));
@@ -69,10 +73,12 @@ void main() {
     testWidgets('tapping Archive fires onArchive callback', (tester) async {
       bool archiveCalled = false;
 
-      await tester.pumpWidget(buildGroupSwipeableRow(
-        onArchive: () => archiveCalled = true,
-        onDelete: () {},
-      ));
+      await tester.pumpWidget(
+        buildGroupSwipeableRow(
+          onArchive: () => archiveCalled = true,
+          onDelete: () {},
+        ),
+      );
 
       final center = tester.getCenter(find.text('Group Content'));
       await tester.dragFrom(center, const Offset(-250, 0));
@@ -86,10 +92,12 @@ void main() {
     testWidgets('tapping Delete fires onDelete callback', (tester) async {
       bool deleteCalled = false;
 
-      await tester.pumpWidget(buildGroupSwipeableRow(
-        onArchive: () {},
-        onDelete: () => deleteCalled = true,
-      ));
+      await tester.pumpWidget(
+        buildGroupSwipeableRow(
+          onArchive: () {},
+          onDelete: () => deleteCalled = true,
+        ),
+      );
 
       final center = tester.getCenter(find.text('Group Content'));
       await tester.dragFrom(center, const Offset(-250, 0));
@@ -108,6 +116,9 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: Column(
               children: [
@@ -156,10 +167,12 @@ void main() {
     testWidgets('archived group shows Unarchive on swipe', (tester) async {
       bool unarchiveCalled = false;
 
-      await tester.pumpWidget(buildGroupSwipeableRow(
-        isArchived: true,
-        onUnarchive: () => unarchiveCalled = true,
-      ));
+      await tester.pumpWidget(
+        buildGroupSwipeableRow(
+          isArchived: true,
+          onUnarchive: () => unarchiveCalled = true,
+        ),
+      );
 
       final center = tester.getCenter(find.text('Group Content'));
       await tester.dragFrom(center, const Offset(-200, 0));

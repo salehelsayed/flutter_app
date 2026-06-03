@@ -820,7 +820,8 @@ func (s *GroupInboxStore) SetPush(push *PushService) {
 }
 
 func (s *GroupInboxStore) Store(groupId, from, message string) error {
-	return s.store(groupId, from, message, []string{from})
+	_, err := s.store(groupId, from, message, []string{from})
+	return err
 }
 
 func (s *GroupInboxStore) store(
@@ -828,25 +829,34 @@ func (s *GroupInboxStore) store(
 	from string,
 	message string,
 	recipientPeerIds []string,
-) error {
+) (GroupInboxStoreResult, error) {
 	normalizedRecipients := normalizePeerIds(recipientPeerIds)
 	if len(normalizedRecipients) == 0 {
-		return fmt.Errorf("recipientPeerIds required")
+		return "", fmt.Errorf("recipientPeerIds required")
 	}
 
-	err := s.backend.StoreWithRecipients(
+	result, err := s.backend.StoreWithRecipients(
 		groupId,
 		from,
 		message,
 		normalizedRecipients,
 	)
-	if err == nil {
+	if err != nil {
+		return "", err
+	}
+	if result == GroupInboxStoreResultDuplicate {
+		log.Printf("[GROUP_INBOX] Duplicate message for group %s from %s skipped",
+			groupId[:min(20, len(groupId))],
+			from[:min(20, len(from))])
+		return GroupInboxStoreResultDuplicate, nil
+	}
+	if result == GroupInboxStoreResultStored {
 		groupInboxStoredCounter.Inc()
 		log.Printf("[GROUP_INBOX] Stored message for group %s from %s",
 			groupId[:min(20, len(groupId))],
 			from[:min(20, len(from))])
 	}
-	return err
+	return result, nil
 }
 
 func (s *GroupInboxStore) StoreWithPushRecipients(
@@ -856,8 +866,12 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 	recipientPeerIds []string,
 ) error {
 	normalizedRecipients := normalizePeerIds(recipientPeerIds)
-	if err := s.store(groupId, from, message, normalizedRecipients); err != nil {
+	result, err := s.store(groupId, from, message, normalizedRecipients)
+	if err != nil {
 		return err
+	}
+	if result == GroupInboxStoreResultDuplicate {
+		return nil
 	}
 
 	if !s.shouldFanoutPush(groupId, message) {
@@ -1134,6 +1148,40 @@ func normalizePeerIds(peerIds []string) []string {
 		result = append(result, peerId)
 	}
 	return result
+}
+
+func mergePeerIds(existing []string, incoming []string) []string {
+	merged := normalizePeerIds(existing)
+	if len(incoming) == 0 {
+		return merged
+	}
+	seen := make(map[string]struct{}, len(merged)+len(incoming))
+	for _, peerId := range merged {
+		seen[peerId] = struct{}{}
+	}
+	for _, peerId := range incoming {
+		if peerId == "" {
+			continue
+		}
+		if _, ok := seen[peerId]; ok {
+			continue
+		}
+		seen[peerId] = struct{}{}
+		merged = append(merged, peerId)
+	}
+	return merged
+}
+
+func stringSlicesEqual(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func groupInboxMessageAuthorizedForPeer(message groupInboxMessage, peerId string) bool {

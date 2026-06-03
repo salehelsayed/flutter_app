@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 OrbitGroup _group({
   required String name,
@@ -32,6 +33,9 @@ OrbitGroup _group({
 void main() {
   Widget wrap(Widget child) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(body: child),
     );
   }
@@ -65,8 +69,10 @@ void main() {
         expect(find.text('النسخة Alpha'), findsOneWidget);
         expect(find.text('Alice'), findsOneWidget);
         expect(find.text('مرحبا Hello 123'), findsOneWidget);
-        expect(_textFor(tester, 'مرحبا Hello 123').textDirection,
-            TextDirection.rtl);
+        expect(
+          _textFor(tester, 'مرحبا Hello 123').textDirection,
+          TextDirection.rtl,
+        );
         expect(find.text('2'), findsOneWidget);
       },
     );
@@ -92,14 +98,17 @@ void main() {
         expect(find.text('Team نور'), findsOneWidget);
         expect(find.text('نور'), findsOneWidget);
         expect(find.text('Hello مرحبا 123'), findsOneWidget);
-        expect(_textFor(tester, 'Hello مرحبا 123').textDirection,
-            TextDirection.ltr);
+        expect(
+          _textFor(tester, 'Hello مرحبا 123').textDirection,
+          TextDirection.ltr,
+        );
         expect(find.text('Announce'), findsOneWidget);
       },
     );
 
-    testWidgets('renders empty preview fallback when no structured message',
-        (tester) async {
+    testWidgets('renders empty preview fallback when no structured message', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         wrap(
           GroupRow(
@@ -145,9 +154,7 @@ void main() {
       expect(find.text('2'), findsOneWidget);
     });
 
-    testWidgets('renders announcement groups without throwing', (
-      tester,
-    ) async {
+    testWidgets('renders announcement groups without throwing', (tester) async {
       await tester.pumpWidget(
         wrap(
           GroupRow(

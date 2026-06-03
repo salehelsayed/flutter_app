@@ -1,10 +1,18 @@
 package main
 
+type GroupInboxStoreResult string
+
+const (
+	GroupInboxStoreResultStored    GroupInboxStoreResult = "stored"
+	GroupInboxStoreResultDuplicate GroupInboxStoreResult = "duplicate"
+)
+
 // GroupInboxBackend abstracts the storage layer for group inbox messages.
 type GroupInboxBackend interface {
 	// StoreWithRecipients appends a message to a group's inbox with the
 	// per-message recipient ACL used by relay stream authorization.
-	StoreWithRecipients(groupId string, from string, message string, recipientPeerIds []string) error
+	// Duplicate means the same safe group message identity already exists.
+	StoreWithRecipients(groupId string, from string, message string, recipientPeerIds []string) (GroupInboxStoreResult, error)
 
 	// RetrieveSince returns messages for a group with timestamp > sinceTimestamp.
 	// Messages are NOT deleted on retrieve (non-destructive read).

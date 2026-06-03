@@ -13,6 +13,7 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../test/core/bridge/fake_bridge.dart';
 import '../test/core/services/fake_p2p_service.dart';
@@ -448,6 +449,9 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            locale: const Locale('en'),
             home: Builder(
               builder: (context) => Scaffold(
                 body: ElevatedButton(

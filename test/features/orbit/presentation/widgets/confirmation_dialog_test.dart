@@ -1,15 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: child,
+  );
+
   group('showConfirmationDialog', () {
     testWidgets('renders title and description', (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
+        wrap(
+          Builder(
             builder: (context) => ElevatedButton(
               onPressed: () {
                 showConfirmationDialog(
@@ -40,8 +48,8 @@ void main() {
     testWidgets('Cancel returns false', (tester) async {
       bool? result;
       await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
+        wrap(
+          Builder(
             builder: (context) => ElevatedButton(
               onPressed: () async {
                 result = await showConfirmationDialog(
@@ -68,8 +76,8 @@ void main() {
     testWidgets('Confirm returns true', (tester) async {
       bool? result;
       await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
+        wrap(
+          Builder(
             builder: (context) => ElevatedButton(
               onPressed: () async {
                 result = await showConfirmationDialog(
@@ -97,8 +105,8 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
+        wrap(
+          Builder(
             builder: (context) => ElevatedButton(
               onPressed: () {
                 showConfirmationDialog(

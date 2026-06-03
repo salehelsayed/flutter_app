@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/swipeable_friend_row.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   late ValueNotifier<Key?> openRowNotifier;
@@ -23,6 +24,9 @@ void main() {
     VoidCallback? onDelete,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: SwipeableFriendRow(
           key: const ValueKey('test-row'),

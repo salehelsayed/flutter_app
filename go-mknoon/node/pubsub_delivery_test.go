@@ -3559,6 +3559,7 @@ func TestGA019PublicKeyReuseAcrossMemberIDsRejectsPolicy(t *testing.T) {
 	memberCID := "ga019-member-c"
 	deviceBID := "ga019-device-b"
 	deviceCID := "ga019-device-c"
+	uniqueBTransportPeerID := generatePeerIDStr(t)
 	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
 	cSharedConfig := &GroupConfig{
 		Name:      "GA019 Public Key Reuse Private Chat",
@@ -3572,7 +3573,7 @@ func TestGA019PublicKeyReuseAcrossMemberIDsRejectsPolicy(t *testing.T) {
 				Devices: []GroupMemberDevice{
 					{
 						DeviceId:               deviceBID,
-						TransportPeerId:        "ga019-transport-b",
+						TransportPeerId:        uniqueBTransportPeerID,
 						DeviceSigningPublicKey: uniqueBPub,
 						KeyPackageId:           "ga019-kp-b",
 						Status:                 "active",
@@ -3651,7 +3652,11 @@ func TestGA019PublicKeyReuseAcrossMemberIDsRejectsPolicy(t *testing.T) {
 		t.Fatalf("ambiguous config pure validator = %s, want reject:ambiguous_signing_key", result)
 	}
 
-	nodeA.UpdateGroupConfig(groupId, ambiguousConfig)
+	// Public config updates reject ambiguous identity. Force the state here to
+	// keep defensive receive/publish validation covered for corrupt local state.
+	nodeA.mu.Lock()
+	nodeA.groupConfigs[groupId] = cloneGroupConfig(ambiguousConfig)
+	nodeA.mu.Unlock()
 	baseline := len(nodeACapture.snapshot())
 	publishRawGroupEnvelope(t, nodeC, groupId, envelopeJSON)
 	waitForCollectedValidationReject(t, nodeACapture, baseline, "ambiguous_signing_key", keyInfo.KeyEpoch, 5*time.Second)
@@ -3853,6 +3858,7 @@ func TestGA021DuplicateTransportPeerAcrossMembersRejectsPolicy(t *testing.T) {
 	deviceBID := "ga021-device-b"
 	deviceCID := "ga021-device-c"
 	sharedTransportPeerID := nodeSharedTransport.PeerId()
+	uniqueBTransportPeerID := generatePeerIDStr(t)
 	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
 	cSharedConfig := &GroupConfig{
 		Name:      "GA021 Duplicate Transport Peer Private Chat",
@@ -3866,7 +3872,7 @@ func TestGA021DuplicateTransportPeerAcrossMembersRejectsPolicy(t *testing.T) {
 				Devices: []GroupMemberDevice{
 					{
 						DeviceId:               deviceBID,
-						TransportPeerId:        "ga021-transport-b",
+						TransportPeerId:        uniqueBTransportPeerID,
 						DeviceSigningPublicKey: uniqueBPub,
 						KeyPackageId:           "ga021-kp-b",
 						Status:                 "active",
@@ -3948,7 +3954,11 @@ func TestGA021DuplicateTransportPeerAcrossMembersRejectsPolicy(t *testing.T) {
 		t.Fatalf("ambiguous config pure validator = %s, want reject:ambiguous_transport_peer", result)
 	}
 
-	nodeA.UpdateGroupConfig(groupId, ambiguousConfig)
+	// Public config updates reject ambiguous identity. Force the state here to
+	// keep defensive receive/publish validation covered for corrupt local state.
+	nodeA.mu.Lock()
+	nodeA.groupConfigs[groupId] = cloneGroupConfig(ambiguousConfig)
+	nodeA.mu.Unlock()
 	baseline := len(nodeACapture.snapshot())
 	publishRawGroupEnvelope(t, nodeSharedTransport, groupId, envelopeJSON)
 	waitForCollectedValidationReject(t, nodeACapture, baseline, "ambiguous_transport_peer", keyInfo.KeyEpoch, 5*time.Second)

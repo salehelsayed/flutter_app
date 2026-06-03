@@ -114,6 +114,7 @@ class OrbitWired extends StatefulWidget {
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
@@ -157,6 +158,7 @@ class OrbitWired extends StatefulWidget {
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
     this.introductionRepository,
     this.introductionListener,
@@ -179,6 +181,9 @@ class OrbitWired extends StatefulWidget {
 }
 
 class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
+  static const _acceptRecoveryRetryCount = 5;
+  static const _acceptRecoveryRetryDelay = Duration(milliseconds: 500);
+
   IdentityModel? _identity;
   Uint8List? _avatarBytes;
   List<OrbitFriend> _activeFriends = [];
@@ -1055,29 +1060,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     setState(() => _processingPendingInviteIds.add(invite.groupId));
     try {
+      await _drainPendingGroupInviteInboxBeforeAccept(
+        inviteListener,
+        invite.groupId,
+      );
       final identity = await widget.identityRepo.loadIdentity();
       final localTransportPeerId = widget.p2pService.currentState.peerId;
-      final (result, group) = await acceptPendingGroupInvite(
-        pendingInviteRepo: inviteListener.pendingInviteRepo,
-        groupRepo: groupRepository,
-        contactRepo: widget.contactRepo,
-        msgRepo: groupMessageRepository,
-        bridge: widget.bridge,
-        groupId: invite.groupId,
-        mediaAttachmentRepo: widget.mediaAttachmentRepo,
-        reactionRepo: widget.reactionRepository,
+      final (result, group) = await _acceptPendingInviteWithRecoveryRetry(
+        inviteListener: inviteListener,
+        invite: invite,
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
         senderPeerId: identity?.peerId,
         senderPublicKey: identity?.publicKey,
         senderPrivateKey: identity?.privateKey,
         senderUsername: identity?.username,
-        ownDeviceId: localTransportPeerId,
-        ownTransportPeerId: localTransportPeerId,
+        localTransportPeerId: localTransportPeerId,
         ownMlKemPublicKey: identity?.mlKemPublicKey,
-        ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
-          localTransportPeerId,
-        ),
-        ownKeyPackagePublicMaterial: identity?.mlKemPublicKey,
       );
       if (group != null) {
         _markGroupChanged(group.id);
@@ -1118,11 +1118,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           _showSnackBar('Group already added');
           break;
         case AcceptPendingGroupInviteResult.bridgeError:
-          _showSnackBar(
-            group != null
-                ? 'Joined ${group.name}, but recovery is still catching up'
-                : 'Invite accepted, but recovery is still catching up',
-          );
+          _showSnackBar('Failed to accept invite');
           break;
       }
     } catch (e) {
@@ -1144,6 +1140,94 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (mounted) {
         setState(() => _processingPendingInviteIds.remove(invite.groupId));
       }
+    }
+  }
+
+  Future<(AcceptPendingGroupInviteResult, GroupModel?)>
+  _acceptPendingInviteWithRecoveryRetry({
+    required GroupInviteListener inviteListener,
+    required PendingGroupInvite invite,
+    required GroupRepository groupRepository,
+    required GroupMessageRepository groupMessageRepository,
+    required GroupMessageListener groupMessageListener,
+    required String? senderPeerId,
+    required String? senderPublicKey,
+    required String? senderPrivateKey,
+    required String? senderUsername,
+    required String? localTransportPeerId,
+    required String? ownMlKemPublicKey,
+  }) async {
+    Future<(AcceptPendingGroupInviteResult, GroupModel?)> attempt() {
+      return acceptPendingGroupInvite(
+        pendingInviteRepo: inviteListener.pendingInviteRepo,
+        groupRepo: groupRepository,
+        contactRepo: widget.contactRepo,
+        msgRepo: groupMessageRepository,
+        bridge: widget.bridge,
+        groupId: invite.groupId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        reactionRepo: widget.reactionRepository,
+        groupMessageListener: groupMessageListener,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+        ownDeviceId: localTransportPeerId,
+        ownTransportPeerId: localTransportPeerId,
+        ownMlKemPublicKey: ownMlKemPublicKey,
+        ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+          localTransportPeerId,
+        ),
+        ownKeyPackagePublicMaterial: ownMlKemPublicKey,
+        drainAcceptedInboxAllPages: true,
+        acceptedInboxDrainMaxAttempts: 4,
+      );
+    }
+
+    var outcome = await attempt();
+    for (var retry = 0;
+        outcome.$1 == AcceptPendingGroupInviteResult.bridgeError &&
+            outcome.$2 == null &&
+            retry < _acceptRecoveryRetryCount;
+        retry++) {
+      if (await inviteListener.pendingInviteRepo.getPendingInvite(
+            invite.groupId,
+          ) ==
+          null) {
+        return outcome;
+      }
+      await Future<void>.delayed(_acceptRecoveryRetryDelay);
+      await _drainPendingGroupInviteInboxBeforeAccept(
+        inviteListener,
+        invite.groupId,
+      );
+      outcome = await attempt();
+    }
+    return outcome;
+  }
+
+  Future<void> _drainPendingGroupInviteInboxBeforeAccept(
+    GroupInviteListener inviteListener,
+    String groupId,
+  ) async {
+    try {
+      final p2pService = widget.p2pService;
+      if (p2pService is P2PFullInboxDrain) {
+        await (p2pService as P2PFullInboxDrain).drainOfflineInboxFully();
+      } else {
+        await p2pService.drainOfflineInbox();
+      }
+      await inviteListener.waitForIdle();
+      await widget.waitForGroupMembershipUpdateIdle?.call();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_ACCEPT_PENDING_GROUP_INVITE_PREFLIGHT_WARNING',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'error': e.toString(),
+        },
+      );
     }
   }
 
@@ -1673,6 +1757,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                   widget.groupReactionReplayOutboxRepository,
               groupMessageListener: widget.groupMessageListener,
               groupInviteListener: widget.groupInviteListener,
+              waitForGroupMembershipUpdateIdle:
+                  widget.waitForGroupMembershipUpdateIdle,
               groupConversationTracker: widget.groupConversationTracker,
               introductionRepository: widget.introductionRepository,
               introductionListener: widget.introductionListener,

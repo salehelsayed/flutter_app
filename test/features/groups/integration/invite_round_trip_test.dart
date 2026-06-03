@@ -2813,7 +2813,7 @@ void main() {
     );
 
     test(
-      'GCA-004 bridgeError accept retry drains recovered inbox and clears pending row',
+      'GCA-004 bridgeError recovery drains inbox after settled materialized invite',
       () async {
         final receiverBridge = FakeBridge();
         final receiverGroupRepo = InMemoryGroupRepository();
@@ -2907,6 +2907,11 @@ void main() {
           'ok': false,
           'errorCode': 'JOIN_FAILED',
         };
+        receiverBridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
 
         final (acceptResult, group) = await acceptPendingGroupInvite(
           pendingInviteRepo: receiverPendingInviteRepo,
@@ -2925,13 +2930,13 @@ void main() {
         expect(group, isNotNull);
         expect(
           await receiverPendingInviteRepo.getPendingInvite(_groupId),
-          isNotNull,
+          isNull,
         );
         expect(
           await receiverPendingInviteRepo.getConsumedInvite(
             'invite-bridge-error',
           ),
-          isNull,
+          isNotNull,
         );
         expect(await receiverGroupRepo.getGroup(_groupId), isNotNull);
         expect(receiverBridge.commandLog, contains('group:publish'));
@@ -3029,7 +3034,7 @@ void main() {
         expect(recoveredMessage!.text, 'Recovered after bridge error');
         expect(
           await receiverPendingInviteRepo.getPendingInvite(_groupId),
-          isNotNull,
+          isNull,
         );
 
         receiverBridge.responses['group:inboxRetrieveCursor'] = {
@@ -3052,8 +3057,8 @@ void main() {
           groupMessageListener: replayListener,
         );
 
-        expect(retryResult, AcceptPendingGroupInviteResult.success);
-        expect(retryGroup, isNotNull);
+        expect(retryResult, AcceptPendingGroupInviteResult.notFound);
+        expect(retryGroup, isNull);
         expect(
           await receiverPendingInviteRepo.getPendingInvite(_groupId),
           isNull,
@@ -3078,7 +3083,7 @@ void main() {
             .map((message) => jsonDecode(message) as Map<String, dynamic>)
             .where((message) => message['cmd'] == 'group:join')
             .toList();
-        expect(joinCommands, hasLength(3));
+        expect(joinCommands, hasLength(2));
       },
     );
 

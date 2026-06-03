@@ -169,6 +169,7 @@ class FeedWired extends StatefulWidget {
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
@@ -207,6 +208,7 @@ class FeedWired extends StatefulWidget {
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
     this.introductionRepository,
     this.introductionListener,
@@ -2862,6 +2864,7 @@ class _FeedWiredState extends State<FeedWired>
           widget.groupReactionReplayOutboxRepository,
       groupMessageListener: widget.groupMessageListener,
       groupInviteListener: widget.groupInviteListener,
+      waitForGroupMembershipUpdateIdle: widget.waitForGroupMembershipUpdateIdle,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
       introductionListener: widget.introductionListener,

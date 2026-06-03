@@ -16,6 +16,29 @@ import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
+List<Map<String, dynamic>> _gird003Media({
+  required String id,
+  required String createdAt,
+  String contentHash = _validContentHash,
+  String encryptionKeyBase64 = 'gird003-key-fixture',
+  String encryptionNonce = 'gird003-nonce-fixture',
+}) {
+  return [
+    {
+      'id': id,
+      'mime': 'image/png',
+      'size': 4096,
+      'mediaType': 'image',
+      'contentHash': contentHash,
+      'encryptionKeyBase64': encryptionKeyBase64,
+      'encryptionNonce': encryptionNonce,
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+      'downloadStatus': 'pending',
+      'createdAt': createdAt,
+    },
+  ];
+}
+
 class _CountingGroupRepository extends InMemoryGroupRepository {
   var getGroupCalls = 0;
   var getMemberCalls = 0;
@@ -629,6 +652,71 @@ void main() {
       expect(saved.transportPeerId, 'peer-sender-device');
       expect(saved.wireEnvelope, '{"cmd":"group:publish"}');
       expect(msgRepo.count, 1);
+    },
+  );
+
+  test(
+    'GIRD-001 same-id self replay repairs in-doubt failed outgoing row',
+    () async {
+      const messageId = 'gird001-self-replay-repairs-failed';
+      final localTimestamp = DateTime.utc(2026, 5, 31, 12);
+      final createdAt = localTimestamp.subtract(const Duration(seconds: 3));
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          transportPeerId: 'peer-sender',
+          senderUsername: 'Sender',
+          text: 'GIRD-001 in-doubt failed text',
+          timestamp: localTimestamp,
+          keyGeneration: 1,
+          status: 'failed',
+          isIncoming: false,
+          createdAt: createdAt,
+          wireEnvelope: '{"cmd":"group:publish"}',
+          inboxStored: false,
+          inboxRetryPayload: '{"cmd":"group:inboxStore"}',
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'GIRD-001 in-doubt failed text',
+        timestamp: localTimestamp
+            .add(const Duration(seconds: 5))
+            .toIso8601String(),
+        selfPeerId: 'peer-sender',
+        transportPeerId: 'peer-sender',
+        messageId: messageId,
+      );
+
+      expect(result, isNotNull);
+      expect(result!.id, messageId);
+      expect(result.isIncoming, isFalse);
+      expect(result.status, 'sent');
+
+      final saved = await msgRepo.getMessage(messageId);
+      expect(saved, isNotNull);
+      expect(saved!.isIncoming, isFalse);
+      expect(saved.status, 'sent');
+      expect(saved.text, 'GIRD-001 in-doubt failed text');
+      expect(saved.timestamp, localTimestamp);
+      expect(saved.createdAt, createdAt);
+      expect(saved.wireEnvelope, isNull);
+      expect(saved.inboxStored, isFalse);
+      expect(saved.inboxRetryPayload, '{"cmd":"group:inboxStore"}');
+      expect(msgRepo.count, 1);
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+      final failedIds = (await msgRepo.getFailedOutgoingMessages())
+          .map((row) => row.id)
+          .toSet();
+      expect(failedIds, isNot(contains(messageId)));
     },
   );
 
@@ -2189,6 +2277,125 @@ void main() {
       expect(pending.length, 1);
       expect(pending.first.downloadStatus, 'pending');
     });
+
+    test(
+      'GIRD-003 distinct-id group image retry with same media identity keeps one recipient row',
+      () async {
+        const originalMessageId = 'gird003-original';
+        const remintedMessageId = 'gird003-reminted';
+        final sentAt = DateTime.utc(2026, 5, 31, 13, 15);
+        final media = _gird003Media(
+          id: 'blob-gird003-shared',
+          createdAt: sentAt.toIso8601String(),
+        );
+
+        final first = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 3,
+          text: '',
+          timestamp: sentAt.toIso8601String(),
+          messageId: originalMessageId,
+          quotedMessageId: 'gird003-parent',
+          media: media,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        final duplicate = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 3,
+          text: '',
+          timestamp: sentAt.toIso8601String(),
+          messageId: remintedMessageId,
+          quotedMessageId: 'gird003-parent',
+          media: media,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(first, isNotNull);
+        expect(duplicate, isNull);
+        expect(msgRepo.count, 1);
+        expect(await msgRepo.getMessage(originalMessageId), isNotNull);
+        expect(await msgRepo.getMessage(remintedMessageId), isNull);
+
+        final originalAttachments = await mediaRepo.getAttachmentsForMessage(
+          originalMessageId,
+        );
+        final duplicateAttachments = await mediaRepo.getAttachmentsForMessage(
+          remintedMessageId,
+        );
+        expect(originalAttachments, hasLength(1));
+        expect(originalAttachments.single.id, 'blob-gird003-shared');
+        expect(originalAttachments.single.messageId, originalMessageId);
+        expect(duplicateAttachments, isEmpty);
+        expect(mediaRepo.count, 1);
+      },
+    );
+
+    test(
+      'GIRD-003 intentional separate image sends with distinct media identity both persist',
+      () async {
+        const firstMessageId = 'gird003-intentional-first';
+        const secondMessageId = 'gird003-intentional-second';
+        final firstSentAt = DateTime.utc(2026, 5, 31, 13, 20);
+        final secondSentAt = firstSentAt.add(const Duration(seconds: 30));
+
+        final first = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 3,
+          text: 'same image again',
+          timestamp: firstSentAt.toIso8601String(),
+          messageId: firstMessageId,
+          media: _gird003Media(
+            id: 'blob-gird003-intentional-a',
+            createdAt: firstSentAt.toIso8601String(),
+          ),
+          mediaAttachmentRepo: mediaRepo,
+        );
+        final second = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 3,
+          text: 'same image again',
+          timestamp: secondSentAt.toIso8601String(),
+          messageId: secondMessageId,
+          media: _gird003Media(
+            id: 'blob-gird003-intentional-b',
+            createdAt: secondSentAt.toIso8601String(),
+          ),
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(first, isNotNull);
+        expect(second, isNotNull);
+        expect(msgRepo.count, 2);
+
+        final firstAttachments = await mediaRepo.getAttachmentsForMessage(
+          firstMessageId,
+        );
+        final secondAttachments = await mediaRepo.getAttachmentsForMessage(
+          secondMessageId,
+        );
+        expect(firstAttachments, hasLength(1));
+        expect(firstAttachments.single.id, 'blob-gird003-intentional-a');
+        expect(secondAttachments, hasLength(1));
+        expect(secondAttachments.single.id, 'blob-gird003-intentional-b');
+        expect(mediaRepo.count, 2);
+      },
+    );
 
     test(
       'rejects invalid live media before saving message or attachment',

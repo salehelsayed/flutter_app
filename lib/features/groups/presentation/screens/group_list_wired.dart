@@ -43,6 +43,7 @@ class GroupListWired extends StatefulWidget {
   final ContactRepository contactRepo;
   final P2PService p2pService;
   final GroupInviteListener? groupInviteListener;
+  final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
   final ImageProcessor? imageProcessor;
@@ -66,6 +67,7 @@ class GroupListWired extends StatefulWidget {
     required this.contactRepo,
     required this.p2pService,
     this.groupInviteListener,
+    this.waitForGroupMembershipUpdateIdle,
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.imageProcessor,
@@ -85,6 +87,8 @@ class GroupListWired extends StatefulWidget {
 class _GroupListWiredState extends State<GroupListWired>
     with WidgetsBindingObserver {
   static const _loadErrorMessage = "Couldn't load groups";
+  static const _acceptRecoveryRetryCount = 5;
+  static const _acceptRecoveryRetryDelay = Duration(milliseconds: 500);
 
   List<GroupModel> _groups = [];
   Map<String, GroupMessage?> _latestMessages = {};
@@ -281,29 +285,21 @@ class _GroupListWiredState extends State<GroupListWired>
 
     setState(() => _processingInviteIds.add(invite.groupId));
     try {
+      await _drainPendingGroupInviteInboxBeforeAccept(
+        inviteListener,
+        invite.groupId,
+      );
       final identity = await widget.identityRepo.loadIdentity();
       final localTransportPeerId = widget.p2pService.currentState.peerId;
-      final (result, group) = await acceptPendingGroupInvite(
-        pendingInviteRepo: inviteListener.pendingInviteRepo,
-        groupRepo: widget.groupRepo,
-        contactRepo: widget.contactRepo,
-        msgRepo: widget.msgRepo,
-        bridge: widget.bridge,
-        groupId: invite.groupId,
-        mediaAttachmentRepo: widget.mediaAttachmentRepo,
-        reactionRepo: widget.reactionRepo,
-        groupMessageListener: widget.groupMessageListener,
+      final (result, group) = await _acceptPendingInviteWithRecoveryRetry(
+        inviteListener: inviteListener,
+        invite: invite,
         senderPeerId: identity?.peerId,
         senderPublicKey: identity?.publicKey,
         senderPrivateKey: identity?.privateKey,
         senderUsername: identity?.username,
-        ownDeviceId: localTransportPeerId,
-        ownTransportPeerId: localTransportPeerId,
+        localTransportPeerId: localTransportPeerId,
         ownMlKemPublicKey: identity?.mlKemPublicKey,
-        ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
-          localTransportPeerId,
-        ),
-        ownKeyPackagePublicMaterial: identity?.mlKemPublicKey,
       );
       if (group != null) {
         _changedGroupIds.add(group.id);
@@ -345,11 +341,7 @@ class _GroupListWiredState extends State<GroupListWired>
           _showSnackBar(l10n.group_invite_duplicate_group);
           break;
         case AcceptPendingGroupInviteResult.bridgeError:
-          _showSnackBar(
-            group != null
-                ? l10n.group_invite_joined_recovery(group.name)
-                : l10n.group_invite_accepted_recovery,
-          );
+          _showSnackBar(l10n.group_invite_accept_failed);
           break;
       }
     } catch (e) {
@@ -371,6 +363,91 @@ class _GroupListWiredState extends State<GroupListWired>
       if (mounted) {
         setState(() => _processingInviteIds.remove(invite.groupId));
       }
+    }
+  }
+
+  Future<(AcceptPendingGroupInviteResult, GroupModel?)>
+  _acceptPendingInviteWithRecoveryRetry({
+    required GroupInviteListener inviteListener,
+    required PendingGroupInvite invite,
+    required String? senderPeerId,
+    required String? senderPublicKey,
+    required String? senderPrivateKey,
+    required String? senderUsername,
+    required String? localTransportPeerId,
+    required String? ownMlKemPublicKey,
+  }) async {
+    Future<(AcceptPendingGroupInviteResult, GroupModel?)> attempt() {
+      return acceptPendingGroupInvite(
+        pendingInviteRepo: inviteListener.pendingInviteRepo,
+        groupRepo: widget.groupRepo,
+        contactRepo: widget.contactRepo,
+        msgRepo: widget.msgRepo,
+        bridge: widget.bridge,
+        groupId: invite.groupId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        reactionRepo: widget.reactionRepo,
+        groupMessageListener: widget.groupMessageListener,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+        ownDeviceId: localTransportPeerId,
+        ownTransportPeerId: localTransportPeerId,
+        ownMlKemPublicKey: ownMlKemPublicKey,
+        ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+          localTransportPeerId,
+        ),
+        ownKeyPackagePublicMaterial: ownMlKemPublicKey,
+        drainAcceptedInboxAllPages: true,
+        acceptedInboxDrainMaxAttempts: 4,
+      );
+    }
+
+    var outcome = await attempt();
+    for (var retry = 0;
+        outcome.$1 == AcceptPendingGroupInviteResult.bridgeError &&
+            outcome.$2 == null &&
+            retry < _acceptRecoveryRetryCount;
+        retry++) {
+      if (await inviteListener.pendingInviteRepo.getPendingInvite(
+            invite.groupId,
+          ) ==
+          null) {
+        return outcome;
+      }
+      await Future<void>.delayed(_acceptRecoveryRetryDelay);
+      await _drainPendingGroupInviteInboxBeforeAccept(
+        inviteListener,
+        invite.groupId,
+      );
+      outcome = await attempt();
+    }
+    return outcome;
+  }
+
+  Future<void> _drainPendingGroupInviteInboxBeforeAccept(
+    GroupInviteListener inviteListener,
+    String groupId,
+  ) async {
+    try {
+      final p2pService = widget.p2pService;
+      if (p2pService is P2PFullInboxDrain) {
+        await (p2pService as P2PFullInboxDrain).drainOfflineInboxFully();
+      } else {
+        await p2pService.drainOfflineInbox();
+      }
+      await inviteListener.waitForIdle();
+      await widget.waitForGroupMembershipUpdateIdle?.call();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_LIST_FL_ACCEPT_PENDING_INVITE_PREFLIGHT_WARNING',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'error': e.toString(),
+        },
+      );
     }
   }
 

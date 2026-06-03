@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/home/presentation/widgets/scan_friend_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
-        home: Scaffold(
-          body: MediaQuery(
-            data: const MediaQueryData(size: Size(400, 800)),
-            child: child,
-          ),
-        ),
-      );
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(
+      body: MediaQuery(
+        data: const MediaQueryData(size: Size(400, 800)),
+        child: child,
+      ),
+    ),
+  );
 
   group('ScanFriendCard', () {
-    testWidgets('renders "Scan a friend\'s code" title text',
-        (tester) async {
+    testWidgets('renders "Scan a friend\'s code" title text', (tester) async {
       await tester.pumpWidget(wrap(ScanFriendCard(onTap: () {})));
       expect(find.text("Scan a friend's code"), findsOneWidget);
     });
@@ -31,8 +34,7 @@ void main() {
 
     testWidgets('calls onTap when tapped', (tester) async {
       var tapped = false;
-      await tester
-          .pumpWidget(wrap(ScanFriendCard(onTap: () => tapped = true)));
+      await tester.pumpWidget(wrap(ScanFriendCard(onTap: () => tapped = true)));
       // Use tapDown + tapUp gesture to match GestureDetector.onTapUp
       final center = tester.getCenter(find.byType(ScanFriendCard));
       final gesture = await tester.startGesture(center);

@@ -1490,6 +1490,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get failed_media_retry_failed => 'تعذرت إعادة محاولة رسالة الوسائط.';
 
   @override
+  String get failed_media_upload_pending_retry =>
+      'ما زال تحميل الوسائط قيد الإكمال. ستتم إعادة المحاولة قريبًا.';
+
+  @override
   String get failed_media_delete_unavailable => 'الحذف غير متاح الآن.';
 
   @override

@@ -111,6 +111,34 @@ void main() {
     );
 
     test(
+      'GIRD-006 group image remote payload uses canonical anchored route payload',
+      () {
+        final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'group_message',
+          'groupId': 'group-gird006',
+          'message_id': 'msg-gird006-image',
+          'payloadType': 'group_message',
+          'kind': 'group_offline_replay',
+        });
+
+        expect(routeTarget, isNotNull);
+        expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+        expect(routeTarget.groupId, 'group-gird006');
+        expect(routeTarget.messageId, 'msg-gird006-image');
+        expect(
+          routeTarget.toPayload(),
+          'group:group-gird006|message:msg-gird006-image',
+        );
+        expect(
+          NotificationRouteTarget.fromPayload(
+            routeTarget.toPayload(),
+          )!.messageId,
+          'msg-gird006-image',
+        );
+      },
+    );
+
+    test(
       'fromRemoteMessageData ignores ciphertext fields while routing chat pushes',
       () {
         final routeTarget = NotificationRouteTarget.fromRemoteMessageData({

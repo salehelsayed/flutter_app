@@ -562,7 +562,8 @@ func (b *redisGroupInboxBackend) sequenceKey() string {
 }
 
 func (b *redisGroupInboxBackend) Store(groupId string, from string, message string) error {
-	return b.StoreWithRecipients(groupId, from, message, []string{from})
+	_, err := b.StoreWithRecipients(groupId, from, message, []string{from})
+	return err
 }
 
 func (b *redisGroupInboxBackend) StoreWithRecipients(
@@ -570,40 +571,90 @@ func (b *redisGroupInboxBackend) StoreWithRecipients(
 	from string,
 	message string,
 	recipientPeerIds []string,
-) error {
+) (GroupInboxStoreResult, error) {
 	normalizedRecipients := normalizePeerIds(recipientPeerIds)
 	if len(normalizedRecipients) == 0 {
-		return fmt.Errorf("recipientPeerIds required")
+		return "", fmt.Errorf("recipientPeerIds required")
 	}
 
 	ctx := context.Background()
-	id, err := b.client.Incr(ctx, b.sequenceKey()).Result()
-	if err != nil {
-		return fmt.Errorf("allocate group inbox id: %w", err)
-	}
+	key := b.key(groupId)
+	cutoff := time.Now().Add(-b.ttl).UnixMilli()
+	messageID := extractMessageId(message)
+	var result GroupInboxStoreResult
 
-	record := redisGroupRecord{
-		From:             from,
-		Message:          message,
-		Timestamp:        time.Now().UnixMilli(),
-		ID:               fmt.Sprintf("%d", id),
-		RecipientPeerIds: normalizedRecipients,
-	}
+	err := withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
+		rawEntries, err := tx.LRange(ctx, key, 0, -1).Result()
+		if err == redis.Nil {
+			rawEntries = nil
+		} else if err != nil {
+			return err
+		}
 
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("encode group inbox message: %w", err)
-	}
+		validRaw, validMessages, err := normalizeRedisGroupInboxRecords(rawEntries, cutoff)
+		if err != nil {
+			return err
+		}
 
-	if _, err := b.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.RPush(ctx, b.key(groupId), payload)
-		pipe.LTrim(ctx, b.key(groupId), int64(-b.maxPerGroup), -1)
+		if messageID != "" {
+			for i := range validMessages {
+				if extractMessageId(validMessages[i].Message) != messageID {
+					continue
+				}
+				if validMessages[i].From != from || validMessages[i].Message != message {
+					return fmt.Errorf("conflicting group inbox messageId %q", messageID)
+				}
+
+				validMessages[i].RecipientPeerIds = mergePeerIds(
+					validMessages[i].RecipientPeerIds,
+					normalizedRecipients,
+				)
+				nextRaw, err := encodeRedisGroupInboxRecords(validMessages)
+				if err != nil {
+					return err
+				}
+				if !stringSlicesEqual(rawEntries, nextRaw) {
+					if err := redisReplaceList(tx, key, nextRaw); err != nil {
+						return err
+					}
+				}
+				result = GroupInboxStoreResultDuplicate
+				return nil
+			}
+		}
+
+		id, err := tx.Incr(ctx, b.sequenceKey()).Result()
+		if err != nil {
+			return fmt.Errorf("allocate group inbox id: %w", err)
+		}
+
+		record := redisGroupRecord{
+			From:             from,
+			Message:          message,
+			Timestamp:        time.Now().UnixMilli(),
+			ID:               fmt.Sprintf("%d", id),
+			RecipientPeerIds: normalizedRecipients,
+		}
+		payload, err := json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("encode group inbox message: %w", err)
+		}
+
+		values := append([]string(nil), validRaw...)
+		values = append(values, string(payload))
+		if len(values) > b.maxPerGroup {
+			values = values[len(values)-b.maxPerGroup:]
+		}
+		if err := redisReplaceList(tx, key, values); err != nil {
+			return err
+		}
+		result = GroupInboxStoreResultStored
 		return nil
-	}); err != nil {
-		return fmt.Errorf("store group inbox message: %w", err)
+	})
+	if err != nil {
+		return "", fmt.Errorf("store redis group inbox message: %w", err)
 	}
-
-	return nil
+	return result, nil
 }
 
 func (b *redisGroupInboxBackend) RetrieveSince(groupId string, sinceTimestamp int64) []groupInboxMessage {
@@ -779,6 +830,65 @@ func (b *redisGroupInboxBackend) pruneKey(key string) error {
 		}
 		return redisReplaceList(tx, key, validRaw)
 	})
+}
+
+func normalizeRedisGroupInboxRecords(rawEntries []string, cutoff int64) ([]string, []groupInboxMessage, error) {
+	validRaw := make([]string, 0, len(rawEntries))
+	validMessages := make([]groupInboxMessage, 0, len(rawEntries))
+
+	for _, raw := range rawEntries {
+		var record redisGroupRecord
+		if err := json.Unmarshal([]byte(raw), &record); err != nil {
+			log.Printf("[REDIS][GROUP_INBOX] decode failed during normalize: %v", err)
+			continue
+		}
+		if record.Timestamp <= cutoff {
+			continue
+		}
+
+		message := groupInboxMessage{
+			From:             record.From,
+			Message:          record.Message,
+			Timestamp:        record.Timestamp,
+			ID:               record.ID,
+			RecipientPeerIds: normalizePeerIds(record.RecipientPeerIds),
+		}
+		normalizedRaw, err := encodeRedisGroupInboxRecord(message)
+		if err != nil {
+			return nil, nil, err
+		}
+		validRaw = append(validRaw, normalizedRaw)
+		validMessages = append(validMessages, message)
+	}
+
+	return validRaw, validMessages, nil
+}
+
+func encodeRedisGroupInboxRecords(messages []groupInboxMessage) ([]string, error) {
+	raw := make([]string, 0, len(messages))
+	for _, message := range messages {
+		encoded, err := encodeRedisGroupInboxRecord(message)
+		if err != nil {
+			return nil, err
+		}
+		raw = append(raw, encoded)
+	}
+	return raw, nil
+}
+
+func encodeRedisGroupInboxRecord(message groupInboxMessage) (string, error) {
+	record := redisGroupRecord{
+		From:             message.From,
+		Message:          message.Message,
+		Timestamp:        message.Timestamp,
+		ID:               message.ID,
+		RecipientPeerIds: normalizePeerIds(message.RecipientPeerIds),
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return "", fmt.Errorf("encode group inbox message: %w", err)
+	}
+	return string(payload), nil
 }
 
 func decodeGroupInboxEntries(rawEntries []string) []groupInboxMessage {

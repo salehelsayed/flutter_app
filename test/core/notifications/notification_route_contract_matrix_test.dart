@@ -156,6 +156,46 @@ void main() {
         expect(notification!.payload, testCase.target.toPayload());
       });
     }
+
+    test(
+      'GIRD-006 group image push contract aligns route, prepare, and fallback payload',
+      () async {
+        const remoteData = {
+          'type': 'group_message',
+          'groupId': 'group-gird006',
+          'message_id': 'msg-gird006-image',
+          'payloadType': 'group_message',
+          'kind': 'group_offline_replay',
+        };
+        final target = NotificationRouteTarget.fromRemoteMessageData(
+          remoteData,
+        );
+
+        expect(target, isNotNull);
+        expect(
+          target!.toPayload(),
+          'group:group-gird006|message:msg-gird006-image',
+        );
+
+        final events = <String>[];
+        final result = await prepareNotificationOpen(
+          routeTarget: target,
+          drainOfflineInbox: () async {
+            events.add('drain:inbox');
+          },
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            events.add('drain:group:$groupId');
+          },
+        );
+        final fallback = buildBackgroundPushFallbackNotification(
+          const RemoteMessage(data: remoteData),
+        );
+
+        expect(result.ok, isTrue, reason: result.error);
+        expect(events, ['drain:group:group-gird006']);
+        expect(fallback.payload, target.toPayload());
+      },
+    );
   });
 }
 

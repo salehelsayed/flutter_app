@@ -115,6 +115,26 @@ bool _reliableGroupSendUnavailable(Map<String, dynamic>? result) {
       code == 'UNIMPLEMENTED';
 }
 
+bool _reliableGroupSendTimedOut(Map<String, dynamic> result) {
+  return result['ok'] != true &&
+      result['errorCode']?.toString() == 'BRIDGE_TIMEOUT';
+}
+
+bool _reliablePublishSucceededWithoutCustody({
+  required bool reliableOk,
+  required bool publishSucceeded,
+  required bool inboxOk,
+  required int? topicPeers,
+  required int expectedRecipientCount,
+}) {
+  return reliableOk &&
+      publishSucceeded &&
+      !inboxOk &&
+      expectedRecipientCount > 0 &&
+      topicPeers != null &&
+      topicPeers <= 0;
+}
+
 int? _intResultField(Map<String, dynamic> result, String key) {
   final value = result[key];
   if (value is int) return value;
@@ -865,6 +885,66 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
             result: reliableResult,
             fallback: prePersistMessage.inboxRetryPayload,
           );
+    final reliableTimedOut = _reliableGroupSendTimedOut(reliableResult);
+    final publishWithoutCustody = _reliablePublishSucceededWithoutCustody(
+      reliableOk: reliableOk,
+      publishSucceeded: publishSucceeded,
+      inboxOk: inboxOk,
+      topicPeers: topicPeers,
+      expectedRecipientCount: reliableExpectedRecipientCount,
+    );
+
+    if (reliableTimedOut || publishWithoutCustody) {
+      final inDoubtMessage = prePersistMessage.copyWith(
+        status: 'pending',
+        wireEnvelope: reliableTimedOut ? prePersistMessage.wireEnvelope : null,
+        inboxStored: inboxOk,
+        inboxRetryPayload: retryPayload,
+      );
+      await msgRepo.saveMessage(inDoubtMessage);
+      await _persistOutgoingMedia(
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        attachments: groupMediaAttachments
+            ?.map(
+              (attachment) => attachment.copyWith(messageId: resolvedMessageId),
+            )
+            .toList(growable: false),
+      );
+
+      final reason = reliableTimedOut
+          ? 'bridge_timeout'
+          : 'live_publish_without_custody';
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_USE_CASE_RELIABLE_IN_DOUBT',
+        details: {
+          'messageId': resolvedMessageId.length > 8
+              ? resolvedMessageId.substring(0, 8)
+              : resolvedMessageId,
+          'reason': reason,
+          'deliveryMode': reliableResult['deliveryMode'],
+          ..._groupPublishFanoutEvidence(
+            topicPeers: topicPeers,
+            expectedRecipientCount: reliableExpectedRecipientCount,
+            inboxOk: inboxOk,
+          ),
+        },
+      );
+      emitGroupSendTiming(
+        outcome: 'reliable_in_doubt',
+        details: {
+          'status': inDoubtMessage.status,
+          'reason': reason,
+          'deliveryMode': reliableResult['deliveryMode'],
+          ..._groupPublishFanoutEvidence(
+            topicPeers: topicPeers,
+            expectedRecipientCount: reliableExpectedRecipientCount,
+            inboxOk: inboxOk,
+          ),
+        },
+      );
+      return (SendGroupMessageResult.success, inDoubtMessage);
+    }
 
     if (!reliableOk || (!publishSucceeded && !inboxOk)) {
       await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');

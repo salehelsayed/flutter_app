@@ -191,4 +191,87 @@ void main() {
       );
     },
   );
+
+  test(
+    'GIRD-005 treats verified done media without a local path as resolving while unsafe states stay unavailable',
+    () {
+      const base = MediaAttachment(
+        id: 'blob',
+        messageId: 'msg',
+        mime: 'image/jpeg',
+        size: 5,
+        mediaType: 'image',
+        localPath: '/tmp/media.jpg',
+        downloadStatus: kMediaDownloadStatusDone,
+        createdAt: '2026-04-30T12:00:00.000Z',
+        contentHash: validHash,
+        encryptionKeyBase64: 'key-1',
+        encryptionNonce: 'nonce-1',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final resolving = base.copyWith(clearLocalPath: true);
+
+      expect(
+        GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(resolving),
+        isFalse,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(
+          resolving,
+          requireVerifiedContentHash: true,
+        ),
+        isFalse,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(
+          resolving.copyWith(clearContentHash: true),
+          requireVerifiedContentHash: true,
+        ),
+        isTrue,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(
+          resolving.copyWith(contentHash: 'abc'),
+          requireVerifiedContentHash: true,
+        ),
+        isTrue,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(
+          resolving.copyWith(
+            clearEncryptionKeyBase64: true,
+            clearEncryptionNonce: true,
+            clearEncryptionScheme: true,
+          ),
+          requireVerifiedContentHash: true,
+        ),
+        isTrue,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(
+          resolving.copyWith(
+            downloadStatus: kMediaDownloadStatusIntegrityFailed,
+          ),
+          requireVerifiedContentHash: true,
+        ),
+        isTrue,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(
+          resolving.copyWith(downloadStatus: kMediaDownloadStatusUploadFailed),
+          requireVerifiedContentHash: true,
+        ),
+        isTrue,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(
+          resolving.copyWith(
+            downloadStatus: kMediaDownloadStatusUploadCancelled,
+          ),
+          requireVerifiedContentHash: true,
+        ),
+        isTrue,
+      );
+    },
+  );
 }

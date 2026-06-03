@@ -153,7 +153,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
 
-      expect(find.text('1 attachments'), findsOneWidget);
+      expect(find.text('1 attachment'), findsOneWidget);
 
       await tester.ensureVisible(find.text('Post'));
       await tester.tap(find.text('Post'));

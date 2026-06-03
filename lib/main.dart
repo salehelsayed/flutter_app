@@ -1817,7 +1817,10 @@ void main() async {
     pendingKeyRepairRepo: groupPendingKeyRepairRepository,
     mediaAttachmentRepo: mediaAttachmentRepository,
     reactionRepo: reactionRepository,
-    replayGroupEnvelope: groupMessageListener.handleReplayEnvelope,
+    replayGroupEnvelope: (data) => groupMessageListener.handleReplayEnvelope(
+      data,
+      allowMembershipBuffer: true,
+    ),
   );
 
   // Create group invite listener
@@ -1899,6 +1902,9 @@ void main() async {
     groupRepo: groupRepository,
     bridge: bridge,
     groupMessageListener: groupMessageListener,
+    msgRepo: groupMessageRepository,
+    pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+    requestGroupKeyRepair: emitGroupKeyRepairRequest,
   );
 
   // Create introduction listener
@@ -2840,6 +2846,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.groupReactionReplayOutboxRepository,
         groupMessageListener: widget.groupMessageListener,
         groupInviteListener: widget.groupInviteListener,
+        waitForGroupMembershipUpdateIdle:
+            widget.groupMembershipUpdateListener.waitForIdle,
         groupConversationTracker: widget.groupConversationTracker,
         introductionRepository: widget.introductionRepository,
         introductionListener: widget.introductionListener,
@@ -3233,6 +3241,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.groupReactionReplayOutboxRepository,
         groupMessageListener: widget.groupMessageListener,
         groupInviteListener: widget.groupInviteListener,
+        waitForGroupMembershipUpdateIdle:
+            widget.groupMembershipUpdateListener.waitForIdle,
         groupConversationTracker: widget.groupConversationTracker,
         introductionRepository: widget.introductionRepository,
         introductionListener: widget.introductionListener,

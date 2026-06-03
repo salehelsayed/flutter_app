@@ -1481,6 +1481,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get failed_media_retry_failed => 'Could not retry media message.';
 
   @override
+  String get failed_media_upload_pending_retry =>
+      'Media upload is still finishing. It will retry soon.';
+
+  @override
   String get failed_media_delete_unavailable => 'Delete unavailable right now.';
 
   @override

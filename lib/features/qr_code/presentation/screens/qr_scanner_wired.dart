@@ -78,6 +78,7 @@ class QRScannerWired extends StatelessWidget {
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
+  final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
   final IntroductionRepository? introductionRepository;
@@ -113,6 +114,7 @@ class QRScannerWired extends StatelessWidget {
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
     this.downloadProfilePictureFn,
     this.introductionRepository,
@@ -364,6 +366,8 @@ class QRScannerWired extends StatelessWidget {
                             groupReactionReplayOutboxRepository,
                         groupMessageListener: groupMessageListener,
                         groupInviteListener: groupInviteListener,
+                        waitForGroupMembershipUpdateIdle:
+                            waitForGroupMembershipUpdateIdle,
                         groupConversationTracker: groupConversationTracker,
                         introductionRepository: introductionRepository,
                         introductionListener: introductionListener,

@@ -78,10 +78,13 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
     message.data,
   );
-  if (routeTarget != null) {
-    final payload = routeTarget.toPayload();
-    final messageId =
-        routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind)
+  Future<void> markVisibleRemoteAnnouncement() async {
+    final target = routeTarget;
+    if (target == null) {
+      return;
+    }
+    final payload = target.toPayload();
+    final messageId = routeTargetSupportsMessageAwareRemoteDedupe(target.kind)
         ? remoteNotificationMessageIdFromData(message.data)
         : null;
     await recentRemoteNotificationGate.markAnnouncement(
@@ -91,6 +94,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 
   if (!shouldShowBackgroundPushFallbackNotification(message)) {
+    if (message.notification != null) {
+      await markVisibleRemoteAnnouncement();
+    }
     return;
   }
 
@@ -124,6 +130,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     if (dedupeKey != null) {
       await recentBackgroundNotificationGate.markShown(dedupeKey);
     }
+    await markVisibleRemoteAnnouncement();
 
     emitFlowEvent(
       layer: 'FL',

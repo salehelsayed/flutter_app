@@ -260,6 +260,7 @@ void main() {
     ValueChanged<bool>? onRowActionOpenChanged,
     VoidCallback? onHeaderBuild,
     VoidCallback? onListBuild,
+    Future<void> Function()? waitForGroupMembershipUpdateIdle,
     List<NavigatorObserver>? navigatorObservers,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
@@ -307,6 +308,7 @@ void main() {
       groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
       groupInviteListener: groupInviteListener,
+      waitForGroupMembershipUpdateIdle: waitForGroupMembershipUpdateIdle,
       introductionRepository: introductionRepository,
       introductionListener: introductionListener,
       appShellController: appShellController,
@@ -2071,7 +2073,7 @@ void main() {
             id: 'gm-2',
             groupId: 'game-night',
             senderPeerId: testIdentity.peerId,
-            senderUsername: testIdentity.username!,
+            senderUsername: testIdentity.username,
             text: 'me',
             timestamp: now.add(const Duration(seconds: 30)),
             isIncoming: false,
@@ -2929,6 +2931,186 @@ void main() {
     );
 
     testWidgets(
+      'accepting a stale pending group invite drains latest invite before materializing group',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+
+        final staleInvite = makePendingInvite(
+          groupId: 'grp-stale-tap',
+          groupName: 'test 2',
+        );
+        final latestInvite = makePendingInvite(
+          groupId: 'grp-stale-tap',
+          groupName: 'test 3',
+          receivedAt: staleInvite.receivedAt.add(const Duration(minutes: 5)),
+        );
+        await pendingInviteRepo.savePendingInvite(staleInvite);
+        p2pService.onDrainOfflineInbox = () async {
+          await pendingInviteRepo.savePendingInvite(latestInvite);
+        };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': <Map<String, dynamic>>[],
+          'cursor': '',
+        };
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('test 2'), findsOneWidget);
+        expect(find.text('test 3'), findsNothing);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-accept-${staleInvite.groupId}'),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+
+        expect(p2pService.drainOfflineInboxCallCount, 1);
+        expect(
+          await pendingInviteRepo.getPendingInvite(staleInvite.groupId),
+          isNull,
+        );
+        final group = await groupRepo.getGroup(staleInvite.groupId);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(find.text('Joined test 3'), findsOneWidget);
+        expect(find.text('Joined test 2'), findsNothing);
+
+        await tester.tap(find.text('All'));
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.text('test 3'), findsOneWidget);
+        expect(find.text('test 2'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'pending group invite accept waits for direct membership update idle before materializing group',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+
+        final staleInvite = makePendingInvite(
+          groupId: 'grp-membership-idle',
+          groupName: 'test 2',
+        );
+        final latestInvite = makePendingInvite(
+          groupId: 'grp-membership-idle',
+          groupName: 'test 3',
+          receivedAt: staleInvite.receivedAt.add(const Duration(minutes: 5)),
+        );
+        await pendingInviteRepo.savePendingInvite(staleInvite);
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': <Map<String, dynamic>>[],
+          'cursor': '',
+        };
+
+        final membershipIdleGate = Completer<void>();
+        var membershipIdleWaitStarted = false;
+        Future<void> waitForGroupMembershipUpdateIdle() async {
+          membershipIdleWaitStarted = true;
+          await membershipIdleGate.future;
+          await pendingInviteRepo.savePendingInvite(latestInvite);
+        }
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            waitForGroupMembershipUpdateIdle: waitForGroupMembershipUpdateIdle,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-accept-${staleInvite.groupId}'),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(p2pService.drainOfflineInboxCallCount, 1);
+        expect(membershipIdleWaitStarted, isTrue);
+        expect(await groupRepo.getGroup(staleInvite.groupId), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite(staleInvite.groupId),
+          isNotNull,
+        );
+
+        membershipIdleGate.complete();
+        await pumpOrbitFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(staleInvite.groupId),
+          isNull,
+        );
+        final group = await groupRepo.getGroup(staleInvite.groupId);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(find.text('Joined test 3'), findsOneWidget);
+        expect(find.text('Joined test 2'), findsNothing);
+      },
+    );
+
+    testWidgets(
       'EK011 accepts a key-package-bound pending group invite from Intros',
       (tester) async {
         setLargeTestSurface(tester);
@@ -3069,7 +3251,7 @@ void main() {
         expect(find.text('Joined Cursor Writers'), findsOneWidget);
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
-          hasLength(1),
+          hasLength(2),
         );
       },
     );
@@ -3930,6 +4112,10 @@ class _FakeGroupMessageListener extends GroupMessageListener {
 }
 
 class _NoOpGroupRepo implements GroupRepository {
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) async =>
+      const <GroupMember>[];
+
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
 }

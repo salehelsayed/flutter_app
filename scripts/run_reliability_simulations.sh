@@ -528,6 +528,31 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
+preflight_transport_census_processes() {
+  local matches
+
+  matches="$(
+    ps -axo pid=,ppid=,stat=,etime=,command= |
+      awk '
+        /run_transport_census_cli\.dart|transport_census_harness\.dart|go-mknoon\/bin\/testpeer/ &&
+        $0 !~ /awk / &&
+        $0 !~ /ps -axo/ {
+          print
+        }
+      '
+  )"
+
+  if [ -n "$matches" ]; then
+    printf '\nReliability preflight failed: transport census/testpeer processes are already running.\n' >&2
+    printf 'These clients can consume relay capacity and make later group roles fail online readiness.\n' >&2
+    printf 'Stop them before running reliability-sim:\n' >&2
+    printf '%s\n' "$matches" >&2
+    return 1
+  fi
+}
+
+preflight_transport_census_processes
+
 printf '\nRunning %s reliability simulation command(s)...\n' "$command_count"
 while IFS=$'\t' read -r index kind path scenario; do
   [ -n "$kind" ] || continue

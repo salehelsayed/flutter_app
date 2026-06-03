@@ -45,7 +45,8 @@ class _LearnedTransport {
 }
 
 /// Implementation of P2PService backed by the Go native bridge.
-class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
+class P2PServiceImpl
+    implements P2PService, ReadinessProofRecorder, P2PFullInboxDrain {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
@@ -118,6 +119,11 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   /// Timing instrumentation: when degradation was first detected (for outage timing).
   DateTime? _outageDetectedAt;
 
+  /// Cold-start relay recovery is allowed only after the normal startup grace
+  /// period, so a relay reservation that is merely still settling is not
+  /// treated as a failure.
+  DateTime? _lastStartupRelayRecoveryAttemptAt;
+
   /// §24: Timestamp when startNodeCore() was called (for cold-start timing).
   DateTime? _nodeStartRequestedAt;
 
@@ -171,6 +177,12 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
 
   /// How often the health check polls node:status.
   static const healthCheckInterval = Duration(seconds: 30);
+
+  /// How long cold start may remain relay-degraded before actively recovering.
+  static const startupRelayRecoveryDelay = Duration(seconds: 2);
+
+  /// Minimum spacing between cold-start relay recovery attempts.
+  static const startupRelayRecoveryRetryInterval = Duration(seconds: 15);
 
   /// Maximum time budget for warm background tasks during startup.
   static const warmTaskTimeout = Duration(seconds: 5);
@@ -331,6 +343,7 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     _nodeStartRequestedAt = DateTime.now();
     _coldStartOnlineEmitted = false;
     _isHotRestart = false;
+    _lastStartupRelayRecoveryAttemptAt = null;
     if (kDebugMode) {
       debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
     }
@@ -1118,8 +1131,8 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   /// Drain queued offline inbox messages and inject them into message stream.
   /// Retrieves the first page on the foreground budget, then continues in the
   /// background when the relay reports remaining backlog.
-  Future<void> _drainOfflineInbox() async {
-    await _drainOfflineInboxDurably();
+  Future<void> _drainOfflineInbox({bool waitForAllPages = false}) async {
+    await _drainOfflineInboxDurably(waitForAllPages: waitForAllPages);
   }
 
   Future<void> _continueDrainingOfflineInboxDurably({
@@ -1171,7 +1184,9 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     }
   }
 
-  Future<void> _drainOfflineInboxDurably() async {
+  Future<void> _drainOfflineInboxDurably({
+    bool waitForAllPages = false,
+  }) async {
     try {
       final toPeerId = _currentState.peerId ?? '';
       final replayedExisting = await _replayStagedInboxEntries();
@@ -1184,13 +1199,16 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       final totalStaged = firstPage.staged;
 
       if (firstPage.hasMore && totalStaged > 0) {
-        unawaited(
-          _continueDrainingOfflineInboxDurably(
-            toPeerId: toPeerId,
-            totalReplayed: totalReplayed,
-            totalStaged: totalStaged,
-          ),
+        final continuation = _continueDrainingOfflineInboxDurably(
+          toPeerId: toPeerId,
+          totalReplayed: totalReplayed,
+          totalStaged: totalStaged,
         );
+        if (waitForAllPages) {
+          await continuation;
+        } else {
+          unawaited(continuation);
+        }
       }
 
       if (replayedExisting > 0) {
@@ -1264,6 +1282,7 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
 
       if (response['ok'] == true) {
         _hasEverBeenOnline = false;
+        _lastStartupRelayRecoveryAttemptAt = null;
         _clearActiveReadinessProofWindow();
         _emitState(NodeState.stopped);
 
@@ -2284,6 +2303,24 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     return state.circuitAddresses.isEmpty;
   }
 
+  bool _shouldAttemptStartupRelayRecovery(NodeState state) {
+    if (_hasEverBeenOnline || !_stateNeedsRelayRecovery(state)) {
+      return false;
+    }
+
+    final startedAt = _nodeStartRequestedAt;
+    if (startedAt == null) return true;
+
+    final now = DateTime.now();
+    if (now.difference(startedAt) < startupRelayRecoveryDelay) {
+      return false;
+    }
+
+    final lastAttemptAt = _lastStartupRelayRecoveryAttemptAt;
+    return lastAttemptAt == null ||
+        now.difference(lastAttemptAt) >= startupRelayRecoveryRetryInterval;
+  }
+
   /// NET-REL-02 Option A: short peer ID (last 8 chars) matching the Go tracer's
   /// `remotePeerShort`, for correlating upgrade telemetry against a peer ID.
   String _shortId(String peerId) =>
@@ -2396,29 +2433,59 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       // Recovery: when reservation-aware relay health says we are degraded,
       // reconnect relays. If relayState is absent, fall back to circuit
       // addresses for compatibility with older bridges.
-      if (_stateNeedsRelayRecovery(freshState) && _hasEverBeenOnline) {
-        _outageDetectedAt ??= DateTime.now();
-        final detectionMs = _lastHealthyRelayAt != null
-            ? DateTime.now().difference(_lastHealthyRelayAt!).inMilliseconds
-            : -1;
+      final needsRelayRecovery = _stateNeedsRelayRecovery(freshState);
+      final isStartupRelayRecovery =
+          freshState.isStarted &&
+          needsRelayRecovery &&
+          !_hasEverBeenOnline &&
+          _shouldAttemptStartupRelayRecovery(freshState);
+      if (needsRelayRecovery &&
+          (_hasEverBeenOnline || isStartupRelayRecovery)) {
+        if (isStartupRelayRecovery) {
+          _lastStartupRelayRecoveryAttemptAt = DateTime.now();
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_STARTUP_RELAY_RECOVERY_TRIGGERED',
+            details: {
+              'relayState': freshState.relayState,
+              'circuitAddresses': freshState.circuitAddresses.length,
+              'elapsedMs': _nodeStartRequestedAt == null
+                  ? -1
+                  : DateTime.now()
+                        .difference(_nodeStartRequestedAt!)
+                        .inMilliseconds,
+            },
+          );
+        } else {
+          _outageDetectedAt ??= DateTime.now();
+          final detectionMs = _lastHealthyRelayAt != null
+              ? DateTime.now().difference(_lastHealthyRelayAt!).inMilliseconds
+              : -1;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RELAY_OUTAGE_TIMING',
+            details: {
+              'phase': 'detected',
+              'detectionMs': detectionMs,
+              'detectionSource': 'poll',
+            },
+          );
+        }
         final recoverySource =
             _pendingRecoverySource ??
-            (_resumeStartedAt != null ? 'resume_trigger' : 'health_check_poll');
+            (isStartupRelayRecovery
+                ? 'cold_start_health_check'
+                : (_resumeStartedAt != null
+                      ? 'resume_trigger'
+                      : 'health_check_poll'));
         _pendingRecoverySource = null;
-        _beginReadinessProofWindow(
-          phase: _resumeStartedAt != null ? 'background_resume' : 'recovery',
-          trigger: recoverySource,
-          startedAt: _resumeStartedAt ?? DateTime.now(),
-        );
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RELAY_OUTAGE_TIMING',
-          details: {
-            'phase': 'detected',
-            'detectionMs': detectionMs,
-            'detectionSource': 'poll',
-          },
-        );
+        if (!isStartupRelayRecovery) {
+          _beginReadinessProofWindow(
+            phase: _resumeStartedAt != null ? 'background_resume' : 'recovery',
+            trigger: recoverySource,
+            startedAt: _resumeStartedAt ?? DateTime.now(),
+          );
+        }
         if (kDebugMode) {
           debugPrint(
             '[HEALTH] DEGRADED — relay not healthy '
@@ -2488,7 +2555,7 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
         }
         return;
       } else if (freshState.isStarted &&
-          !_stateHasHealthyRelay(freshState) &&
+          needsRelayRecovery &&
           !_hasEverBeenOnline) {
         _pendingRecoverySource = null;
         if (kDebugMode) {
@@ -3148,6 +3215,18 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       details: {},
     );
     await _drainOfflineInbox();
+  }
+
+  @override
+  Future<void> drainOfflineInboxFully() async {
+    if (!_currentState.isStarted) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_FULL_BEGIN',
+      details: {},
+    );
+    await _drainOfflineInbox(waitForAllPages: true);
   }
 
   @override

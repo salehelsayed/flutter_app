@@ -20,6 +20,8 @@ const groupKeyRepairReasonReceivedMessageEpochMissingLocalKey =
     'received_message_epoch_missing_local_key';
 const groupKeyRepairReasonKeyUpdateApplyFailed = 'key_update_apply_failed';
 const groupKeyRepairReasonSameEpochKeyConflict = 'same_epoch_key_conflict';
+const groupKeyRepairReasonDirectMembershipUpdateDeferred =
+    'direct_membership_update_deferred';
 
 class GroupKeyRepairRequest {
   final String groupId;
@@ -89,6 +91,7 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
   required Map<String, dynamic> relayEnvelope,
   required Map<String, dynamic> replayEnvelope,
   required RequestGroupKeyRepair requestGroupKeyRepair,
+  String repairReason = groupKeyRepairReasonOfflineMissingKey,
 }) async {
   if (!isGroupOfflineReplayEnvelope(replayEnvelope)) return false;
 
@@ -178,7 +181,7 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
       GroupKeyRepairRequest(
         groupId: groupId,
         keyEpoch: keyEpoch,
-        reason: groupKeyRepairReasonOfflineMissingKey,
+        reason: repairReason,
         messageId: messageId,
       ),
     );
@@ -452,6 +455,7 @@ class GroupPendingKeyRepairRunner {
         expectedRelayPeerId: repair.transportPeerId ?? repair.senderPeerId,
       );
 
+      Map<String, dynamic>? replayPayload;
       if (repair.payloadType == groupOfflineReplayPayloadTypeReaction) {
         final reactions = reactionRepo;
         if (reactions == null) {
@@ -473,6 +477,7 @@ class GroupPendingKeyRepairRunner {
         }
       } else {
         final payload = Map<String, dynamic>.from(jsonDecode(plaintext) as Map);
+        replayPayload = payload;
         payload.putIfAbsent('groupId', () => repair.groupId);
         payload.putIfAbsent('messageId', () => repair.messageId);
         payload.putIfAbsent('keyEpoch', () => repair.keyEpoch);
@@ -515,7 +520,12 @@ class GroupPendingKeyRepairRunner {
       final message = await msgRepo.getMessage(repair.messageId);
       if (message != null &&
           message.status == groupPendingKeyRepairStatusPendingKey) {
-        throw StateError('replay did not replace pending placeholder');
+        if (replayPayload != null &&
+            _isSystemGroupReplayPayload(replayPayload)) {
+          await msgRepo.deleteMessage(repair.messageId);
+        } else {
+          throw StateError('replay did not replace pending placeholder');
+        }
       }
       await pendingKeyRepairRepo.finalizeRepaired(repair.id);
       emitFlowEvent(
@@ -571,6 +581,17 @@ class GroupPendingKeyRepairRunner {
         'keyEpoch': repair.keyEpoch,
       },
     );
+  }
+}
+
+bool _isSystemGroupReplayPayload(Map<String, dynamic> payload) {
+  final text = payload['text'];
+  if (text is! String || text.isEmpty) return false;
+  try {
+    final decoded = jsonDecode(text);
+    return decoded is Map && decoded['__sys'] is String;
+  } catch (_) {
+    return false;
   }
 }
 

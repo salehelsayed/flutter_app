@@ -3,12 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   Widget wrap(Widget child, {ThemeData? theme}) => MaterialApp(
     theme: theme,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: child),
   );
 

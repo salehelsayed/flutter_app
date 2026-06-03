@@ -61,6 +61,7 @@ void main() {
           'private_admin_role_transfer_delivery',
           'private_admin_metadata_intro_photo_convergence',
           'private_admin_demotion_enforcement',
+          'scenario7_group_invite_stale_metadata_recovery',
           'gm002',
           'gm035',
         ]),
@@ -520,6 +521,18 @@ void main() {
       expect(
         scenarioRequirement(
           'private_admin_demotion_enforcement',
+        ).requiredDeviceCount,
+        4,
+      );
+      expect(
+        scenarioRequirement(
+          'scenario7_group_invite_stale_metadata_recovery',
+        ).roles,
+        ['alice', 'bob', 'charlie', 'dana'],
+      );
+      expect(
+        scenarioRequirement(
+          'scenario7_group_invite_stale_metadata_recovery',
         ).requiredDeviceCount,
         4,
       );
@@ -983,6 +996,235 @@ void main() {
         );
       },
     );
+
+    test('scenario7 stale invite recovery accepts four-user proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: _scenario7StaleMetadataRecoveryScenario,
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validScenario7StaleMetadataRecoveryVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains(
+          'scenario7_group_invite_stale_metadata_recovery verdicts valid',
+        ),
+      );
+    });
+
+    test('scenario7 stale invite recovery rejects stale accepted metadata', () {
+      final verdicts = _validScenario7StaleMetadataRecoveryVerdicts();
+      verdicts[3] =
+          _withScenario7ProofOverrides(verdicts[3], const <String, Object?>{
+            'acceptedGroupMetadataFresh': false,
+            'acceptedGroupName': 'test 2',
+            'acceptedGroupDescription': '222',
+            'acceptedGroupAvatarBlobId': 'scenario7-stale-avatar',
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: _scenario7StaleMetadataRecoveryScenario,
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.acceptedGroupMetadataFresh',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.acceptedGroupName',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.acceptedGroupAvatarBlobId must differ from stale invite avatar',
+        ),
+      );
+    });
+
+    test('scenario7 stale invite recovery rejects missing pre-accept buffer', () {
+      final verdicts = _validScenario7StaleMetadataRecoveryVerdicts();
+      verdicts[3] = _withScenario7ProofOverrides(
+        verdicts[3],
+        const <String, Object?>{'preAcceptDirectMetadataBuffered': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: _scenario7StaleMetadataRecoveryScenario,
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.preAcceptDirectMetadataBuffered',
+        ),
+      );
+    });
+
+    test(
+      'scenario7 stale invite recovery rejects pre-refreshed pending invite',
+      () {
+        final verdicts = _validScenario7StaleMetadataRecoveryVerdicts();
+        verdicts[3] =
+            _withScenario7ProofOverrides(verdicts[3], const <String, Object?>{
+              'pendingInviteStaleAtAccept': false,
+              'pendingInviteRefreshedBeforeAccept': true,
+            });
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: _scenario7StaleMetadataRecoveryScenario,
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'dana: scenario7GroupInviteStaleMetadataRecoveryProof.pendingInviteStaleAtAccept',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'dana: scenario7GroupInviteStaleMetadataRecoveryProof.pendingInviteRefreshedBeforeAccept',
+          ),
+        );
+      },
+    );
+
+    test('scenario7 stale invite recovery rejects stale final metadata', () {
+      final verdicts = _validScenario7StaleMetadataRecoveryVerdicts();
+      verdicts[3] =
+          _withScenario7ProofOverrides(verdicts[3], const <String, Object?>{
+            'finalMetadataConverged': false,
+            'finalMetadataName': 'test 2',
+            'finalMetadataDescription': '222',
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: _scenario7StaleMetadataRecoveryScenario,
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.finalMetadataConverged',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.finalMetadataName',
+        ),
+      );
+    });
+
+    test('scenario7 stale invite recovery rejects unconsumed pending invite', () {
+      final verdicts = _validScenario7StaleMetadataRecoveryVerdicts();
+      verdicts[3] =
+          _withScenario7ProofOverrides(verdicts[3], const <String, Object?>{
+            'pendingInviteConsumedAfterAccept': false,
+            'pendingInviteCountAfterAccept': 1,
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: _scenario7StaleMetadataRecoveryScenario,
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.pendingInviteConsumedAfterAccept',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'dana: scenario7GroupInviteStaleMetadataRecoveryProof.pendingInviteCountAfterAccept',
+        ),
+      );
+    });
+
+    test('scenario7 stale invite recovery rejects unchanged final avatar', () {
+      final verdicts = _validScenario7StaleMetadataRecoveryVerdicts();
+      verdicts[0] = _withScenario7ProofOverrides(verdicts[0], const <
+        String,
+        Object?
+      >{
+        'latestAvatarDiffersFromStale': false,
+        'finalAvatarBlobId': 'scenario7-stale-avatar',
+        'finalAvatarSha256':
+            '7777777777777777777777777777777777777777777777777777777777777777',
+      });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: _scenario7StaleMetadataRecoveryScenario,
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: scenario7GroupInviteStaleMetadataRecoveryProof.latestAvatarDiffersFromStale',
+        ),
+      );
+    });
+
+    test('scenario7 stale invite recovery rejects missing Dana membership', () {
+      final verdicts = _validScenario7StaleMetadataRecoveryVerdicts();
+      verdicts[0] = _withScenario7ProofOverrides(
+        <String, dynamic>{
+          ...verdicts[0],
+          'activeMemberPeerIds': const <String>[
+            'alice-peer',
+            'bob-peer',
+            'charlie-peer',
+          ],
+        },
+        const <String, Object?>{
+          'allFourMembersActive': false,
+          'finalActiveMemberPeerIds': <String>[
+            'alice-peer',
+            'bob-peer',
+            'charlie-peer',
+          ],
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: _scenario7StaleMetadataRecoveryScenario,
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: scenario7GroupInviteStaleMetadataRecoveryProof.allFourMembersActive',
+        ),
+      );
+    });
 
     test(
       'regression group admin permissions rejects missing Bob pre-promotion field',
@@ -26739,6 +26981,229 @@ List<Map<String, dynamic>> _validRegressionGroupAdminPermissionsVerdicts() {
     verdictFor('charlie'),
     verdictFor('dana'),
   ];
+}
+
+const _scenario7StaleMetadataRecoveryScenario =
+    'scenario7_group_invite_stale_metadata_recovery';
+const _scenario7StaleMetadataRecoveryProofName =
+    'scenario7GroupInviteStaleMetadataRecoveryProof';
+const _scenario7StaleMetadataRecoveryGroupId =
+    'scenario7-stale-metadata-recovery-group';
+const _scenario7StaleMetadataRecoveryPeerIds = <String, String>{
+  'alice': 'alice-peer',
+  'bob': 'bob-peer',
+  'charlie': 'charlie-peer',
+  'dana': 'dana-peer',
+};
+const _scenario7StaleMetadataRecoveryActiveMembers = <String>[
+  'alice-peer',
+  'bob-peer',
+  'charlie-peer',
+  'dana-peer',
+];
+const _scenario7StaleMetadataRecoveryMatrixKeys = <String>[
+  'aliceScenario7PostDanaAccept',
+  'bobScenario7PostDanaAccept',
+  'charlieScenario7PostDanaAccept',
+  'danaScenario7PostDanaAccept',
+];
+
+List<Map<String, Object?>> _scenario7MessageSpecs() {
+  return const <Map<String, Object?>>[
+    <String, Object?>{
+      'key': 'aliceScenario7PostDanaAccept',
+      'sender': 'alice',
+      'receivers': <String>['bob', 'charlie', 'dana'],
+    },
+    <String, Object?>{
+      'key': 'bobScenario7PostDanaAccept',
+      'sender': 'bob',
+      'receivers': <String>['alice', 'charlie', 'dana'],
+    },
+    <String, Object?>{
+      'key': 'charlieScenario7PostDanaAccept',
+      'sender': 'charlie',
+      'receivers': <String>['alice', 'bob', 'dana'],
+    },
+    <String, Object?>{
+      'key': 'danaScenario7PostDanaAccept',
+      'sender': 'dana',
+      'receivers': <String>['alice', 'bob', 'charlie'],
+    },
+  ];
+}
+
+Map<String, Object?> _scenario7SentMessage(Map<String, Object?> spec) {
+  final key = spec['key'] as String;
+  final sender = spec['sender'] as String;
+  return <String, Object?>{
+    'key': key,
+    'messageId': 'msg-$key',
+    'groupId': _scenario7StaleMetadataRecoveryGroupId,
+    'text': 'Scenario 7 stale metadata recovery $key',
+    'outcome': 'success',
+    'senderPeerId': _scenario7StaleMetadataRecoveryPeerIds[sender],
+    'keyEpoch': 6,
+    'timestamp': '2026-05-29T13:00:00.000Z',
+  };
+}
+
+Map<String, Object?> _scenario7SelfDelivery(Map<String, Object?> spec) {
+  final sent = _scenario7SentMessage(spec);
+  return <String, Object?>{
+    ...sent,
+    'isIncoming': false,
+    'selfDelivery': true,
+    'persistedCount': 1,
+  };
+}
+
+Map<String, Object?> _scenario7ReceivedMessage(Map<String, Object?> spec) {
+  final key = spec['key'] as String;
+  final sender = spec['sender'] as String;
+  return _received(
+    key,
+    'msg-$key',
+    'Scenario 7 stale metadata recovery $key',
+    _scenario7StaleMetadataRecoveryPeerIds[sender]!,
+    groupId: _scenario7StaleMetadataRecoveryGroupId,
+    keyEpoch: 6,
+    timestamp: '2026-05-29T13:00:00.000Z',
+  );
+}
+
+Map<String, Object?> _scenario7ProofFor(String role) {
+  return <String, Object?>{
+    'rowId': 'SCENARIO-7-GROUP-INVITE-STALE-METADATA-RECOVERY',
+    'scenario': _scenario7StaleMetadataRecoveryScenario,
+    'proofRole': role,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'proofSource': 'app_peer_core_simulator',
+    'initialContactGraphProof': true,
+    'staleInviteCapturedBeforeLatestMetadata': true,
+    'pendingInviteVisibleBeforeAccept': true,
+    'pendingInviteConsumedAfterAccept': true,
+    'pendingInviteCountBeforeAccept': 1,
+    'pendingInviteCountAfterAccept': 0,
+    'acceptResult': 'success',
+    'acceptedGroupMaterialized': true,
+    'preAcceptDirectMetadataBuffered': true,
+    'pendingInviteStaleAtAccept': true,
+    'pendingInviteRefreshedBeforeAccept': false,
+    'acceptedGroupMetadataFresh': true,
+    'acceptedGroupName': 'test 3',
+    'acceptedGroupDescription': '333',
+    'acceptedGroupAvatarBlobId': 'scenario7-latest-avatar',
+    'acceptedGroupAvatarMime': 'image/png',
+    'acceptedGroupAvatarPath':
+        'media/group_avatars/$_scenario7StaleMetadataRecoveryGroupId.png',
+    'retryAcceptResult': 'notFound',
+    'retryGroupMaterialized': false,
+    'staleInviteName': 'test 2',
+    'staleInviteDescription': '222',
+    'staleInviteAvatarBlobId': 'scenario7-stale-avatar',
+    'staleInviteAvatarMime': 'image/png',
+    'staleInviteAvatarSha256':
+        '7777777777777777777777777777777777777777777777777777777777777777',
+    'staleInviteAvatarByteLength': 64,
+    'staleInviteMatchedCharlieSnapshot': true,
+    'latestMetadataPublishedBeforeDanaAccept': true,
+    'latestAvatarDiffersFromStale': true,
+    'finalMetadataConverged': true,
+    'finalMetadataName': 'test 3',
+    'finalMetadataDescription': '333',
+    'avatarBytesVisible': true,
+    'finalAvatarBlobId': 'scenario7-latest-avatar',
+    'finalAvatarMime': 'image/png',
+    'finalAvatarPath':
+        'media/group_avatars/$_scenario7StaleMetadataRecoveryGroupId.png',
+    'finalAvatarSha256':
+        '8888888888888888888888888888888888888888888888888888888888888888',
+    'finalAvatarByteLength': 64,
+    'allFourMembersActive': true,
+    'finalRolesConverged': true,
+    'finalActiveMemberPeerIds': _scenario7StaleMetadataRecoveryActiveMembers,
+    'finalAdminPeerIds': const <String>['alice-peer', 'charlie-peer'],
+    'finalMemberRoles': const <String, String>{
+      'alice': 'admin',
+      'bob': 'writer',
+      'charlie': 'admin',
+      'dana': 'writer',
+    },
+    'finalStateHash': 'scenario7-shared-final-state-hash',
+    'finalKeyEpoch': 6,
+    'fullMessageMatrixProofPassed': true,
+    'fullMessageMatrixPhaseKeys': _scenario7StaleMetadataRecoveryMatrixKeys,
+  };
+}
+
+List<Map<String, dynamic>> _validScenario7StaleMetadataRecoveryVerdicts() {
+  final specs = _scenario7MessageSpecs();
+
+  List<Map<String, Object?>> sentMessages(String role) {
+    return <Map<String, Object?>>[
+      for (final spec in specs)
+        if (spec['sender'] == role) _scenario7SentMessage(spec),
+    ];
+  }
+
+  List<Map<String, Object?>> receivedMessages(String role) {
+    return <Map<String, Object?>>[
+      for (final spec in specs)
+        if (List<String>.from(spec['receivers'] as List).contains(role))
+          _scenario7ReceivedMessage(spec),
+      for (final spec in specs)
+        if (spec['sender'] == role) _scenario7SelfDelivery(spec),
+    ];
+  }
+
+  Map<String, int> persistedCounts(String role) {
+    return <String, int>{
+      for (final spec in specs)
+        if (List<String>.from(spec['receivers'] as List).contains(role))
+          spec['key'] as String: 1,
+    };
+  }
+
+  Map<String, dynamic> verdictFor(String role) {
+    return _baseVerdict(
+      scenario: _scenario7StaleMetadataRecoveryScenario,
+      role: role,
+      peerId: _scenario7StaleMetadataRecoveryPeerIds[role]!,
+      groupId: _scenario7StaleMetadataRecoveryGroupId,
+      keyEpoch: 6,
+      memberPeerIds: _scenario7StaleMetadataRecoveryActiveMembers,
+      sentMessages: sentMessages(role),
+      receivedMessages: receivedMessages(role),
+      persistedMessageCounts: persistedCounts(role),
+      extra: <String, Object?>{
+        'activeMemberPeerIds': _scenario7StaleMetadataRecoveryActiveMembers,
+        _scenario7StaleMetadataRecoveryProofName: _scenario7ProofFor(role),
+      },
+    );
+  }
+
+  return <Map<String, dynamic>>[
+    verdictFor('alice'),
+    verdictFor('bob'),
+    verdictFor('charlie'),
+    verdictFor('dana'),
+  ];
+}
+
+Map<String, dynamic> _withScenario7ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    _scenario7StaleMetadataRecoveryProofName: <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict[_scenario7StaleMetadataRecoveryProofName] as Map,
+      ),
+      ...overrides,
+    },
+  };
 }
 
 Map<String, dynamic> _withRegressionGroupAdminProofOverrides(

@@ -9,6 +9,8 @@ import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
 

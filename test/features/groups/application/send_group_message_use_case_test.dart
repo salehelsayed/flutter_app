@@ -5869,6 +5869,135 @@ void main() {
     );
 
     test(
+      'GIRD-001 reliable send timeout persists in-doubt non-failed outgoing row',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 31, 11),
+          ),
+        );
+        bridge.responses['group:sendReliable'] = {
+          'ok': false,
+          'errorCode': 'BRIDGE_TIMEOUT',
+          'errorMessage': 'Timed out waiting for group:sendReliable response',
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'GIRD-001 reliable timeout',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'gird001-reliable-timeout',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, 'gird001-reliable-timeout');
+        expect(message.isIncoming, isFalse);
+        expect(message.status, 'pending');
+        expect(message.wireEnvelope, isNotNull);
+        expect(message.inboxRetryPayload, isNotNull);
+        expect(message.inboxStored, isFalse);
+
+        final saved = await msgRepo.getMessage('gird001-reliable-timeout');
+        expect(saved, isNotNull);
+        expect(saved!.id, 'gird001-reliable-timeout');
+        expect(saved.isIncoming, isFalse);
+        expect(saved.status, 'pending');
+        expect(saved.wireEnvelope, isNotNull);
+        expect(saved.inboxRetryPayload, isNotNull);
+        expect(saved.inboxStored, isFalse);
+
+        final failedIds = (await msgRepo.getFailedOutgoingMessages())
+            .map((row) => row.id)
+            .toSet();
+        expect(failedIds, isNot(contains('gird001-reliable-timeout')));
+      },
+    );
+
+    test(
+      'GIRD-001 reliable publish success with zero peers and no custody is in-doubt, not failed',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 31, 11),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Carol',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: DateTime.utc(2026, 5, 31, 11, 1),
+          ),
+        );
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'messageId': 'gird001-reliable-zero-peers',
+          'topicPeerCount': 0,
+          'expectedRecipientCount': 2,
+          'recipientPeerIds': ['peer-2', 'peer-3'],
+          'inboxStored': false,
+          'publishSucceeded': true,
+          'deliveryMode': 'live_only',
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'GIRD-001 reliable zero peers',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'gird001-reliable-zero-peers',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, 'gird001-reliable-zero-peers');
+        expect(message.isIncoming, isFalse);
+        expect(message.status, 'pending');
+        expect(message.wireEnvelope, isNull);
+        expect(message.inboxRetryPayload, isNotNull);
+        expect(message.inboxStored, isFalse);
+
+        final saved = await msgRepo.getMessage('gird001-reliable-zero-peers');
+        expect(saved, isNotNull);
+        expect(saved!.id, 'gird001-reliable-zero-peers');
+        expect(saved.isIncoming, isFalse);
+        expect(saved.status, 'pending');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxRetryPayload, isNotNull);
+        expect(saved.inboxStored, isFalse);
+
+        final failedIds = (await msgRepo.getFailedOutgoingMessages())
+            .map((row) => row.id)
+            .toSet();
+        expect(failedIds, isNot(contains('gird001-reliable-zero-peers')));
+      },
+    );
+
+    test(
       'DE-007 zero-peer publish stores durable inbox for all active recipients',
       () async {
         final joinedAt = DateTime.utc(2026, 5, 12, 4);
@@ -7714,9 +7843,11 @@ void main() {
           'groupId',
           'message',
           'recipientPeerIds',
+          'preserveRecipientPeerIds',
         });
         expect(inboxPayload['groupId'], 'group-1');
         expect(inboxPayload['recipientPeerIds'], ['peer-2']);
+        expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
         expect(inboxPayload.containsKey('pushTitle'), isFalse);
         expect(inboxPayload.containsKey('pushBody'), isFalse);
 

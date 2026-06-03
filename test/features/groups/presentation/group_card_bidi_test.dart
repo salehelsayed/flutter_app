@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_card.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   final announcementGroup = GroupModel(
@@ -27,6 +28,9 @@ void main() {
 
   Widget buildCard({required GroupModel group, String? sender, String? body}) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: GroupCard(
           group: group,

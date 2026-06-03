@@ -35,6 +35,33 @@ void main() {
       expect(events.single.details['hasMessageId'], isTrue);
     });
 
+    test(
+      'GIRD-006 foreground group image push drains the anchored group message route',
+      () async {
+        var oneToOneCalls = 0;
+        final drainedGroups = <String>[];
+        late ForegroundRemoteMessageResult result;
+
+        result = await handleForegroundRemoteMessage(
+          data: groupMessageData(
+            groupId: 'group-gird006',
+            messageId: 'msg-gird006-image',
+          ),
+          messageId: 'fcm-gird006-image',
+          drainOfflineInbox: () async {
+            oneToOneCalls += 1;
+          },
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            drainedGroups.add(groupId);
+          },
+        );
+
+        expect(result, ForegroundRemoteMessageResult.drained);
+        expect(oneToOneCalls, 0);
+        expect(drainedGroups, ['group-gird006']);
+      },
+    );
+
     test('new_message routes to the 1:1 drain', () async {
       var oneToOneCalls = 0;
       final drainedGroups = <String>[];

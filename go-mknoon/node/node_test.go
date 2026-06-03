@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -75,6 +76,9 @@ func configureRefreshRelayAddresses(t *testing.T, n *Node, addrs []string) []pee
 
 	for _, relayPeerID := range relayPeerOrder {
 		n.relaySessionMgr.InitRelayPeer(relayPeerID)
+	}
+	n.reserveRelaySlotHook = func(ctx context.Context, h host.Host, info peer.AddrInfo) (*relayclient.Reservation, error) {
+		return &relayclient.Reservation{Expiration: time.Now().Add(time.Hour)}, nil
 	}
 
 	return relayInfos
@@ -2270,6 +2274,56 @@ func TestRefreshRelaySession_UsesForegroundCadenceAndDialTimeout(t *testing.T) {
 			waitTimeouts,
 			ForegroundCircuitAddressWaitTimeout,
 		)
+	}
+}
+
+func TestRefreshRelaySession_UsesExplicitReservationBeforePolling(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	relayInfos := configureRefreshRelayAddresses(t, n, []string{generateFakeRelayAddr(t, 19037)})
+	var reservedPeer peer.ID
+	var reserveDeadlineSet bool
+	n.reserveRelaySlotHook = func(ctx context.Context, h host.Host, info peer.AddrInfo) (*relayclient.Reservation, error) {
+		reservedPeer = info.ID
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			reserveDeadlineSet = remaining > 0 && remaining <= ForegroundRelayReserveTimeout
+		}
+		return &relayclient.Reservation{Expiration: time.Now().Add(time.Hour)}, nil
+	}
+	n.warmRelayConnectionWithTimeoutHook = func(info peer.AddrInfo, timeout time.Duration) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+
+	result := n.RefreshRelaySession()
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession() should succeed, got %+v", result)
+	}
+	if reservedPeer != relayInfos[0].ID {
+		t.Fatalf("reserved peer = %s, want %s", reservedPeer, relayInfos[0].ID)
+	}
+	if !reserveDeadlineSet {
+		t.Fatalf("reserve call did not use foreground reservation timeout %v", ForegroundRelayReserveTimeout)
+	}
+	if result.ReservationPath != "explicit_reserve" {
+		t.Fatalf("reservationPath = %q, want explicit_reserve: %+v", result.ReservationPath, result)
+	}
+	if result.ReserveRpcMs < 0 {
+		t.Fatalf("reserveRpcMs should be non-negative, got %+v", result)
 	}
 }
 

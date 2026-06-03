@@ -7,6 +7,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/helpers/readability_test_helpers.dart';
 
@@ -71,6 +72,9 @@ void main() {
         BackgroundPreference.defaultBackground,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: GroupListScreen(
         groups: groups,
         pendingInvites: pendingInvites,

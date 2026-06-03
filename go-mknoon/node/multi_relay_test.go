@@ -377,6 +377,7 @@ func TestInboxStore_TriesSecondRelayWhenFirstFails(t *testing.T) {
 func TestGroupInboxRetrieve_TriesSecondRelayWhenFirstFails(t *testing.T) {
 	n := startLocalNodeForMultiRelayTest(t)
 	setFakeRelays(t, n)
+	disableGroupInboxRecoveryForFakeRelayTest(n)
 
 	_, err := n.GroupInboxRetrieve("group-123", 0)
 	if err == nil {
@@ -393,6 +394,7 @@ func TestGroupInboxRetrieve_TriesSecondRelayWhenFirstFails(t *testing.T) {
 func TestGroupInboxRetrieveWithCursor_TriesSecondRelayWhenFirstFails(t *testing.T) {
 	n := startLocalNodeForMultiRelayTest(t)
 	setFakeRelays(t, n)
+	disableGroupInboxRecoveryForFakeRelayTest(n)
 
 	_, _, err := n.GroupInboxRetrieveWithCursor("group-123", "opaque-cursor", 25)
 	if err == nil {

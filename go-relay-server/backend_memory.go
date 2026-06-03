@@ -324,7 +324,8 @@ func newMemoryGroupInboxBackend(maxPerGroup int, ttl time.Duration) *memoryGroup
 }
 
 func (b *memoryGroupInboxBackend) Store(groupId string, from string, message string) error {
-	return b.StoreWithRecipients(groupId, from, message, []string{from})
+	_, err := b.StoreWithRecipients(groupId, from, message, []string{from})
+	return err
 }
 
 func (b *memoryGroupInboxBackend) StoreWithRecipients(
@@ -332,16 +333,34 @@ func (b *memoryGroupInboxBackend) StoreWithRecipients(
 	from string,
 	message string,
 	recipientPeerIds []string,
-) error {
+) (GroupInboxStoreResult, error) {
 	normalizedRecipients := normalizePeerIds(recipientPeerIds)
 	if len(normalizedRecipients) == 0 {
-		return fmt.Errorf("recipientPeerIds required")
+		return "", fmt.Errorf("recipientPeerIds required")
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	msgs := b.pruneExpiredLocked(b.messages[groupId])
+	messageID := extractMessageId(message)
+	if messageID != "" {
+		for i := range msgs {
+			if extractMessageId(msgs[i].Message) != messageID {
+				continue
+			}
+			if msgs[i].From != from || msgs[i].Message != message {
+				b.messages[groupId] = msgs
+				return "", fmt.Errorf("conflicting group inbox messageId %q", messageID)
+			}
+			mergedRecipients := mergePeerIds(msgs[i].RecipientPeerIds, normalizedRecipients)
+			if !stringSlicesEqual(msgs[i].RecipientPeerIds, mergedRecipients) {
+				msgs[i].RecipientPeerIds = mergedRecipients
+			}
+			b.messages[groupId] = msgs
+			return GroupInboxStoreResultDuplicate, nil
+		}
+	}
 
 	// Cap enforcement
 	if len(msgs) >= b.maxPerGroup {
@@ -359,7 +378,7 @@ func (b *memoryGroupInboxBackend) StoreWithRecipients(
 		RecipientPeerIds: normalizedRecipients,
 	})
 	b.messages[groupId] = msgs
-	return nil
+	return GroupInboxStoreResultStored, nil
 }
 
 func (b *memoryGroupInboxBackend) RetrieveSince(groupId string, sinceTimestamp int64) []groupInboxMessage {

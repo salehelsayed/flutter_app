@@ -946,6 +946,49 @@ func TestBuildGroupPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *te
 	}
 }
 
+func TestGIRD006BuildGroupImagePushMessageUsesCanonicalDataOnlyIdentity(t *testing.T) {
+	msg := buildGroupPushMessage(
+		"fcm-token",
+		"group-gird006",
+		"msg-gird006-image",
+		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"msg-gird006-image","ciphertext":"gc","nonce":"gn"}`,
+	)
+
+	if msg.Notification != nil {
+		t.Fatal("group image pushes should remain data-only at the FCM top level")
+	}
+	if msg.Android == nil || msg.Android.Notification != nil {
+		t.Fatal("Android group image push should be data-only")
+	}
+	if msg.Data["type"] != "group_message" {
+		t.Fatalf("type = %q, want group_message", msg.Data["type"])
+	}
+	if msg.Data["groupId"] != "group-gird006" {
+		t.Fatalf("groupId = %q, want group-gird006", msg.Data["groupId"])
+	}
+	if msg.Data["message_id"] != "msg-gird006-image" {
+		t.Fatalf("message_id = %q, want msg-gird006-image", msg.Data["message_id"])
+	}
+	if msg.Data["payloadType"] != "group_message" {
+		t.Fatalf("payloadType = %q, want group_message", msg.Data["payloadType"])
+	}
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
+		t.Fatal("expected APNS payload")
+	}
+	if msg.APNS.Payload.Aps.ThreadID != "group-gird006" {
+		t.Fatalf("APNS thread id = %q, want group-gird006", msg.APNS.Payload.Aps.ThreadID)
+	}
+	if !msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("expected mutable-content for iOS NSE preview")
+	}
+	if _, ok := msg.Data["title"]; ok {
+		t.Fatalf("title should be omitted from protected group image push, got %q", msg.Data["title"])
+	}
+	if _, ok := msg.Data["body"]; ok {
+		t.Fatalf("body should be omitted from protected group image push, got %q", msg.Data["body"])
+	}
+}
+
 func assertNoDirectPushSchemaVersionKeys(t *testing.T, data map[string]string) {
 	t.Helper()
 
@@ -1167,6 +1210,74 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 	case <-recorder.sentSignal:
 		t.Fatal("duplicate store re-fanned out push sends")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestGIRD004GroupStoreDuplicateDoesNotAppendOrRefanoutPush(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	groupInbox.SetPush(push)
+	inbox := NewInboxStore(push)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderPeer := env.sender.ID().String()
+	recipientPeer := env.recipient.ID().String()
+	tokenStore.RegisterToken(recipientPeer, "recipient-token", "ios")
+
+	sendGroupStore := func() inboxResponse {
+		t.Helper()
+
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "group_store",
+			GroupId: "group-gird004-stream-duplicate",
+			From:    senderPeer,
+			Message: `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"gird004-stream-duplicate","ciphertext":"gc","nonce":"gn"}`,
+			RecipientPeerIds: []string{
+				senderPeer,
+				recipientPeer,
+			},
+		})
+
+		return recvInboxResp(t, stream)
+	}
+
+	resp := sendGroupStore()
+	if resp.Status != "OK" {
+		t.Fatalf("first group_store status = %q error=%q, want OK", resp.Status, resp.Error)
+	}
+	select {
+	case <-recorder.sentSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first push send")
+	}
+	if stored := groupInbox.Retrieve("group-gird004-stream-duplicate", 0); len(stored) != 1 {
+		t.Fatalf("stored after first group_store = %d, want 1", len(stored))
+	}
+
+	resp = sendGroupStore()
+	if resp.Status != "OK" {
+		t.Fatalf("duplicate group_store status = %q error=%q, want OK", resp.Status, resp.Error)
+	}
+	if stored := groupInbox.Retrieve("group-gird004-stream-duplicate", 0); len(stored) != 1 {
+		t.Fatalf("stored after duplicate group_store = %d, want 1", len(stored))
+	}
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("duplicate group_store re-fanned out push")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if calls := recorder.SendCallCount(); calls != 1 {
+		t.Fatalf("push send calls = %d, want 1", calls)
 	}
 }
 

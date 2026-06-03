@@ -16,6 +16,12 @@ import (
 	"github.com/mknoon/go-mknoon/internal"
 )
 
+func disableGroupInboxRecoveryForFakeRelayTest(n *Node) {
+	n.groupInboxRecoverHook = func(error) error {
+		return errors.New("group inbox relay recovery disabled for fake relay test")
+	}
+}
+
 func TestBuildGroupInboxStoreRequest_MarshalsRecipientPeerIds(t *testing.T) {
 	req := buildGroupInboxStoreRequest(
 		"group-1",
@@ -348,6 +354,10 @@ func TestSendGroupMessageReliableStoresExactEnvelopeForActiveRecipients(t *testi
 	if err != nil {
 		t.Fatalf("GenerateGroupKey: %v", err)
 	}
+	bobActiveTransport := generatePeerIDStr(t)
+	bobRevokedTransport := generatePeerIDStr(t)
+	bobRevokedAtTransport := generatePeerIDStr(t)
+	carolLegacyPeer := generatePeerIDStr(t)
 
 	n := startLocalNodeForMultiRelayTest(t)
 	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
@@ -366,12 +376,12 @@ func TestSendGroupMessageReliableStoresExactEnvelopeForActiveRecipients(t *testi
 				Role:      GroupRoleWriter,
 				PublicKey: "bob-legacy-pub",
 				Devices: []GroupMemberDevice{
-					{DeviceId: "bob-active-device", TransportPeerId: "bob-active-transport", DeviceSigningPublicKey: "bob-active-pub", Status: "active"},
-					{DeviceId: "bob-revoked-device", TransportPeerId: "bob-revoked-transport", DeviceSigningPublicKey: "bob-revoked-pub", Status: "revoked"},
-					{DeviceId: "bob-revoked-at-device", TransportPeerId: "bob-revoked-at-transport", DeviceSigningPublicKey: "bob-revoked-at-pub", RevokedAt: "2026-05-22T00:00:00Z"},
+					{DeviceId: "bob-active-device", TransportPeerId: bobActiveTransport, DeviceSigningPublicKey: "bob-active-pub", Status: "active"},
+					{DeviceId: "bob-revoked-device", TransportPeerId: bobRevokedTransport, DeviceSigningPublicKey: "bob-revoked-pub", Status: "revoked"},
+					{DeviceId: "bob-revoked-at-device", TransportPeerId: bobRevokedAtTransport, DeviceSigningPublicKey: "bob-revoked-at-pub", RevokedAt: "2026-05-22T00:00:00Z"},
 				},
 			},
-			{PeerId: "carol-legacy", Role: GroupRoleWriter, PublicKey: "carol-pub"},
+			{PeerId: carolLegacyPeer, Role: GroupRoleWriter, PublicKey: "carol-pub"},
 		},
 		CreatedBy: n.PeerId(),
 		CreatedAt: "2026-05-23T00:00:00Z",
@@ -411,7 +421,7 @@ func TestSendGroupMessageReliableStoresExactEnvelopeForActiveRecipients(t *testi
 		if req.Message != result.Envelope {
 			t.Fatalf("inbox message does not match returned live envelope")
 		}
-		wantRecipients := []string{"bob-active-transport", "carol-legacy"}
+		wantRecipients := []string{bobActiveTransport, carolLegacyPeer}
 		if len(req.RecipientPeerIds) != len(wantRecipients) {
 			t.Fatalf("recipientPeerIds = %#v, want %#v", req.RecipientPeerIds, wantRecipients)
 		}
@@ -1394,6 +1404,91 @@ func TestGISTR001GroupInboxStoreRetriesAfterTransientRelayEOF(t *testing.T) {
 	}
 }
 
+func TestGIRD004GroupInboxStoreRetryKeepsStableMessageID(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requests := make(chan groupInboxRequest, 2)
+	var requestCount atomic.Int32
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requests <- req
+		if requestCount.Add(1) == 1 {
+			return
+		}
+		_ = writeFrame(s, []byte(`{"status":"OK"}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	var recoverCalls atomic.Int32
+	n.groupInboxRecoverHook = func(err error) error {
+		recoverCalls.Add(1)
+		if !isTransientGroupInboxRelayStreamError(err) {
+			t.Fatalf("recover hook received non-transient error: %v", err)
+		}
+		return nil
+	}
+
+	message := `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","messageId":"gird004-native-stable","ciphertext":"stable-ciphertext","nonce":"stable-nonce"}`
+	recipients := []string{"peer-recipient-a", "peer-recipient-b"}
+	if err := n.GroupInboxStore(
+		"group-gird004-native-stable",
+		message,
+		recipients,
+		"ignored title",
+		"ignored body",
+	); err != nil {
+		t.Fatalf("GroupInboxStore: %v", err)
+	}
+	if got := recoverCalls.Load(); got != 1 {
+		t.Fatalf("recoverCalls = %d, want 1", got)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("requestCount = %d, want 2", got)
+	}
+
+	first := <-requests
+	second := <-requests
+	for i, req := range []groupInboxRequest{first, second} {
+		if req.Action != "group_store" {
+			t.Fatalf("request[%d].Action = %q, want group_store", i, req.Action)
+		}
+		if req.GroupId != "group-gird004-native-stable" {
+			t.Fatalf("request[%d].GroupId = %q", i, req.GroupId)
+		}
+		if req.Message != message {
+			t.Fatalf("request[%d].Message changed across retry: %q", i, req.Message)
+		}
+		if req.From != n.PeerId() {
+			t.Fatalf("request[%d].From = %q, want %q", i, req.From, n.PeerId())
+		}
+		if len(req.RecipientPeerIds) != len(recipients) {
+			t.Fatalf("request[%d].RecipientPeerIds = %#v, want %#v", i, req.RecipientPeerIds, recipients)
+		}
+		for j, want := range recipients {
+			if req.RecipientPeerIds[j] != want {
+				t.Fatalf("request[%d].RecipientPeerIds[%d] = %q, want %q", i, j, req.RecipientPeerIds[j], want)
+			}
+		}
+	}
+}
+
 func TestGISTR001GroupInboxStoreDoesNotRetryWhenRecoveryFails(t *testing.T) {
 	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
@@ -1809,6 +1904,7 @@ func TestGroupInboxRetrieveCursor_DefaultsLimitWhenZero(t *testing.T) {
 
 	// Set fake relays so the relay selector has something to try.
 	setFakeRelays(t, n)
+	disableGroupInboxRecoveryForFakeRelayTest(n)
 
 	// Call with limit=0 — should default to 50 internally.
 	_, _, err = n.GroupInboxRetrieveWithCursor("test-group-default-limit", "", 0)
@@ -1844,6 +1940,7 @@ func TestGroupInboxRetrieveCursor_StableAcrossPages(t *testing.T) {
 	defer n.Stop()
 
 	setFakeRelays(t, n)
+	disableGroupInboxRecoveryForFakeRelayTest(n)
 
 	// Page 1: empty cursor, limit 10.
 	_, _, err1 := n.GroupInboxRetrieveWithCursor("test-group-stable", "", 10)
@@ -1883,6 +1980,7 @@ func TestGroupInboxRetrieveCursor_NoDuplicateOnContinuation(t *testing.T) {
 	defer n.Stop()
 
 	setFakeRelays(t, n)
+	disableGroupInboxRecoveryForFakeRelayTest(n)
 
 	// First page (cursor="").
 	_, nextCursor1, err1 := n.GroupInboxRetrieveWithCursor("group-nodup", "", 20)
@@ -1944,6 +2042,7 @@ func TestGroupInboxRetrieveCursor_NegativeLimitDefaultsTo50(t *testing.T) {
 	defer n.Stop()
 
 	setFakeRelays(t, n)
+	disableGroupInboxRecoveryForFakeRelayTest(n)
 
 	// Call with limit=-1 — should default to 50 internally.
 	_, _, err = n.GroupInboxRetrieveWithCursor("test-group-neg-limit", "", -1)
@@ -2766,7 +2865,7 @@ func TestGI012GroupInboxRetrieveNoMessagesReturnsEmptyAndClosesStream(t *testing
 	case req := <-requestSeen:
 		if req.Action != "group_retrieve" ||
 			req.GroupId != "group-gi-012" ||
-			req.SinceTimestamp != 1778676905120 ||
+			req.SinceTimestamp != 1778676905119 ||
 			req.Limit != 50 {
 			t.Fatalf("unexpected NO_MESSAGES request: %#v", req)
 		}
@@ -2828,7 +2927,7 @@ func TestGI013GroupInboxRetrieveRetriesRelaysInOrderAndReturnsSecondData(t *test
 		}
 		if req.Action != "group_retrieve" ||
 			req.GroupId != "group-gi-013" ||
-			req.SinceTimestamp != 1778677800000 ||
+			req.SinceTimestamp != 1778677799999 ||
 			req.Limit != 50 {
 			attempts <- "second:unexpected_request"
 			_ = writeFrame(s, []byte(`{"status":"ERROR","error":"unexpected second request"}`))
@@ -2935,7 +3034,7 @@ func TestGI014GroupInboxRetrieveReturnsRelayNonOKError(t *testing.T) {
 	case req := <-requestSeen:
 		if req.Action != "group_retrieve" ||
 			req.GroupId != "group-gi-014" ||
-			req.SinceTimestamp != 1778678400000 ||
+			req.SinceTimestamp != 1778678399999 ||
 			req.Limit != 50 {
 			t.Fatalf("unexpected retrieve request: %#v", req)
 		}
@@ -2996,7 +3095,7 @@ func TestGI015GroupInboxRetrieveMalformedJSONReturnsError(t *testing.T) {
 	case req := <-requestSeen:
 		if req.Action != "group_retrieve" ||
 			req.GroupId != "group-gi-015" ||
-			req.SinceTimestamp != 1778679000000 ||
+			req.SinceTimestamp != 1778678999999 ||
 			req.Limit != 50 {
 			t.Fatalf("unexpected retrieve request: %#v", req)
 		}
@@ -3059,7 +3158,7 @@ func TestGI016GroupInboxRetrieveRejectsOversizedFrame(t *testing.T) {
 	case req := <-requestSeen:
 		if req.Action != "group_retrieve" ||
 			req.GroupId != "group-gi-016" ||
-			req.SinceTimestamp != 1778679600000 ||
+			req.SinceTimestamp != 1778679599999 ||
 			req.Limit != 50 {
 			t.Fatalf("unexpected retrieve request: %#v", req)
 		}

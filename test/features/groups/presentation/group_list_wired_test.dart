@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -65,6 +66,7 @@ class FakeGroupMessageListener extends GroupMessageListener {
 class FakeGroupInviteListener extends GroupInviteListener {
   final Stream<GroupModel> _joinedStream;
   final Stream<PendingGroupInvite> _pendingStream;
+  int waitForIdleCallCount = 0;
 
   FakeGroupInviteListener({
     required Stream<GroupModel> joinedStream,
@@ -86,6 +88,11 @@ class FakeGroupInviteListener extends GroupInviteListener {
 
   @override
   Stream<PendingGroupInvite> get pendingInviteStream => _pendingStream;
+
+  @override
+  Future<void> waitForIdle() async {
+    waitForIdleCallCount++;
+  }
 }
 
 // Minimal no-op implementations only needed for the fake listener super calls.
@@ -223,6 +230,88 @@ Future<Map<String, dynamic>> makeSignedReplayInboxMessage({
     ),
   );
   return {'from': '12D3KooWAlice', 'message': envelope};
+}
+
+Future<Map<String, dynamic>> makeSignedMetadataReplayInboxMessage({
+  required FakeBridge bridge,
+  required InMemoryGroupRepository groupRepo,
+  required String groupId,
+  required DateTime updatedAt,
+  required String name,
+  required String description,
+  required String messageId,
+}) async {
+  final groupConfig = <String, dynamic>{
+    'name': name,
+    'groupType': 'chat',
+    'description': description,
+    'members': [
+      {
+        'peerId': '12D3KooWAlice',
+        'username': 'Alice',
+        'role': 'admin',
+        'publicKey': 'alicePubKey64',
+        'mlKemPublicKey': 'aliceMlKem64',
+      },
+      {
+        'peerId': testIdentity.peerId,
+        'username': testIdentity.username,
+        'role': 'writer',
+        'publicKey': testIdentity.publicKey,
+        'mlKemPublicKey': testIdentity.mlKemPublicKey,
+      },
+    ],
+    'createdBy': '12D3KooWAlice',
+    'createdAt': DateTime.utc(2026, 3, 2).toIso8601String(),
+    'metadataUpdatedAt': updatedAt.toUtc().toIso8601String(),
+    groupConfigVersionField: updatedAt.toUtc().toIso8601String(),
+  };
+  groupConfig[groupConfigStateHashField] = buildGroupConfigStateHash(
+    groupId: groupId,
+    groupConfig: groupConfig,
+  );
+  final actorPayload = buildGroupMetadataActorEventPayload(
+    groupId: groupId,
+    updatedAt: updatedAt,
+    actorPeerId: '12D3KooWAlice',
+    actorUsername: 'Alice',
+    actorPublicKey: 'alicePubKey64',
+    groupConfig: groupConfig,
+  );
+  final canonicalPayload = canonicalizeGroupMetadataActorEventPayload(
+    actorPayload,
+  );
+  final signResponse = await callSignPayload(
+    bridge: bridge,
+    dataToSign: canonicalPayload,
+    privateKey: 'alicePrivateKey64',
+  );
+  final sysText = jsonEncode({
+    '__sys': 'group_metadata_updated',
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+    'groupConfig': groupConfig,
+    groupMetadataActorEventEnvelopeField:
+        buildSignedGroupMetadataActorEventEnvelope(
+          signedPayload: canonicalPayload,
+          signature: signResponse['signature'] as String,
+        ),
+  });
+  return makeSignedReplayInboxMessage(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    groupId: groupId,
+    payloadType: groupOfflineReplayPayloadTypeMessage,
+    plaintextPayload: {
+      'groupId': groupId,
+      'messageId': messageId,
+      'senderId': '12D3KooWAlice',
+      'senderUsername': 'Alice',
+      'keyEpoch': 1,
+      'text': sysText,
+      'timestamp': updatedAt.toUtc().toIso8601String(),
+    },
+    messageId: messageId,
+  );
 }
 
 PendingGroupInvite makePendingInvite({
@@ -702,11 +791,18 @@ void main() {
         );
         await pumpFrames(tester);
 
+        final acceptFinder = find.byKey(
+          ValueKey('pending-group-invite-accept-${invite.groupId}'),
+        );
+        expect(tester.widget<FilledButton>(acceptFinder).onPressed, isNotNull);
         await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+          acceptFinder,
         );
         await pumpFrames(tester, count: 30);
 
+        expect(p2pService.drainOfflineInboxCallCount, 1);
+        expect(groupInviteListener.waitForIdleCallCount, 1);
+        expect(bridge.commandLog, contains('group:join'));
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNull,
@@ -726,6 +822,86 @@ void main() {
         expect(reactions, hasLength(1));
         expect(reactions.single.senderPeerId, '12D3KooWAlice');
         expect(reactions.single.emoji, '👍');
+      },
+    );
+
+    testWidgets(
+      'accept retries rollback until latest metadata is recovered',
+      (tester) async {
+        final invite = makePendingInvite(
+          groupId: 'grp-stale-retry',
+          groupName: 'test 2',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final replayListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => testIdentity.peerId,
+        );
+        addTearDown(replayListener.dispose);
+
+        final latestMetadataAt = DateTime.now()
+            .toUtc()
+            .add(const Duration(minutes: 5));
+        final latestMetadata = await makeSignedMetadataReplayInboxMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: invite.groupId,
+          updatedAt: latestMetadataAt,
+          name: 'test 3',
+          description: '333',
+          messageId: 'metadata-after-rollback',
+        );
+        bridge.responseSequences['group:inboxRetrieveCursor'] = [
+          for (var i = 0; i < 4; i++)
+            {
+              'ok': false,
+              'errorCode': 'RELAY_UNAVAILABLE',
+              'errorMessage': 'relay unavailable',
+            },
+          {
+            'ok': true,
+            'messages': [latestMetadata],
+            'cursor': '',
+          },
+        ];
+
+        await tester.pumpWidget(
+          buildWidget(groupMessageListener: replayListener),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 90);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        final group = await groupRepo.getGroup(invite.groupId);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(group.description, '333');
+        expect(group.lastMetadataEventAt, latestMetadataAt);
+        expect(p2pService.drainOfflineInboxCallCount, 2);
+        expect(groupInviteListener.waitForIdleCallCount, 2);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(2),
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(5),
+        );
+        expect(find.text('Joined test 3'), findsOneWidget);
+        expect(
+          find.text('Invite accepted, but recovery is still catching up'),
+          findsNothing,
+        );
+        expect(find.text('Failed to accept invite'), findsNothing);
       },
     );
 
@@ -774,7 +950,7 @@ void main() {
     );
 
     testWidgets(
-      'bridgeError accept keeps the joined group and shows recovery warning',
+      'bridgeError accept keeps invite retryable without stale group',
       (tester) async {
         final invite = makePendingInvite();
         await pendingInviteRepo.savePendingInvite(invite);
@@ -786,6 +962,11 @@ void main() {
           'ok': false,
           'errorCode': 'PUBLISH_FAILED',
         };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
 
         await tester.pumpWidget(buildWidget());
         await pumpFrames(tester);
@@ -793,33 +974,38 @@ void main() {
         await tester.tap(
           find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
         );
-        await pumpFrames(tester, count: 30);
+        await pumpFrames(tester, count: 220);
 
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNotNull,
         );
-        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(await groupRepo.getGroup(invite.groupId), isNull);
+        expect(await groupRepo.getLatestKey(invite.groupId), isNull);
+        expect(await groupRepo.getMembers(invite.groupId), isEmpty);
         expect(
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsOneWidget,
         );
-        expect(find.text('Book Club'), findsAtLeastNWidgets(1));
         expect(
-          find.text('Joined Book Club, but recovery is still catching up'),
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
           findsOneWidget,
         );
-        expect(bridge.commandLog, contains('group:publish'));
-        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(
+          find.text('Invite accepted, but recovery is still catching up'),
+          findsNothing,
+        );
+        expect(find.text('Failed to accept invite'), findsOneWidget);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
 
         final latestMessage = await msgRepo.getLatestMessage(invite.groupId);
-        expect(latestMessage, isNotNull);
-        expect(latestMessage!.text, 'Admin joined the group');
+        expect(latestMessage, isNull);
       },
     );
 
     testWidgets(
-      'accept clears spinner when inbox catch-up reports more cursor pages',
+      'accept drains all inbox cursor pages before clearing spinner',
       (tester) async {
         final invite = makePendingInvite(
           groupId: 'grp-cursor-pending',
@@ -853,7 +1039,7 @@ void main() {
         expect(find.text('Joined Cursor Room'), findsOneWidget);
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
-          hasLength(1),
+          hasLength(2),
         );
       },
     );

@@ -238,14 +238,29 @@ void main() {
     final sysMembers = sysText['members'] as List<dynamic>;
     expect(sysMembers.length, equals(2));
 
-    // 4. 2 entries in p2pService.sentMessageLog
-    expect(p2pService.sentMessageLog.length, equals(2));
-    final sentPeerIds = p2pService.sentMessageLog.map((e) => e.peerId).toSet();
+    // 4. Existing members receive a direct membership update; added members
+    // receive individual v2 invites.
+    expect(p2pService.sentMessageLog.length, equals(3));
+    final directUpdate = p2pService.sentMessageLog.singleWhere(
+      (entry) => entry.peerId == 'peer-bob',
+    );
+    final directEnvelope =
+        jsonDecode(directUpdate.content) as Map<String, dynamic>;
+    expect(directEnvelope['type'], equals('group_membership_update'));
+    expect(directEnvelope['groupId'], equals('group-1'));
+
+    final inviteEntries = p2pService.sentMessageLog
+        .where((entry) {
+          final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+          return envelope['type'] == 'group_invite';
+        })
+        .toList(growable: false);
+    expect(inviteEntries.length, equals(2));
+    final sentPeerIds = inviteEntries.map((e) => e.peerId).toSet();
     expect(sentPeerIds, contains('peer-alice'));
     expect(sentPeerIds, contains('peer-charlie'));
 
-    // Each is a v2 group_invite envelope
-    for (final entry in p2pService.sentMessageLog) {
+    for (final entry in inviteEntries) {
       final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
       expect(envelope['type'], equals('group_invite'));
       expect(envelope['version'], equals('2'));

@@ -2606,6 +2606,12 @@ abstract class AppLocalizations {
   /// **'Could not retry media message.'**
   String get failed_media_retry_failed;
 
+  /// No description provided for @failed_media_upload_pending_retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Media upload is still finishing. It will retry soon.'**
+  String get failed_media_upload_pending_retry;
+
   /// No description provided for @failed_media_delete_unavailable.
   ///
   /// In en, this message translates to:

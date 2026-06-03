@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -210,6 +212,60 @@ void main() {
         ]);
       },
       timeout: const Timeout(Duration(seconds: 10)),
+    );
+
+    test(
+      'GIRD-002 online group retry sweep awaits incomplete uploads before failed-message retry',
+      () async {
+        final callOrder = <String>[];
+        final uploadGate = Completer<void>();
+        final failedCalled = Completer<void>();
+        var failedStartedBeforeUploadCompleted = false;
+
+        p2pService = FakeP2PService(initialState: onlineNodeState);
+
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          retryDebounce: const Duration(milliseconds: 10),
+          retryIncompleteGroupUploadsFn: () async {
+            callOrder.add('retryIncompleteGroupUploads:start');
+            await uploadGate.future;
+            callOrder.add('retryIncompleteGroupUploads:end');
+            return 0;
+          },
+          retryFailedGroupMessagesFn: () async {
+            failedStartedBeforeUploadCompleted = !uploadGate.isCompleted;
+            callOrder.add('retryFailedGroupMessages');
+            if (!failedCalled.isCompleted) {
+              failedCalled.complete();
+            }
+            return 0;
+          },
+          retryFailedMessagesOverride: () async => 0,
+          retryUnackedMessagesOverride: () async => 0,
+        );
+        retrier.start();
+
+        await Future.delayed(const Duration(milliseconds: 80));
+
+        expect(callOrder, <String>['retryIncompleteGroupUploads:start']);
+        expect(failedCalled.isCompleted, isFalse);
+
+        uploadGate.complete();
+        await failedCalled.future.timeout(const Duration(seconds: 1));
+
+        expect(failedStartedBeforeUploadCompleted, isFalse);
+        expect(callOrder, <String>[
+          'retryIncompleteGroupUploads:start',
+          'retryIncompleteGroupUploads:end',
+          'retryFailedGroupMessages',
+        ]);
+      },
+      timeout: const Timeout(Duration(seconds: 3)),
     );
   });
 }

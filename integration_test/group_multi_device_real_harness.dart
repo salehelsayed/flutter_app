@@ -16,6 +16,7 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
@@ -111,6 +112,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
@@ -165,14 +167,30 @@ Map<String, dynamic>? loadCliPeerFixture() {
   }
 }
 
-void writeSharedJson(String name, Map<String, dynamic> value) {
+void _writeSharedAtomically(String name, String value) {
   Directory(configuredSharedDir).createSync(recursive: true);
-  File(sharedPath(name)).writeAsStringSync(jsonEncode(value));
+  final targetPath = sharedPath(name);
+  final tempPath =
+      '$targetPath.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}';
+  final tempFile = File(tempPath);
+  try {
+    tempFile.writeAsStringSync(value, flush: true);
+    tempFile.renameSync(targetPath);
+  } finally {
+    if (tempFile.existsSync()) {
+      try {
+        tempFile.deleteSync();
+      } catch (_) {}
+    }
+  }
+}
+
+void writeSharedJson(String name, Map<String, dynamic> value) {
+  _writeSharedAtomically(name, jsonEncode(value));
 }
 
 void writeSharedText(String name, String value) {
-  Directory(configuredSharedDir).createSync(recursive: true);
-  File(sharedPath(name)).writeAsStringSync(value);
+  _writeSharedAtomically(name, value);
 }
 
 Future<Map<String, dynamic>> waitForSharedJson(
@@ -181,11 +199,24 @@ Future<Map<String, dynamic>> waitForSharedJson(
 }) async {
   final deadline = DateTime.now().add(timeout);
   final file = File(sharedPath(name));
+  Object? lastDecodeError;
   while (DateTime.now().isBefore(deadline)) {
     if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      try {
+        return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      } on FormatException catch (error) {
+        lastDecodeError = error;
+      } on FileSystemException catch (error) {
+        lastDecodeError = error;
+      }
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  if (lastDecodeError != null) {
+    throw TimeoutException(
+      'Timed out waiting for complete shared json: $name; last error: '
+      '$lastDecodeError',
+    );
   }
   throw TimeoutException('Timed out waiting for shared json: $name');
 }
@@ -696,6 +727,36 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     db,
     enableInboxPageTransactions: true,
   );
+  final groupPendingKeyRepairRepo = GroupPendingKeyRepairRepositoryImpl(
+    dbUpsertGroupPendingKeyRepair: (row) =>
+        dbUpsertGroupPendingKeyRepair(db, row),
+    dbLoadGroupPendingKeyRepair: (id) => dbLoadGroupPendingKeyRepair(db, id),
+    dbLoadPendingGroupKeyRepairsForEpoch:
+        ({required groupId, required keyEpoch, int limit = 50}) =>
+            dbLoadPendingGroupKeyRepairsForEpoch(
+              db,
+              groupId: groupId,
+              keyEpoch: keyEpoch,
+              limit: limit,
+            ),
+    dbRecordGroupPendingKeyRepairAttempt:
+        (id, {required lastError, required updatedAt}) =>
+            dbRecordGroupPendingKeyRepairAttempt(
+              db,
+              id,
+              lastError: lastError,
+              updatedAt: updatedAt,
+            ),
+    dbFinalizeGroupPendingKeyRepair:
+        (id, {required status, required lastError, required finalizedAt}) =>
+            dbFinalizeGroupPendingKeyRepair(
+              db,
+              id,
+              status: status,
+              lastError: lastError,
+              finalizedAt: finalizedAt,
+            ),
+  );
   final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
     dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
     dbLoadMediaForMessage: (messageId) => dbLoadMediaForMessage(db, messageId),
@@ -883,12 +944,15 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     getAppLifecycleState: () => AppLifecycleState.paused,
     reactionRepo: reactionRepo,
     groupDiagnosticEvents: groupDiagnosticEventStream,
+    pendingKeyRepairRepo: groupPendingKeyRepairRepo,
   );
   final groupMembershipUpdateListener = GroupMembershipUpdateListener(
     groupMembershipUpdateStream: messageRouter.groupMembershipUpdateStream,
     groupRepo: groupRepo,
     bridge: bridge,
     groupMessageListener: groupListener,
+    msgRepo: groupMsgRepo,
+    pendingKeyRepairRepo: groupPendingKeyRepairRepo,
   );
   messageRouter.start();
   groupKeyUpdateListener.start();

@@ -45,11 +45,24 @@ Future<Map<String, dynamic>> _waitForJson(
 }) async {
   final deadline = DateTime.now().add(timeout);
   final file = File(path);
+  Object? lastDecodeError;
   while (DateTime.now().isBefore(deadline)) {
     if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      try {
+        return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      } on FormatException catch (error) {
+        lastDecodeError = error;
+      } on FileSystemException catch (error) {
+        lastDecodeError = error;
+      }
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  if (lastDecodeError != null) {
+    throw TimeoutException(
+      'Timed out waiting for complete json: $path; last error: '
+      '$lastDecodeError',
+    );
   }
   throw TimeoutException('Timed out waiting for json: $path');
 }
@@ -426,6 +439,8 @@ List<String> _scenariosToRun(String scenario) {
       return const <String>[
         'regression_group_admin_permissions_and_message_reliability_four_users',
       ];
+    case 'scenario7_group_invite_stale_metadata_recovery':
+      return const <String>['scenario7_group_invite_stale_metadata_recovery'];
     case 'private_history_retention':
       return const <String>['private_history_retention'];
     case 'private_invite_terminal_states':
@@ -498,7 +513,7 @@ List<String> _scenariosToRun(String scenario) {
       throw ArgumentError.value(
         scenario,
         'scenario',
-        'Expected --scenario ge001, ge002, ge003, ge004, ge005, ge006, ge007, ge008, ge009, ge010, go001, go002, go003, ge011, ge012, ge013, ge014, ge015, ge016, ge020, ge021, ge023, ge024, gm001, de002, de003, de007, de017, ir001, ir015, ir016, pl002, pl012, private_abc_create, private_reaction_roundtrip, private_removed_reaction_rejected, private_never_member_publish_rejected, private_removed_old_key_publish_rejected, private_full_mesh_online, private_relay_only_delivery, private_partition_readd_heal, private_relay_reconnect_group_recovery, private_peer_disconnect_not_removal, private_background_resume_group_delivery, private_long_offline_epoch_churn, private_process_death_matrix, private_online_add, private_offline_add, private_online_remove, private_removed_notification_privacy, private_offline_remove, private_offline_readd, private_readd_current, private_readd_active_members, private_readd_alternating_churn, private_max_group_size_churn, private_network_chaos_invariants, private_late_leave_readd, private_rotated_device_readd, private_same_user_multi_device_readd, private_readd_cycles, private_rapid_readd, private_concurrent_admin_membership_edits, private_timeline_truth, private_non_friend_member_delivery, private_admin_role_transfer_delivery, private_admin_metadata_intro_photo_convergence, private_admin_demotion_enforcement, regression_group_admin_permissions_and_message_reliability_four_users, private_history_retention, private_invite_terminal_states, private_stale_invite_readd, private_stale_lower_key_update, private_same_epoch_key_conflict, private_partial_key_distribution, gm002, gm003, gm004, gm005, gm006, gm007, gm008, gm009, gm010, gm011, gm012, gm013, gm014, gm015, gm016, gm017, gm018, gm019, gm020, gm021, gm022, gm023, gm024, gm025, gm033, gm034, gm035, or all',
+        'Expected --scenario ge001, ge002, ge003, ge004, ge005, ge006, ge007, ge008, ge009, ge010, go001, go002, go003, ge011, ge012, ge013, ge014, ge015, ge016, ge020, ge021, ge023, ge024, gm001, de002, de003, de007, de017, ir001, ir015, ir016, pl002, pl012, private_abc_create, private_reaction_roundtrip, private_removed_reaction_rejected, private_never_member_publish_rejected, private_removed_old_key_publish_rejected, private_full_mesh_online, private_relay_only_delivery, private_partition_readd_heal, private_relay_reconnect_group_recovery, private_peer_disconnect_not_removal, private_background_resume_group_delivery, private_long_offline_epoch_churn, private_process_death_matrix, private_online_add, private_offline_add, private_online_remove, private_removed_notification_privacy, private_offline_remove, private_offline_readd, private_readd_current, private_readd_active_members, private_readd_alternating_churn, private_max_group_size_churn, private_network_chaos_invariants, private_late_leave_readd, private_rotated_device_readd, private_same_user_multi_device_readd, private_readd_cycles, private_rapid_readd, private_concurrent_admin_membership_edits, private_timeline_truth, private_non_friend_member_delivery, private_admin_role_transfer_delivery, private_admin_metadata_intro_photo_convergence, private_admin_demotion_enforcement, regression_group_admin_permissions_and_message_reliability_four_users, scenario7_group_invite_stale_metadata_recovery, private_history_retention, private_invite_terminal_states, private_stale_invite_readd, private_stale_lower_key_update, private_same_epoch_key_conflict, private_partial_key_distribution, gm002, gm003, gm004, gm005, gm006, gm007, gm008, gm009, gm010, gm011, gm012, gm013, gm014, gm015, gm016, gm017, gm018, gm019, gm020, gm021, gm022, gm023, gm024, gm025, gm033, gm034, gm035, or all',
       );
   }
 }
@@ -2502,7 +2517,7 @@ Future<void> main(List<String> args) async {
   final relayCheck = evaluateRelayConfiguration(relayAddresses);
   final usage =
       'Usage: dart run integration_test/scripts/run_group_multi_party_device_real.dart '
-      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|de002|de003|de007|de017|ir001|ir015|ir016|pl002|pl012|private_abc_create|private_reaction_roundtrip|private_removed_reaction_rejected|private_never_member_publish_rejected|private_removed_old_key_publish_rejected|private_full_mesh_online|private_relay_only_delivery|private_partition_readd_heal|private_relay_reconnect_group_recovery|private_peer_disconnect_not_removal|private_background_resume_group_delivery|private_long_offline_epoch_churn|private_process_death_matrix|private_online_add|private_offline_add|private_online_remove|private_removed_notification_privacy|private_offline_remove|private_offline_readd|private_readd_current|private_readd_active_members|private_readd_alternating_churn|private_max_group_size_churn|private_network_chaos_invariants|private_late_leave_readd|private_rotated_device_readd|private_same_user_multi_device_readd|private_readd_cycles|private_rapid_readd|private_concurrent_admin_membership_edits|private_timeline_truth|private_non_friend_member_delivery|private_admin_role_transfer_delivery|private_admin_metadata_intro_photo_convergence|private_admin_demotion_enforcement|regression_group_admin_permissions_and_message_reliability_four_users|private_history_retention|private_invite_terminal_states|private_stale_invite_readd|private_stale_lower_key_update|private_same_epoch_key_conflict|private_partial_key_distribution|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]> [--list-scenarios]';
+      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|de002|de003|de007|de017|ir001|ir015|ir016|pl002|pl012|private_abc_create|private_reaction_roundtrip|private_removed_reaction_rejected|private_never_member_publish_rejected|private_removed_old_key_publish_rejected|private_full_mesh_online|private_relay_only_delivery|private_partition_readd_heal|private_relay_reconnect_group_recovery|private_peer_disconnect_not_removal|private_background_resume_group_delivery|private_long_offline_epoch_churn|private_process_death_matrix|private_online_add|private_offline_add|private_online_remove|private_removed_notification_privacy|private_offline_remove|private_offline_readd|private_readd_current|private_readd_active_members|private_readd_alternating_churn|private_max_group_size_churn|private_network_chaos_invariants|private_late_leave_readd|private_rotated_device_readd|private_same_user_multi_device_readd|private_readd_cycles|private_rapid_readd|private_concurrent_admin_membership_edits|private_timeline_truth|private_non_friend_member_delivery|private_admin_role_transfer_delivery|private_admin_metadata_intro_photo_convergence|private_admin_demotion_enforcement|regression_group_admin_permissions_and_message_reliability_four_users|scenario7_group_invite_stale_metadata_recovery|private_history_retention|private_invite_terminal_states|private_stale_invite_readd|private_stale_lower_key_update|private_same_epoch_key_conflict|private_partial_key_distribution|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]> [--list-scenarios]';
 
   if (listScenarios) {
     try {

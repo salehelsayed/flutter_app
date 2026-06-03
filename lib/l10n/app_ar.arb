@@ -798,6 +798,7 @@
   "media_unavailable_now": "الوسائط غير متاحة الآن.",
   "media_still_unavailable": "لا تزال الوسائط غير متاحة.",
   "failed_media_retry_failed": "تعذرت إعادة محاولة رسالة الوسائط.",
+  "failed_media_upload_pending_retry": "ما زال تحميل الوسائط قيد الإكمال. ستتم إعادة المحاولة قريبًا.",
   "failed_media_delete_unavailable": "الحذف غير متاح الآن.",
   "picker_media_library": "مكتبة الوسائط",
   "picker_record_video": "تسجيل فيديو",

@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/view_earlier_link.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
-  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+  Widget wrap(Widget child) => MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
 
   group('ViewEarlierLink', () {
     testWidgets('renders "View earlier messages" text', (tester) async {
@@ -13,7 +18,9 @@ void main() {
 
     testWidgets('fires onTap callback', (tester) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(ViewEarlierLink(onTap: () => tapped = true)));
+      await tester.pumpWidget(
+        wrap(ViewEarlierLink(onTap: () => tapped = true)),
+      );
       await tester.tap(find.text('View earlier messages'));
       expect(tapped, isTrue);
     });

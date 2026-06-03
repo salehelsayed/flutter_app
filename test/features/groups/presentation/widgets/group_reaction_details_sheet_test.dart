@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../shared/helpers/readability_test_helpers.dart';
 
@@ -14,6 +15,9 @@ void main() {
       const colors = BackgroundReadableColors.representativeLight;
       await tester.pumpWidget(
         MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: ThemeData(extensions: const <ThemeExtension<dynamic>>[colors]),
           home: Scaffold(
             body: ColoredBox(

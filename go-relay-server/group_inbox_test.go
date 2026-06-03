@@ -32,7 +32,7 @@ func (b *recordingGroupInboxBackend) StoreWithRecipients(
 	from string,
 	message string,
 	recipientPeerIds []string,
-) error {
+) (GroupInboxStoreResult, error) {
 	b.lastRecipientPeerIds = append([]string(nil), recipientPeerIds...)
 	b.messages = append(b.messages, groupInboxMessage{
 		From:             from,
@@ -41,7 +41,7 @@ func (b *recordingGroupInboxBackend) StoreWithRecipients(
 		ID:               fmt.Sprintf("%d", len(b.messages)+1),
 		RecipientPeerIds: append([]string(nil), recipientPeerIds...),
 	})
-	return nil
+	return GroupInboxStoreResultStored, nil
 }
 
 func (b *recordingGroupInboxBackend) RetrieveSince(groupId string, sinceTimestamp int64) []groupInboxMessage {
@@ -82,7 +82,9 @@ func TestGroupInboxBackendContractRequiresRecipientStore(t *testing.T) {
 	if !ok {
 		t.Fatal("GroupInboxBackend must require StoreWithRecipients")
 	}
-	wantType := reflect.TypeOf(func(string, string, string, []string) error { return nil })
+	wantType := reflect.TypeOf(func(string, string, string, []string) (GroupInboxStoreResult, error) {
+		return "", nil
+	})
 	if storeWithRecipients.Type != wantType {
 		t.Fatalf("StoreWithRecipients type = %v, want %v", storeWithRecipients.Type, wantType)
 	}
@@ -118,6 +120,152 @@ func TestGroupInboxStorePassesRecipientACLToBackendContract(t *testing.T) {
 	}
 	if messages := store.RetrieveAuthorized("group-acl-contract", 0, "peer-d"); len(messages) != 0 {
 		t.Fatalf("unauthorized peer retrieved %#v, want none", messages)
+	}
+}
+
+func TestGIRD004MemoryGroupInboxDuplicateMessageIDStoresOneRow(t *testing.T) {
+	store := NewGroupInboxStore(500, 7*24*time.Hour)
+	groupID := "group-gird004-memory-duplicate"
+	message := opaqueGroupReplayEnvelope("gird004-memory-duplicate")
+
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", message, []string{"peer-b"}); err != nil {
+		t.Fatalf("first StoreWithPushRecipients: %v", err)
+	}
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", message, []string{"peer-b"}); err != nil {
+		t.Fatalf("duplicate StoreWithPushRecipients: %v", err)
+	}
+
+	retrieved := store.RetrieveAuthorized(groupID, 0, "peer-b")
+	if len(retrieved) != 1 {
+		t.Fatalf("authorized retrieve returned %d message(s), want 1: %#v", len(retrieved), retrieved)
+	}
+	cursorPage, nextCursor, historyGaps := store.RetrieveWithCursorAuthorized(groupID, "", 50, "peer-b")
+	if len(cursorPage) != 1 || nextCursor != "" || len(historyGaps) != 0 {
+		t.Fatalf("cursor retrieve = (%d, %q, %#v), want one row/no cursor/no gaps", len(cursorPage), nextCursor, historyGaps)
+	}
+	groups, total := store.Stats()
+	if groups != 1 || total != 1 {
+		t.Fatalf("Stats = (%d, %d), want (1, 1)", groups, total)
+	}
+}
+
+func TestGIRD004MemoryGroupInboxMalformedAndUnkeyedMessagesStoreTwice(t *testing.T) {
+	store := NewGroupInboxStore(500, 7*24*time.Hour)
+
+	tests := []struct {
+		name    string
+		groupID string
+		message string
+	}{
+		{name: "malformed", groupID: "group-gird004-memory-malformed", message: `{"messageId":`},
+		{name: "unkeyed", groupID: "group-gird004-memory-unkeyed", message: `{"kind":"group_offline_replay","ciphertext":"c","nonce":"n"}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := store.StoreWithPushRecipients(tc.groupID, "peer-a", tc.message, []string{"peer-b"}); err != nil {
+				t.Fatalf("first StoreWithPushRecipients: %v", err)
+			}
+			if err := store.StoreWithPushRecipients(tc.groupID, "peer-a", tc.message, []string{"peer-b"}); err != nil {
+				t.Fatalf("second StoreWithPushRecipients: %v", err)
+			}
+			messages := store.RetrieveAuthorized(tc.groupID, 0, "peer-b")
+			if len(messages) != 2 {
+				t.Fatalf("messages = %d, want 2 for %s input", len(messages), tc.name)
+			}
+		})
+	}
+}
+
+func TestGIRD004MemoryGroupInboxDistinctMessageIDsPreserveOrder(t *testing.T) {
+	store := NewGroupInboxStore(500, 7*24*time.Hour)
+	groupID := "group-gird004-memory-distinct"
+	first := opaqueGroupReplayEnvelope("gird004-memory-distinct-1")
+	second := opaqueGroupReplayEnvelope("gird004-memory-distinct-2")
+
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", first, []string{"peer-b"}); err != nil {
+		t.Fatalf("first StoreWithPushRecipients: %v", err)
+	}
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", second, []string{"peer-b"}); err != nil {
+		t.Fatalf("second StoreWithPushRecipients: %v", err)
+	}
+
+	messages := store.RetrieveAuthorized(groupID, 0, "peer-b")
+	if len(messages) != 2 {
+		t.Fatalf("messages = %d, want 2", len(messages))
+	}
+	if messages[0].Message != first || messages[1].Message != second {
+		t.Fatalf("messages out of order: %#v", messages)
+	}
+}
+
+func TestGIRD004MemoryGroupInboxConflictingSameMessageIDRejected(t *testing.T) {
+	tests := []struct {
+		name               string
+		firstFrom          string
+		firstMessage       string
+		conflictingFrom    string
+		conflictingMessage string
+	}{
+		{
+			name:               "different sender",
+			firstFrom:          "peer-a",
+			firstMessage:       opaqueGroupReplayEnvelope("gird004-memory-conflict-sender"),
+			conflictingFrom:    "peer-x",
+			conflictingMessage: opaqueGroupReplayEnvelope("gird004-memory-conflict-sender"),
+		},
+		{
+			name:               "different body",
+			firstFrom:          "peer-a",
+			firstMessage:       `{"kind":"group_offline_replay","messageId":"gird004-memory-conflict-body","ciphertext":"first","nonce":"n1"}`,
+			conflictingFrom:    "peer-a",
+			conflictingMessage: `{"kind":"group_offline_replay","messageId":"gird004-memory-conflict-body","ciphertext":"second","nonce":"n2"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewGroupInboxStore(500, 7*24*time.Hour)
+			groupID := "group-gird004-memory-conflict-" + strings.ReplaceAll(tc.name, " ", "-")
+			if err := store.StoreWithPushRecipients(groupID, tc.firstFrom, tc.firstMessage, []string{"peer-b"}); err != nil {
+				t.Fatalf("first StoreWithPushRecipients: %v", err)
+			}
+			if err := store.StoreWithPushRecipients(groupID, tc.conflictingFrom, tc.conflictingMessage, []string{"peer-b"}); err == nil {
+				t.Fatal("expected conflicting duplicate messageId to be rejected")
+			}
+			messages := store.Retrieve(groupID, 0)
+			if len(messages) != 1 || messages[0].From != tc.firstFrom || messages[0].Message != tc.firstMessage {
+				t.Fatalf("canonical row not preserved: %#v", messages)
+			}
+		})
+	}
+}
+
+func TestGIRD004MemoryGroupInboxDuplicateExpandedRecipientACLMerges(t *testing.T) {
+	store := NewGroupInboxStore(500, 7*24*time.Hour)
+	groupID := "group-gird004-memory-acl-merge"
+	message := opaqueGroupReplayEnvelope("gird004-memory-acl-merge")
+
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", message, []string{"peer-b"}); err != nil {
+		t.Fatalf("first StoreWithPushRecipients: %v", err)
+	}
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", message, []string{"peer-b", "peer-c"}); err != nil {
+		t.Fatalf("duplicate expanded StoreWithPushRecipients: %v", err)
+	}
+
+	messages := store.Retrieve(groupID, 0)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want one canonical row", len(messages))
+	}
+	wantRecipients := []string{"peer-b", "peer-c"}
+	if !reflect.DeepEqual(messages[0].RecipientPeerIds, wantRecipients) {
+		t.Fatalf("RecipientPeerIds = %#v, want %#v", messages[0].RecipientPeerIds, wantRecipients)
+	}
+	for _, peerID := range wantRecipients {
+		authorized := store.RetrieveAuthorized(groupID, 0, peerID)
+		if len(authorized) != 1 {
+			t.Fatalf("RetrieveAuthorized(%q) = %d, want 1", peerID, len(authorized))
+		}
 	}
 }
 

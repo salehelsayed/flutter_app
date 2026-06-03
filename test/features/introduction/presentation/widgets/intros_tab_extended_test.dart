@@ -2,9 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intros_tab.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  Widget wrap(Widget child) {
+    return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: child),
+    );
+  }
+
   group('IntrosTab extended', () {
     testWidgets('multiple introducers render multiple group headers', (
       tester,
@@ -33,15 +43,13 @@ void main() {
       };
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntrosTab(
-              groupedIntros: grouped,
-              introducerUsernames: {'peer-A': 'Noor', 'peer-D': 'Fatima'},
-              onAccept: (_) {},
-              onPass: (_) {},
-              ownPeerId: 'peer-B',
-            ),
+        wrap(
+          IntrosTab(
+            groupedIntros: grouped,
+            introducerUsernames: {'peer-A': 'Noor', 'peer-D': 'Fatima'},
+            onAccept: (_) {},
+            onPass: (_) {},
+            ownPeerId: 'peer-B',
           ),
         ),
       );
@@ -70,15 +78,13 @@ void main() {
       };
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntrosTab(
-              groupedIntros: grouped,
-              introducerUsernames: {'peer-A': 'Noor'},
-              onAccept: (_) {},
-              onPass: (_) {},
-              ownPeerId: 'peer-B',
-            ),
+        wrap(
+          IntrosTab(
+            groupedIntros: grouped,
+            introducerUsernames: {'peer-A': 'Noor'},
+            onAccept: (_) {},
+            onPass: (_) {},
+            ownPeerId: 'peer-B',
           ),
         ),
       );
@@ -91,15 +97,13 @@ void main() {
 
     testWidgets('empty state shows placeholder text', (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntrosTab(
-              groupedIntros: const {},
-              introducerUsernames: const {},
-              onAccept: (_) {},
-              onPass: (_) {},
-              ownPeerId: 'peer-B',
-            ),
+        wrap(
+          IntrosTab(
+            groupedIntros: const {},
+            introducerUsernames: const {},
+            onAccept: (_) {},
+            onPass: (_) {},
+            ownPeerId: 'peer-B',
           ),
         ),
       );
@@ -125,15 +129,13 @@ void main() {
       };
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntrosTab(
-              groupedIntros: grouped,
-              introducerUsernames: const {'peer-A': '   '},
-              onAccept: (_) {},
-              onPass: (_) {},
-              ownPeerId: 'peer-B',
-            ),
+        wrap(
+          IntrosTab(
+            groupedIntros: grouped,
+            introducerUsernames: const {'peer-A': '   '},
+            onAccept: (_) {},
+            onPass: (_) {},
+            ownPeerId: 'peer-B',
           ),
         ),
       );
@@ -165,15 +167,13 @@ void main() {
       };
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntrosTab(
-              groupedIntros: grouped,
-              introducerUsernames: const {'peer-A': longIntroducer},
-              onAccept: (_) {},
-              onPass: (_) {},
-              ownPeerId: 'peer-B',
-            ),
+        wrap(
+          IntrosTab(
+            groupedIntros: grouped,
+            introducerUsernames: const {'peer-A': longIntroducer},
+            onAccept: (_) {},
+            onPass: (_) {},
+            ownPeerId: 'peer-B',
           ),
         ),
       );
@@ -217,22 +217,20 @@ void main() {
         );
 
         await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: IntrosTab(
-                groupedIntros: {
-                  'peer-blank': [blankIntro],
-                  'peer-long': [longIntro],
-                },
-                introducerUsernames: const {
-                  'peer-blank': '   ',
-                  'peer-long': longIntroducer,
-                },
-                onAccept: (_) {},
-                onPass: (_) {},
-                ownPeerId: 'peer-B',
-                foldedReviewItems: folded,
-              ),
+          wrap(
+            IntrosTab(
+              groupedIntros: {
+                'peer-blank': [blankIntro],
+                'peer-long': [longIntro],
+              },
+              introducerUsernames: const {
+                'peer-blank': '   ',
+                'peer-long': longIntroducer,
+              },
+              onAccept: (_) {},
+              onPass: (_) {},
+              ownPeerId: 'peer-B',
+              foldedReviewItems: folded,
             ),
           ),
         );

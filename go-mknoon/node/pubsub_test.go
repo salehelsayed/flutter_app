@@ -10572,36 +10572,28 @@ func TestGM028EmptyPeerIDDoesNotInflateDiscoveryOrPublishPreflight(t *testing.T)
 	storedConfig := cloneGroupConfig(admin.groupConfigs[groupId])
 	admin.mu.RUnlock()
 
-	if storedConfig == nil {
-		t.Fatal("expected stored config after UpdateGroupConfig")
+	if storedConfig != nil {
+		t.Fatalf("UpdateGroupConfig stored invalid empty-peer config: %+v", storedConfig.Members)
 	}
-	if member := findMember(storedConfig, ""); member != nil {
+	if member := findMember(config, ""); member != nil {
 		t.Fatalf("findMember empty peer returned %+v", member)
 	}
-	if member := findMember(storedConfig, "   "); member != nil {
+	if member := findMember(config, "   "); member != nil {
 		t.Fatalf("findMember whitespace peer returned %+v", member)
 	}
-	for _, member := range storedConfig.Members {
-		if strings.TrimSpace(member.PeerId) == "" {
-			t.Fatalf("stored config retained empty peer member: %+v", storedConfig.Members)
-		}
-	}
-	if len(storedConfig.Members) != 2 {
-		t.Fatalf("stored config members = %+v, want only admin and Bob", storedConfig.Members)
-	}
 
-	targets := activeGroupMemberDialTargets(storedConfig, admin.PeerId())
+	targets := activeGroupMemberDialTargets(config, admin.PeerId())
 	if len(targets) != 1 {
 		t.Fatalf("expected only Bob dial target, got %d: %+v", len(targets), targets)
 	}
 	if targets[0].PeerId != validBob.PeerId() {
 		t.Fatalf("expected Bob target %s, got %+v", validBob.PeerId(), targets[0])
 	}
-	if got := countRemoteGroupMembers(storedConfig, admin.PeerId()); got != 1 {
+	if got := countRemoteGroupMembers(config, admin.PeerId()); got != 1 {
 		t.Fatalf("expected blank peer to be excluded from remote count, got %d", got)
 	}
-	if got := admin.expectedConnectedGroupMembers(groupId); got != 1 {
-		t.Fatalf("expected blank peer to be excluded from expected connected count, got %d", got)
+	if got := admin.expectedConnectedGroupMembers(groupId); got != 0 {
+		t.Fatalf("expected rejected config to leave no expected connected count, got %d", got)
 	}
 }
 

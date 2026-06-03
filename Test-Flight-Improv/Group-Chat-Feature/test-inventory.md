@@ -5,6 +5,24 @@
 
 ---
 
+## Report 102 GIRD-007 Addendum
+
+Report 102 group image retry/duplicate notification/media closure is accepted
+through `GIRD-006` and blocked only at the final `GIRD-007` full group
+reliability simulator scope. Host `feature-host-all` passed through `#484`,
+`./scripts/run_test_gates.sh groups` passed with `313` tests,
+`./scripts/run_test_gates.sh completeness-check` passed with `767/767`, and
+relay/native Go preservation passed. The group reliability simulator run passed
+commands `#1` through `#48`; harness-only localization fixes were applied to
+`integration_test/group_recovery_e2e_test.dart` and
+`integration_test/group_invite_status_matrix_harness.dart`. Command `#49`
+`private_never_member_publish_rejected` is the remaining blocker because Dana
+never reached online readiness after three attempts, including after simulator
+reboot. The provider APNs background/terminated physical-device proof remains a
+residual follow-up outside this inventory until a provider-backed harness exists.
+
+---
+
 ## How to Run
 
 **Full host-side group suite:**

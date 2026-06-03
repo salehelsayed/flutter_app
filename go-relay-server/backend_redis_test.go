@@ -41,6 +41,160 @@ func requireRedisInboxStoreResult(
 	}
 }
 
+func TestGIRD004RedisGroupInboxDuplicateMessageIDStoresOneRowAcrossClients(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+	backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+	groupID := "group-gird004-redis-duplicate"
+	message := opaqueGroupReplayEnvelope("gird004-redis-duplicate")
+
+	if _, err := backendA.StoreWithRecipients(groupID, "peer-a", message, []string{"peer-b"}); err != nil {
+		t.Fatalf("first StoreWithRecipients: %v", err)
+	}
+	if _, err := backendB.StoreWithRecipients(groupID, "peer-a", message, []string{"peer-b"}); err != nil {
+		t.Fatalf("duplicate StoreWithRecipients: %v", err)
+	}
+
+	messages := backendA.RetrieveSince(groupID, 0)
+	if len(messages) != 1 {
+		t.Fatalf("RetrieveSince returned %d message(s), want 1: %#v", len(messages), messages)
+	}
+	cursorPage, nextCursor, historyGaps := backendB.RetrieveCursor(groupID, "", 50)
+	if len(cursorPage) != 1 || nextCursor != "" || len(historyGaps) != 0 {
+		t.Fatalf("RetrieveCursor = (%d, %q, %#v), want one row/no cursor/no gaps", len(cursorPage), nextCursor, historyGaps)
+	}
+	groups, total := backendB.Stats()
+	if groups != 1 || total != 1 {
+		t.Fatalf("Stats = (%d, %d), want (1, 1)", groups, total)
+	}
+}
+
+func TestGIRD004RedisGroupInboxMalformedAndUnkeyedMessagesStoreTwice(t *testing.T) {
+	server := miniredis.RunT(t)
+	backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+	backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+
+	tests := []struct {
+		name    string
+		groupID string
+		message string
+	}{
+		{name: "malformed", groupID: "group-gird004-redis-malformed", message: `{"messageId":`},
+		{name: "unkeyed", groupID: "group-gird004-redis-unkeyed", message: `{"kind":"group_offline_replay","ciphertext":"c","nonce":"n"}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := backendA.StoreWithRecipients(tc.groupID, "peer-a", tc.message, []string{"peer-b"}); err != nil {
+				t.Fatalf("first StoreWithRecipients: %v", err)
+			}
+			if _, err := backendB.StoreWithRecipients(tc.groupID, "peer-a", tc.message, []string{"peer-b"}); err != nil {
+				t.Fatalf("second StoreWithRecipients: %v", err)
+			}
+			messages := backendA.RetrieveSince(tc.groupID, 0)
+			if len(messages) != 2 {
+				t.Fatalf("messages = %d, want 2 for %s input", len(messages), tc.name)
+			}
+		})
+	}
+}
+
+func TestGIRD004RedisGroupInboxDistinctMessageIDsPreserveOrder(t *testing.T) {
+	server := miniredis.RunT(t)
+	backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+	backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+	groupID := "group-gird004-redis-distinct"
+	first := opaqueGroupReplayEnvelope("gird004-redis-distinct-1")
+	second := opaqueGroupReplayEnvelope("gird004-redis-distinct-2")
+
+	if _, err := backendA.StoreWithRecipients(groupID, "peer-a", first, []string{"peer-b"}); err != nil {
+		t.Fatalf("first StoreWithRecipients: %v", err)
+	}
+	if _, err := backendB.StoreWithRecipients(groupID, "peer-a", second, []string{"peer-b"}); err != nil {
+		t.Fatalf("second StoreWithRecipients: %v", err)
+	}
+
+	messages := backendA.RetrieveSince(groupID, 0)
+	if len(messages) != 2 {
+		t.Fatalf("messages = %d, want 2", len(messages))
+	}
+	if messages[0].Message != first || messages[1].Message != second {
+		t.Fatalf("messages out of order: %#v", messages)
+	}
+}
+
+func TestGIRD004RedisGroupInboxConflictingSameMessageIDRejected(t *testing.T) {
+	tests := []struct {
+		name               string
+		groupID            string
+		firstFrom          string
+		firstMessage       string
+		conflictingFrom    string
+		conflictingMessage string
+	}{
+		{
+			name:               "different sender",
+			groupID:            "group-gird004-redis-conflict-sender",
+			firstFrom:          "peer-a",
+			firstMessage:       opaqueGroupReplayEnvelope("gird004-redis-conflict-sender"),
+			conflictingFrom:    "peer-x",
+			conflictingMessage: opaqueGroupReplayEnvelope("gird004-redis-conflict-sender"),
+		},
+		{
+			name:               "different body",
+			groupID:            "group-gird004-redis-conflict-body",
+			firstFrom:          "peer-a",
+			firstMessage:       `{"kind":"group_offline_replay","messageId":"gird004-redis-conflict-body","ciphertext":"first","nonce":"n1"}`,
+			conflictingFrom:    "peer-a",
+			conflictingMessage: `{"kind":"group_offline_replay","messageId":"gird004-redis-conflict-body","ciphertext":"second","nonce":"n2"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+			backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+
+			if _, err := backendA.StoreWithRecipients(tc.groupID, tc.firstFrom, tc.firstMessage, []string{"peer-b"}); err != nil {
+				t.Fatalf("first StoreWithRecipients: %v", err)
+			}
+			if _, err := backendB.StoreWithRecipients(tc.groupID, tc.conflictingFrom, tc.conflictingMessage, []string{"peer-b"}); err == nil {
+				t.Fatal("expected conflicting duplicate messageId to be rejected")
+			}
+			messages := backendA.RetrieveSince(tc.groupID, 0)
+			if len(messages) != 1 || messages[0].From != tc.firstFrom || messages[0].Message != tc.firstMessage {
+				t.Fatalf("canonical row not preserved: %#v", messages)
+			}
+		})
+	}
+}
+
+func TestGIRD004RedisGroupInboxDuplicateExpandedRecipientACLMerges(t *testing.T) {
+	server := miniredis.RunT(t)
+	backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+	backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "gird004:", 500, 7*24*time.Hour)
+	groupID := "group-gird004-redis-acl-merge"
+	message := opaqueGroupReplayEnvelope("gird004-redis-acl-merge")
+
+	if _, err := backendA.StoreWithRecipients(groupID, "peer-a", message, []string{"peer-b"}); err != nil {
+		t.Fatalf("first StoreWithRecipients: %v", err)
+	}
+	if _, err := backendB.StoreWithRecipients(groupID, "peer-a", message, []string{"peer-b", "peer-c"}); err != nil {
+		t.Fatalf("duplicate expanded StoreWithRecipients: %v", err)
+	}
+
+	messages := backendA.RetrieveSince(groupID, 0)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want one canonical row", len(messages))
+	}
+	wantRecipients := []string{"peer-b", "peer-c"}
+	if !reflect.DeepEqual(messages[0].RecipientPeerIds, wantRecipients) {
+		t.Fatalf("RecipientPeerIds = %#v, want %#v", messages[0].RecipientPeerIds, wantRecipients)
+	}
+}
+
 func TestRedisRendezvousBackend_RefreshesTTLAndSharesAcrossClients(t *testing.T) {
 	server := miniredis.RunT(t)
 
@@ -367,7 +521,7 @@ func TestRedisGroupInboxBackend_PreservesRecipientPeerIdsAcrossClients(t *testin
 	backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "phase2:", 500, 7*24*time.Hour)
 	backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "phase2:", 500, 7*24*time.Hour)
 
-	if err := backendA.StoreWithRecipients(
+	if _, err := backendA.StoreWithRecipients(
 		"group-acl",
 		"peer-a",
 		"msg-acl",

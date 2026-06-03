@@ -1,12 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
@@ -14,15 +18,20 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_payload.d
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package_tombstone.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_pending_membership_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 
@@ -298,6 +307,201 @@ void main() {
     return {'from': senderPeerId, 'message': replayEnvelope};
   }
 
+  Future<Map<String, dynamic>> signedMetadataReplayInboxMessage({
+    required DateTime updatedAt,
+    required String name,
+    required String description,
+    required String messageId,
+    String? avatarBlobId,
+    String? avatarMime,
+  }) async {
+    final groupConfig = <String, dynamic>{
+      'name': name,
+      'groupType': 'chat',
+      'description': description,
+      'members': [
+        {
+          'peerId': '12D3KooWAlice',
+          'username': 'Alice',
+          'role': 'admin',
+          'publicKey': 'alicePubKey64',
+          'mlKemPublicKey': 'aliceMlKem64',
+        },
+        {
+          'peerId': '12D3KooWReceiver',
+          'username': 'Receiver',
+          'role': 'writer',
+          'publicKey': 'receiverPubKey64',
+          'mlKemPublicKey': 'receiverMlKem64',
+        },
+      ],
+      'createdBy': '12D3KooWAlice',
+      'createdAt': DateTime.utc(2026, 3, 2).toIso8601String(),
+      'metadataUpdatedAt': updatedAt.toUtc().toIso8601String(),
+      groupConfigVersionField: updatedAt.toUtc().toIso8601String(),
+    };
+    if (avatarBlobId != null) {
+      groupConfig['avatarBlobId'] = avatarBlobId;
+    }
+    if (avatarMime != null) {
+      groupConfig['avatarMime'] = avatarMime;
+    }
+    groupConfig[groupConfigStateHashField] = buildGroupConfigStateHash(
+      groupId: 'grp-abc123',
+      groupConfig: groupConfig,
+    );
+    final actorPayload = buildGroupMetadataActorEventPayload(
+      groupId: 'grp-abc123',
+      updatedAt: updatedAt,
+      actorPeerId: '12D3KooWAlice',
+      actorUsername: 'Alice',
+      actorPublicKey: 'alicePubKey64',
+      groupConfig: groupConfig,
+    );
+    final canonicalPayload = canonicalizeGroupMetadataActorEventPayload(
+      actorPayload,
+    );
+    final signResponse = await callSignPayload(
+      bridge: bridge,
+      dataToSign: canonicalPayload,
+      privateKey: 'alicePrivateKey64',
+    );
+    final sysText = jsonEncode({
+      '__sys': 'group_metadata_updated',
+      'updatedAt': updatedAt.toUtc().toIso8601String(),
+      'groupConfig': groupConfig,
+      groupMetadataActorEventEnvelopeField:
+          buildSignedGroupMetadataActorEventEnvelope(
+            signedPayload: canonicalPayload,
+            signature: signResponse['signature'] as String,
+          ),
+    });
+    return signedReplayInboxMessage(
+      payloadType: groupOfflineReplayPayloadTypeMessage,
+      messageId: messageId,
+      plaintextPayload: {
+        'groupId': 'grp-abc123',
+        'messageId': messageId,
+        'senderId': '12D3KooWAlice',
+        'senderUsername': 'Alice',
+        'keyEpoch': 1,
+        'text': sysText,
+        'timestamp': updatedAt.toUtc().toIso8601String(),
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> signedMetadataDirectMessage({
+    required DateTime updatedAt,
+    required String name,
+    required String description,
+    required String messageId,
+    String? avatarBlobId,
+    String? avatarMime,
+  }) async {
+    final relayMessage = await signedMetadataReplayInboxMessage(
+      updatedAt: updatedAt,
+      name: name,
+      description: description,
+      messageId: messageId,
+      avatarBlobId: avatarBlobId,
+      avatarMime: avatarMime,
+    );
+    final replayEnvelope =
+        jsonDecode(relayMessage['message'] as String) as Map<String, dynamic>;
+    return jsonDecode(replayEnvelope['ciphertext'] as String)
+        as Map<String, dynamic>;
+  }
+
+  Map<String, dynamic> metadataGroupConfig({
+    required String name,
+    required String description,
+    required DateTime metadataUpdatedAt,
+    String? avatarBlobId,
+    String? avatarMime,
+  }) {
+    final config = <String, dynamic>{
+      'name': name,
+      'groupType': 'chat',
+      'description': description,
+      'members': [
+        {
+          'peerId': '12D3KooWAlice',
+          'username': 'Alice',
+          'role': 'admin',
+          'publicKey': 'alicePubKey64',
+          'mlKemPublicKey': 'aliceMlKem64',
+        },
+        {
+          'peerId': '12D3KooWReceiver',
+          'username': 'Receiver',
+          'role': 'writer',
+          'publicKey': 'receiverPubKey64',
+          'mlKemPublicKey': 'receiverMlKem64',
+        },
+      ],
+      'createdBy': '12D3KooWAlice',
+      'createdAt': DateTime.utc(2026, 3, 2).toIso8601String(),
+      'metadataUpdatedAt': metadataUpdatedAt.toUtc().toIso8601String(),
+      groupConfigVersionField: metadataUpdatedAt.toUtc().toIso8601String(),
+    };
+    if (avatarBlobId != null) {
+      config['avatarBlobId'] = avatarBlobId;
+    }
+    if (avatarMime != null) {
+      config['avatarMime'] = avatarMime;
+    }
+    config[groupConfigStateHashField] = buildGroupConfigStateHash(
+      groupId: 'grp-abc123',
+      groupConfig: config,
+    );
+    return config;
+  }
+
+  Future<void> saveCompatibleMaterializedInviteGroup({
+    required String name,
+    required String description,
+    required DateTime metadataUpdatedAt,
+    String? avatarBlobId,
+    String? avatarMime,
+  }) async {
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: 'grp-abc123',
+        name: name,
+        type: GroupType.chat,
+        topicName: '/mknoon/group/grp-abc123',
+        description: description,
+        avatarBlobId: avatarBlobId,
+        avatarMime: avatarMime,
+        createdAt: DateTime.utc(2026, 3, 2),
+        createdBy: '12D3KooWAlice',
+        myRole: GroupRole.member,
+        lastMetadataEventAt: metadataUpdatedAt,
+        lastMembershipEventAt: metadataUpdatedAt,
+      ),
+    );
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: 'grp-abc123',
+        keyGeneration: 1,
+        encryptedKey: 'base64-key',
+        createdAt: metadataUpdatedAt,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'grp-abc123',
+        peerId: '12D3KooWReceiver',
+        username: 'Receiver',
+        role: MemberRole.writer,
+        publicKey: 'receiverPubKey64',
+        mlKemPublicKey: 'receiverMlKem64',
+        joinedAt: metadataUpdatedAt,
+      ),
+    );
+  }
+
   setUp(() {
     pendingInviteRepo = InMemoryPendingGroupInviteRepository();
     groupRepo = InMemoryGroupRepository();
@@ -449,6 +653,7 @@ void main() {
           msgRepo: msgRepo,
           bridge: bridge,
           groupId: 'grp-abc123',
+          drainAcceptedInboxAllPages: false,
         );
 
         expect(result, AcceptPendingGroupInviteResult.success);
@@ -482,6 +687,7 @@ void main() {
           msgRepo: msgRepo,
           bridge: bridge,
           groupId: 'grp-abc123',
+          drainAcceptedInboxAllPages: false,
         );
 
         expect(result, AcceptPendingGroupInviteResult.success);
@@ -500,7 +706,7 @@ void main() {
     );
 
     test(
-      'GCA-004 inbox bridgeError keeps pending invite retryable until drain succeeds',
+      'GCA-004 inbox bridgeError keeps incomplete materialization pending',
       () async {
         await pendingInviteRepo.savePendingInvite(makeInvite());
         bridge.responses['group:inboxRetrieveCursor'] = {
@@ -516,18 +722,30 @@ void main() {
           msgRepo: msgRepo,
           bridge: bridge,
           groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
         );
 
         expect(result, AcceptPendingGroupInviteResult.bridgeError);
-        expect(group, isNotNull);
-        expect(group!.id, 'grp-abc123');
+        expect(group, isNull);
         expect(
           await pendingInviteRepo.getPendingInvite('grp-abc123'),
           isNotNull,
         );
         expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
-        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
-        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(msgRepo.count, 0);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+          isEmpty,
+        );
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:join'),
           hasLength(1),
@@ -536,12 +754,6 @@ void main() {
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
           hasLength(1),
         );
-
-        bridge.responses['group:inboxRetrieveCursor'] = {
-          'ok': true,
-          'messages': const [],
-          'cursor': '',
-        };
 
         final (retryResult, retryGroup) = await acceptPendingGroupInvite(
           pendingInviteRepo: pendingInviteRepo,
@@ -550,15 +762,27 @@ void main() {
           msgRepo: msgRepo,
           bridge: bridge,
           groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
         );
 
-        expect(retryResult, AcceptPendingGroupInviteResult.success);
-        expect(retryGroup, isNotNull);
-        expect(retryGroup!.id, 'grp-abc123');
-        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(retryResult, AcceptPendingGroupInviteResult.bridgeError);
+        expect(retryGroup, isNull);
         expect(
-          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
           isNotNull,
+        );
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+        expect(msgRepo.count, 0);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+          isEmpty,
         );
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:join'),
@@ -568,6 +792,827 @@ void main() {
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
           hasLength(2),
         );
+      },
+    );
+
+    test(
+      'GCA-103 join bridgeError drains accepted inbox before returning stale metadata',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final staleMetadataAt = inviteReceivedAt.subtract(
+          const Duration(minutes: 1),
+        );
+        final latestMetadataAt = inviteReceivedAt.add(
+          const Duration(minutes: 5),
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            receivedAt: inviteReceivedAt,
+            groupConfig: metadataGroupConfig(
+              name: 'test 2',
+              description: '222',
+              metadataUpdatedAt: staleMetadataAt,
+              avatarBlobId: 'stale-avatar',
+              avatarMime: 'image/png',
+            ),
+          ),
+        );
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return '/tmp/$blobId.png';
+              },
+        );
+        addTearDown(listener.dispose);
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+        final latestMetadataReplay = await signedMetadataReplayInboxMessage(
+          updatedAt: latestMetadataAt,
+          name: 'test 3',
+          description: '333',
+          avatarBlobId: 'latest-avatar',
+          avatarMime: 'image/png',
+          messageId: 'gca103-join-bridge-error-latest-metadata',
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': [
+            {
+              ...latestMetadataReplay,
+              'timestamp': latestMetadataAt.millisecondsSinceEpoch,
+            },
+          ],
+          'cursor': '',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return null;
+              },
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(group.description, '333');
+        expect(group.avatarBlobId, 'latest-avatar');
+        expect(group.avatarMime, 'image/png');
+        expect(group.avatarPath, '/tmp/latest-avatar.png');
+        expect(group.lastMetadataEventAt, latestMetadataAt);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+
+        final (retryResult, retryGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+        );
+        expect(retryResult, AcceptPendingGroupInviteResult.notFound);
+        expect(retryGroup, isNull);
+      },
+    );
+
+    test(
+      'GCA-103 transient accepted inbox failure retries before returning stale metadata',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final staleMetadataAt = inviteReceivedAt.subtract(
+          const Duration(minutes: 1),
+        );
+        final latestMetadataAt = inviteReceivedAt.add(
+          const Duration(minutes: 5),
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            receivedAt: inviteReceivedAt,
+            groupConfig: metadataGroupConfig(
+              name: 'test 2',
+              description: '222',
+              metadataUpdatedAt: staleMetadataAt,
+              avatarBlobId: 'stale-avatar',
+              avatarMime: 'image/png',
+            ),
+          ),
+        );
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return '/tmp/$blobId.png';
+              },
+        );
+        addTearDown(listener.dispose);
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+        bridge.responseSequences['group:inboxRetrieveCursor'] = [
+          {
+            'ok': false,
+            'errorCode': 'RELAY_UNAVAILABLE',
+            'errorMessage': 'relay unavailable',
+          },
+          {
+            'ok': true,
+            'messages': [
+              await signedMetadataReplayInboxMessage(
+                updatedAt: latestMetadataAt,
+                name: 'test 3',
+                description: '333',
+                avatarBlobId: 'latest-avatar',
+                avatarMime: 'image/png',
+                messageId: 'gca103-transient-latest-metadata',
+              ),
+            ],
+            'cursor': '',
+          },
+        ];
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return null;
+              },
+          acceptedInboxDrainMaxAttempts: 2,
+          acceptedInboxDrainRetryDelay: Duration.zero,
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(group.description, '333');
+        expect(group.avatarBlobId, 'latest-avatar');
+        expect(group.avatarMime, 'image/png');
+        expect(group.avatarPath, '/tmp/latest-avatar.png');
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(2),
+        );
+      },
+    );
+
+    test(
+      'GCA-103 post-invite relay metadata with timestamp is applied before accept commits',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final inviteIssuedAt = inviteReceivedAt
+            .subtract(const Duration(hours: 6))
+            .add(const Duration(minutes: 5));
+        final latestMetadataAt = inviteIssuedAt.add(const Duration(minutes: 5));
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            receivedAt: inviteReceivedAt,
+            groupConfig: metadataGroupConfig(
+              name: 'test 2',
+              description: '222',
+              metadataUpdatedAt: inviteIssuedAt,
+              avatarBlobId: 'stale-avatar',
+              avatarMime: 'image/png',
+            ),
+          ),
+        );
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return '/tmp/$blobId.png';
+              },
+        );
+        addTearDown(listener.dispose);
+        final latestMetadataReplay = await signedMetadataReplayInboxMessage(
+          updatedAt: latestMetadataAt,
+          name: 'test 3',
+          description: '333',
+          avatarBlobId: 'latest-avatar',
+          avatarMime: 'image/png',
+          messageId: 'gca103-post-invite-relay-metadata',
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': [
+            {
+              ...latestMetadataReplay,
+              'timestamp': latestMetadataAt.millisecondsSinceEpoch,
+            },
+          ],
+          'cursor': '',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return null;
+              },
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(group.description, '333');
+        expect(group.avatarBlobId, 'latest-avatar');
+        expect(group.avatarMime, 'image/png');
+        expect(group.avatarPath, '/tmp/latest-avatar.png');
+        expect(group.lastMetadataEventAt, latestMetadataAt);
+        final acceptedSelf = await groupRepo.getMember(
+          'grp-abc123',
+          '12D3KooWReceiver',
+        );
+        expect(acceptedSelf, isNotNull);
+        expect(acceptedSelf!.joinedAt, inviteIssuedAt);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'GCA-103 pre-accept direct metadata buffer prevents stale accepted group when relay drain fails',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final staleMetadataAt = inviteReceivedAt.subtract(
+          const Duration(minutes: 1),
+        );
+        final latestMetadataAt = inviteReceivedAt.add(
+          const Duration(minutes: 5),
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            receivedAt: inviteReceivedAt,
+            membershipWatermark: staleMetadataAt.toIso8601String(),
+            groupConfig: metadataGroupConfig(
+              name: 'test 2',
+              description: '222',
+              metadataUpdatedAt: staleMetadataAt,
+              avatarBlobId: 'stale-avatar',
+              avatarMime: 'image/png',
+            ),
+          ),
+        );
+        final pendingMembershipRepo =
+            InMemoryGroupPendingMembershipMessageRepository();
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          pendingMembershipMessageRepo: pendingMembershipRepo,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return '/tmp/$blobId.png';
+              },
+        );
+        addTearDown(listener.dispose);
+
+        await listener.handleReplayEnvelope(
+          await signedMetadataDirectMessage(
+            updatedAt: latestMetadataAt,
+            name: 'test 3',
+            description: '333',
+            avatarBlobId: 'latest-avatar',
+            avatarMime: 'image/png',
+            messageId: 'gca103-preaccept-direct-latest-metadata',
+          ),
+          allowMembershipBuffer: true,
+        );
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(pendingMembershipRepo.messages, hasLength(1));
+
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return null;
+              },
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(group.description, '333');
+        expect(group.avatarBlobId, 'latest-avatar');
+        expect(group.avatarMime, 'image/png');
+        expect(group.avatarPath, '/tmp/latest-avatar.png');
+        expect(group.lastMetadataEventAt, latestMetadataAt);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(pendingMembershipRepo.messages, isEmpty);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'GCA-103 deferred direct metadata replay refreshes stale invite accept when relay drain fails',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final staleMetadataAt = inviteReceivedAt.subtract(
+          const Duration(minutes: 1),
+        );
+        final latestMetadataAt = inviteReceivedAt.add(
+          const Duration(minutes: 5),
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            receivedAt: inviteReceivedAt,
+            membershipWatermark: staleMetadataAt.toIso8601String(),
+            groupConfig: metadataGroupConfig(
+              name: 'test 2',
+              description: '222',
+              metadataUpdatedAt: staleMetadataAt,
+              avatarBlobId: 'stale-avatar',
+              avatarMime: 'image/png',
+            ),
+          ),
+        );
+
+        final pendingRepairRepo = _InMemoryGroupPendingKeyRepairRepository();
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          pendingKeyRepairRepo: pendingRepairRepo,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return '/tmp/$blobId.png';
+              },
+        );
+        addTearDown(listener.dispose);
+        final directController = StreamController<ChatMessage>.broadcast();
+        final membershipListener = GroupMembershipUpdateListener(
+          groupMembershipUpdateStream: directController.stream,
+          groupRepo: groupRepo,
+          bridge: bridge,
+          groupMessageListener: listener,
+          msgRepo: msgRepo,
+          pendingKeyRepairRepo: pendingRepairRepo,
+        );
+        membershipListener.start();
+        addTearDown(() async {
+          membershipListener.dispose();
+          await directController.close();
+        });
+
+        final directMessageId = 'gca103-deferred-direct-latest-metadata';
+        final relayMessage = await signedMetadataReplayInboxMessage(
+          updatedAt: latestMetadataAt,
+          name: 'test 3',
+          description: '333',
+          avatarBlobId: 'latest-avatar',
+          avatarMime: 'image/png',
+          messageId: directMessageId,
+        );
+        directController.add(
+          ChatMessage(
+            from: '12D3KooWAlice',
+            to: '12D3KooWReceiver',
+            content: buildGroupMembershipUpdateDirectEnvelope(
+              groupId: 'grp-abc123',
+              senderPeerId: '12D3KooWAlice',
+              replayEnvelope: relayMessage['message'] as String,
+              timestamp: latestMetadataAt,
+              messageId: directMessageId,
+            ),
+            timestamp: latestMetadataAt.toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        await pumpEventQueue(times: 10);
+
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(pendingRepairRepo.repairs.values, hasLength(1));
+        expect(pendingRepairRepo.repairs.values.single.lastError, isNull);
+        expect(
+          (await msgRepo.getMessage(directMessageId))?.status,
+          groupPendingKeyRepairStatusPendingKey,
+        );
+
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+          downloadGroupAvatarFn:
+              ({required bridge, required groupId, required blobId}) async {
+                return null;
+              },
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(group!.name, 'test 3');
+        expect(group.description, '333');
+        expect(group.avatarBlobId, 'latest-avatar');
+        expect(group.avatarMime, 'image/png');
+        expect(group.avatarPath, '/tmp/latest-avatar.png');
+        expect(group.lastMetadataEventAt, latestMetadataAt);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await msgRepo.getMessage(directMessageId), isNull);
+        expect(
+          pendingRepairRepo.repairs.values.single.status,
+          groupPendingKeyRepairStatusRepaired,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'GCA-103 failed first drain keeps stale materialization out of All until retry catches up',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final metadataAt = inviteReceivedAt.add(const Duration(minutes: 5));
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: inviteReceivedAt),
+        );
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+        );
+        addTearDown(listener.dispose);
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, acceptedGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.bridgeError);
+        expect(acceptedGroup, isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': [
+            await signedMetadataReplayInboxMessage(
+              updatedAt: metadataAt,
+              name: 'test 3',
+              description: '333',
+              messageId: 'gca103-metadata-late',
+            ),
+          ],
+          'cursor': '',
+        };
+
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+
+        final (retryResult, retryGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+        );
+        expect(retryResult, AcceptPendingGroupInviteResult.success);
+        expect(retryGroup, isNotNull);
+        expect(retryGroup!.name, 'test 3');
+        expect(retryGroup.description, '333');
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
+      },
+    );
+
+    test(
+      'GCA-103 duplicate retry with inbox failure rolls back stale materialization',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final staleMetadataAt = inviteReceivedAt.subtract(
+          const Duration(minutes: 1),
+        );
+        final staleConfig = metadataGroupConfig(
+          name: 'test 2',
+          description: '222',
+          metadataUpdatedAt: staleMetadataAt,
+          avatarBlobId: 'stale-avatar',
+          avatarMime: 'image/png',
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(groupConfig: staleConfig, receivedAt: inviteReceivedAt),
+        );
+        await saveCompatibleMaterializedInviteGroup(
+          name: 'test 2',
+          description: '222',
+          metadataUpdatedAt: staleMetadataAt,
+          avatarBlobId: 'stale-avatar',
+          avatarMime: 'image/png',
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.bridgeError);
+        expect(group, isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+      },
+    );
+
+    test(
+      'GCA-103 duplicate retry join bridgeError keeps stale materialization pending',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final staleMetadataAt = inviteReceivedAt.subtract(
+          const Duration(minutes: 1),
+        );
+        final staleConfig = metadataGroupConfig(
+          name: 'test 2',
+          description: '222',
+          metadataUpdatedAt: staleMetadataAt,
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(groupConfig: staleConfig, receivedAt: inviteReceivedAt),
+        );
+        await saveCompatibleMaterializedInviteGroup(
+          name: 'test 2',
+          description: '222',
+          metadataUpdatedAt: staleMetadataAt,
+        );
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+          'errorMessage': 'join failed',
+        };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.bridgeError);
+        expect(group, isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+      },
+    );
+
+    test(
+      'GCA-103 equal timestamp metadata replay repairs stale invite snapshot',
+      () async {
+        final inviteReceivedAt = DateTime.now().toUtc();
+        final metadataAt = inviteReceivedAt.add(const Duration(minutes: 5));
+        final staleSnapshot = <String, dynamic>{
+          'name': 'test 2',
+          'groupType': 'chat',
+          'description': '222',
+          'members': [
+            {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+            },
+            {
+              'peerId': '12D3KooWReceiver',
+              'username': 'Receiver',
+              'role': 'writer',
+              'publicKey': 'receiverPubKey64',
+              'mlKemPublicKey': 'receiverMlKem64',
+            },
+          ],
+          'createdBy': '12D3KooWAlice',
+          'createdAt': inviteReceivedAt
+              .subtract(const Duration(hours: 6))
+              .toIso8601String(),
+          'metadataUpdatedAt': metadataAt.toIso8601String(),
+          groupConfigVersionField: metadataAt.toIso8601String(),
+        };
+        staleSnapshot[groupConfigStateHashField] = buildGroupConfigStateHash(
+          groupId: 'grp-abc123',
+          groupConfig: staleSnapshot,
+        );
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+        );
+        addTearDown(listener.dispose);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(groupConfig: staleSnapshot, receivedAt: inviteReceivedAt),
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': const [],
+          'cursor': '',
+        };
+
+        final (result, acceptedGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(acceptedGroup, isNotNull);
+        expect(acceptedGroup!.name, 'test 2');
+        expect(acceptedGroup.description, '222');
+        expect(acceptedGroup.lastMetadataEventAt, metadataAt);
+
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': [
+            await signedMetadataReplayInboxMessage(
+              updatedAt: metadataAt,
+              name: 'test 3',
+              description: '333',
+              messageId: 'gca103-metadata-equal',
+            ),
+          ],
+          'cursor': '',
+        };
+
+        await drainGroupOfflineInboxForGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          selfPeerId: '12D3KooWReceiver',
+        );
+
+        final caughtUpGroup = await groupRepo.getGroup('grp-abc123');
+        expect(caughtUpGroup, isNotNull);
+        expect(caughtUpGroup!.name, 'test 3');
+        expect(caughtUpGroup.description, '333');
+        expect(caughtUpGroup.lastMetadataEventAt, metadataAt);
+        expect(await msgRepo.getInboxCursor('grp-abc123'), isNotNull);
       },
     );
 
@@ -893,7 +1938,7 @@ void main() {
     );
 
     test(
-      'GCA-004 join bridgeError keeps welcome package retryable until retry succeeds',
+      'GCA-004 join bridgeError with inbox failure keeps welcome package retryable',
       () async {
         await pendingInviteRepo.savePendingInvite(
           signedInvite(
@@ -915,6 +1960,11 @@ void main() {
           'ok': false,
           'errorCode': 'PUBLISH_FAILED',
         };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
 
         final (result, group) = await acceptPendingGroupInvite(
           pendingInviteRepo: pendingInviteRepo,
@@ -935,41 +1985,33 @@ void main() {
         );
 
         expect(result, AcceptPendingGroupInviteResult.bridgeError);
-        expect(group, isNotNull);
-        expect(group!.id, 'grp-abc123');
+        expect(group, isNull);
         expect(
           await pendingInviteRepo.getPendingInvite('grp-abc123'),
           isNotNull,
         );
         expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
-        expect(
-          await pendingInviteRepo.getWelcomeKeyPackageTombstone(
-            packageId: 'receiver-kp-1',
-            recipientDeviceId: 'receiver-device-1',
-            groupId: 'grp-abc123',
-          ),
-          isNull,
+        final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
+          packageId: 'receiver-kp-1',
+          recipientDeviceId: 'receiver-device-1',
+          groupId: 'grp-abc123',
         );
-        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
-        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
-        expect(msgRepo.count, 1);
-        expect(bridge.commandLog, contains('group:publish'));
-        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(tombstone, isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(msgRepo.count, 0);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+          isEmpty,
+        );
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:join'),
           hasLength(1),
         );
-
-        final latestMessage = await msgRepo.getLatestMessage('grp-abc123');
-        expect(latestMessage, isNotNull);
-        expect(latestMessage!.text, 'Receiver joined the group');
-
-        bridge.responses['group:join'] = {'ok': true};
-        bridge.responses['group:inboxRetrieveCursor'] = {
-          'ok': true,
-          'messages': const [],
-          'cursor': '',
-        };
 
         final (retryResult, retryGroup) = await acceptPendingGroupInvite(
           pendingInviteRepo: pendingInviteRepo,
@@ -989,30 +2031,30 @@ void main() {
           ownKeyPackagePublicMaterial: 'receiver-kpm-1',
         );
 
-        expect(retryResult, AcceptPendingGroupInviteResult.success);
-        expect(retryGroup, isNotNull);
-        expect(retryGroup!.id, 'grp-abc123');
-        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(retryResult, AcceptPendingGroupInviteResult.bridgeError);
+        expect(retryGroup, isNull);
         expect(
-          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
           isNotNull,
         );
-        final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
-          packageId: 'receiver-kp-1',
-          recipientDeviceId: 'receiver-device-1',
-          groupId: 'grp-abc123',
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+        expect(msgRepo.count, 0);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          isEmpty,
         );
-        expect(tombstone, isNotNull);
-        expect(tombstone!.inviteId, 'invite-1');
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+          isEmpty,
+        );
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:join'),
           hasLength(2),
         );
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
-          hasLength(1),
+          hasLength(2),
         );
-        expect(msgRepo.count, 1);
       },
     );
 
@@ -2622,4 +3664,85 @@ void main() {
       },
     );
   });
+}
+
+class _InMemoryGroupPendingKeyRepairRepository
+    implements GroupPendingKeyRepairRepository {
+  final Map<String, GroupPendingKeyRepair> repairs = {};
+
+  @override
+  Future<GroupPendingKeyRepairUpsertResult> upsertPendingRepair(
+    GroupPendingKeyRepair repair,
+  ) async {
+    final existing = repairs[repair.id];
+    if (existing == null) {
+      repairs[repair.id] = repair;
+      return GroupPendingKeyRepairUpsertResult(repair: repair, created: true);
+    }
+    final merged = existing.copyWith(
+      updatedAt: repair.updatedAt,
+      replayEnvelopeJson: repair.replayEnvelopeJson,
+      lastError: repair.lastError,
+    );
+    repairs[repair.id] = merged;
+    return GroupPendingKeyRepairUpsertResult(repair: merged, created: false);
+  }
+
+  @override
+  Future<GroupPendingKeyRepair?> getRepair(String id) async => repairs[id];
+
+  @override
+  Future<List<GroupPendingKeyRepair>> getPendingRepairsForGroupEpoch({
+    required String groupId,
+    required int keyEpoch,
+    int limit = 50,
+  }) async {
+    return repairs.values
+        .where(
+          (repair) =>
+              repair.groupId == groupId &&
+              repair.keyEpoch == keyEpoch &&
+              repair.status == groupPendingKeyRepairStatusPendingKey,
+        )
+        .take(limit)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> recordAttempt(String id, {required String? lastError}) async {
+    final existing = repairs[id];
+    if (existing == null) return;
+    repairs[id] = existing.copyWith(
+      attempts: existing.attempts + 1,
+      lastError: lastError,
+      updatedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  @override
+  Future<void> finalizeRepaired(String id) async {
+    final existing = repairs[id];
+    if (existing == null) return;
+    repairs[id] = existing.copyWith(
+      status: groupPendingKeyRepairStatusRepaired,
+      lastError: null,
+      finalizedAt: DateTime.now().toUtc(),
+      updatedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  @override
+  Future<void> finalizeUndecryptable(
+    String id, {
+    required String lastError,
+  }) async {
+    final existing = repairs[id];
+    if (existing == null) return;
+    repairs[id] = existing.copyWith(
+      status: groupPendingKeyRepairStatusUndecryptable,
+      lastError: lastError,
+      finalizedAt: DateTime.now().toUtc(),
+      updatedAt: DateTime.now().toUtc(),
+    );
+  }
 }

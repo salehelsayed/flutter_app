@@ -34,6 +34,7 @@ class GoBridgeClient extends Bridge {
   static const _rawFlowPassthroughEvents = <String>{
     'node:startup_timing',
     'relay:warm_timing',
+    'relay:reservation_timing',
     'circuit_address:timing',
     'inbox:store_timing',
     'inbox:retrieve_timing',
@@ -651,6 +652,7 @@ class GoBridgeClient extends Bridge {
 
         case 'node:startup_timing':
         case 'relay:warm_timing':
+        case 'relay:reservation_timing':
         case 'circuit_address:timing':
         case 'inbox:store_timing':
         case 'inbox:retrieve_timing':

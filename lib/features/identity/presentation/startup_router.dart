@@ -156,6 +156,9 @@ class StartupRouter extends StatefulWidget {
   /// The group invite listener for incoming group invites.
   final GroupInviteListener? groupInviteListener;
 
+  /// Waits until direct group membership-update replay work is idle.
+  final Future<void> Function()? waitForGroupMembershipUpdateIdle;
+
   /// Tracks which group conversation is currently open (for notification suppression).
   final ActiveConversationTracker? groupConversationTracker;
 
@@ -211,6 +214,7 @@ class StartupRouter extends StatefulWidget {
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
+    this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
     this.introductionRepository,
     this.introductionListener,
@@ -309,6 +313,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 widget.groupReactionReplayOutboxRepository,
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
+            waitForGroupMembershipUpdateIdle:
+                widget.waitForGroupMembershipUpdateIdle,
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
             introductionListener: widget.introductionListener,

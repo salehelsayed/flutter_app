@@ -110,6 +110,8 @@ class GroupInviteListener {
     _subscription = null;
   }
 
+  Future<void> waitForIdle() => _messageProcessing;
+
   /// Disposes of the listener and closes streams.
   void dispose() {
     stop();

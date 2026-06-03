@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   final chatGroup = GroupModel(
@@ -48,6 +49,9 @@ void main() {
     required Map<String, GroupMessage?> latestMessages,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: GroupListScreen(
         groups: groups,
         latestMessages: latestMessages,

@@ -10,7 +10,8 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 /// In-memory [P2PService] for tests.
 ///
 /// Configurable return values, tracks call counts and last arguments.
-class FakeP2PService implements P2PService, ReadinessProofRecorder {
+class FakeP2PService
+    implements P2PService, ReadinessProofRecorder, P2PFullInboxDrain {
   NodeState _currentState;
   final _stateController = StreamController<NodeState>.broadcast();
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -28,6 +29,7 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
   bool throwOnHealthCheck;
   bool throwOnDrainInbox;
   String? recoveryMethod;
+  Future<void> Function()? onDrainOfflineInbox;
 
   /// Ordered log of all sendMessage calls for multi-send assertions.
   final List<({String peerId, String content})> sentMessageLog = [];
@@ -43,6 +45,7 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
   int retrieveInboxCallCount = 0;
   int performImmediateHealthCheckCallCount = 0;
   int drainOfflineInboxCallCount = 0;
+  int drainOfflineInboxFullyCallCount = 0;
   int markResumeStartedCallCount = 0;
   int clearResumeStartedCallCount = 0;
   int noteTransportSessionResetCallCount = 0;
@@ -76,6 +79,7 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
     this.throwOnHealthCheck = false,
     this.throwOnDrainInbox = false,
     this.recoveryMethod,
+    this.onDrainOfflineInbox,
   }) : _currentState = initialState ?? NodeState.stopped,
        sendMessageWithReplyResult =
            sendMessageWithReplyResult ??
@@ -199,6 +203,13 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
     if (throwOnDrainInbox) {
       throw Exception('FakeP2PService: drain inbox error');
     }
+    await onDrainOfflineInbox?.call();
+  }
+
+  @override
+  Future<void> drainOfflineInboxFully() async {
+    drainOfflineInboxFullyCallCount++;
+    await drainOfflineInbox();
   }
 
   @override
@@ -215,8 +226,7 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   // NET-REL-05 P3 (sticky transport): configurable learned-transport memory.
   String? lastKnownGoodTransportResult;

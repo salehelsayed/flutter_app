@@ -44,6 +44,26 @@ const _validContentHash =
 const _bytes123ContentHash =
     '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81';
 
+List<Map<String, dynamic>> _gird003ListenerMedia({
+  required String id,
+  required String createdAt,
+}) {
+  return [
+    {
+      'id': id,
+      'mime': 'image/png',
+      'size': 4096,
+      'mediaType': 'image',
+      'downloadStatus': 'pending',
+      'contentHash': _validContentHash,
+      'encryptionKeyBase64': 'gird003-key-fixture',
+      'encryptionNonce': 'gird003-nonce-fixture',
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+      'createdAt': createdAt,
+    },
+  ];
+}
+
 class SequencedUpdateConfigBridge extends FakeBridge {
   SequencedUpdateConfigBridge(this._behaviors);
 
@@ -10917,6 +10937,86 @@ void main() {
     );
 
     test(
+      'GIRD-003 reminted group image retry emits and notifies once',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        const originalMessageId = 'gird003-listener-original';
+        const remintedMessageId = 'gird003-listener-reminted';
+        final sentAt = DateTime.utc(2026, 5, 31, 13, 25);
+        final media = _gird003ListenerMedia(
+          id: 'blob-gird003-listener-shared',
+          createdAt: sentAt.toIso8601String(),
+        );
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        final emitted = <GroupMessage>[];
+        final sub = notifListener.groupMessageStream.listen(emitted.add);
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 3,
+          'messageId': originalMessageId,
+          'text': '',
+          'timestamp': sentAt.toIso8601String(),
+          'quotedMessageId': 'gird003-listener-parent',
+          'media': media,
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 3,
+          'messageId': remintedMessageId,
+          'text': '',
+          'timestamp': sentAt.toIso8601String(),
+          'quotedMessageId': 'gird003-listener-parent',
+          'media': media,
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(emitted, hasLength(1));
+        expect(emitted.single.id, originalMessageId);
+        await expectNotificationCount(notifService, 1);
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+        expect(msgRepo.count, 1);
+        expect(await msgRepo.getMessage(originalMessageId), isNotNull);
+        expect(await msgRepo.getMessage(remintedMessageId), isNull);
+
+        final originalAttachments = await mediaRepo.getAttachmentsForMessage(
+          originalMessageId,
+        );
+        final duplicateAttachments = await mediaRepo.getAttachmentsForMessage(
+          remintedMessageId,
+        );
+        expect(originalAttachments, hasLength(1));
+        expect(originalAttachments.single.id, 'blob-gird003-listener-shared');
+        expect(originalAttachments.single.messageId, originalMessageId);
+        expect(duplicateAttachments, isEmpty);
+        expect(notifService.shown.single.payload, contains(originalMessageId));
+
+        await sub.cancel();
+        notifListener.dispose();
+      },
+    );
+
+    test(
       'GP-025 LP013 duplicate PubSub delivery preserves first row and notification state',
       () async {
         final notifService = FakeNotificationService();
@@ -11080,6 +11180,96 @@ void main() {
 
         expect(notifService.shown, isEmpty);
         expect(msgRepo.count, 1);
+
+        notifListener.dispose();
+      },
+    );
+
+    test(
+      'GIRD-006 local group replay suppresses same remote-announced id but not a distinct id',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/gird006-group-listener-exact-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        addTearDown(gate.clear);
+        await gate.markAnnouncement(
+          payload: 'group:group-1|message:gird006-announced',
+          messageId: 'gird006-announced',
+        );
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          remoteNotificationGate: gate,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': '',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'gird006-announced',
+          'media': [
+            {
+              'id': 'gird006-media-announced',
+              'mime': 'image/jpeg',
+              'size': 1024,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'gird006-key-announced',
+              'encryptionNonce': 'gird006-nonce-announced',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          ],
+        });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': '',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'gird006-distinct',
+          'media': [
+            {
+              'id': 'gird006-media-distinct',
+              'mime': 'image/jpeg',
+              'size': 1024,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'gird006-key-distinct',
+              'encryptionNonce': 'gird006-nonce-distinct',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          ],
+        });
+
+        await expectNotificationCount(notifService, 1);
+
+        expect(msgRepo.count, 2);
+        expect(
+          notifService.shown.single.payload,
+          'group:group-1|message:gird006-distinct',
+        );
+        expect(notifService.shown.single.messageText, 'Sender: Photo');
 
         notifListener.dispose();
       },

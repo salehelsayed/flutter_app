@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/swipe_action_buttons.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
-  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
 
   group('BlockActionButton', () {
     testWidgets('renders block icon and "Block" text', (tester) async {
@@ -14,7 +20,9 @@ void main() {
 
     testWidgets('calls onTap when tapped', (tester) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(BlockActionButton(onTap: () => tapped = true)));
+      await tester.pumpWidget(
+        wrap(BlockActionButton(onTap: () => tapped = true)),
+      );
       await tester.tap(find.byType(BlockActionButton));
       expect(tapped, isTrue);
     });
@@ -29,7 +37,9 @@ void main() {
 
     testWidgets('calls onTap when tapped', (tester) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(UnblockActionButton(onTap: () => tapped = true)));
+      await tester.pumpWidget(
+        wrap(UnblockActionButton(onTap: () => tapped = true)),
+      );
       await tester.tap(find.byType(UnblockActionButton));
       expect(tapped, isTrue);
     });
@@ -44,7 +54,9 @@ void main() {
 
     testWidgets('calls onTap when tapped', (tester) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(DeleteActionButton(onTap: () => tapped = true)));
+      await tester.pumpWidget(
+        wrap(DeleteActionButton(onTap: () => tapped = true)),
+      );
       await tester.tap(find.byType(DeleteActionButton));
       expect(tapped, isTrue);
     });
@@ -59,7 +71,9 @@ void main() {
 
     testWidgets('calls onTap when tapped', (tester) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(ArchiveActionButton(onTap: () => tapped = true)));
+      await tester.pumpWidget(
+        wrap(ArchiveActionButton(onTap: () => tapped = true)),
+      );
       await tester.tap(find.byType(ArchiveActionButton));
       expect(tapped, isTrue);
     });
@@ -74,7 +88,9 @@ void main() {
 
     testWidgets('calls onTap when tapped', (tester) async {
       var tapped = false;
-      await tester.pumpWidget(wrap(UnarchiveActionButton(onTap: () => tapped = true)));
+      await tester.pumpWidget(
+        wrap(UnarchiveActionButton(onTap: () => tapped = true)),
+      );
       await tester.tap(find.byType(UnarchiveActionButton));
       expect(tapped, isTrue);
     });

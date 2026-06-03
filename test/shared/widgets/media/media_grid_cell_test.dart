@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/media/video_thumbnail_overlay.dart';
@@ -64,7 +65,7 @@ MediaAttachment _attachment({
   required String mime,
   required String mediaType,
   required String downloadStatus,
-  required String localPath,
+  required String? localPath,
   int size = 1024,
   String? contentHash,
   bool withEncryption = false,
@@ -104,7 +105,12 @@ void main() {
     }
   });
 
-  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+  Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(body: child),
+  );
 
   testWidgets(
     'renders GIF attachment through MediaThumbnailImage and shows badge',
@@ -356,6 +362,46 @@ void main() {
     await tester.tap(find.byType(MediaGridCell));
     expect(tapped, isTrue);
   });
+
+  testWidgets(
+    'GIRD-005 verified done image without local path shows loading instead of unavailable',
+    (tester) async {
+      var tapped = false;
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 120,
+            height: 120,
+            child: MediaGridCell(
+              requireVerifiedContentHash: true,
+              onTap: () => tapped = true,
+              onRetryUnavailableMedia: () {},
+              attachment: _attachment(
+                id: 'verified-no-path',
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: kMediaDownloadStatusDone,
+                localPath: null,
+                contentHash: _validContentHash,
+                withEncryption: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Media unavailable'), findsNothing);
+      expect(find.byType(MediaThumbnailImage), findsNothing);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+      expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+
+      await tester.tap(find.byType(MediaGridCell));
+      expect(tapped, isFalse);
+    },
+  );
 
   testWidgets(
     'MD-012 integrity-failed image and video cells render unavailable UI and do not build MediaThumbnailImage',

@@ -121,6 +121,10 @@ classify_path() {
       record "ignored" "$path" "ignored" "posts simulator/fake smoke outside 1:1/group/intro reliability"
       return
       ;;
+    integration_test/scripts/run_transport_census_cli.dart)
+      record "ignored" "$path" "ignored" "manual NET-REL-04 1:1 transport census harvest outside default reliability-sim gates"
+      return
+      ;;
     integration_test/scripts/run_benchmark_suite.dart|\
     integration_test/scripts/run_group_publish_benchmark.dart|\
     integration_test/scripts/run_timeout_accuracy_benchmark.dart|\
@@ -128,6 +132,10 @@ classify_path() {
     integration_test/*_performance_test.dart|\
     integration_test/*_performance_harness.dart)
       record "ignored" "$path" "ignored" "benchmark/performance coverage outside reliability simulation discovery"
+      return
+      ;;
+    integration_test/transport_census_harness.dart)
+      record "support" "$path" "support" "NET-REL-04 transport census role harness launched by census orchestrators"
       return
       ;;
   esac

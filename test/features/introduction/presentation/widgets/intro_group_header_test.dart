@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   Widget wrap(Widget child) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(body: child),
     );
   }
@@ -33,8 +37,9 @@ void main() {
       expect(find.text('Alice'), findsOneWidget);
     });
 
-    testWidgets('dynamic Arabic-first username stays explicit inside header',
-        (tester) async {
+    testWidgets('dynamic Arabic-first username stays explicit inside header', (
+      tester,
+    ) async {
       const username = 'ليلى Alpha';
       await tester.pumpWidget(
         wrap(const IntroGroupHeader(introducerUsername: username)),
@@ -47,8 +52,9 @@ void main() {
       );
     });
 
-    testWidgets('dynamic English-first username stays explicit inside header',
-        (tester) async {
+    testWidgets('dynamic English-first username stays explicit inside header', (
+      tester,
+    ) async {
       const username = 'Alpha ليلى';
       await tester.pumpWidget(
         wrap(const IntroGroupHeader(introducerUsername: username)),

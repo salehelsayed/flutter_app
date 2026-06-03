@@ -17,6 +17,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_invite_del
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../test/core/bridge/fake_bridge.dart';
 import '../test/core/services/fake_p2p_service.dart';
@@ -401,6 +402,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('en'),
         home: GroupInfoWired(
           group: fixture.group,
           groupRepo: fixture.groupRepo,

@@ -1276,6 +1276,80 @@ void main() {
     );
 
     test(
+      'drainOfflineInboxFully waits for remaining pages before returning',
+      () async {
+        var retrieveCallCount = 0;
+        final secondPage = Completer<String>();
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand('inbox:retrieve_pending', (_) {
+          retrieveCallCount++;
+          if (retrieveCallCount == 1) {
+            return jsonEncode({
+              'ok': true,
+              'messages': [
+                _pendingInboxRow(
+                  entryId: 'entry-1',
+                  from: 'sender1',
+                  message: 'msg1',
+                  timestamp: 1700000000000,
+                ),
+              ],
+              'hasMore': true,
+            });
+          }
+          return secondPage.future;
+        });
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        final messages = <ChatMessage>[];
+        final sub = service.messageStream.listen(messages.add);
+
+        var fullDrainReturned = false;
+        final fullDrain = service.drainOfflineInboxFully().then((_) {
+          fullDrainReturned = true;
+        });
+        await Future<void>.delayed(Duration.zero);
+
+        expect(fullDrainReturned, isFalse);
+        expect(messages.length, 1);
+        expect(bridge.payloadsFor('inbox:retrieve_pending'), hasLength(2));
+
+        secondPage.complete(
+          jsonEncode({
+            'ok': true,
+            'messages': [
+              _pendingInboxRow(
+                entryId: 'entry-2',
+                from: 'sender2',
+                message: 'msg2',
+                timestamp: 1700000001000,
+              ),
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        await fullDrain;
+        expect(fullDrainReturned, isTrue);
+        expect(messages.length, 2);
+
+        await sub.cancel();
+      },
+    );
+
+    test(
       'fast circuit fallback poll updates online state when push event is delayed',
       () async {
         bridge.whenCommand(

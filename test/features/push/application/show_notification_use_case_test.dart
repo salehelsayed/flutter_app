@@ -212,6 +212,53 @@ void main() {
     });
 
     test(
+      'GIRD-006 suppresses only the exact remotely announced group message',
+      () async {
+        final announced = <String>{'group:group-123|message:msg-remote'};
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:group-123',
+          routePayload: 'group:group-123|message:msg-remote',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Photo',
+          messageId: 'msg-remote',
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async {
+                expect(messageId, 'msg-remote');
+                return announced.remove(payload);
+              },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:group-123',
+          routePayload: 'group:group-123|message:msg-local',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Photo',
+          messageId: 'msg-local',
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async {
+                expect(messageId, 'msg-local');
+                return announced.remove(payload);
+              },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(notificationService.shown, hasLength(1));
+        expect(
+          notificationService.shown.single.payload,
+          'group:group-123|message:msg-local',
+        );
+      },
+    );
+
+    test(
       'preserves mixed-script sender and body when forwarding notification text',
       () async {
         const sender = '\u0644\u064a\u0644\u0649 Alpha';

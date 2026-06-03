@@ -403,7 +403,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `integration_test/group_delete_preserves_friends_simulator_test.dart` | Optional / manual direct suite | Simulator-bound Orbit delete regression proving deleting one group does not remove friends or 1:1 threads |
 | `integration_test/group_invite_accept_spinner_simulator_test.dart` | Optional / manual direct suite | Simulator-bound pending group invite accept regression proving the spinner clears and the group joins |
 | `integration_test/scripts/run_group_invite_status_matrix_sim.dart` | Optional / manual simulator orchestrator | Four-simulator seeded creator-side `GroupInfoWired` Members invite-status display proof for `Invite sent`, `In their inbox`, `Resend needed`, `Cannot send` with user-readable reason copy, `Joined`, and `Invite unknown`; remains outside named gates and does not claim relay/testpeer lifecycle proof |
-| `integration_test/scripts/run_group_multi_party_device_real.dart` | Optional / manual simulator orchestrator | PREREQ-GM-MULTI-PARTY-DEVICE-HARNESS multi-party Flutter app peer proof for GM-001/GM-002/GM-003-shaped prerequisites with exact relay env; remains outside named gates and does not close GM rows without row-specific sessions |
+| `integration_test/scripts/run_group_multi_party_device_real.dart` | Optional / manual simulator orchestrator | PREREQ-GM-MULTI-PARTY-DEVICE-HARNESS multi-party Flutter app peer proof for GM-001/GM-002/GM-003-shaped prerequisites with exact relay env; includes Report 103 `scenario7_group_invite_stale_metadata_recovery` for four-role stale-invite/latest-metadata recovery, pending retry, final roles, avatar bytes, and fan-out criteria; remains outside named gates and does not close GM rows without row-specific sessions |
 | `integration_test/feed_wired_init_performance_test.dart` | Optional / manual direct suite | Performance-only validation for feed initialization |
 | `integration_test/group_new_member_media_simulator_proof_test.dart` | Optional / manual direct suite | Report 89 simulator-backed new discussion member video and voice render/play/reopen proof; Report 90 GMAR-005 configured-simulator proof without widening frozen named gates |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
@@ -429,6 +429,7 @@ These directories are intentionally outside the named gates, but they are not ac
 | `test/core/lifecycle/*.dart` | Direct suite | Pause/resume ordering and lifecycle hardening; kept separate so the transport gate stays bounded |
 | `test/core/resilience/*.dart` | Direct suite | Deterministic chaos/failover coverage; broader than the frozen transport gate |
 | `test/core/notifications/*.dart` | Direct suite | Notification route/dispatch helpers without promoting them into the baseline |
+| `test/core/debug/*.dart` | Direct suite | Transport/debug metrics diagnostics and privacy invariants |
 | `test/core/bridge/*.dart` | Direct suite | Bridge adapter and helper behavior |
 | `test/core/database/*.dart` | Direct suite | Database helper and migration coverage |
 | `test/core/device/*.dart` | Direct suite | Device-level helpers such as wake-lock coordination without widening named gates |
@@ -437,6 +438,8 @@ These directories are intentionally outside the named gates, but they are not ac
 | `test/core/media/*.dart` | Direct suite | Media helper and processing behavior |
 | `test/core/secure_storage/*.dart` | Direct suite | Secure storage behavior |
 | `test/core/constants/*.dart`, `test/core/theme/*.dart`, `test/core/utils/*.dart` | Direct suite | Component-level contracts, not gate members |
+| `test/l10n/*.dart` | Direct suite | Generated/localized copy integrity |
+| `test/shared/fakes/*.dart` | Direct suite | Test harness fakes and seeded reproduction fixtures |
 | `test/security/*.dart` | Direct suite | Security invariant and forbidden-field classifier coverage without widening frozen named gates |
 | `test/shared/widgets/*.dart` | Direct suite | Shared widget behavior |
 | `test/unit/*.dart` | Direct suite | Unit-level leaf coverage |
@@ -471,8 +474,9 @@ Validation run dates:
   `group_admin_metadata_convergence_test.dart`,
   `group_info_wired_test.dart`, `send_group_invite_use_case_test.dart`,
   `member_removal_integration_test.dart`, and `git diff --check`
+- 2026-05-31 Report 102 GIRD-007 completeness revalidation for direct-suite classification coverage.
 
-- Completeness check: latest attempted on 2026-05-28 via `./scripts/run_test_gates.sh completeness-check` and failed with `747/750` test files classified. The unmatched files were reported as pre-existing and unrelated to the promoted-admin regression task: `test/l10n/l10n_integrity_test.dart`, `test/shared/fakes/fake_group_pubsub_network_test.dart`, and `test/shared/fakes/seeded_group_reproduction_log_test.dart`.
+- Completeness check: latest attempted on 2026-05-31 via `./scripts/run_test_gates.sh completeness-check` and passed with `767/767` test files classified. Report 102 GIRD-007 added direct-suite classifications for `test/core/debug/*.dart`, `test/l10n/*.dart`, and `test/shared/fakes/*.dart`.
 - Report 90 GMAR-005 final gate set: passed on 2026-05-03 via the required direct optional/manual suites, configured simulator commands on `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, paired simulator smoke commands on `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD,5BA69F1C-B112-47BE-B1FF-8C1003728C8F` with relay addresses, `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD ./scripts/run_test_gates.sh all`, broad `flutter test`, `cd go-mknoon && go test ./...`, and `git diff --check`.
 - Report 89 simulator proof: passed on 2026-04-29 via `flutter test -d emulator-5554 integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d emulator-5554 integration_test/media_message_journey_e2e_test.dart`, `flutter test -d emulator-5554 integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d emulator-5554 integration_test/foreground_group_push_drain_test.dart`.
 - Report 89 iOS simulator proof: passed on 2026-04-29 via `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_message_journey_e2e_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/foreground_group_push_drain_test.dart`.
@@ -482,5 +486,5 @@ Validation run dates:
 - Group Messaging Gate: revalidated on 2026-04-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` and passed.
 - Posts / Privacy Gate: `test/features/posts/phase3/post_presence_listener_test.dart` passed, and `integration_test/posts_phase1_fake_test.dart` ran successfully on macOS. `integration_test/posts_phase2_fake_test.dart` through `integration_test/posts_phase5_fake_test.dart` failed to start on macOS with `Error waiting for a debug connection` / `Unable to start the app on the device`.
 - Startup / Transport Gate: revalidated on 2026-03-26 via `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport` and passed. During the first rerun, `integration_test/wifi_relay_fallback_smoke_test.dart` and `integration_test/transport_e2e_test.dart` exposed stale `MessageRepositoryImpl` constructor wiring; after those repo-local test harness fixes landed, the same simulator-backed gate reran green.
-- Top-level script validation: earlier Session 41 reruns confirmed `completeness-check`, `baseline`, `1to1`, and `groups` green; the latest 2026-05-28 completeness-check attempt is red only on the three unmatched files listed above.
+- Top-level script validation: earlier Session 41 reruns confirmed `completeness-check`, `baseline`, `1to1`, and `groups` green; the latest 2026-05-31 completeness-check attempt is green with `767/767` classified files after the direct-suite classification update listed above.
 - Device note: when multiple Flutter targets are attached, set `FLUTTER_DEVICE_ID=<device-id>` for integration-backed gates. Session 27 revalidation used `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F`.

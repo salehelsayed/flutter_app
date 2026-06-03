@@ -225,6 +225,139 @@ void main() {
     );
 
     test(
+      'GIRD-006 does not mark remote announcement when group fallback display fails',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/gird006-background-display-failure-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        debugSetRecentRemoteNotificationGate(gate);
+        addTearDown(gate.clear);
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              if (call.method == 'show') {
+                throw PlatformException(
+                  code: 'display_failed',
+                  message: 'blocked by OS notification state',
+                );
+              }
+              return null;
+            });
+
+        const message = RemoteMessage(
+          messageId: 'fcm-gird006-display-fail',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-gird006',
+            'message_id': 'msg-gird006-display-fail',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:group-gird006|message:msg-gird006-display-fail',
+            messageId: 'msg-gird006-display-fail',
+          ),
+          isFalse,
+          reason:
+              'A failed local fallback must not suppress the later listener notification.',
+        );
+      },
+    );
+
+    test(
+      'GIRD-006 marks remote announcement after successful group fallback display',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/gird006-background-display-success-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        debugSetRecentRemoteNotificationGate(gate);
+        addTearDown(gate.clear);
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        const message = RemoteMessage(
+          messageId: 'fcm-gird006-display-success',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-gird006',
+            'message_id': 'msg-gird006-display-success',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:group-gird006|message:msg-gird006-display-success',
+            messageId: 'msg-gird006-display-success',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'GIRD-006 coalesces duplicate group background fallback by logical message id',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        const message = RemoteMessage(
+          messageId: 'fcm-gird006-transport-a',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-gird006',
+            'message_id': 'msg-gird006-duplicate',
+          },
+        );
+        const duplicateTransportMessage = RemoteMessage(
+          messageId: 'fcm-gird006-transport-b',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-gird006',
+            'message_id': 'msg-gird006-duplicate',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+        await firebaseMessagingBackgroundHandler(duplicateTransportMessage);
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+      },
+    );
+
+    test(
       'shows iOS local fallback for chat pushes when Flutter surfaces only the data payload',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.iOS;

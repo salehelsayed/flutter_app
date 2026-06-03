@@ -255,6 +255,11 @@ const _regressionGroupAdminPermissionsFourUsersRequirement =
           'regression_group_admin_permissions_and_message_reliability_four_users',
       roles: <String>['alice', 'bob', 'charlie', 'dana'],
     );
+const _scenario7GroupInviteStaleMetadataRecoveryRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'scenario7_group_invite_stale_metadata_recovery',
+      roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
 const _ge001Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'ge001',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -550,6 +555,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
       _privateAdminDemotionEnforcementRequirement,
   'regression_group_admin_permissions_and_message_reliability_four_users':
       _regressionGroupAdminPermissionsFourUsersRequirement,
+  'scenario7_group_invite_stale_metadata_recovery':
+      _scenario7GroupInviteStaleMetadataRecoveryRequirement,
   'gm002': _gm002Requirement,
   'gm003': _gm003Requirement,
   'gm004': _gm004Requirement,
@@ -2399,6 +2406,29 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['alice', 'bob'],
         ),
       ];
+    case 'scenario7_group_invite_stale_metadata_recovery':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceScenario7PostDanaAccept',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'bobScenario7PostDanaAccept',
+          senderRole: 'bob',
+          receiverRoles: <String>['alice', 'charlie', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'charlieScenario7PostDanaAccept',
+          senderRole: 'charlie',
+          receiverRoles: <String>['alice', 'bob', 'dana'],
+        ),
+        _ExpectedProofMessage(
+          key: 'danaScenario7PostDanaAccept',
+          senderRole: 'dana',
+          receiverRoles: <String>['alice', 'bob', 'charlie'],
+        ),
+      ];
     case 'private_history_retention':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
@@ -3415,6 +3445,14 @@ void _validateScenarioProofFields({
   if (scenario ==
       'regression_group_admin_permissions_and_message_reliability_four_users') {
     _validateRegressionGroupAdminPermissionsFourUsersProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+  if (scenario == 'scenario7_group_invite_stale_metadata_recovery') {
+    _validateScenario7GroupInviteStaleMetadataRecoveryProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -8238,6 +8276,278 @@ void _validatePrivateAdminDemotionEnforcementProof({
         );
       }
     }
+  }
+}
+
+void _validateScenario7GroupInviteStaleMetadataRecoveryProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'scenario7GroupInviteStaleMetadataRecoveryProof';
+  const scenario = 'scenario7_group_invite_stale_metadata_recovery';
+  const expectedMatrixKeys = <String>{
+    'aliceScenario7PostDanaAccept',
+    'bobScenario7PostDanaAccept',
+    'charlieScenario7PostDanaAccept',
+    'danaScenario7PostDanaAccept',
+  };
+  const expectedRoleNames = <String, String>{
+    'alice': 'admin',
+    'bob': 'writer',
+    'charlie': 'admin',
+    'dana': 'writer',
+  };
+  final expectedPeerIds = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['bob'],
+    ?peerIdByRole['charlie'],
+    ?peerIdByRole['dana'],
+  };
+  final expectedAdminPeerIds = <String>{
+    ?peerIdByRole['alice'],
+    ?peerIdByRole['charlie'],
+  };
+  final finalStateHashes = <String>{};
+  final finalAvatarHashes = <String>{};
+
+  for (final role in const <String>['alice', 'bob', 'charlie', 'dana']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: $proofName is required');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) !=
+        'SCENARIO-7-GROUP-INVITE-STALE-METADATA-RECOVERY') {
+      failures.add('$role: $proofName.rowId mismatch');
+    }
+    if (_stringValue(proof['scenario']) != scenario) {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    if (_stringValue(proof['appPeerPlatform']) != 'ios_26_2_core_simulator') {
+      failures.add('$role: $proofName.appPeerPlatform must be iOS 26.2');
+    }
+
+    for (final field in const <String>[
+      'initialContactGraphProof',
+      'staleInviteCapturedBeforeLatestMetadata',
+      'pendingInviteVisibleBeforeAccept',
+      'pendingInviteConsumedAfterAccept',
+      'acceptedGroupMaterialized',
+      'preAcceptDirectMetadataBuffered',
+      'pendingInviteStaleAtAccept',
+      'acceptedGroupMetadataFresh',
+      'staleInviteMatchedCharlieSnapshot',
+      'latestMetadataPublishedBeforeDanaAccept',
+      'latestAvatarDiffersFromStale',
+      'finalMetadataConverged',
+      'avatarBytesVisible',
+      'allFourMembersActive',
+      'finalRolesConverged',
+      'fullMessageMatrixProofPassed',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireIntProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'pendingInviteCountBeforeAccept',
+      expected: 1,
+      failures: failures,
+    );
+    _requireIntProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'pendingInviteCountAfterAccept',
+      expected: 0,
+      failures: failures,
+    );
+    if (_stringValue(proof['acceptResult']) != 'success') {
+      failures.add('$role: $proofName.acceptResult must be success');
+    }
+    if (_stringValue(proof['acceptedGroupName']) != 'test 3') {
+      failures.add('$role: $proofName.acceptedGroupName must be test 3');
+    }
+    if (_stringValue(proof['acceptedGroupDescription']) != '333') {
+      failures.add('$role: $proofName.acceptedGroupDescription must be 333');
+    }
+    final acceptedAvatarBlobId = _stringValue(
+      proof['acceptedGroupAvatarBlobId'],
+    );
+    if (acceptedAvatarBlobId == null || acceptedAvatarBlobId.isEmpty) {
+      failures.add('$role: $proofName.acceptedGroupAvatarBlobId is required');
+    }
+    if (_stringValue(proof['acceptedGroupAvatarMime']) != 'image/png') {
+      failures.add(
+        '$role: $proofName.acceptedGroupAvatarMime must be image/png',
+      );
+    }
+    if (_stringValue(proof['retryAcceptResult']) != 'notFound') {
+      failures.add('$role: $proofName.retryAcceptResult must be notFound');
+    }
+    _requireFalseProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'retryGroupMaterialized',
+      failures: failures,
+    );
+    _requireFalseProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'pendingInviteRefreshedBeforeAccept',
+      failures: failures,
+    );
+
+    if (_stringValue(proof['staleInviteName']) != 'test 2') {
+      failures.add('$role: $proofName.staleInviteName must be test 2');
+    }
+    if (_stringValue(proof['staleInviteDescription']) != '222') {
+      failures.add('$role: $proofName.staleInviteDescription must be 222');
+    }
+    final staleAvatarBlobId = _stringValue(proof['staleInviteAvatarBlobId']);
+    if (staleAvatarBlobId == null || staleAvatarBlobId.isEmpty) {
+      failures.add('$role: $proofName.staleInviteAvatarBlobId is required');
+    } else if (acceptedAvatarBlobId == staleAvatarBlobId) {
+      failures.add(
+        '$role: $proofName.acceptedGroupAvatarBlobId must differ from stale invite avatar',
+      );
+    }
+    if (_stringValue(proof['staleInviteAvatarMime']) != 'image/png') {
+      failures.add('$role: $proofName.staleInviteAvatarMime must be image/png');
+    }
+    final staleAvatarHash = _stringValue(proof['staleInviteAvatarSha256']);
+    if (staleAvatarHash == null || staleAvatarHash.length != 64) {
+      failures.add('$role: $proofName.staleInviteAvatarSha256 is required');
+    }
+    _requireIntAtLeastProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'staleInviteAvatarByteLength',
+      minimum: 1,
+      failures: failures,
+    );
+
+    if (_stringValue(proof['finalMetadataName']) != 'test 3') {
+      failures.add('$role: $proofName.finalMetadataName must be test 3');
+    }
+    if (_stringValue(proof['finalMetadataDescription']) != '333') {
+      failures.add('$role: $proofName.finalMetadataDescription must be 333');
+    }
+    final finalAvatarBlobId = _stringValue(proof['finalAvatarBlobId']);
+    if (finalAvatarBlobId == null || finalAvatarBlobId.isEmpty) {
+      failures.add('$role: $proofName.finalAvatarBlobId is required');
+    }
+    if (_stringValue(proof['finalAvatarMime']) != 'image/png') {
+      failures.add('$role: $proofName.finalAvatarMime must be image/png');
+    }
+    final finalAvatarHash = _stringValue(proof['finalAvatarSha256']);
+    if (finalAvatarHash == null || finalAvatarHash.length != 64) {
+      failures.add('$role: $proofName.finalAvatarSha256 is required');
+    } else {
+      finalAvatarHashes.add(finalAvatarHash);
+    }
+    _requireIntAtLeastProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'finalAvatarByteLength',
+      minimum: 1,
+      failures: failures,
+    );
+    if (staleAvatarBlobId != null &&
+        finalAvatarBlobId != null &&
+        staleAvatarBlobId == finalAvatarBlobId) {
+      failures.add(
+        '$role: $proofName stale and final avatar blob ids must differ',
+      );
+    }
+    if (staleAvatarHash != null &&
+        finalAvatarHash != null &&
+        staleAvatarHash == finalAvatarHash) {
+      failures.add(
+        '$role: $proofName stale and final avatar hashes must differ',
+      );
+    }
+
+    if (expectedPeerIds.length == 4) {
+      _requireProofPeerSet(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: 'finalActiveMemberPeerIds',
+        expected: expectedPeerIds,
+        failures: failures,
+      );
+    }
+    if (expectedAdminPeerIds.length == 2) {
+      _requireProofPeerSet(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: 'finalAdminPeerIds',
+        expected: expectedAdminPeerIds,
+        failures: failures,
+      );
+    }
+    final finalRoles = _mapValue(proof['finalMemberRoles']);
+    if (finalRoles == null) {
+      failures.add('$role: $proofName.finalMemberRoles is required');
+    } else {
+      for (final expected in expectedRoleNames.entries) {
+        if (_stringValue(finalRoles[expected.key]) != expected.value) {
+          failures.add(
+            '$role: $proofName.finalMemberRoles.${expected.key} must be ${expected.value}',
+          );
+        }
+      }
+    }
+    final finalEpoch = _intValue(proof['finalKeyEpoch']);
+    if (finalEpoch == null || finalEpoch < 1) {
+      failures.add('$role: $proofName.finalKeyEpoch must be positive');
+    }
+    final finalStateHash = _stringValue(proof['finalStateHash']);
+    if (finalStateHash == null || finalStateHash.isEmpty) {
+      failures.add('$role: $proofName.finalStateHash is required');
+    } else {
+      finalStateHashes.add(finalStateHash);
+    }
+    final matrixKeys = _stringList(proof['fullMessageMatrixPhaseKeys']).toSet();
+    final missingMatrixKeys = expectedMatrixKeys.difference(matrixKeys);
+    final unexpectedMatrixKeys = matrixKeys.difference(expectedMatrixKeys);
+    if (missingMatrixKeys.isNotEmpty || unexpectedMatrixKeys.isNotEmpty) {
+      failures.add(
+        '$role: $proofName.fullMessageMatrixPhaseKeys mismatch'
+        '${missingMatrixKeys.isNotEmpty ? ', missing ${missingMatrixKeys.join(', ')}' : ''}'
+        '${unexpectedMatrixKeys.isNotEmpty ? ', unexpected ${unexpectedMatrixKeys.join(', ')}' : ''}',
+      );
+    }
+  }
+
+  if (finalStateHashes.length > 1) {
+    failures.add(
+      '$proofName finalStateHash differs across roles: '
+      '${finalStateHashes.join(', ')}',
+    );
+  }
+  if (finalAvatarHashes.length > 1) {
+    failures.add(
+      '$proofName finalAvatarSha256 differs across roles: '
+      '${finalAvatarHashes.join(', ')}',
+    );
   }
 }
 
