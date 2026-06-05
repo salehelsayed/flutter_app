@@ -11,16 +11,19 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -295,11 +298,134 @@ class _SaveTrackingGroupMessageRepository
   }
 }
 
+class _InMemoryInviteDeliveryAttemptRepository
+    implements GroupInviteDeliveryAttemptRepository {
+  final Map<String, GroupInviteDeliveryAttempt> _attempts = {};
+
+  String _key(String groupId, String peerId) => '$groupId::$peerId';
+
+  @override
+  Future<void> saveAttempt(GroupInviteDeliveryAttempt attempt) async {
+    _attempts[_key(attempt.groupId, attempt.peerId)] = attempt;
+  }
+
+  @override
+  Future<GroupInviteDeliveryAttempt?> getAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => _attempts[_key(groupId, peerId)];
+
+  @override
+  Future<List<GroupInviteDeliveryAttempt>> getAttemptsForGroup(
+    String groupId,
+  ) async => _attempts.values
+      .where((attempt) => attempt.groupId == groupId)
+      .toList(growable: false);
+
+  @override
+  Future<GroupInviteDeliveryStatus> getStatusForMember({
+    required String groupId,
+    required String peerId,
+  }) async =>
+      _attempts[_key(groupId, peerId)]?.status ??
+      GroupInviteDeliveryStatus.unknown;
+
+  @override
+  Future<Map<String, GroupInviteDeliveryStatus>> getStatusesForGroupMembers(
+    String groupId,
+  ) async => {
+    for (final attempt in _attempts.values.where(
+      (attempt) => attempt.groupId == groupId,
+    ))
+      attempt.peerId: attempt.status,
+  };
+
+  @override
+  Future<void> updateStatus({
+    required String groupId,
+    required String peerId,
+    required GroupInviteDeliveryStatus status,
+    DateTime? updatedAt,
+  }) async {
+    final now = (updatedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: status,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(status: status, updatedAt: now);
+  }
+
+  @override
+  Future<void> markJoined({
+    required String groupId,
+    required String peerId,
+    String? username,
+    DateTime? joinedAt,
+  }) async {
+    final now = (joinedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<int> deleteAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => _attempts.remove(_key(groupId, peerId)) == null ? 0 : 1;
+
+  @override
+  Future<int> deleteAttemptsForGroup(String groupId) async {
+    final keys = _attempts.keys
+        .where((key) => key.startsWith('$groupId::'))
+        .toList(growable: false);
+    for (final key in keys) {
+      _attempts.remove(key);
+    }
+    return keys.length;
+  }
+}
+
 Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
   final inboxMsg = bridge.sentMessages.lastWhere(
     (m) => (jsonDecode(m) as Map)['cmd'] == 'group:inboxStore',
   );
   return (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
+}
+
+Map<String, dynamic> _groupSendReliablePayloadForMessage(
+  FakeBridge bridge,
+  String messageId,
+) {
+  for (final raw in bridge.sentMessages.reversed) {
+    final parsed = jsonDecode(raw) as Map<String, dynamic>;
+    if (parsed['cmd'] != 'group:sendReliable') continue;
+    final payload = parsed['payload'] as Map<String, dynamic>;
+    if (payload['messageId'] == messageId) {
+      return payload;
+    }
+  }
+  fail('missing group:sendReliable for $messageId');
 }
 
 Map<String, dynamic> _groupInboxStorePayloadForMessage(
@@ -2369,6 +2495,529 @@ void main() {
   );
 
   test(
+    'INV-106 excludes persisted non-joined invite attempts from every ordinary send recipient list',
+    () async {
+      final joinedAt = DateTime.utc(2026, 6, 4, 8);
+      const bobPeerId = 'peer-accepted-bob';
+      const charliePeerId = 'peer-invited-charlie';
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: bobPeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob-accepted',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie-invited',
+          joinedAt: joinedAt,
+        ),
+      );
+
+      Future<void> expectRecipients({
+        required String messageId,
+        required GroupInviteDeliveryStatus charlieStatus,
+        GroupInviteDeliveryStatus? bobStatus,
+      }) async {
+        final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+        final attemptAt = joinedAt.add(const Duration(minutes: 1));
+        await attemptRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: 'group-1',
+            peerId: charliePeerId,
+            username: 'Charlie',
+            status: charlieStatus,
+            attemptedAt: attemptAt,
+            updatedAt: attemptAt,
+          ),
+        );
+        if (bobStatus != null) {
+          await attemptRepo.saveAttempt(
+            GroupInviteDeliveryAttempt(
+              groupId: 'group-1',
+              peerId: bobPeerId,
+              username: 'Bob',
+              status: bobStatus,
+              attemptedAt: attemptAt,
+              updatedAt: attemptAt,
+            ),
+          );
+        }
+
+        final scenarioBridge = _OpaqueReplayInboxStoreFailBridge();
+        scenarioBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': messageId,
+          'topicPeers': 1,
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: scenarioBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'INV-106 accepted recipients only for $messageId',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          timestamp: joinedAt.add(const Duration(minutes: 2)),
+          inviteDeliveryAttemptRepo: attemptRepo,
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.inboxRetryPayload, isNotNull);
+        expect(
+          _recipientPeerIdsFromRetryPayload(message.inboxRetryPayload!),
+          <String>[bobPeerId],
+          reason: messageId,
+        );
+
+        final saved = await msgRepo.getMessage(messageId);
+        expect(saved, isNotNull);
+        expect(saved!.inboxRetryPayload, isNotNull);
+        expect(
+          _recipientPeerIdsFromRetryPayload(saved.inboxRetryPayload!),
+          <String>[bobPeerId],
+          reason: '$messageId saved retry payload',
+        );
+
+        final inboxPayload = _lastGroupInboxStorePayload(scenarioBridge);
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          <String>[bobPeerId],
+          reason: '$messageId group:inboxStore',
+        );
+        expect(
+          inboxPayload['recipientPeerIds'],
+          isNot(contains(charliePeerId)),
+          reason: '$messageId group:inboxStore excludes unaccepted invitee',
+        );
+        expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
+
+        final reliablePayload = _groupSendReliablePayloadForMessage(
+          scenarioBridge,
+          messageId,
+        );
+        expect(
+          (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          <String>[bobPeerId],
+          reason: '$messageId group:sendReliable',
+        );
+        expect(
+          reliablePayload['recipientPeerIds'],
+          isNot(contains(charliePeerId)),
+          reason: '$messageId native reliable send excludes unaccepted invitee',
+        );
+        expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+      }
+
+      for (final status in const [
+        GroupInviteDeliveryStatus.sent,
+        GroupInviteDeliveryStatus.queued,
+        GroupInviteDeliveryStatus.needsResend,
+        GroupInviteDeliveryStatus.cannotSend,
+      ]) {
+        await expectRecipients(
+          messageId: 'inv106-${status.toValue()}',
+          charlieStatus: status,
+        );
+      }
+
+      await expectRecipients(
+        messageId: 'inv106-joined-control',
+        charlieStatus: GroupInviteDeliveryStatus.sent,
+        bobStatus: GroupInviteDeliveryStatus.joined,
+      );
+    },
+  );
+
+  test(
+    'INV-106 excludes missing invite-attempt rows once joined evidence exists',
+    () async {
+      final joinedAt = DateTime.utc(2026, 6, 5, 8);
+      const bobPeerId = 'peer-accepted-missing-row-bob';
+      const charliePeerId = 'peer-unknown-missing-row-charlie';
+      final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: bobPeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob-missing-row',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie-missing-row',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await attemptRepo.markJoined(
+        groupId: 'group-1',
+        peerId: bobPeerId,
+        username: 'Bob',
+        joinedAt: joinedAt,
+      );
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'inv106-missing-row-leak',
+        'topicPeers': 1,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'INV-106 missing row must fail closed',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'inv106-missing-row-leak',
+        timestamp: joinedAt.add(const Duration(minutes: 2)),
+        inviteDeliveryAttemptRepo: attemptRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        <String>[bobPeerId],
+      );
+      expect(inboxPayload['recipientPeerIds'], isNot(contains(charliePeerId)));
+
+      final reliablePayload = _groupSendReliablePayloadForMessage(
+        bridge,
+        'inv106-missing-row-leak',
+      );
+      expect(
+        (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        <String>[bobPeerId],
+      );
+      expect(
+        reliablePayload['recipientPeerIds'],
+        isNot(contains(charliePeerId)),
+      );
+      expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+    },
+  );
+
+  test(
+    'INV-106 falls back to member-joined timeline evidence when invite repo is absent',
+    () async {
+      final joinedAt = DateTime.utc(2026, 6, 5, 10, 18, 10);
+      const bobPeerId = 'peer-accepted-timeline-bob';
+      const charliePeerId = 'peer-pending-timeline-charlie';
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: bobPeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob-timeline',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie-timeline',
+          joinedAt: joinedAt,
+        ),
+      );
+      await msgRepo.saveMessage(
+        buildMemberJoinedTimelineMessage(
+          groupId: 'group-1',
+          joinedPeerId: bobPeerId,
+          joinedUsername: 'Bob',
+          eventAt: joinedAt,
+        ),
+      );
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'inv106-timeline-repo-absent',
+        'topicPeers': 1,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'INV-106 timeline fallback must not notify Charlie',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'inv106-timeline-repo-absent',
+        timestamp: joinedAt.add(const Duration(seconds: 12)),
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        <String>[bobPeerId],
+      );
+      expect(inboxPayload['recipientPeerIds'], isNot(contains(charliePeerId)));
+
+      final reliablePayload = _groupSendReliablePayloadForMessage(
+        bridge,
+        'inv106-timeline-repo-absent',
+      );
+      expect(
+        (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        <String>[bobPeerId],
+      );
+      expect(
+        reliablePayload['recipientPeerIds'],
+        isNot(contains(charliePeerId)),
+      );
+      expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+    },
+  );
+
+  test(
+    'INV-106 preserves legacy current members when no invite evidence exists',
+    () async {
+      final joinedAt = DateTime.utc(2026, 6, 5, 9);
+      const bobPeerId = 'peer-legacy-bob';
+      const charliePeerId = 'peer-legacy-charlie';
+      final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: bobPeerId,
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-legacy-bob',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-legacy-charlie',
+          joinedAt: joinedAt.add(const Duration(minutes: 1)),
+        ),
+      );
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'inv106-legacy-no-invite-evidence',
+        'topicPeers': 2,
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'INV-106 legacy current members stay eligible',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'inv106-legacy-no-invite-evidence',
+        timestamp: joinedAt.add(const Duration(minutes: 2)),
+        inviteDeliveryAttemptRepo: attemptRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+
+      final inboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        unorderedEquals(<String>[bobPeerId, charliePeerId]),
+      );
+    },
+  );
+
+  test('INV-106 preserves explicit empty accepted recipient lists', () async {
+    final joinedAt = DateTime.utc(2026, 6, 4, 8);
+    const charliePeerId = 'peer-only-unaccepted-charlie';
+    final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+    final attemptAt = joinedAt.add(const Duration(minutes: 1));
+
+    await groupRepo.saveGroup(
+      testGroup.copyWith(
+        createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: charliePeerId,
+        username: 'Charlie',
+        role: MemberRole.writer,
+        publicKey: 'pk-charlie-unaccepted',
+        joinedAt: joinedAt,
+      ),
+    );
+    await attemptRepo.saveAttempt(
+      GroupInviteDeliveryAttempt(
+        groupId: 'group-1',
+        peerId: charliePeerId,
+        username: 'Charlie',
+        status: GroupInviteDeliveryStatus.sent,
+        attemptedAt: attemptAt,
+        updatedAt: attemptAt,
+      ),
+    );
+
+    final nativeBridge = FakeBridge();
+    nativeBridge.responses['group:sendReliable'] = {
+      'ok': true,
+      'messageId': 'inv106-empty-native',
+      'topicPeerCount': 0,
+      'expectedRecipientCount': 0,
+      'recipientPeerIds': <String>[],
+      'inboxStored': false,
+      'publishSucceeded': true,
+      'deliveryMode': 'live_only',
+      'envelope': '{"kind":"native-reliable-envelope"}',
+    };
+
+    final (nativeResult, nativeMessage) = await sendGroupMessage(
+      bridge: nativeBridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'INV-106 no accepted remotes native',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+      messageId: 'inv106-empty-native',
+      timestamp: joinedAt.add(const Duration(minutes: 2)),
+      inviteDeliveryAttemptRepo: attemptRepo,
+    );
+
+    expect(nativeResult, SendGroupMessageResult.success);
+    expect(nativeMessage, isNotNull);
+    final nativeReliablePayload = _groupSendReliablePayloadForMessage(
+      nativeBridge,
+      'inv106-empty-native',
+    );
+    expect(nativeReliablePayload.containsKey('recipientPeerIds'), isTrue);
+    expect(
+      (nativeReliablePayload['recipientPeerIds'] as List<dynamic>)
+          .cast<String>(),
+      <String>[],
+    );
+    expect(nativeReliablePayload['preserveRecipientPeerIds'], isTrue);
+    expect(
+      nativeReliablePayload['recipientPeerIds'],
+      isNot(contains(charliePeerId)),
+    );
+    final nativeRetryPayload =
+        jsonDecode(nativeMessage!.inboxRetryPayload!) as Map<String, dynamic>;
+    expect(nativeRetryPayload.containsKey('recipientPeerIds'), isTrue);
+    expect(
+      (nativeRetryPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+      <String>[],
+    );
+
+    final fallbackBridge = FakeBridge();
+    fallbackBridge.responses['group:sendReliable'] = {
+      'ok': false,
+      'errorCode': 'UNKNOWN_COMMAND',
+    };
+    fallbackBridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'inv106-empty-fallback',
+      'topicPeers': 0,
+    };
+
+    final (fallbackResult, fallbackMessage) = await sendGroupMessage(
+      bridge: fallbackBridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'INV-106 no accepted remotes fallback',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+      messageId: 'inv106-empty-fallback',
+      timestamp: joinedAt.add(const Duration(minutes: 3)),
+      inviteDeliveryAttemptRepo: attemptRepo,
+    );
+
+    expect(fallbackResult, SendGroupMessageResult.successNoPeers);
+    expect(fallbackMessage, isNotNull);
+    final fallbackReliablePayload = _groupSendReliablePayloadForMessage(
+      fallbackBridge,
+      'inv106-empty-fallback',
+    );
+    expect(fallbackReliablePayload['recipientPeerIds'], <String>[]);
+    expect(fallbackReliablePayload['preserveRecipientPeerIds'], isTrue);
+
+    final inboxPayload = _lastGroupInboxStorePayload(fallbackBridge);
+    expect(inboxPayload.containsKey('recipientPeerIds'), isTrue);
+    expect(
+      (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+      <String>[],
+    );
+    expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
+    expect(inboxPayload['recipientPeerIds'], isNot(contains(charliePeerId)));
+  });
+
+  test(
     'UP-012 post-removal sends exclude removed members from durable notification recipients',
     () async {
       final joinedAt = DateTime.utc(2026, 5, 14, 2);
@@ -2612,7 +3261,8 @@ void main() {
       expect(bridge.commandLog, contains('group:inboxStore'));
 
       final inboxPayload = _lastGroupInboxStorePayload(bridge);
-      expect(inboxPayload.containsKey('recipientPeerIds'), isFalse);
+      expect(inboxPayload['recipientPeerIds'], <String>[]);
+      expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
     },
   );
 
@@ -4043,6 +4693,59 @@ void main() {
     );
 
     test(
+      'message id collision guard treats edited restored failed text as a new message',
+      () async {
+        const failedId = 'edited-restored-old-id';
+        const freshId = 'edited-restored-fresh-id';
+        final failedTimestamp = DateTime.utc(2026, 4, 5, 12, 30);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: failedId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: 'Original failed text',
+            timestamp: failedTimestamp,
+            keyGeneration: 1,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: failedTimestamp,
+            wireEnvelope: '{}',
+            inboxRetryPayload: '{}',
+          ),
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Edited failed text',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: failedId,
+          timestamp: failedTimestamp,
+          messageIdFactory: () => freshId,
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message!.id, freshId);
+
+        final oldRow = await msgRepo.getMessage(failedId);
+        expect(oldRow, isNotNull);
+        expect(oldRow!.text, 'Original failed text');
+        expect(oldRow.status, 'failed');
+
+        final freshRow = await msgRepo.getMessage(freshId);
+        expect(freshRow, isNotNull);
+        expect(freshRow!.text, 'Edited failed text');
+        expect(freshRow.status, anyOf('sent', 'pending'));
+      },
+    );
+
+    test(
       'PL-002 media-only group message accepts empty text and preserves media',
       () async {
         final voiceAttachment = MediaAttachment(
@@ -5269,6 +5972,7 @@ void main() {
 
         final fixedTime = DateTime.utc(2026, 1, 15, 12, 0, 0);
         var completed = false;
+        final attemptWindowStart = DateTime.now().toUtc();
 
         final sendFuture =
             sendGroupMessage(
@@ -5289,8 +5993,19 @@ void main() {
             });
 
         final firstSaved = await trackingRepo.firstSave.future;
+        final attemptWindowEnd = DateTime.now().toUtc();
         expect(firstSaved.id, 'pre-persist-id');
         expect(firstSaved.status, 'sending');
+        expect(firstSaved.timestamp, fixedTime);
+        expect(firstSaved.lastSendAttemptAt, isNotNull);
+        expect(
+          firstSaved.lastSendAttemptAt!.isBefore(attemptWindowStart),
+          isFalse,
+        );
+        expect(
+          firstSaved.lastSendAttemptAt!.isAfter(attemptWindowEnd),
+          isFalse,
+        );
         expect(firstSaved.wireEnvelope, isNotNull);
         expect(firstSaved.inboxRetryPayload, isNotNull);
 
@@ -5312,6 +6027,8 @@ void main() {
         final saved = await trackingRepo.getMessage('pre-persist-id');
         expect(saved, isNotNull);
         expect(saved!.status, 'sent');
+        expect(saved.timestamp, fixedTime);
+        expect(saved.lastSendAttemptAt, firstSaved.lastSendAttemptAt);
       },
     );
 
@@ -5994,6 +6711,108 @@ void main() {
             .map((row) => row.id)
             .toSet();
         expect(failedIds, isNot(contains('gird001-reliable-zero-peers')));
+      },
+    );
+
+    test(
+      'GIRD-001 replay-envelope fallback uses native reliable envelope for pending inbox retry',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-2',
+            joinedAt: DateTime.utc(2026, 5, 31, 11),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-3',
+            username: 'Carol',
+            role: MemberRole.writer,
+            publicKey: 'pk-3',
+            joinedAt: DateTime.utc(2026, 5, 31, 11, 1),
+          ),
+        );
+
+        const messageId = 'gird001-native-envelope-retry';
+        const protectedText = 'GIRD001 local replay plaintext secret';
+        const senderPrivateKey = 'sk-gird001-native-fallback-secret';
+        final nativeEnvelope = jsonEncode({
+          'kind': 'group_offline_replay',
+          'payloadType': 'group_message',
+          'messageId': messageId,
+          'ciphertext': 'native-reliable-ciphertext',
+          'nonce': 'native-reliable-nonce',
+        });
+        bridge.responses['group.encrypt'] = {
+          'ok': false,
+          'errorCode': 'GROUP_ENCRYPT_FAILED',
+          'errorMessage': 'local replay envelope failed',
+        };
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'messageId': messageId,
+          'topicPeerCount': 0,
+          'expectedRecipientCount': 2,
+          'recipientPeerIds': ['peer-2', 'peer-3'],
+          'inboxStored': false,
+          'publishSucceeded': true,
+          'deliveryMode': 'live_only',
+          'envelope': nativeEnvelope,
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: protectedText,
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: senderPrivateKey,
+          senderUsername: 'Alice',
+          messageId: messageId,
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, messageId);
+        expect(message.status, 'pending');
+        expect(message.wireEnvelope, isNull);
+        expect(message.inboxStored, isFalse);
+        expect(message.inboxRetryPayload, isNotNull);
+
+        final saved = await msgRepo.getMessage(messageId);
+        expect(saved, isNotNull);
+        expect(saved!.status, 'pending');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxStored, isFalse);
+        expect(saved.inboxRetryPayload, isNotNull);
+
+        final retryRaw = saved.inboxRetryPayload!;
+        _expectNoProtectedFragments(retryRaw, [
+          protectedText,
+          senderPrivateKey,
+        ]);
+        final retryPayload = jsonDecode(retryRaw) as Map<String, dynamic>;
+        expect(retryPayload.keys.toSet(), {
+          'groupId',
+          'message',
+          'recipientPeerIds',
+        });
+        expect(retryPayload['groupId'], 'group-1');
+        expect(retryPayload['message'], nativeEnvelope);
+        expect(
+          retryPayload['recipientPeerIds'],
+          unorderedEquals(['peer-2', 'peer-3']),
+        );
+
+        final inboxRetryRows = await msgRepo.getMessagesWithFailedInboxStore();
+        expect(inboxRetryRows.map((row) => row.id), [messageId]);
       },
     );
 

@@ -19,6 +19,8 @@ class BridgeCommandException implements Exception {
 
 Duration _debugGroupLeaveDelay = Duration.zero;
 
+const Duration groupSendReliableDefaultTimeout = Duration(seconds: 40);
+
 @visibleForTesting
 void debugSetGroupLeaveDelayForTest(Duration delay) {
   _debugGroupLeaveDelay = delay.isNegative ? Duration.zero : delay;
@@ -407,8 +409,13 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   DateTime? timestamp,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
-  Duration timeout = const Duration(seconds: 10),
+  List<String>? recipientPeerIds,
+  bool preserveRecipientPeerIds = false,
+  Duration timeout = groupSendReliableDefaultTimeout,
 }) async {
+  final normalizedRecipientPeerIds = _normalizeRecipientPeerIds(
+    recipientPeerIds,
+  );
   final payload = <String, dynamic>{
     'groupId': groupId,
     'text': text,
@@ -441,6 +448,12 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   if (media != null && media.isNotEmpty) {
     payload['media'] = media;
   }
+  if (preserveRecipientPeerIds) {
+    payload['recipientPeerIds'] = normalizedRecipientPeerIds;
+    payload['preserveRecipientPeerIds'] = true;
+  } else if (normalizedRecipientPeerIds.isNotEmpty) {
+    payload['recipientPeerIds'] = normalizedRecipientPeerIds;
+  }
 
   try {
     final responseJson = await bridge
@@ -454,6 +467,22 @@ Future<Map<String, dynamic>> callGroupSendReliable(
       'errorMessage': 'Timed out waiting for group:sendReliable response',
     };
   }
+}
+
+List<String> _normalizeRecipientPeerIds(List<String>? recipientPeerIds) {
+  if (recipientPeerIds == null || recipientPeerIds.isEmpty) {
+    return const <String>[];
+  }
+  final normalized = <String>[];
+  final seen = <String>{};
+  for (final recipientPeerId in recipientPeerIds) {
+    final trimmed = recipientPeerId.trim();
+    if (trimmed.isEmpty || !seen.add(trimmed)) {
+      continue;
+    }
+    normalized.add(trimmed);
+  }
+  return normalized;
 }
 
 /// Calls the bridge to publish a reaction to a group topic.
@@ -745,7 +774,8 @@ Future<void> callGroupInboxStore(
     'payload': {
       'groupId': groupId,
       'message': message,
-      if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
+      if (recipientPeerIds != null &&
+          (preserveRecipientPeerIds || recipientPeerIds.isNotEmpty))
         'recipientPeerIds': recipientPeerIds,
       if (preserveRecipientPeerIds) 'preserveRecipientPeerIds': true,
     },

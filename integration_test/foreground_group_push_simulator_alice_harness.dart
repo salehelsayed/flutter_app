@@ -132,6 +132,7 @@ void main() {
         selectedContacts: [bobContact!],
         type: GroupType.chat,
         name: 'Foreground Group Push Smoke',
+        inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
       );
       final groupId = groupResult.group.id;
       final group = await stack.groupRepo.getGroup(groupId);
@@ -148,6 +149,11 @@ void main() {
       await _waitForSignal(
         'bob_group_joined',
         timeout: const Duration(minutes: 8),
+      );
+      await stack.groupInviteDeliveryAttemptRepo.markJoined(
+        groupId: groupId,
+        peerId: bobPeerId,
+        username: 'BobFgPush',
       );
       await Future<void>.delayed(const Duration(seconds: 5));
 
@@ -168,6 +174,7 @@ void main() {
           senderPublicKey: stack.identity.publicKey,
           senderPrivateKey: stack.identity.privateKey,
           senderUsername: stack.identity.username,
+          inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
         );
         sw.stop();
         final message = result.$2;

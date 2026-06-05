@@ -7,19 +7,34 @@ import 'package:flutter_app/core/notifications/recent_background_notification_ga
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
+import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 final FlutterLocalNotificationsPlugin _backgroundNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 bool _backgroundNotificationsInitialized = false;
+const String _backgroundDbEncryptionKey = 'db_encryption_key';
 
 typedef BackgroundPushNotificationResolver =
     Future<BackgroundPushNotificationFallback> Function(RemoteMessage message);
+typedef BackgroundPushNotificationDisplayEligibilityResolver =
+    Future<PushFallbackNotificationDisplayEligibility> Function(
+      RemoteMessage message,
+    );
 
 BackgroundPushNotificationResolver _backgroundPushNotificationResolver =
     resolveBackgroundPushNotification;
+BackgroundPushNotificationDisplayEligibilityResolver
+_backgroundPushNotificationDisplayEligibilityResolver =
+    resolveBackgroundPushNotificationDisplayEligibilityFromLocalState;
 
 @visibleForTesting
 void debugSetBackgroundPushNotificationResolver(
@@ -31,6 +46,19 @@ void debugSetBackgroundPushNotificationResolver(
 @visibleForTesting
 void debugResetBackgroundPushNotificationResolver() {
   _backgroundPushNotificationResolver = resolveBackgroundPushNotification;
+}
+
+@visibleForTesting
+void debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+  BackgroundPushNotificationDisplayEligibilityResolver resolver,
+) {
+  _backgroundPushNotificationDisplayEligibilityResolver = resolver;
+}
+
+@visibleForTesting
+void debugResetBackgroundPushNotificationDisplayEligibilityResolver() {
+  _backgroundPushNotificationDisplayEligibilityResolver =
+      resolveBackgroundPushNotificationDisplayEligibilityFromLocalState;
 }
 
 Future<void> _initializeBackgroundNotifications() async {
@@ -100,6 +128,21 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
 
+  final displayEligibility =
+      await _backgroundPushNotificationDisplayEligibilityResolver(message);
+  if (!displayEligibility.shouldDisplay) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+      details: {
+        'messageId': message.messageId,
+        'reason': displayEligibility.reason,
+        'payload': routeTarget?.toPayload() ?? '',
+      },
+    );
+    return;
+  }
+
   try {
     await _initializeBackgroundNotifications();
     final fallback = await _backgroundPushNotificationResolver(message);
@@ -146,5 +189,83 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       event: 'PUSH_BACKGROUND_NOTIFICATION_ERROR',
       details: {'error': e.toString()},
     );
+  }
+}
+
+Future<PushFallbackNotificationDisplayEligibility>
+resolveBackgroundPushNotificationDisplayEligibilityFromLocalState(
+  RemoteMessage message,
+) {
+  return resolveBackgroundPushFallbackDisplayEligibility(
+    message,
+    groupMessageDisplayEligibilityResolver:
+        _resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb,
+  );
+}
+
+Future<GroupMessageNotificationDisplayEligibility>
+_resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb(
+  String groupId,
+) async {
+  Database? db;
+  try {
+    final key = await FlutterSecureKeyStore().read(_backgroundDbEncryptionKey);
+    if (key == null || key.trim().isEmpty) {
+      return const GroupMessageNotificationDisplayEligibility.suppressed(
+        'background_local_state_unavailable',
+      );
+    }
+
+    final dbPath = await getDatabasesPath();
+    db = await openDatabase(
+      '$dbPath/identity.db',
+      password: key,
+      readOnly: true,
+      singleInstance: false,
+    );
+
+    final identityRow = await dbLoadIdentityRow(db);
+    final localPeerId = identityRow?['peer_id']?.toString().trim();
+    if (localPeerId == null || localPeerId.isEmpty) {
+      return const GroupMessageNotificationDisplayEligibility.suppressed(
+        'unknown_local_identity',
+      );
+    }
+
+    final groupRow = await dbLoadGroup(db, groupId);
+    if (groupRow != null) {
+      final memberRow = await dbLoadGroupMember(db, groupId, localPeerId);
+      if (memberRow != null) {
+        return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+      }
+    }
+
+    final pendingInviteRow = await dbLoadPendingGroupInvite(db, groupId);
+    if (pendingInviteRow != null) {
+      return const GroupMessageNotificationDisplayEligibility.suppressed(
+        'pending_invite',
+      );
+    }
+
+    if (groupRow != null) {
+      return const GroupMessageNotificationDisplayEligibility.suppressed(
+        'local_member_missing',
+      );
+    }
+
+    return const GroupMessageNotificationDisplayEligibility.suppressed(
+      'group_missing',
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_DISPLAY_ELIGIBILITY_ERROR',
+      details: {'error': e.toString()},
+    );
+    return const GroupMessageNotificationDisplayEligibility.suppressed(
+      'background_local_state_unavailable',
+    );
+  } finally {
+    await db?.close();
   }
 }

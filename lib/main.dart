@@ -94,6 +94,7 @@ import 'package:flutter_app/core/database/migrations/069_group_message_local_del
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
+import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -315,7 +316,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 72,
+    version: 73,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -389,6 +390,7 @@ void main() async {
       await runGroupKeyRotationDraftsMigration(db);
       await runPendingIntroductionResponseTransportSenderMigration(db);
       await runGroupPendingMembershipMessagesMigration(db);
+      await runGroupMessageLastSendAttemptAtMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -601,6 +603,9 @@ void main() async {
       }
       if (oldVersion < 72) {
         await runGroupPendingMembershipMessagesMigration(db);
+      }
+      if (oldVersion < 73) {
+        await runGroupMessageLastSendAttemptAtMigration(db);
       }
     },
   );
@@ -1977,6 +1982,7 @@ void main() async {
       p2pService: p2pService,
       identityRepo: repository,
       mediaFileManager: mediaFileManager,
+      inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
     ),
     retryFailedGroupMessagesFn: () => retryFailedGroupMessages(
       groupMsgRepo: groupMessageRepository,
@@ -1984,6 +1990,7 @@ void main() async {
       identityRepo: repository,
       bridge: bridge,
       mediaAttachmentRepo: mediaAttachmentRepository,
+      inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
     ),
     retryPendingIntroductionDeliveriesFn: () =>
         retryPendingIntroductionDeliveries(
@@ -2544,6 +2551,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       reactionListener: widget.reactionListener,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupInviteDeliveryAttemptRepository:
+          widget.groupInviteDeliveryAttemptRepository,
       groupMessageListener: widget.groupMessageListener,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
@@ -3079,6 +3088,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           p2pService: widget.p2pService,
           identityRepo: widget.repository,
           mediaFileManager: widget.mediaFileManager,
+          inviteDeliveryAttemptRepo:
+              widget.groupInviteDeliveryAttemptRepository,
         ),
         retryFailedGroupMessagesFn: () => retryFailedGroupMessages(
           groupMsgRepo: widget.groupMessageRepository,
@@ -3086,6 +3097,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           identityRepo: widget.repository,
           bridge: widget.bridge,
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          inviteDeliveryAttemptRepo:
+              widget.groupInviteDeliveryAttemptRepository,
         ),
         retryPendingIntroductionDeliveriesFn: () =>
             retryPendingIntroductionDeliveries(
@@ -3194,6 +3207,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         result: result,
         notificationService: widget.notificationService,
         message: message,
+        groupMessageDisplayEligibilityResolver: (groupId) async {
+          final identity = await widget.repository.loadIdentity();
+          return resolveGroupMessageNotificationDisplayEligibility(
+            groupId: groupId,
+            groupRepo: widget.groupRepository,
+            pendingInviteRepo: widget.groupInviteListener.pendingInviteRepo,
+            localPeerId: identity?.peerId,
+          );
+        },
       );
     } catch (e) {
       emitFlowEvent(

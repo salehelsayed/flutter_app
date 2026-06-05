@@ -320,6 +320,7 @@ void main() {
           ),
         );
 
+        final attemptWindowStart = DateTime.now().toUtc();
         final count = await retryFailedGroupMessages(
           groupMsgRepo: msgRepo,
           groupRepo: groupRepo,
@@ -327,12 +328,16 @@ void main() {
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
         );
+        final attemptWindowEnd = DateTime.now().toUtc();
 
         expect(count, 1);
         final saved = await msgRepo.getMessage('msg-retry-1');
         expect(saved, isNotNull);
         expect(saved!.status, 'sent');
         expect(saved.timestamp, DateTime.parse('2026-01-15T12:00:00.000Z'));
+        expect(saved.lastSendAttemptAt, isNotNull);
+        expect(saved.lastSendAttemptAt!.isBefore(attemptWindowStart), isFalse);
+        expect(saved.lastSendAttemptAt!.isAfter(attemptWindowEnd), isFalse);
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
           1,
@@ -657,6 +662,75 @@ void main() {
           bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
           1,
         );
+      },
+    );
+
+    test(
+      'retries a failed uploaded audio row with the original message id and timestamp',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        const messageId = 'msg-voice-done';
+        const timestampIso = '2026-01-15T12:03:04.000Z';
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: messageId,
+            text: '',
+            timestampIso: timestampIso,
+            media: [
+              {
+                'id': 'att-voice-done',
+                'mime': 'audio/mp4',
+                'mediaType': 'audio',
+                'durationMs': 2400,
+                'waveform': [0.1, 0.3, 0.2],
+              },
+            ],
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _makeAttachment(
+            id: 'att-voice-done',
+            messageId: messageId,
+            downloadStatus: 'done',
+            mime: 'audio/mp4',
+          ).copyWith(durationMs: 2400, waveform: const [0.1, 0.3, 0.2]),
+        );
+
+        final count = await retryFailedGroupMessage(
+          messageId: messageId,
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage(messageId);
+        expect(saved, isNotNull);
+        expect(saved!.id, messageId);
+        expect(saved.status, 'sent');
+        expect(saved.timestamp, DateTime.parse(timestampIso));
+        expect((await msgRepo.getMessagesPage('group-1')), hasLength(1));
+
+        final payloads = _publishedGroupPayloads(bridge);
+        expect(payloads, hasLength(1));
+        expect(payloads.single['messageId'], messageId);
+        expect(payloads.single['timestamp'], timestampIso);
+        final media = (payloads.single['media'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(media, hasLength(1));
+        expect(media.single['id'], 'att-voice-done');
+        expect(media.single['mime'], 'audio/mp4');
+        expect(media.single['mediaType'], 'audio');
+        expect(media.single['durationMs'], 2400);
+        expect(media.single['waveform'], [0.1, 0.3, 0.2]);
+
+        final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+        expect(attachments, hasLength(1));
+        expect(attachments.single.id, 'att-voice-done');
+        expect(attachments.single.downloadStatus, 'done');
       },
     );
 

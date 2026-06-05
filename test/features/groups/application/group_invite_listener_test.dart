@@ -206,6 +206,7 @@ ChatMessage _makeSignedV2InviteMessage({
   DateTime? membershipProofIssuedAt,
   DateTime? membershipProofExpiresAt,
   DateTime? messageTimestamp,
+  DateTime? policyExpiresAt,
 }) {
   final effectiveGroupConfig = groupConfig ?? _testGroupConfig;
   final payload = GroupInvitePayload(
@@ -219,7 +220,7 @@ ChatMessage _makeSignedV2InviteMessage({
     timestamp: '2026-03-02T12:00:00.000Z',
     recipientPeerId: '12D3KooWBob',
     invitePolicy: GroupInvitePolicy(
-      expiresAt: DateTime.utc(2099, 3, 9, 12),
+      expiresAt: policyExpiresAt ?? DateTime.utc(2099, 3, 9, 12),
       allowedDevices: const ['12D3KooWBob'],
       assignedRole: 'writer',
       canInviteOthers: false,
@@ -487,6 +488,37 @@ void main() {
           isNotNull,
         );
         expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'stores delayed policy-valid invite after old freshness window without joining',
+      () async {
+        final issuedAt = DateTime.utc(2026, 3, 2, 12);
+        listenerNow = issuedAt.add(const Duration(hours: 25));
+        listener.start();
+
+        final invites = <PendingGroupInvite>[];
+        listener.pendingInviteStream.listen(invites.add);
+
+        incomingController.add(
+          _makeSignedV2InviteMessage(
+            membershipProofIssuedAt: issuedAt,
+            messageTimestamp: listenerNow,
+            policyExpiresAt: issuedAt.add(pendingGroupInviteTtl),
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(invites, hasLength(1));
+        expect(invites.first.expiresAt, issuedAt.add(pendingGroupInviteTtl));
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
         expect(bridge.commandLog, isNot(contains('group:join')));
       },
     );

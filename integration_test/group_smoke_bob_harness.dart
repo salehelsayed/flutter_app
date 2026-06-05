@@ -212,6 +212,7 @@ void main() {
         senderPublicKey: stack.identity.publicKey,
         senderPrivateKey: stack.identity.privateKey,
         senderUsername: stack.identity.username,
+        inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
       );
       sw.stop();
       return {'sendMs': sw.elapsedMilliseconds, 'outcome': result.$1.name};
@@ -357,6 +358,7 @@ void main() {
       notificationService: stack.notificationService,
       groupConversationTracker: ActiveConversationTracker(),
       getAppLifecycleState: () => AppLifecycleState.paused,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     newGroupListener.start(newGroupStream.stream);
     activeGroupListener = newGroupListener;
@@ -427,6 +429,7 @@ void main() {
       notificationService: stack.notificationService,
       groupConversationTracker: ActiveConversationTracker(),
       getAppLifecycleState: () => AppLifecycleState.paused,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     g5GroupListener.start(g5GroupStream.stream);
     activeGroupListener = g5GroupListener;

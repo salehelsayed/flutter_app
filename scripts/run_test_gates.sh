@@ -92,6 +92,8 @@ readonly NIGHTLY_ONLY_TESTS=(
   "integration_test/bidi_text_smoke_test.dart"
 )
 
+readonly APP_DEFAULT_RELAY_ADDRESSES="/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
+
 readonly OPTIONAL_MANUAL_TESTS=(
   "test/features/groups/integration/announcement_happy_path_test.dart"
   "test/features/groups/integration/announcement_new_reader_onboarding_test.dart"
@@ -228,11 +230,14 @@ run_group_real_network_nightly_gate() {
     return 1
   fi
 
+  local relay_addresses="${MKNOON_RELAY_ADDRESSES:-$APP_DEFAULT_RELAY_ADDRESSES}"
+
   printf 'Running Group Real-Network Nightly Gate\n'
+  printf 'Using MKNOON_RELAY_ADDRESSES=%s\n' "$relay_addresses"
   flutter test \
     -d "$FLUTTER_DEVICE_ID" \
     --dart-define=MKNOON_REQUIRE_MULTI_RELAY=true \
-    --dart-define=MKNOON_RELAY_ADDRESSES="${MKNOON_RELAY_ADDRESSES:-}" \
+    --dart-define=MKNOON_RELAY_ADDRESSES="$relay_addresses" \
     integration_test/multi_relay_failover_test.dart
 }
 

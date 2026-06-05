@@ -6,9 +6,9 @@
 
 **Priority: P0** · Theme owner: group-chat reliability · Source: `Test-Flight-Improv/102-group-image-retry-duplicate-delivery-notifications-media-ux.md` (+ GIRD-001…007 session plans)
 
-> **One-liner:** Extend the doc-102 cascade fix — which landed for **images** — to the **plain-text** and **recorded-voice** paths, close the **root timeout asymmetry** that doc 102 deferred, and prove the end-to-end closure doc 102 left `blocked`.
+> **One-liner:** The June 2026 implementation sessions extend the doc-102 cascade fix from **images** to **plain-text** and **recorded-voice** paths, close the Dart/native timeout asymmetry with retained in-doubt handling, and preserve one logical delivery/notification path in repo-local evidence.
 
-> **⚠️ Scope correction (verified against code 2026-06).** Doc 102 and its GIRD-001…007 sessions already fixed the *image* cascade and several pieces landed in the live code (credited in the next section). This theme is **not** "the cascade is wide open" — it is the **residue those sessions did not cover**: the same cascade on the **text** path and the **recorded-voice** path (voice rides a separate `_onRecordStop()` flow the doc-102 restored-composer fix never touched, and a re-record produces *different bytes* that no dedup can collapse), the **timeout value** doc 102 explicitly declined to change, and doc 102's own `blocked with evidence` closure. Two earlier draft claims in this doc were over-stated and are corrected below: the open conversation screen *does* apply background status updates, and a bridge timeout no longer false-*fails* a row (it resolves to in-doubt `pending`).
+> **Scope correction (verified against code and accepted sessions 2026-06).** Doc 102 and its GIRD-001…007 sessions already fixed the *image* cascade. This theme originally scoped the remaining **text**, **recorded-voice**, timeout, local-status, stuck-sending, and live/replay notification gaps. Those gaps are now accepted in repo-local evidence; the only remaining strict-closure residual is provider-backed APNs/TestFlight background/terminated proof.
 
 ---
 
@@ -23,49 +23,58 @@ Crediting the prior work so this theme stays scoped to the residue:
 | An open conversation **applies** status updates from the message stream (`_applyMessageUpdate`, for *every* group message, not incoming-only) and reloads on resume — so reconciled self-echoes refresh live | `group_conversation_wired.dart:1201-1218`, `:591` |
 | Restored-composer id reuse (**media**), recipient media dedupe, relay-inbox idempotency, the "Media unavailable" flash, Android notification display-failure/coalescing | per doc 102 §7, GIRD-002…006 |
 
-**Not closed, per doc 102's own verdict (§7).** The three-user incident reproduction is `blocked with evidence` — reliability command #49 never ran because the *Dana* simulator stayed `relayState=recovering, circuitAddresses=0, connections=0` across three attempts (incl. reboot) — and the real-APNs iOS path is `residual-only` follow-up. So even the media fix lacks its final end-to-end gate.
+**Current closure status (2026-06-04).** The doc-102 media lineage is preserved, and the June improvement-review sessions close the text/voice extension in repo-local direct, simulator, and named-gate evidence. The broad `groups` gate now passes after the follow-up `GCA-004 bridgeError recovery drains inbox after settled materialized invite` fix. `group-real-network-nightly` also passes with `MKNOON_RELAY_ADDRESSES` unset because the gate now falls back to the same default relay addresses hardcoded in the app. Real provider-backed APNs/TestFlight background/terminated proof remains residual-only.
+
+## Acceptance Closure (2026-06-04)
+
+| Area | Accepted closure evidence | Remaining residual |
+|------|---------------------------|--------------------|
+| Failed text retry | `group_conversation_screen_test.dart`, `group_conversation_wired_test.dart`, and `retry_failed_group_messages_use_case_test.dart` were rerun and passed, proving failed outgoing text-only group rows expose in-place retry and reach same-id retry plumbing. | None in repo-local scope. |
+| Restored text continuation | `group_conversation_wired_test.dart`, `send_group_message_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `integration_test/group_recovery_e2e_test.dart` command `#8` were rerun and passed, proving unchanged restored text reuses the failed row id/timestamp while edited text remains a new send. | None in repo-local scope. |
+| Recorded voice recovery | `retry_failed_group_messages_use_case_test.dart`, `retry_incomplete_group_uploads_use_case_test.dart`, `group_conversation_wired_test.dart`, `group_conversation_wired_bg_task_test.dart`, and `integration_test/group_recovery_e2e_test.dart` command `#8` were rerun and passed, proving uploaded-audio same-id retry, upload-pending retry, durable-prep cleanup, and re-record continuation. | None in repo-local scope. |
+| Timeout / in-doubt pending | `bridge_group_helpers_test.dart`, `send_group_message_use_case_test.dart`, DB helper/lifecycle tests, the `transport` named gate, and `integration_test/group_recovery_e2e_test.dart` command `#8` were rerun and passed, proving the 40-second Dart bridge timeout and retained pending retry-payload recovery. | Native early-custody signaling remains out of scope. |
+| Local status visibility | `group_message_repository_impl_test.dart`, `group_conversation_wired_test.dart`, and `integration_test/group_recovery_e2e_test.dart` command `#8` were rerun and passed, proving local outgoing status changes reach the open group screen. | None in repo-local scope. |
+| Stuck-sending recovery | Migration, DB helper, repository, send/retry/recover use-case, lifecycle, and full migration-chain tests were rerun and passed, proving `last_send_attempt_at` persistence and stuck-sending recovery. | None in repo-local scope. |
+| Live/replay notification dedup | `group_message_listener_test.dart`, `handle_incoming_group_message_use_case_test.dart`, `drain_group_offline_inbox_use_case_test.dart`, `group_notification_dedupe_integration_test.dart`, and `foreground_group_push_drain_test.dart` command `#2` were rerun and passed, proving raced live/replay handling emits one row and one notification path. | Real APNs/TestFlight background/terminated proof remains residual-only. |
+
+## Follow-up Sweep (2026-06-04)
+
+- `GCA-004 bridgeError recovery drains inbox after settled materialized invite` is now closed in repo-local evidence. Inline materialized invite acceptance preserves recovery state on bridge/inbox error, while welcome-package retries still roll back to preserve retryability.
+- Focused GCA coverage passed: `accept_pending_group_invite_use_case_test.dart --plain-name "GCA-004 join bridgeError with inline invite preserves recovery state"`, `accept_pending_group_invite_use_case_test.dart --plain-name "GCA-004 join bridgeError with inbox failure keeps welcome package retryable"`, and `invite_round_trip_test.dart --plain-name "GCA-004 bridgeError recovery drains inbox after settled materialized invite"`.
+- `./scripts/run_test_gates.sh groups` passed after the GCA fix.
+- `./scripts/run_test_gates.sh group-real-network-nightly` passed on simulator `5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3` with `MKNOON_RELAY_ADDRESSES` unset and the app default relay CSV injected by the gate.
+- Fixture-backed real-network group recovery passed with the app default relays via `dart run integration_test/scripts/run_group_recovery_e2e.dart -d 5A9A8286-001B-4BF1-8F40-5A3AB8BF8FE3`; the E2E harness schema was brought forward to migration `073`.
+- Push release configuration passed `./scripts/check_push_release_gate.sh`. After locating the workspace service-account JSON, the strict credential form also passed via `FIREBASE_SERVICE_ACCOUNT=<workspace service-account JSON> ./scripts/check_push_release_gate.sh --require-service-account`. Provider-backed APNs/TestFlight background/terminated delivery remains the only external proof needed for a strict closed verdict.
+- Physical-device provider/APNs foreground proof passed on the physical iPhone named `iPhone`: native logs show notification authorization enabled, APNs token registration, FCM token minting, relay push-token registration, Firebase FCM v1 send success, and native `willPresent` receipt for probe `iphone13-foreground-20260604T113032`. Background attempts are not accepted as closure proof yet because their native receipt context was still `willPresent`, meaning the app was foreground at delivery time.
+- Physical-device provider/APNs locked-screen proof passed on the same iPhone: Firebase accepted probe `iphone13-locked2-20260604T113904` as `projects/mknoon-c6e62/messages/1780565944971027`, the user observed the lock-screen notification and tapped it, and device process evidence immediately after the tap showed both the Notification Service Extension and `Runner.app` running. Direct IPA installation is still not a TestFlight substitute: `devicectl` rejects the beta IPA with `Attempted to install a Beta profile without the proper entitlement`; TestFlight itself is installed and was launched for manual app install/update.
 
 ---
 
 ## Why this matters (user experience)
 
-The cascade is the single most visible reliability failure in group chat, and it is now **closed for images but still reachable for plain text**:
+The original cascade made group senders unsure whether retrying would recover one intended message or create duplicates. The accepted implementation now makes the safe path visible and id-stable for text and recorded voice, keeps ambiguous timeout states recoverable, and preserves one recipient materialization plus one notification path when live delivery and replay/drain overlap.
 
-1. A text send shows a clock/error because Flutter gives up at **10s** while native is still finishing (≈15–30s).
-2. The message often **did** deliver — flood-publish or relay-inbox custody completed after Flutter stopped waiting (the row is correctly held as in-doubt `pending`).
-3. For **text** there is still **no in-place retry button** (1:1 has one; groups don't), so the user's only recovery is to **retype**.
-4. A retyped text message mints a **fresh `messageId` + timestamp** (the id-reuse continuation only fires for media), so recipients can't dedupe it — and because it's a brand-new id, the doc-102 same-id reconciliation never repairs it.
-5. Recipients receive **two copies** of one intended text message (and, in a narrow window, **two notifications**).
-
-**Recorded voice is the worst variant.** Voice does not go through `_onSend`/`_restoreComposerSnapshot` at all — it rides a separate `_onRecordStop()` path that the doc-102 restored-composer id-reuse fix never touched. For the common case (audio uploaded, publish failed/in-doubt) a failed voice row *does* show the media retry button and resends id-stably, so it is partly covered. But:
-
-- If the **upload itself** stalled (`upload_pending`), tapping retry **no-ops** with a snackbar (`_onRetryFailedMedia` returns early; `retryFailedGroupMessages` skips `upload_pending`) — only the background upload sweep can re-drive it.
-- There is **no composer restore** for voice, so the user's instinct is to **re-record**, which mints a fresh `messageId` *and* fresh audio bytes. If the original later delivers, the recipient gets **two voice notes** — and because the bytes differ, **no content-hash dedup can ever collapse them**.
-
-Because recipients dedupe purely on `messageId`, the durable cure is the same as doc 102's for media — **one stable id per intended send** plus a **safe in-place retry** — but applied to **text and voice**, with the root **timeout asymmetry** finally closed so fewer sends enter the in-doubt state at all. The fixes are small-to-medium and each independently weakens the cascade.
+The remaining evidence limit is deliberately narrower than the original bug: repo-local APNs payload, preview, fallback, foreground-drain, and notification-open behavior is covered, but real provider-backed iOS background/terminated proof still requires provider/device evidence.
 
 ---
 
-## Current behaviour & evidence
+## Accepted behaviour & evidence
 
-| Area | Current behaviour | Evidence (file:line) |
-|------|-------------------|----------------------|
-| Failed text retry (UI) | Group screen only computes `showFailedMediaActions` which **requires `messageMedia.isNotEmpty`**; only `onRetryFailedMedia` / `onDeleteFailedMedia` are wired into `LetterCard`. There is no `onRetryFailedMessage` field on the group screen at all. A failed *text* row renders only an error glyph with no control. | `group_conversation_screen.dart:543-547`, `:582-589`, fields at `:75-76`; `letter_card.dart:530` (error glyph), `:294-314` (supported but null); `grep onRetryFailedMessage lib/features/groups` → **none** |
-| 1:1 has the pattern | The 1:1 screen *does* wire `onRetryFailedMessage` for failed text-only rows. Groups are the gap. | `conversation_screen.dart:470-476` (`showFailedTextRetry`), `:538-539` |
-| Id-stable retry exists, but media-only | `retryFailedGroupMessage()` re-sends with the original id + timestamp and already supports text-only via `_isTextOnlyRetryPayload`. Its **only** group-wired call site is inside `_onRetryFailedMedia`. | `retry_failed_group_messages_use_case.dart:37-58`, `:94`; `group_conversation_wired.dart:2071` |
-| Open screen: refreshes for stream events, **not** for local-only sweeps *(corrected)* | The stream handler applies updates for **every** message in the group via `_applyMessageUpdate` (not incoming-only), and resume triggers `_loadMessages()` — so reconciled self-echoes **do** refresh live (GIRD-002). **Residual:** purely **local** status changes from background sweeps (`recoverStuckSendingGroupMessages`, the `retryFailed*` use cases) write the DB with **no stream emit**, so they aren't reflected on an open screen until the next reconcile/reload. | `group_conversation_wired.dart:1201-1218` (`_applyMessageUpdate`), `:591` (resume reload); status write with no broadcast `group_message_repository_impl.dart:294-297`; sweep does a bare DB update `recover_stuck_sending_group_messages_use_case.dart` |
-| Retype is not id-stable **(text)** | `_onSend` uses `messageId = restoredContinuation?.messageId ?? _uuid.v4()` and `now = restoredContinuation?.timestamp ?? DateTime.now()`. The continuation is only tracked for **media** (`snapshot.pendingAttachments.isNotEmpty`); text-only failed sends hit the `else` that **clears** tracking, so a retyped text message gets a fresh id and escapes both recipient dedupe and the doc-102 same-id reconcile. | `group_conversation_wired.dart:1590-1591`, `:2158-2166` |
-| Voice is a separate path with **no composer restore** | Recorded voice goes through `_onRecordStop()` (not `_onSend`), which mints a fresh `messageId`/`attachmentId` (`_uuid.v4()`), copies the audio to durable storage, then calls `sendGroupMessage` with that id. On any **pre-send** failure (durable-prep error, upload returns null) it marks the row `failed` and **returns with no restore** — the doc-102 restored-composer id-reuse fix never applies here, so the user re-records → fresh id + different bytes → undedup-able duplicate. | `group_conversation_wired.dart:2982-2983` (fresh ids), `:3032-3063` (durable + persist), `:3138-3155` (send with id), `:3064-3077`,`:3113-3122` (fail → no restore) |
-| Failed-voice retry no-ops while upload is pending | A failed voice row shows the **media** retry button (`messageMedia.isNotEmpty` is true for `mediaType:'audio'`), so the common case (upload done, send failed) retries id-stably. But `_onRetryFailedMedia` returns early with a snackbar when any attachment is still `upload_pending`, and `retryFailedGroupMessages` skips `upload_pending` media — so a manual retry **cannot** re-drive a stalled voice upload; only the background `retryIncompleteGroupUploads` sweep can. | `group_conversation_screen.dart:542-547` (media gate), `group_conversation_wired.dart:2038-2070` (upload-pending no-op), `retry_failed_group_messages_use_case.dart` (skips `upload_pending`) |
-| Reuse predicate too strict | `_resolveOutgoingMessageId` can reuse an id only when text **and** timestamp match exactly (`_canReuseOutgoingMessageId`). A retype passes a fresh uuid + fresh `DateTime.now()`, so reuse never fires. | `send_group_message_use_case.dart:208-227`, `:230-279` |
-| Orphaned in-doubt `pending` | On `reliableTimedOut`/`publishWithoutCustody` the row is saved `status:'pending'` with `inboxRetryPayload = retryPayload`, whose fallback is `prePersistMessage.inboxRetryPayload` — **null** when `buildGroupOfflineReplayEnvelope` threw earlier. No sweep reclaims such a row. | `send_group_message_use_case.dart:881-904`; null path at `:785-817`; sweeps: `dbLoadGroupMessagesWithFailedInboxStore` requires `inbox_retry_payload IS NOT NULL` `group_messages_db_helpers.dart:730-731`, stuck-sweep only `status='sending'` `:700`/`:748-754`, failed-load only `status='failed'` `:713` |
-| Timeout budget mismatch — now in-doubt, **not** false-fail *(corrected)* | Flutter `callGroupSendReliable` still defaults to `Duration(seconds: 10)` → returns `BRIDGE_TIMEOUT`; native runs inbox (`InboxTimeout=15s`) and publish (`PubSubTimeout=30s`) **concurrently** (≈30s worst case). GIRD-001 made the 10s timeout resolve to in-doubt `pending` (not `failed`), so it self-heals **when a same-id self-echo/receipt later arrives**. **Residual:** the asymmetry itself remains, and any send that never gets a reconciliation — notably a text retype under a new id — escapes the repair. | `bridge_group_helpers.dart:410`, `:445-456`; `config.go:33`, `:45`; native `pubsub.go` wg.Wait; in-doubt handling `send_group_message_use_case.dart:897-946` |
-| Stuck-sweep races in-flight retry | A retry pre-persists `status:'sending'` with the **original (old) timestamp**; `dbTransitionGroupSendingToFailed` flips `sending` rows whose **creation timestamp** is older than 30s. Resume step-3d `recoverStuck` (30s) can flip a retry that is still awaiting the bridge. | `recover_stuck_sending_group_messages_use_case.dart:5` (`kStuckSendingGroupThreshold=30s`); `group_messages_db_helpers.dart:742-756`; retry reuses ts `retry_failed_group_messages_use_case.dart:285` → `send_group_message_use_case.dart:621`,`:819-836`; resume sweep `handle_app_resumed.dart` (step 3d) |
-| Live-vs-replay dedup race | `handleReplayEnvelope` calls `_handleMessage` directly, **bypassing** the `asyncMap` serialization that wraps only the live stream. Dedup is non-atomic `getMessage()`-then-`saveMessage()`. Two concurrent handlers for one id can both emit/notify. | `group_message_listener.dart:193-205` (replay path), `:248-249` (live-only serialization); dedup `handle_incoming_group_message_use_case.dart:462-609`; DB merge protects the row only `group_messages_db_helpers.dart:31-38` |
+| Area | Accepted behaviour | Rerun evidence |
+|------|-------------------|----------------|
+| Failed text retry (UI) | Failed outgoing text-only group rows expose in-place retry and route to existing same-id retry plumbing instead of requiring a manual retype. | `flutter test test/features/groups/presentation/group_conversation_screen_test.dart`; `flutter test test/features/groups/presentation/group_conversation_wired_test.dart`; `flutter test test/features/groups/application/retry_failed_group_messages_use_case_test.dart` |
+| Restored text resend | Unchanged restored text reuses the failed row id/timestamp; edited text is treated as a new intentional send. | `group_conversation_wired_test.dart`; `send_group_message_use_case_test.dart`; `retry_failed_group_messages_use_case_test.dart`; reliability-sim `group_recovery_e2e_test.dart` command `#8` |
+| Recorded voice retry/re-record | Uploaded audio retries under the same message id, upload-pending voice can be re-driven, durable-prep failures do not leave empty retry-less rows, and re-record continuation stays tied to the failed logical send. | `retry_failed_group_messages_use_case_test.dart`; `retry_incomplete_group_uploads_use_case_test.dart`; `group_conversation_wired_test.dart`; `group_conversation_wired_bg_task_test.dart`; reliability-sim `group_recovery_e2e_test.dart` command `#8` |
+| Timeout / pending recovery | Dart waits long enough for native reliable-send work, while retained in-doubt pending handling persists retry payloads for recovery. | `bridge_group_helpers_test.dart`; `send_group_message_use_case_test.dart`; DB helper/lifecycle suites; named `transport` gate |
+| Local status visibility | Local outgoing status changes are broadcast to the open group screen so recovery does not invite duplicate resends. | `group_message_repository_impl_test.dart`; `group_conversation_wired_test.dart`; reliability-sim `group_recovery_e2e_test.dart` command `#8` |
+| Stuck-sending timestamp | `last_send_attempt_at` distinguishes old message creation time from a fresh retry attempt and prevents in-flight retries from being flipped back to failed by resume recovery. | migration `073`, DB helper, repository, send/retry/recover use-case, lifecycle, and full migration-chain suites |
+| Live/replay dedup | Live pubsub, inbox replay, and drain converge on one row and one eligible notification path for the same logical group message. | `group_message_listener_test.dart`; `handle_incoming_group_message_use_case_test.dart`; `drain_group_offline_inbox_use_case_test.dart`; `group_notification_dedupe_integration_test.dart`; reliability-sim `foreground_group_push_drain_test.dart` command `#2` |
 
 ---
 
-## Root cause(s)
+## Root cause(s) addressed by accepted sessions
+
+The following root-cause list is retained as historical implementation context. The accepted evidence above is the current closure source of truth.
 
 1. **No id-stable, in-place text recovery in the group UI.** The id-reuse retry plumbing exists and even supports text, but in the group UI it is reachable only through the media path, so the user's only text recovery is retyping — the duplicate generator. (doc 102 fixed this for media via restored-composer id reuse; text was out of scope.)
 1b. **Voice rides a separate, restore-less path.** `_onRecordStop()` is independent of `_onSend`/`_restoreComposerSnapshot`, so the doc-102 id-reuse fix never applies; a stalled voice upload can't be re-driven manually, and a re-record produces fresh id + different bytes that defeat *every* dedup. Voice is the only content type whose duplicate can never be collapsed after the fact.
@@ -76,7 +85,9 @@ Because recipients dedupe purely on `messageId`, the durable cure is the same as
 
 ---
 
-## Proposed improvements
+## Proposed improvements (implemented or residualized)
+
+This section is retained as the original implementation checklist. Items 1, 2, 2b, 3, 4, 5, 6, and 7 have been accepted in repo-local evidence by the June 2026 sessions unless explicitly residualized above.
 
 Ordered roughly by impact-per-effort. Items 1–3 break the cascade for the common case; 4–7 close the remaining holes.
 
@@ -189,7 +200,9 @@ Scope is narrow but real: a `pending` row with **null `inbox_retry_payload`** (r
 
 ---
 
-## Test & verification strategy
+## Test & verification strategy (accepted evidence recorded)
+
+The strategy below was the implementation target; the acceptance closure table above records the current rerun evidence and remaining residuals.
 
 **Unit tests**
 - *Retry id-stability* (items 1, 2): retrying / resending a failed text row calls `sendGroupMessage` with the **original** `messageId` + `timestamp`; assert `_canReuseOutgoingMessageId` returns true and no new uuid is minted.

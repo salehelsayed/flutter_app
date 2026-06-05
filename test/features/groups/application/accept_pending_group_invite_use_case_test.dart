@@ -101,6 +101,8 @@ void main() {
     String? recipientKeyPackageId,
     String? recipientKeyPackagePublicMaterial,
     String? membershipWatermark,
+    DateTime? membershipProofIssuedAt,
+    DateTime? membershipProofExpiresAt,
   }) {
     final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
     final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
@@ -191,7 +193,8 @@ void main() {
         recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
         groupConfig: resolvedGroupConfig,
         keyEpoch: keyEpoch,
-        issuedAt: inviteTimestamp,
+        issuedAt: membershipProofIssuedAt ?? inviteTimestamp,
+        expiresAt: membershipProofExpiresAt,
         membershipWatermark: membershipWatermark,
       ),
     ).withInviteSignature(signature: 'signed-invite-by-alice');
@@ -1938,6 +1941,47 @@ void main() {
     );
 
     test(
+      'GCA-004 join bridgeError with inline invite preserves recovery state',
+      () async {
+        await pendingInviteRepo.savePendingInvite(makeInvite());
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.bridgeError);
+        expect(group, isNotNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+      },
+    );
+
+    test(
       'GCA-004 join bridgeError with inbox failure keeps welcome package retryable',
       () async {
         await pendingInviteRepo.savePendingInvite(
@@ -3110,8 +3154,13 @@ void main() {
       'PREREQ-INVITER-FRESHNESS accept deletes stale self-consistent invite without state',
       () async {
         final receivedAt = DateTime.utc(2026, 3, 2, 12);
+        final issuedAt = receivedAt.subtract(const Duration(hours: 1));
         await pendingInviteRepo.savePendingInvite(
-          makeInvite(receivedAt: receivedAt),
+          makeInvite(
+            receivedAt: receivedAt,
+            membershipProofIssuedAt: issuedAt,
+            membershipProofExpiresAt: issuedAt.add(const Duration(hours: 18)),
+          ),
         );
 
         final (result, group) = await acceptPendingGroupInvite(
@@ -3136,6 +3185,37 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:join')));
         expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
         expect(msgRepo.count, 0);
+      },
+    );
+
+    test(
+      'accepts delayed policy-valid invite after old freshness window',
+      () async {
+        final receivedAt = DateTime.utc(2026, 3, 2, 12);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: receivedAt),
+        );
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: receivedAt.add(const Duration(hours: 25)),
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(bridge.commandLog, contains('group:join'));
       },
     );
 

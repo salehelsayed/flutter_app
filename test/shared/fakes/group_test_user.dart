@@ -29,6 +29,7 @@ import 'package:flutter_app/features/groups/application/update_group_metadata_us
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 
@@ -53,6 +54,7 @@ class GroupTestUser {
   final InMemoryGroupRepository groupRepo;
   final InMemoryGroupMessageRepository msgRepo;
   final InMemoryMediaAttachmentRepository mediaAttachmentRepo;
+  final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final GroupMessageListener groupMessageListener;
   final ReactionRepository? reactionRepo;
   final GroupReactionReplayOutboxRepository reactionReplayOutboxRepo;
@@ -75,6 +77,7 @@ class GroupTestUser {
     required this.groupRepo,
     required this.msgRepo,
     required this.mediaAttachmentRepo,
+    this.inviteDeliveryAttemptRepo,
     required this.groupMessageListener,
     required this.reactionRepo,
     required this.reactionReplayOutboxRepo,
@@ -115,6 +118,7 @@ class GroupTestUser {
     GroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
     NotificationService? notificationService,
     InMemoryGroupMessageRepository? msgRepo,
+    GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
     RequestGroupKeyRepair? requestGroupKeyRepair,
@@ -177,6 +181,7 @@ class GroupTestUser {
       groupRepo: groupRepo,
       msgRepo: effectiveMsgRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       groupMessageListener: listener,
       reactionRepo: reactionRepo,
       reactionReplayOutboxRepo:
@@ -649,6 +654,7 @@ class GroupTestUser {
         quotedMessageId: quotedMessageId,
         mediaAttachments: mediaAttachments,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       );
 
       if (result == group_send.SendGroupMessageResult.success &&

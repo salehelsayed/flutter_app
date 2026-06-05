@@ -18,6 +18,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -123,6 +124,8 @@ class DefaultShareBatchDeliveryCoordinator
   final MediaAttachmentRepository mediaAttachmentRepository;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupInviteDeliveryAttemptRepository?
+  groupInviteDeliveryAttemptRepository;
   final Bridge bridge;
   final P2PService p2pService;
   final MediaFileManager mediaFileManager;
@@ -140,6 +143,7 @@ class DefaultShareBatchDeliveryCoordinator
     required this.mediaAttachmentRepository,
     required this.groupRepository,
     required this.groupMessageRepository,
+    this.groupInviteDeliveryAttemptRepository,
     required this.bridge,
     required this.p2pService,
     required this.mediaFileManager,
@@ -432,6 +436,7 @@ class DefaultShareBatchDeliveryCoordinator
         senderTransportPeerId: senderDeviceId,
         mediaAttachments: attachments.isEmpty ? null : attachments,
         mediaAttachmentRepo: mediaAttachmentRepository,
+        inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
       );
       final pendingCompletion =
           result == SendGroupMessageResult.success &&

@@ -186,8 +186,9 @@ func (n *Node) GroupInboxStoreWithOptions(
 			if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
 				return fmt.Errorf("invalid group config for group %s: %w", groupId, err)
 			}
-			if len(normalizeGroupInboxRecipientPeerIds(recipientPeerIds)) == 0 {
-				return fmt.Errorf("explicit group inbox recipients empty for group %s", groupId)
+			recipientPeerIds = normalizeGroupInboxRecipientPeerIds(recipientPeerIds)
+			if len(recipientPeerIds) == 0 {
+				return nil
 			}
 		} else {
 			if senderTransportPeerId == "" {

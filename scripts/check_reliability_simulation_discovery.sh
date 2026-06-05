@@ -125,6 +125,11 @@ classify_path() {
       record "ignored" "$path" "ignored" "manual NET-REL-04 1:1 transport census harvest outside default reliability-sim gates"
       return
       ;;
+    integration_test/apns_provider_probe_app.dart|\
+    integration_test/apns_provider_probe_harness.dart)
+      record "ignored" "$path" "ignored" "physical iOS APNs provider probe outside default simulator reliability gates"
+      return
+      ;;
     integration_test/scripts/run_benchmark_suite.dart|\
     integration_test/scripts/run_group_publish_benchmark.dart|\
     integration_test/scripts/run_timeout_accuracy_benchmark.dart|\

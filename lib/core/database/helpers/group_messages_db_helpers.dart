@@ -697,7 +697,7 @@ Future<List<Map<String, dynamic>>> dbLoadStuckSendingGroupMessages(
 }) async {
   final threshold = olderThan.toUtc().toIso8601String();
   return db.rawQuery(
-    "SELECT * FROM group_messages WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ? ORDER BY timestamp ASC, id ASC LIMIT ?",
+    "SELECT * FROM group_messages WHERE status = 'sending' AND is_incoming = 0 AND COALESCE(last_send_attempt_at, timestamp) < ? ORDER BY timestamp ASC, id ASC LIMIT ?",
     [threshold, limit],
   );
 }
@@ -751,7 +751,7 @@ Future<int> dbTransitionGroupSendingToFailed(
 
   final threshold = olderThan.toUtc().toIso8601String();
   return db.rawUpdate(
-    "UPDATE group_messages SET status = 'failed' WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ?",
+    "UPDATE group_messages SET status = 'failed' WHERE status = 'sending' AND is_incoming = 0 AND COALESCE(last_send_attempt_at, timestamp) < ?",
     [threshold],
   );
 }

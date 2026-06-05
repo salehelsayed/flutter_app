@@ -352,6 +352,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 reactionListener: widget.reactionListener,
                 groupRepository: widget.groupRepository,
                 groupMessageRepository: widget.groupMessageRepository,
+                groupInviteDeliveryAttemptRepository:
+                    widget.groupInviteDeliveryAttemptRepository,
                 groupMessageListener: widget.groupMessageListener,
                 groupConversationTracker: widget.groupConversationTracker,
                 introductionRepository: widget.introductionRepository,
@@ -866,6 +868,8 @@ class _StartupRouterState extends State<StartupRouter> {
       reactionListener: widget.reactionListener,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupInviteDeliveryAttemptRepository:
+          widget.groupInviteDeliveryAttemptRepository,
       groupMessageListener: widget.groupMessageListener,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,

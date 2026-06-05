@@ -7,6 +7,7 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 GroupMessage _makeSendingMessage({
   required String id,
   required Duration age,
+  DateTime? lastSendAttemptAt,
 }) {
   final ts = DateTime.now().toUtc().subtract(age);
   return GroupMessage(
@@ -20,6 +21,7 @@ GroupMessage _makeSendingMessage({
     status: 'sending',
     isIncoming: false,
     createdAt: ts,
+    lastSendAttemptAt: lastSendAttemptAt,
   );
 }
 
@@ -31,37 +33,46 @@ void main() {
       msgRepo = InMemoryGroupMessageRepository();
     });
 
-    test('returns count from repo and transitions stuck rows to failed', () async {
-      await msgRepo.saveMessage(
-        _makeSendingMessage(id: 'old-sending', age: const Duration(minutes: 5)),
-      );
-      await msgRepo.saveMessage(
-        _makeSendingMessage(id: 'recent-sending', age: const Duration(seconds: 10)),
-      );
-      await msgRepo.saveMessage(
-        GroupMessage(
-          id: 'sent-row',
-          groupId: 'group-1',
-          senderPeerId: 'peer-1',
-          senderUsername: 'Alice',
-          text: 'Already sent',
-          timestamp: DateTime.now().toUtc(),
-          keyGeneration: 0,
-          status: 'sent',
-          isIncoming: false,
-          createdAt: DateTime.now().toUtc(),
-        ),
-      );
+    test(
+      'returns count from repo and transitions stuck rows to failed',
+      () async {
+        await msgRepo.saveMessage(
+          _makeSendingMessage(
+            id: 'old-sending',
+            age: const Duration(minutes: 5),
+          ),
+        );
+        await msgRepo.saveMessage(
+          _makeSendingMessage(
+            id: 'recent-sending',
+            age: const Duration(seconds: 10),
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'sent-row',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: 'Already sent',
+            timestamp: DateTime.now().toUtc(),
+            keyGeneration: 0,
+            status: 'sent',
+            isIncoming: false,
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
 
-      final count = await recoverStuckSendingGroupMessages(
-        groupMsgRepo: msgRepo,
-        threshold: const Duration(seconds: 30),
-      );
+        final count = await recoverStuckSendingGroupMessages(
+          groupMsgRepo: msgRepo,
+          threshold: const Duration(seconds: 30),
+        );
 
-      expect(count, 1);
-      expect((await msgRepo.getMessage('old-sending'))!.status, 'failed');
-      expect((await msgRepo.getMessage('recent-sending'))!.status, 'sending');
-    });
+        expect(count, 1);
+        expect((await msgRepo.getMessage('old-sending'))!.status, 'failed');
+        expect((await msgRepo.getMessage('recent-sending'))!.status, 'sending');
+      },
+    );
 
     test('returns 0 when nothing is stuck', () async {
       final count = await recoverStuckSendingGroupMessages(
@@ -74,7 +85,10 @@ void main() {
 
     test('respects the supplied threshold', () async {
       await msgRepo.saveMessage(
-        _makeSendingMessage(id: 'recent-sending', age: const Duration(seconds: 10)),
+        _makeSendingMessage(
+          id: 'recent-sending',
+          age: const Duration(seconds: 10),
+        ),
       );
 
       final count = await recoverStuckSendingGroupMessages(
@@ -84,6 +98,49 @@ void main() {
 
       expect(count, 0);
       expect((await msgRepo.getMessage('recent-sending'))!.status, 'sending');
+    });
+
+    test('uses lastSendAttemptAt with timestamp fallback', () async {
+      final now = DateTime.now().toUtc();
+      await msgRepo.saveMessage(
+        _makeSendingMessage(
+          id: 'old-logical-fresh-attempt',
+          age: const Duration(minutes: 5),
+          lastSendAttemptAt: now.subtract(const Duration(seconds: 10)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        _makeSendingMessage(
+          id: 'recent-logical-stale-attempt',
+          age: const Duration(seconds: 10),
+          lastSendAttemptAt: now.subtract(const Duration(minutes: 5)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        _makeSendingMessage(
+          id: 'legacy-null-attempt',
+          age: const Duration(minutes: 5),
+        ),
+      );
+
+      final count = await recoverStuckSendingGroupMessages(
+        groupMsgRepo: msgRepo,
+        threshold: const Duration(seconds: 30),
+      );
+
+      expect(count, 2);
+      expect(
+        (await msgRepo.getMessage('old-logical-fresh-attempt'))!.status,
+        'sending',
+      );
+      expect(
+        (await msgRepo.getMessage('recent-logical-stale-attempt'))!.status,
+        'failed',
+      );
+      expect(
+        (await msgRepo.getMessage('legacy-null-attempt'))!.status,
+        'failed',
+      );
     });
   });
 }

@@ -77,6 +77,7 @@ void main() {
     bool isActiveQuoteUnavailable = false,
     VoidCallback? onClearQuote,
     ValueChanged<String>? onQuoteReply,
+    ValueChanged<String>? onRetryFailedMessage,
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
     void Function(String messageId, String attachmentId)?
@@ -116,6 +117,7 @@ void main() {
           isActiveQuoteUnavailable: isActiveQuoteUnavailable,
           onClearQuote: onClearQuote,
           onQuoteReply: onQuoteReply,
+          onRetryFailedMessage: onRetryFailedMessage,
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
           onRetryUnavailableMedia: onRetryUnavailableMedia,
@@ -1320,6 +1322,156 @@ void main() {
 
     expect(retriedId, 'failed-media');
     expect(deletedId, 'failed-media');
+  });
+
+  testWidgets('failed outgoing text-only rows show retry', (tester) async {
+    String? retriedId;
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: [
+          GroupMessage(
+            id: 'incoming-failed-text',
+            groupId: 'group-1',
+            senderPeerId: 'peer-2',
+            senderUsername: 'Alice',
+            text: 'Incoming failed text',
+            status: 'failed',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            isIncoming: true,
+          ),
+          GroupMessage(
+            id: 'empty-failed-text',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'You',
+            text: '   ',
+            status: 'failed',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            isIncoming: false,
+          ),
+          GroupMessage(
+            id: 'sent-text',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'You',
+            text: 'Already sent',
+            status: 'sent',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            isIncoming: false,
+          ),
+          GroupMessage(
+            id: 'failed-media-with-caption',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'You',
+            text: 'Caption stays media retry',
+            status: 'failed',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            isIncoming: false,
+            media: [
+              makeImageAttachment(
+                id: 'att-failed-media-with-caption',
+                messageId: 'failed-media-with-caption',
+              ),
+            ],
+          ),
+          GroupMessage(
+            id: 'failed-text-retry',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'You',
+            text: 'Retry this text',
+            status: 'failed',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            isIncoming: false,
+          ),
+        ],
+        initialLoadDone: true,
+        onRetryFailedMessage: (id) => retriedId = id,
+        onRetryFailedMedia: (_) {},
+        onDeleteFailedMedia: (_) {},
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final retryKey = find.byKey(
+      const ValueKey('failed-message-retry-failed-text-retry'),
+    );
+    expect(retryKey, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('failed-media-retry-failed-text-retry')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('failed-media-delete-failed-text-retry')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('failed-message-retry-incoming-failed-text')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('failed-message-retry-empty-failed-text')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('failed-message-retry-sent-text')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('failed-message-retry-failed-media-with-caption'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('failed-media-retry-failed-media-with-caption'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('failed-media-delete-failed-media-with-caption'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(retryKey);
+    await tester.pump();
+    expect(retriedId, 'failed-text-retry');
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: [
+          GroupMessage(
+            id: 'failed-readonly-text',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'You',
+            text: 'Cannot retry while read-only',
+            status: 'failed',
+            timestamp: DateTime.now().toUtc(),
+            createdAt: DateTime.now().toUtc(),
+            isIncoming: false,
+          ),
+        ],
+        canWrite: false,
+        initialLoadDone: true,
+        onRetryFailedMessage: (_) {},
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(
+      find.byKey(const ValueKey('failed-message-retry-failed-readonly-text')),
+      findsNothing,
+    );
   });
 
   testWidgets(

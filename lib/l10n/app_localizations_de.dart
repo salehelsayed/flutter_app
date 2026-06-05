@@ -1522,6 +1522,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Mediennachricht konnte nicht erneut versucht werden.';
 
   @override
+  String get failed_message_retry_failed =>
+      'Nachricht konnte nicht erneut versucht werden.';
+
+  @override
   String get failed_media_upload_pending_retry =>
       'Medienupload wird noch abgeschlossen. Er wird bald erneut versucht.';
 

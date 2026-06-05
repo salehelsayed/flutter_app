@@ -441,6 +441,40 @@ That is the correct level of honesty for a publish + inbox-backed, receipt-less 
 - No gate-definition changes were required; the existing groups gate remains the
   release-facing host proof for this regression.
 
+### 16. Accepted-vs-invited notification boundary proof
+
+- Report 106 is closed on `2026-06-04` for the accepted-vs-invited ordinary
+  group-message notification journey.
+- The accepted contract is deliberately repo-owned and boundary-specific:
+  ordinary group-message fanout must use accepted/current recipient evidence,
+  non-joined invite attempts must not enter the explicit `recipientPeerIds` set,
+  relay custody may fan out only from that supplied accepted-recipient set, and
+  receiver-side fallback/tap routing must fail closed when local state is not a
+  current group membership or actionable pending invite.
+- Closure evidence:
+  - `INV-106` host smoke in `group_messaging_smoke_test.dart` proves accepted
+    recipient persistence while excluding the non-joined invitee.
+  - Focused session `02` Flutter/Go evidence preserves accepted
+    `recipientPeerIds` through Dart replay, `group:inboxStore`, native
+    `group:sendReliable`, and relay custody input.
+  - Session `03` direct and simulator evidence preserves foreground/background
+    fallback suppression, current-member display/open, pending-invite Intros
+    redirect, and missing/non-current suppression.
+  - Session `04` extends `private_invite_terminal_states` with Report 106 proof
+    fields and passes the targeted reliability simulator: Alice's sent
+    recipient set includes accepted Bob and excludes terminal Charlie, Bob
+    receives the accepted-member message, and Charlie has no local group/key,
+    no post-terminal plaintext, no local fallback notification, and no received
+    message ids.
+- Accepted differences: no production change was needed in session `04`, no
+  provider APNs/FCM or TestFlight delivery SLA is claimed, and the known
+  `TestGL019ConcurrentJoinLeaveUpdateSameGroupIsRaceFree` full Go sweep failure
+  remains an out-of-scope native topic join/leave/update lifecycle follow-up.
+- Reopen Report 106 only on a real regression where a pending, expired,
+  declined, revoked/invalid, terminal, or missing-invite user can receive an
+  ordinary group message or dead-end group-message notification, or an
+  accepted/current member loses the preserved normal message/notification path.
+
 ---
 
 ## Accepted Architectural Differences From 1:1

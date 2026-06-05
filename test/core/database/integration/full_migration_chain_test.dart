@@ -69,6 +69,7 @@ import 'package:flutter_app/core/database/migrations/069_group_message_local_del
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
+import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -161,6 +162,7 @@ void main() {
     await runGroupKeyRotationDraftsMigration(db);
     await runPendingIntroductionResponseTransportSenderMigration(db);
     await runGroupPendingMembershipMessagesMigration(db);
+    await runGroupMessageLastSendAttemptAtMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -196,6 +198,7 @@ void main() {
     );
     final groupMessageCols61 = await getColumnNames(db, 'group_messages');
     expect(groupMessageCols61, contains('transport_peer_id'));
+    expect(groupMessageCols61, contains('last_send_attempt_at'));
     final pendingIntroResponseCols71 = await getColumnNames(
       db,
       'pending_introduction_responses',
@@ -271,6 +274,7 @@ void main() {
     await runGroupKeyRotationDraftsMigration(db);
     await runPendingIntroductionResponseTransportSenderMigration(db);
     await runGroupPendingMembershipMessagesMigration(db);
+    await runGroupMessageLastSendAttemptAtMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -560,6 +564,7 @@ void main() {
           'timestamp',
           'quoted_message_id',
           'transport_peer_id',
+          'last_send_attempt_at',
         ]),
       );
     });
@@ -960,6 +965,9 @@ void main() {
         final keyStore = FakeSecureKeyStore();
         await runUpgradePathFromV1(db, keyStore: keyStore);
 
+        final groupMessageColumns = await getColumnNames(db, 'group_messages');
+        expect(groupMessageColumns, contains('last_send_attempt_at'));
+
         final messageRepo = buildMessageRepository(db);
         const timestamp = '2026-01-02T12:34:56.000Z';
 
@@ -1142,6 +1150,7 @@ void main() {
       await runGroupKeyRotationDraftsMigration(db);
       await runPendingIntroductionResponseTransportSenderMigration(db);
       await runGroupPendingMembershipMessagesMigration(db);
+      await runGroupMessageLastSendAttemptAtMigration(db);
 
       // Seed data
       await db.insert('identity', {
@@ -1183,6 +1192,7 @@ void main() {
       await runGroupKeyRotationDraftsMigration(db);
       await runPendingIntroductionResponseTransportSenderMigration(db);
       await runGroupPendingMembershipMessagesMigration(db);
+      await runGroupMessageLastSendAttemptAtMigration(db);
 
       // Re-run secrets migration (should be no-op)
       await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);

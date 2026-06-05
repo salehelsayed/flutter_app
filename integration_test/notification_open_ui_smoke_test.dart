@@ -10,8 +10,12 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:integration_test/integration_test.dart';
@@ -19,7 +23,9 @@ import 'package:integration_test/integration_test.dart';
 import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/identity/domain/repositories/fake_identity_repository.dart';
 import '../test/shared/fakes/in_memory_contact_repository.dart';
+import '../test/shared/fakes/in_memory_group_repository.dart';
 import '../test/shared/fakes/in_memory_message_repository.dart';
+import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
 
 enum _HarnessScreen { home, conversation, intros, group }
 
@@ -34,9 +40,15 @@ class _NotificationOpenHarnessApp extends StatefulWidget {
 class _NotificationOpenHarnessAppState
     extends State<_NotificationOpenHarnessApp> {
   static const _peerAlice = 'peer-alice';
+  static const _localPeerId = 'peer-self';
   static const _groupWeekend = 'grp-weekend';
+  static const _groupPending = 'grp-pending';
+  static const _groupMissing = 'grp-missing';
 
   final List<String> _events = <String>[];
+  final InMemoryGroupRepository _groupRepo = InMemoryGroupRepository();
+  final InMemoryPendingGroupInviteRepository _pendingInviteRepo =
+      InMemoryPendingGroupInviteRepository();
   final Map<String, List<String>> _pendingConversationMessages =
       <String, List<String>>{
         _peerAlice: <String>['Hello from Alice', 'Offline backlog caught up'],
@@ -58,6 +70,51 @@ class _NotificationOpenHarnessAppState
   String? _activeGroupId;
   List<String> _visibleIntros = <String>[];
   int _clearCount = 0;
+  bool _groupRouteStateSeeded = false;
+
+  Future<void> _ensureGroupRouteStateSeeded() async {
+    if (_groupRouteStateSeeded) {
+      return;
+    }
+
+    final now = DateTime.utc(2026, 4, 10, 9);
+    await _groupRepo.saveGroup(
+      GroupModel(
+        id: _groupWeekend,
+        name: 'Weekend Crew',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$_groupWeekend',
+        createdAt: now,
+        createdBy: _peerAlice,
+        myRole: GroupRole.member,
+      ),
+    );
+    await _groupRepo.saveMember(
+      GroupMember(
+        groupId: _groupWeekend,
+        peerId: _localPeerId,
+        username: 'Self',
+        role: MemberRole.writer,
+        joinedAt: now.add(const Duration(minutes: 1)),
+      ),
+    );
+    await _pendingInviteRepo.savePendingInvite(
+      PendingGroupInvite(
+        groupId: _groupPending,
+        inviteId: 'invite-pending',
+        payloadJson: '{}',
+        groupName: 'Pending Crew',
+        groupType: GroupType.chat,
+        senderPeerId: _peerAlice,
+        senderUsername: 'Alice',
+        createdBy: _peerAlice,
+        createdAt: now,
+        receivedAt: now.add(const Duration(minutes: 2)),
+        expiresAt: now.add(const Duration(days: 7)),
+      ),
+    );
+    _groupRouteStateSeeded = true;
+  }
 
   Future<void> _clearDeliveredNotifications() async {
     setState(() {
@@ -114,6 +171,37 @@ class _NotificationOpenHarnessAppState
   }
 
   Future<void> _route(NotificationRouteTarget routeTarget) async {
+    if (routeTarget.kind == NotificationRouteTargetKind.group) {
+      await _ensureGroupRouteStateSeeded();
+      final groupId = routeTarget.groupId;
+      if (groupId != null) {
+        final resolution = await resolveGroupNotificationRouteTarget(
+          groupId: groupId,
+          groupRepo: _groupRepo,
+          pendingInviteRepo: _pendingInviteRepo,
+          localPeerId: _localPeerId,
+          drainOfflineInbox: () async {
+            setState(() {
+              _events.add('resolve-drain');
+            });
+          },
+        );
+        if (resolution.group == null) {
+          setState(() {
+            if (resolution.hasPendingInvite) {
+              _events.add('redirect:intros:$groupId');
+              _visibleIntros = List<String>.from(_pendingIntros);
+              _screen = _HarnessScreen.intros;
+            } else {
+              _events.add('suppress-missing-group:$groupId');
+              _screen = _HarnessScreen.home;
+            }
+          });
+          return;
+        }
+      }
+    }
+
     setState(() {
       _events.add('route:${routeTarget.toPayload()}');
       switch (routeTarget.kind) {
@@ -195,6 +283,34 @@ class _NotificationOpenHarnessAppState
     );
   }
 
+  Future<void> _simulateWarmPendingGroupMessageTap() async {
+    await routeAppRootRemoteNotificationOpen(
+      data: const <String, dynamic>{
+        'type': 'group_message',
+        'groupId': _groupPending,
+        'messageId': 'msg-pending-1',
+      },
+      onBeforeOpen: _clearDeliveredNotifications,
+      onBeforeRouteTarget: _prepare,
+      onRouteTarget: _route,
+      onMissingRouteTarget: _missingRouteTarget,
+    );
+  }
+
+  Future<void> _simulateWarmMissingGroupMessageTap() async {
+    await routeAppRootRemoteNotificationOpen(
+      data: const <String, dynamic>{
+        'type': 'group_message',
+        'groupId': _groupMissing,
+        'messageId': 'msg-missing-1',
+      },
+      onBeforeOpen: _clearDeliveredNotifications,
+      onBeforeRouteTarget: _prepare,
+      onRouteTarget: _route,
+      onMissingRouteTarget: _missingRouteTarget,
+    );
+  }
+
   Future<void> _simulateWarmLocalChatTap() async {
     await routeAppRootLocalNotificationTap(
       payload: _peerAlice,
@@ -259,6 +375,18 @@ class _NotificationOpenHarnessAppState
           key: const Key('warm-group-message-button'),
           onPressed: _simulateWarmGroupMessageTap,
           child: const Text('Simulate Warm Group Message Tap'),
+        ),
+        const SizedBox(height: 8),
+        ElevatedButton(
+          key: const Key('warm-pending-group-message-button'),
+          onPressed: _simulateWarmPendingGroupMessageTap,
+          child: const Text('Simulate Warm Pending Group Message Tap'),
+        ),
+        const SizedBox(height: 8),
+        ElevatedButton(
+          key: const Key('warm-missing-group-message-button'),
+          onPressed: _simulateWarmMissingGroupMessageTap,
+          child: const Text('Simulate Warm Missing Group Message Tap'),
         ),
         const SizedBox(height: 8),
         ElevatedButton(
@@ -963,6 +1091,53 @@ void main() {
         find.textContaining(
           'clear > prepare:group:grp-weekend|message:msg-weekend-1 > '
           'drain:group:grp-weekend > route:group:grp-weekend|message:msg-weekend-1',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'pending-invite group message tap redirects to intros instead of group',
+    (tester) async {
+      await tester.pumpWidget(const _NotificationOpenHarnessApp());
+
+      await tester.tap(
+        find.byKey(const Key('warm-pending-group-message-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('intros-screen')), findsOneWidget);
+      expect(find.byKey(const Key('group-screen')), findsNothing);
+      expect(find.text('Weekend Crew invite from Alice'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'clear > prepare:group:grp-pending|message:msg-pending-1 > '
+          'drain:group:grp-pending > redirect:intros:grp-pending',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'missing group message tap emits suppression evidence without group navigation',
+    (tester) async {
+      await tester.pumpWidget(const _NotificationOpenHarnessApp());
+
+      await tester.tap(
+        find.byKey(const Key('warm-missing-group-message-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('home-title')), findsOneWidget);
+      expect(find.byKey(const Key('group-screen')), findsNothing);
+      expect(find.byKey(const Key('intros-screen')), findsNothing);
+      expect(
+        find.textContaining(
+          'clear > prepare:group:grp-missing|message:msg-missing-1 > '
+          'drain:group:grp-missing > resolve-drain > '
+          'suppress-missing-group:grp-missing',
         ),
         findsOneWidget,
       );

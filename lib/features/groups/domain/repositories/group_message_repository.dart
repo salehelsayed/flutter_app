@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../models/group_message.dart';
 import '../models/group_message_receipt.dart';
 
@@ -167,6 +169,36 @@ abstract class GroupMessageRepository {
   }) async {
     await apply(this);
   }
+}
+
+/// Local in-process notification for outgoing group row changes written by a
+/// repository implementation.
+class GroupOutgoingLocalMessageChange {
+  const GroupOutgoingLocalMessageChange.status({
+    required String groupId,
+    required String messageId,
+    required String status,
+  }) : groupId = groupId,
+       messageId = messageId,
+       status = status,
+       reloadRequired = false;
+
+  const GroupOutgoingLocalMessageChange.rowsChanged({this.groupId})
+    : messageId = null,
+      status = null,
+      reloadRequired = true;
+
+  final String? groupId;
+  final String? messageId;
+  final String? status;
+  final bool reloadRequired;
+}
+
+/// Optional source for UI surfaces that want repository-local outgoing status
+/// changes without forcing every [GroupMessageRepository] implementation to
+/// expose a stream.
+abstract class GroupOutgoingLocalMessageChangeSource {
+  Stream<GroupOutgoingLocalMessageChange> get outgoingLocalMessageChanges;
 }
 
 /// Optional repository capability for internal membership-window repair.

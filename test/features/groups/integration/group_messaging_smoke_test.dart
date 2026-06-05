@@ -8,6 +8,7 @@ import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -13428,6 +13429,427 @@ void main() {
         expect(
           (await charlie.groupRepo.getLatestKey(groupId))!.keyGeneration,
           1,
+        );
+      },
+    );
+
+    test(
+      'INV-106 mixed accepted and unaccepted invitees target only accepted ordinary-message recipients',
+      () async {
+        final inviteRepo = _InMemoryGroupInviteDeliveryAttemptRepository();
+        final alice = GroupTestUser.create(
+          peerId: 'inv106-alice-peer',
+          username: 'Alice',
+          network: network,
+          inviteDeliveryAttemptRepo: inviteRepo,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'inv106-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'inv106-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-inv106-mixed-recipients';
+        const messageId = 'inv106-ordinary-message';
+        final createdAt = DateTime.utc(2026, 6, 4, 8);
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'INV-106 Mixed Recipients',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: charlie.peerId,
+            username: charlie.username,
+            role: MemberRole.writer,
+            publicKey: charlie.publicKey,
+            mlKemPublicKey: charlie.mlKemPublicKey,
+            devices: [charlie.deviceIdentity],
+            joinedAt: createdAt.add(const Duration(minutes: 2)),
+          ),
+        );
+        await inviteRepo.markJoined(
+          groupId: groupId,
+          peerId: bob.peerId,
+          username: bob.username,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await inviteRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: charlie.peerId,
+            username: charlie.username,
+            status: GroupInviteDeliveryStatus.sent,
+            attemptedAt: createdAt.add(const Duration(minutes: 2)),
+            updatedAt: createdAt.add(const Duration(minutes: 2)),
+          ),
+        );
+
+        Future<void> saveKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'inv106-smoke-key',
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await Future.wait([saveKey(alice), saveKey(bob)]);
+        alice.start();
+        bob.start();
+
+        final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'INV-106 accepted recipient only',
+          messageId: messageId,
+          timestamp: createdAt.add(const Duration(minutes: 3)),
+        );
+
+        expect(sendResult.name, 'success');
+        expect(sentMessage, isNotNull);
+        expect(network.isSubscribed(groupId, bob.deviceId), isTrue);
+        expect(network.isSubscribed(groupId, charlie.deviceId), isFalse);
+
+        final inboxRaw = alice.bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        final inboxPayload =
+            (jsonDecode(inboxRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          [bob.peerId],
+        );
+        expect(
+          inboxPayload['recipientPeerIds'],
+          isNot(contains(charlie.peerId)),
+        );
+
+        final reliableRaw = alice.bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:sendReliable',
+        );
+        final reliablePayload =
+            (jsonDecode(reliableRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(
+          (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          [bob.peerId],
+        );
+        expect(
+          reliablePayload['recipientPeerIds'],
+          isNot(contains(charlie.peerId)),
+        );
+        expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+
+        await waitUntil(
+          () async => (await bob.loadGroupMessages(
+            groupId,
+          )).any((message) => message.id == messageId),
+          maxTicks: 40,
+        );
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        expect(
+          bobMessages.where((message) => message.id == messageId),
+          hasLength(1),
+        );
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          charlieMessages.where((message) => message.id == messageId),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'INV-106 mixed journey excludes unknown invite row from bridge recipients',
+      () async {
+        final inviteRepo = _InMemoryGroupInviteDeliveryAttemptRepository();
+        final alice = GroupTestUser.create(
+          peerId: 'inv106-unknown-alice-peer',
+          username: 'Alice',
+          network: network,
+          inviteDeliveryAttemptRepo: inviteRepo,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'inv106-unknown-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'inv106-unknown-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-inv106-missing-attempt-row';
+        const messageId = 'inv106-missing-attempt-row-message';
+        final createdAt = DateTime.utc(2026, 6, 5, 8);
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'INV-106 Missing Attempt Row',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: charlie.peerId,
+            username: charlie.username,
+            role: MemberRole.writer,
+            publicKey: charlie.publicKey,
+            mlKemPublicKey: charlie.mlKemPublicKey,
+            devices: [charlie.deviceIdentity],
+            joinedAt: createdAt.add(const Duration(minutes: 2)),
+          ),
+        );
+        await inviteRepo.markJoined(
+          groupId: groupId,
+          peerId: bob.peerId,
+          username: bob.username,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+
+        Future<void> saveKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'inv106-missing-row-smoke-key',
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await Future.wait([saveKey(alice), saveKey(bob)]);
+        alice.start();
+        bob.start();
+
+        final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'INV-106 unknown invite row must not notify Charlie',
+          messageId: messageId,
+          timestamp: createdAt.add(const Duration(minutes: 3)),
+        );
+
+        expect(sendResult.name, 'success');
+        expect(sentMessage, isNotNull);
+        expect(network.isSubscribed(groupId, bob.deviceId), isTrue);
+        expect(network.isSubscribed(groupId, charlie.deviceId), isFalse);
+
+        final inboxRaw = alice.bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        final inboxPayload =
+            (jsonDecode(inboxRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          [bob.peerId],
+        );
+        expect(
+          inboxPayload['recipientPeerIds'],
+          isNot(contains(charlie.peerId)),
+        );
+
+        final reliableRaw = alice.bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:sendReliable',
+        );
+        final reliablePayload =
+            (jsonDecode(reliableRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(
+          (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          [bob.peerId],
+        );
+        expect(
+          reliablePayload['recipientPeerIds'],
+          isNot(contains(charlie.peerId)),
+        );
+        expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+
+        await waitUntil(
+          () async => (await bob.loadGroupMessages(
+            groupId,
+          )).any((message) => message.id == messageId),
+          maxTicks: 40,
+        );
+        expect(
+          (await charlie.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == messageId),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'INV-106 manual-route fallback uses joined timeline when invite repo is absent',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'inv106-manual-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'inv106-manual-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'inv106-manual-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-inv106-manual-route-repo-absent';
+        const messageId = 'inv106-manual-route-message';
+        final createdAt = DateTime.utc(2026, 6, 5, 10, 18);
+        final bobJoinedAt = createdAt.add(const Duration(seconds: 10));
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'INV-106 Manual Route',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(seconds: 5)),
+        );
+        await alice.groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: charlie.peerId,
+            username: charlie.username,
+            role: MemberRole.writer,
+            publicKey: charlie.publicKey,
+            mlKemPublicKey: charlie.mlKemPublicKey,
+            devices: [charlie.deviceIdentity],
+            joinedAt: createdAt.add(const Duration(seconds: 6)),
+          ),
+        );
+        await alice.msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: groupId,
+            joinedPeerId: bob.peerId,
+            joinedUsername: bob.username,
+            eventAt: bobJoinedAt,
+          ),
+        );
+
+        Future<void> saveKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'inv106-manual-route-key',
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await Future.wait([saveKey(alice), saveKey(bob)]);
+        alice.start();
+        bob.start();
+
+        final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'INV-106 manual route should only target Bob',
+          messageId: messageId,
+          timestamp: createdAt.add(const Duration(seconds: 22)),
+        );
+
+        expect(sendResult.name, 'success');
+        expect(sentMessage, isNotNull);
+        expect(alice.inviteDeliveryAttemptRepo, isNull);
+
+        final inboxRaw = alice.bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        final inboxPayload =
+            (jsonDecode(inboxRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          [bob.peerId],
+        );
+        expect(
+          inboxPayload['recipientPeerIds'],
+          isNot(contains(charlie.peerId)),
+        );
+
+        final reliableRaw = alice.bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:sendReliable',
+        );
+        final reliablePayload =
+            (jsonDecode(reliableRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(
+          (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          [bob.peerId],
+        );
+        expect(
+          reliablePayload['recipientPeerIds'],
+          isNot(contains(charlie.peerId)),
+        );
+        expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+
+        await waitUntil(
+          () async => (await bob.loadGroupMessages(
+            groupId,
+          )).any((message) => message.id == messageId),
+          maxTicks: 40,
+        );
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          charlieMessages.where((message) => message.id == messageId),
+          isEmpty,
         );
       },
     );

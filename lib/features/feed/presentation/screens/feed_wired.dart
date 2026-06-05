@@ -2274,6 +2274,7 @@ class _FeedWiredState extends State<FeedWired>
         quotedMessageId: quotedMsgId,
         senderDeviceId: senderDeviceId,
         senderTransportPeerId: senderDeviceId,
+        inviteDeliveryAttemptRepo: widget.groupInviteDeliveryAttemptRepository,
       );
 
       if (!mounted) return;

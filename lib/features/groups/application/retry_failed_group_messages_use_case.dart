@@ -6,6 +6,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -79,6 +80,7 @@ Future<int> retryFailedGroupMessages({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) {
   return _retryFailedGroupMessagesInternal(
     groupMsgRepo: groupMsgRepo,
@@ -86,6 +88,7 @@ Future<int> retryFailedGroupMessages({
     identityRepo: identityRepo,
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepo,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     loadFailedMessages: groupMsgRepo.getFailedOutgoingMessages,
   );
 }
@@ -98,6 +101,7 @@ Future<int> retryFailedGroupMessage({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) {
   return _retryFailedGroupMessagesInternal(
     groupMsgRepo: groupMsgRepo,
@@ -105,6 +109,7 @@ Future<int> retryFailedGroupMessage({
     identityRepo: identityRepo,
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepo,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     loadFailedMessages: () async {
       final message = await groupMsgRepo.getMessage(messageId);
       if (message == null || message.isIncoming || message.status != 'failed') {
@@ -121,6 +126,7 @@ Future<int> _retryFailedGroupMessagesInternal({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   required Future<List<GroupMessage>> Function() loadFailedMessages,
 }) async {
   final retryStopwatch = Stopwatch()..start();
@@ -198,6 +204,7 @@ Future<int> _retryFailedGroupMessagesInternal({
       bridge: bridge,
       mediaAttachmentRepo: mediaAttachmentRepo,
       identity: identity,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     );
     if (outcome.retried) {
       successCount++;
@@ -233,6 +240,7 @@ _retryFailedGroupMessageCandidate({
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
   required dynamic identity,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
   final retryPayloadAvailable =
       (msg.inboxRetryPayload?.isNotEmpty ?? false) ||
@@ -286,6 +294,7 @@ _retryFailedGroupMessageCandidate({
       quotedMessageId: msg.quotedMessageId,
       mediaAttachments: retryAttachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       emitTimingEvent: false,
     );
 

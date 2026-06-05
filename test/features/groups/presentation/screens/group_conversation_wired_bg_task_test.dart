@@ -35,6 +35,25 @@ import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
+const _tinyMp4Bytes = <int>[
+  0x00,
+  0x00,
+  0x00,
+  0x18,
+  0x66,
+  0x74,
+  0x79,
+  0x70,
+  0x6d,
+  0x70,
+  0x34,
+  0x32,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+];
+
 class _FakeIdentityRepository implements IdentityRepository {
   _FakeIdentityRepository(this.identity);
 
@@ -822,6 +841,111 @@ void main() {
       _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
       _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
     });
+
+    testWidgets(
+      'upload-pending failed voice retry is background-task protected',
+      (tester) async {
+        final operationLog = <String>[];
+        final bridge = _OrderRecordingBridge(operationLog: operationLog);
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final mediaFileManager = FakeMediaFileManager();
+        final localPath = p.join(
+          Directory.systemTemp.path,
+          'test_docs',
+          'pending_uploads',
+          'msg-voice-pending-bg',
+          'voice.m4a',
+        );
+        final localFile = File(localPath);
+        localFile.parent.createSync(recursive: true);
+        localFile.writeAsBytesSync(_tinyMp4Bytes, flush: true);
+
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-voice-pending-bg',
+            groupId: 'group-1',
+            senderPeerId: _testIdentity.peerId,
+            senderUsername: _testIdentity.username,
+            text: '',
+            timestamp: DateTime.utc(2026, 1, 1, 12),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1, 12),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-voice-pending-bg',
+            messageId: 'msg-voice-pending-bg',
+            mime: 'audio/mp4',
+            size: 16,
+            mediaType: 'audio',
+            localPath: 'pending_uploads/msg-voice-pending-bg/voice.m4a',
+            downloadStatus: 'upload_pending',
+            durationMs: 1300,
+            waveform: [0.2, 0.7, 0.3],
+            createdAt: '2026-01-01T12:00:00.000Z',
+          ),
+        );
+
+        await _pumpGroupConversationWired(
+          tester,
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: mediaFileManager,
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                MediaFileManager? mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+                List<String>? allowedPeers,
+                String? blobId,
+              }) async {
+                operationLog.add('uploadMediaFn');
+                return _uploadedMedia(
+                  id: blobId ?? 'att-voice-pending-bg',
+                  messageId: '',
+                  mime: mime,
+                  localPath: mediaFileManager!.relativePathForAttachment(
+                    contactPeerId: recipientPeerId,
+                    blobId: blobId ?? 'att-voice-pending-bg',
+                    mime: mime,
+                  ),
+                  durationMs: durationMs,
+                  waveform: waveform,
+                );
+              },
+        );
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.onRetryFailedMedia, isNotNull);
+        retryScreen.onRetryFailedMedia!('msg-voice-pending-bg');
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => operationLog.contains('bridge:bg:end'),
+        );
+
+        _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
+        _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
+        _expectOrdered(
+          operationLog,
+          'bridge:group:inboxStore',
+          'bridge:bg:end',
+        );
+      },
+    );
 
     testWidgets(
       'announcement voice-only send uses durable path, omits plaintext push body, and sent status when no peers are live',

@@ -119,6 +119,7 @@ class GroupMessageListener {
   final _reactionChangeController =
       StreamController<ReactionChange>.broadcast();
   final Map<String, Future<void>> _groupConfigWorkQueue = {};
+  final Map<String, Future<void>> _userMessageWorkQueue = {};
   final Map<String, String> _acceptedSignedTransitionAuditHashesBySourceId = {};
   final Map<String, List<_PendingMembershipDependentMessage>>
   _pendingMembershipDependentMessagesByGroup = {};
@@ -196,7 +197,7 @@ class GroupMessageListener {
     bool rethrowOnError = false,
     bool allowMembershipBuffer = false,
   }) {
-    return _handleMessage(
+    return _handleQueuedUserMessage(
       data,
       msgRepoOverride: msgRepoOverride,
       rethrowOnError: rethrowOnError,
@@ -321,7 +322,9 @@ class GroupMessageListener {
   }
 
   Future<void> _handleLiveMessage(Map<String, dynamic> data) {
-    return _trackInFlight(_handleMessage(data, requestRecoveryOnError: true));
+    return _trackInFlight(
+      _handleQueuedUserMessage(data, requestRecoveryOnError: true),
+    );
   }
 
   void _handleLiveReaction(Map<String, dynamic> data) {
@@ -346,6 +349,59 @@ class GroupMessageListener {
       final current = _inFlightHandlers.toList(growable: false);
       await Future.wait<void>(current.map((work) => work.catchError((_) {})));
     }
+  }
+
+  String? _userMessageWorkKey(Map<String, dynamic> data) {
+    final rawMessageId = data['messageId'];
+    if (rawMessageId is! String) return null;
+    final messageId = rawMessageId.trim();
+    if (messageId.isEmpty) return null;
+
+    final rawText = data['text'];
+    final text = rawText is String ? rawText : '';
+    if (text.startsWith('{"__sys":')) return null;
+
+    return messageId;
+  }
+
+  Future<void> _handleQueuedUserMessage(
+    Map<String, dynamic> data, {
+    GroupMessageRepository? msgRepoOverride,
+    bool rethrowOnError = false,
+    bool allowMembershipBuffer = true,
+    bool requestRecoveryOnError = false,
+  }) {
+    final queueKey = _userMessageWorkKey(data);
+    if (queueKey == null) {
+      return _handleMessage(
+        data,
+        msgRepoOverride: msgRepoOverride,
+        rethrowOnError: rethrowOnError,
+        allowMembershipBuffer: allowMembershipBuffer,
+        requestRecoveryOnError: requestRecoveryOnError,
+      );
+    }
+
+    final previous = _userMessageWorkQueue[queueKey];
+    final predecessor = previous?.catchError((_) {}) ?? Future<void>.value();
+    late final Future<void> tracked;
+    tracked = predecessor
+        .then<void>(
+          (_) => _handleMessage(
+            data,
+            msgRepoOverride: msgRepoOverride,
+            rethrowOnError: rethrowOnError,
+            allowMembershipBuffer: allowMembershipBuffer,
+            requestRecoveryOnError: requestRecoveryOnError,
+          ),
+        )
+        .whenComplete(() {
+          if (identical(_userMessageWorkQueue[queueKey], tracked)) {
+            _userMessageWorkQueue.remove(queueKey);
+          }
+        });
+    _userMessageWorkQueue[queueKey] = tracked;
+    return tracked;
   }
 
   Future<void> _handleGroupDiagnosticEvent(Map<String, dynamic> event) async {

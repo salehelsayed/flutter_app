@@ -298,6 +298,34 @@ void main() {
       },
     );
 
+    test(
+      'stores delayed policy-valid invite after old freshness window without creating group state',
+      () async {
+        final issuedAt = DateTime.utc(2026, 4, 29, 12);
+        final receivedAt = issuedAt.add(const Duration(hours: 25));
+
+        final (result, invite) = await storeIncomingPendingGroupInvite(
+          message: makeMessage(
+            issuedAt: issuedAt,
+            policyExpiresAt: issuedAt.add(pendingGroupInviteTtl),
+          ),
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: 'myPeerId',
+          receivedAt: receivedAt,
+        );
+
+        expect(result, StorePendingGroupInviteResult.storedPending);
+        expect(invite, isNotNull);
+        expect(invite!.expiresAt, issuedAt.add(pendingGroupInviteTtl));
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), invite);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+      },
+    );
+
     test('ignores delayed invite copy when invite was revoked', () async {
       final revokedAt = DateTime.utc(2026, 4, 29, 12);
       await pendingInviteRepo.saveRevokedInvite(

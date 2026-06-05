@@ -16,8 +16,10 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
@@ -45,24 +47,135 @@ enum SendGroupMessageResult {
 Future<({List<GroupMember> members, List<String> recipientPeerIds})>
 _loadGroupSendMembership({
   required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
   required String groupId,
   required String senderPeerId,
   DateTime? membershipCutoff,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
   final members = await groupRepo.getMembers(groupId);
+  final inviteStatuses = inviteDeliveryAttemptRepo == null
+      ? const <String, GroupInviteDeliveryStatus>{}
+      : await inviteDeliveryAttemptRepo.getStatusesForGroupMembers(groupId);
+  final hasJoinedStatusEvidence = inviteStatuses.values.any(
+    (status) => status == GroupInviteDeliveryStatus.joined,
+  );
+  final joinedTimelinePeerIds = hasJoinedStatusEvidence
+      ? const <String>{}
+      : await _loadMemberJoinedTimelinePeerIds(
+          msgRepo: msgRepo,
+          groupId: groupId,
+          membershipCutoff: membershipCutoff,
+        );
+  final hasJoinedInviteEvidence =
+      hasJoinedStatusEvidence || joinedTimelinePeerIds.isNotEmpty;
+  if (inviteDeliveryAttemptRepo == null && joinedTimelinePeerIds.isNotEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_INVITE_REPO_ABSENT_USING_JOIN_TIMELINE',
+      details: {
+        'groupId': _diagnosticPrefix(groupId),
+        'memberJoinedTimelineCount': joinedTimelinePeerIds.length,
+      },
+    );
+  }
   final normalizedCutoff = membershipCutoff?.toUtc();
+  final normalizedSenderPeerId = senderPeerId.trim();
   final recipientPeerIds = members
-      .where(
-        (member) =>
-            (normalizedCutoff == null ||
+      .where((member) {
+        final peerId = member.peerId.trim();
+        final inviteStatus = inviteStatuses[peerId];
+        final hasJoinedTimelineEvidence = joinedTimelinePeerIds.contains(
+          peerId,
+        );
+        return (normalizedCutoff == null ||
                 !member.joinedAt.toUtc().isAfter(normalizedCutoff)) &&
             hasDeliverableGroupMemberIdentity(member) &&
-            member.peerId.trim() != senderPeerId,
-      )
+            peerId != normalizedSenderPeerId &&
+            !_isPersistedNonJoinedInviteStatus(inviteStatus) &&
+            !_isMissingInviteStatusInTrackedGroup(
+              inviteStatus: inviteStatus,
+              hasJoinedInviteEvidence: hasJoinedInviteEvidence,
+              hasJoinedTimelineEvidence: hasJoinedTimelineEvidence,
+            );
+      })
       .map((member) => member.peerId.trim())
       .toSet()
       .toList();
   return (members: members, recipientPeerIds: recipientPeerIds);
+}
+
+Future<Set<String>> _loadMemberJoinedTimelinePeerIds({
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  DateTime? membershipCutoff,
+}) async {
+  const pageSize = 500;
+  final joinedPeerIds = <String>{};
+  final normalizedCutoff = membershipCutoff?.toUtc();
+  var offset = 0;
+  while (true) {
+    final page = await msgRepo.getMessagesPage(
+      groupId,
+      limit: pageSize,
+      offset: offset,
+    );
+    for (final message in page) {
+      if (normalizedCutoff != null &&
+          message.timestamp.toUtc().isAfter(normalizedCutoff)) {
+        continue;
+      }
+      final peerId = _memberJoinedTimelinePeerId(
+        messageId: message.id,
+        groupId: groupId,
+      );
+      if (peerId != null) {
+        joinedPeerIds.add(peerId);
+      }
+    }
+    if (page.length < pageSize) {
+      break;
+    }
+    offset += page.length;
+  }
+  return joinedPeerIds;
+}
+
+String? _memberJoinedTimelinePeerId({
+  required String messageId,
+  required String groupId,
+}) {
+  final prefix = 'sys-member_joined:$groupId:';
+  if (!messageId.startsWith(prefix)) {
+    return null;
+  }
+  final suffix = messageId.substring(prefix.length);
+  final timestampSeparator = suffix.lastIndexOf(':');
+  if (timestampSeparator <= 0) {
+    return null;
+  }
+  final peerId = suffix.substring(0, timestampSeparator).trim();
+  return peerId.isEmpty || peerId == 'unknown' ? null : peerId;
+}
+
+bool _isPersistedNonJoinedInviteStatus(GroupInviteDeliveryStatus? status) {
+  return status == GroupInviteDeliveryStatus.sent ||
+      status == GroupInviteDeliveryStatus.queued ||
+      status == GroupInviteDeliveryStatus.needsResend ||
+      status == GroupInviteDeliveryStatus.cannotSend;
+}
+
+bool _isMissingInviteStatusInTrackedGroup({
+  required GroupInviteDeliveryStatus? inviteStatus,
+  required bool hasJoinedInviteEvidence,
+  required bool hasJoinedTimelineEvidence,
+}) {
+  if (inviteStatus == GroupInviteDeliveryStatus.unknown) {
+    return true;
+  }
+  return inviteStatus == null &&
+      hasJoinedInviteEvidence &&
+      !hasJoinedTimelineEvidence;
 }
 
 String _classifyGroupPublishLiveFanout({
@@ -164,7 +277,8 @@ String? _nativeReliableInboxRetryPayload({
   return jsonEncode({
     'groupId': groupId,
     'message': envelope,
-    if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
+    if (result.containsKey('recipientPeerIds'))
+      'recipientPeerIds': recipientPeerIds,
   });
 }
 
@@ -286,6 +400,7 @@ Future<bool> _tryInboxStore({
   required String groupId,
   required String inboxPayload,
   List<String>? recipientPeerIds,
+  bool preserveRecipientPeerIds = false,
 }) async {
   try {
     await callGroupInboxStore(
@@ -293,8 +408,7 @@ Future<bool> _tryInboxStore({
       groupId,
       inboxPayload,
       recipientPeerIds: recipientPeerIds,
-      preserveRecipientPeerIds:
-          recipientPeerIds != null && recipientPeerIds.isNotEmpty,
+      preserveRecipientPeerIds: preserveRecipientPeerIds,
     );
     return true;
   } catch (e) {
@@ -503,6 +617,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   bool emitTimingEvent = true,
 }) async {
   final sendStopwatch = Stopwatch()..start();
@@ -619,6 +734,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   // 3. Prepare all parameters
   final prepareStopwatch = Stopwatch()..start();
   final now = timestamp ?? DateTime.now().toUtc();
+  final sendAttemptAt = DateTime.now().toUtc();
   final membershipCutoff =
       timestamp != null && !timestamp.toUtc().isBefore(group.createdAt.toUtc())
       ? timestamp
@@ -626,9 +742,11 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final latestKeyFuture = groupRepo.getLatestKey(groupId);
   final sendMembershipFuture = _loadGroupSendMembership(
     groupRepo: groupRepo,
+    msgRepo: msgRepo,
     groupId: groupId,
     senderPeerId: senderPeerId,
     membershipCutoff: membershipCutoff,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );
   final sendMembership = await sendMembershipFuture;
   final members = sendMembership.members;
@@ -803,7 +921,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     inboxRetryPayload = jsonEncode({
       'groupId': groupId,
       'message': replayEnvelope,
-      if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
+      'recipientPeerIds': recipientPeerIds,
     });
   } catch (e) {
     emitFlowEvent(
@@ -825,6 +943,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderUsername: senderUsername,
     text: sanitizedText,
     timestamp: now,
+    lastSendAttemptAt: sendAttemptAt,
     quotedMessageId: quotedMessageId,
     keyGeneration: keyEpoch,
     status: 'sending',
@@ -858,6 +977,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       timestamp: now,
       quotedMessageId: quotedMessageId,
       media: mediaJson,
+      recipientPeerIds: recipientPeerIds,
+      preserveRecipientPeerIds: true,
     );
   } catch (e) {
     reliableResult = {
@@ -968,7 +1089,10 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       return (SendGroupMessageResult.error, failedMessage);
     }
 
-    final canMarkSent = inboxOk || (publishSucceeded && (topicPeers ?? 0) > 0);
+    final canMarkSent =
+        reliableExpectedRecipientCount <= 0 ||
+        inboxOk ||
+        (publishSucceeded && (topicPeers ?? 0) > 0);
     if (!canMarkSent && (topicPeers ?? 0) <= 0) {
       await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
       final failedMessage = prePersistMessage.copyWith(
@@ -1067,9 +1191,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
                   bridge: bridge,
                   groupId: groupId,
                   inboxPayload: replayEnvelope,
-                  recipientPeerIds: recipientPeerIds.isNotEmpty
-                      ? recipientPeerIds
-                      : null,
+                  recipientPeerIds: recipientPeerIds,
+                  preserveRecipientPeerIds: true,
                 ))
           .then((value) {
             inboxStopwatch.stop();

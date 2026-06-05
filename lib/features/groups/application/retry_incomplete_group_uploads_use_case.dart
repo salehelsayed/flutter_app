@@ -11,6 +11,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -50,6 +51,8 @@ Future<int> retryIncompleteGroupUploads({
   required IdentityRepository identityRepo,
   UploadMediaFn uploadMediaFn = uploadMedia,
   MediaFileManager? mediaFileManager,
+  String? messageId,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -94,8 +97,13 @@ Future<int> retryIncompleteGroupUploads({
 
   _retryIncompleteGroupUploadsInFlight = true;
   try {
-    final pendingAttachments = await mediaAttachmentRepo
+    final allPendingAttachments = await mediaAttachmentRepo
         .getUploadPendingAttachments();
+    final pendingAttachments = messageId == null
+        ? allPendingAttachments
+        : allPendingAttachments
+              .where((attachment) => attachment.messageId == messageId)
+              .toList(growable: false);
     if (pendingAttachments.isEmpty) {
       emitFlowEvent(
         layer: 'FL',
@@ -539,6 +547,7 @@ Future<int> retryIncompleteGroupUploads({
           senderTransportPeerId: currentSenderDeviceId,
           mediaAttachments: fullAttachmentList,
           mediaAttachmentRepo: mediaAttachmentRepo,
+          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
           emitTimingEvent: false,
         );
 

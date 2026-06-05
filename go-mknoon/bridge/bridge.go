@@ -1734,20 +1734,22 @@ func GroupPublish(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId               string                   `json:"groupId"`
-		Text                  string                   `json:"text"`
-		SenderPeerId          string                   `json:"senderPeerId"`
-		SenderPublicKey       string                   `json:"senderPublicKey"`
-		SenderPrivateKey      string                   `json:"senderPrivateKey"`
-		SenderUsername        string                   `json:"senderUsername"`
-		SenderDeviceId        string                   `json:"senderDeviceId,omitempty"`
-		SenderTransportPeerId string                   `json:"senderTransportPeerId,omitempty"`
-		SenderDevicePublicKey string                   `json:"senderDevicePublicKey,omitempty"`
-		SenderKeyPackageId    string                   `json:"senderKeyPackageId,omitempty"`
-		MessageId             string                   `json:"messageId,omitempty"`
-		Timestamp             string                   `json:"timestamp,omitempty"`
-		QuotedMessageId       string                   `json:"quotedMessageId,omitempty"`
-		Media                 []map[string]interface{} `json:"media,omitempty"`
+		GroupId                  string                   `json:"groupId"`
+		Text                     string                   `json:"text"`
+		SenderPeerId             string                   `json:"senderPeerId"`
+		SenderPublicKey          string                   `json:"senderPublicKey"`
+		SenderPrivateKey         string                   `json:"senderPrivateKey"`
+		SenderUsername           string                   `json:"senderUsername"`
+		SenderDeviceId           string                   `json:"senderDeviceId,omitempty"`
+		SenderTransportPeerId    string                   `json:"senderTransportPeerId,omitempty"`
+		SenderDevicePublicKey    string                   `json:"senderDevicePublicKey,omitempty"`
+		SenderKeyPackageId       string                   `json:"senderKeyPackageId,omitempty"`
+		MessageId                string                   `json:"messageId,omitempty"`
+		Timestamp                string                   `json:"timestamp,omitempty"`
+		QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
+		Media                    []map[string]interface{} `json:"media,omitempty"`
+		RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
+		PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1820,20 +1822,22 @@ func GroupSendReliable(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId               string                   `json:"groupId"`
-		Text                  string                   `json:"text"`
-		SenderPeerId          string                   `json:"senderPeerId"`
-		SenderPublicKey       string                   `json:"senderPublicKey"`
-		SenderPrivateKey      string                   `json:"senderPrivateKey"`
-		SenderUsername        string                   `json:"senderUsername"`
-		SenderDeviceId        string                   `json:"senderDeviceId,omitempty"`
-		SenderTransportPeerId string                   `json:"senderTransportPeerId,omitempty"`
-		SenderDevicePublicKey string                   `json:"senderDevicePublicKey,omitempty"`
-		SenderKeyPackageId    string                   `json:"senderKeyPackageId,omitempty"`
-		MessageId             string                   `json:"messageId,omitempty"`
-		Timestamp             string                   `json:"timestamp,omitempty"`
-		QuotedMessageId       string                   `json:"quotedMessageId,omitempty"`
-		Media                 []map[string]interface{} `json:"media,omitempty"`
+		GroupId                  string                   `json:"groupId"`
+		Text                     string                   `json:"text"`
+		SenderPeerId             string                   `json:"senderPeerId"`
+		SenderPublicKey          string                   `json:"senderPublicKey"`
+		SenderPrivateKey         string                   `json:"senderPrivateKey"`
+		SenderUsername           string                   `json:"senderUsername"`
+		SenderDeviceId           string                   `json:"senderDeviceId,omitempty"`
+		SenderTransportPeerId    string                   `json:"senderTransportPeerId,omitempty"`
+		SenderDevicePublicKey    string                   `json:"senderDevicePublicKey,omitempty"`
+		SenderKeyPackageId       string                   `json:"senderKeyPackageId,omitempty"`
+		MessageId                string                   `json:"messageId,omitempty"`
+		Timestamp                string                   `json:"timestamp,omitempty"`
+		QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
+		Media                    []map[string]interface{} `json:"media,omitempty"`
+		RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
+		PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1864,6 +1868,12 @@ func GroupSendReliable(paramsJSON string) (result string) {
 	}
 	if params.Timestamp != "" {
 		opts["timestamp"] = params.Timestamp
+	}
+	if params.PreserveRecipientPeerIds {
+		opts["recipientPeerIds"] = params.RecipientPeerIds
+		opts["preserveRecipientPeerIds"] = true
+	} else if len(params.RecipientPeerIds) > 0 {
+		opts["recipientPeerIds"] = params.RecipientPeerIds
 	}
 
 	sendResult, err := n.SendGroupMessageReliable(

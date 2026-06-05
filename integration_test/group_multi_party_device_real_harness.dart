@@ -883,6 +883,7 @@ Future<Map<String, dynamic>> _createGroupFixture({
     selectedContacts: contacts,
     type: GroupType.chat,
     name: name,
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   expect(result.membersAdded, memberRoles.length);
 
@@ -949,6 +950,7 @@ Future<(String, Map<String, dynamic>)> _createMl001PrivateAbcGroup({
     selectedContacts: contacts,
     type: GroupType.chat,
     name: 'ML-001 Private ABC',
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   expect(result.membersAdded, 2);
   expect(result.inviteBatchResult?.successCount, 2);
@@ -1287,6 +1289,7 @@ Future<Map<String, dynamic>> _sendProofMessage({
     senderTransportPeerId: currentTransportPeerId,
     mediaAttachments: mediaAttachments,
     mediaAttachmentRepo: stack.mediaAttachmentRepo,
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   stopwatch.stop();
   if (result.$1 != SendGroupMessageResult.success &&
@@ -1985,6 +1988,7 @@ Future<Map<String, dynamic>> _sendRa013ProofMessageAsDevice({
     messageId: messageId,
     senderDeviceId: senderDeviceId,
     senderTransportPeerId: senderDeviceId,
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   stopwatch.stop();
   final sent = <String, dynamic>{
@@ -2066,6 +2070,7 @@ Future<Map<String, dynamic>> _sendGo002InboxFailureProofMessage({
     messageId: messageId,
     senderDeviceId: currentTransportPeerId,
     senderTransportPeerId: currentTransportPeerId,
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   stopwatch.stop();
 
@@ -2479,6 +2484,7 @@ Future<Map<String, dynamic>> _sendNw001ProofMessage({
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
       messageId: messageId,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     stopwatch.stop();
 
@@ -2540,6 +2546,7 @@ Future<Map<String, dynamic>> _attemptRejectedProofMessage({
     messageId: messageId,
     senderDeviceId: bindCurrentTransport ? currentTransportPeerId : null,
     senderTransportPeerId: bindCurrentTransport ? currentTransportPeerId : null,
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   stopwatch.stop();
   final sent = <String, dynamic>{
@@ -5493,6 +5500,7 @@ Future<Map<String, dynamic>> _sendNw002ProofMessage({
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     messageId: messageId,
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   stopwatch.stop();
 
@@ -16442,6 +16450,12 @@ Future<void> _runMl018Alice(
   await waitForSharedSignal(_signalName('charlie_post_terminal_checked'));
 
   final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final acceptedRecipientPeerId = identities['bob']!['peerId'] as String;
+  final terminalInviteePeerId = identities['charlie']!['peerId'] as String;
+  final aliceRecipientPeerIds =
+      (aliceSent['recipientPeerIds'] as List<dynamic>? ?? const <dynamic>[])
+          .map((value) => value.toString())
+          .toList(growable: false);
   await _writeVerdict(
     stack: stack,
     groupId: groupId,
@@ -16461,6 +16475,23 @@ Future<void> _runMl018Alice(
         ),
         'terminalInviteePeerId': identities['charlie']!['peerId'] as String,
         'rotatedEpoch': rotatedKey.keyGeneration,
+      },
+      'report106MixedInviteNotificationProof': <String, dynamic>{
+        'rowId': 'INV-106',
+        'role': 'sender',
+        'sentPostTerminalMessage': true,
+        'acceptedRecipientIncluded': aliceRecipientPeerIds.contains(
+          acceptedRecipientPeerId,
+        ),
+        'noTerminalInviteeRecipient': !aliceRecipientPeerIds.contains(
+          terminalInviteePeerId,
+        ),
+        'acceptedRecipientPeerIds': <String>[acceptedRecipientPeerId],
+        'excludedRecipientPeerIds': <String>[terminalInviteePeerId],
+        'sentRecipientPeerIds': aliceRecipientPeerIds,
+        'postTerminalMessageIds': <String>[aliceSent['messageId'] as String],
+        'acceptedRecipientPeerId': acceptedRecipientPeerId,
+        'terminalInviteePeerId': terminalInviteePeerId,
       },
     },
   );
@@ -16540,6 +16571,16 @@ Future<void> _runMl018Bob(
         'memberListExcludesCharlie': !memberPeerIds.contains(charliePeerId),
         'hasRotatedEpoch': await _keyEpoch(stack, groupId) == rotatedEpoch,
         'rotatedEpoch': rotatedEpoch,
+      },
+      'report106MixedInviteNotificationProof': <String, dynamic>{
+        'rowId': 'INV-106',
+        'role': 'accepted_member',
+        'receivedAcceptedMessage': true,
+        'acceptedMemberCurrent': memberPeerIds.contains(stack.identity.peerId),
+        'noTerminalInviteeMember': !memberPeerIds.contains(charliePeerId),
+        'receivedMessageIds': <String>[aliceReceived['messageId'] as String],
+        'acceptedRecipientPeerId': stack.identity.peerId,
+        'terminalInviteePeerId': charliePeerId,
       },
     },
   );
@@ -16644,6 +16685,7 @@ Future<void> _runMl018Charlie(
     final bobSent = await waitForSharedJson(
       _signalName('bob_sent_bobAfterInviteTerminalStates.json'),
     );
+    final postTerminalNotificationBaseline = _notificationCount(stack);
     await Future<void>.delayed(const Duration(seconds: 5));
     final aliceLeakCount = await _proofMessageCount(
       stack: stack,
@@ -16667,6 +16709,8 @@ Future<void> _runMl018Charlie(
     final localGroup = await stack.groupRepo.getGroup(groupId);
     final localKey = await stack.groupRepo.getLatestKey(groupId);
     final postTerminalPlaintextCount = aliceLeakCount + bobLeakCount;
+    final postTerminalNotificationCount =
+        _notificationCount(stack) - postTerminalNotificationBaseline;
     writeSharedText(_signalName('charlie_post_terminal_checked'), 'ok');
 
     await _writeVerdict(
@@ -16703,6 +16747,21 @@ Future<void> _runMl018Charlie(
           'postTerminalPublishAccepted': rejectedSend['accepted'] == true,
           'postTerminalPlaintextCount': postTerminalPlaintextCount,
           'postTerminalSendOutcome': rejectedSend['outcome'] as String,
+        },
+        'report106MixedInviteNotificationProof': <String, dynamic>{
+          'rowId': 'INV-106',
+          'role': 'terminal_invitee',
+          'noLocalGroup': localGroup == null,
+          'noUsableKey': localKey == null,
+          'noPostTerminalPlaintext': postTerminalPlaintextCount == 0,
+          'postTerminalPlaintextCount': postTerminalPlaintextCount,
+          'noLocalFallbackNotifications': postTerminalNotificationCount == 0,
+          'postTerminalNotificationCount': postTerminalNotificationCount,
+          'rejectedOwnPostTerminalSend': rejectedSend['accepted'] != true,
+          'postTerminalSendOutcome': rejectedSend['outcome'] as String,
+          'receivedMessageIds': const <String>[],
+          'acceptedRecipientPeerIds': <String>[alicePeerId, bobPeerId],
+          'terminalInviteePeerId': stack.identity.peerId,
         },
       },
     );
@@ -17767,6 +17826,7 @@ Future<(String, Map<String, dynamic>)> _createPromptAliceBobGroup({
     selectedContacts: contacts,
     type: GroupType.chat,
     name: 'test',
+    inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
   );
   expect(result.membersAdded, 1);
   final bobPeerId = identities['bob']!['peerId'] as String;

@@ -264,6 +264,66 @@ func TestGroupInboxStorePreservesExplicitRecipientsWhenRequested(t *testing.T) {
 	}
 }
 
+func TestGroupInboxStorePreservesExplicitEmptyRecipientsWhenRequested(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	var streamAttempts atomic.Int32
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		streamAttempts.Add(1)
+		_ = s.Reset()
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	groupId := "group-explicit-empty-membership-replay"
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	selfTransportPeerId := n.PeerId()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.groupConfigs[groupId] = &GroupConfig{
+		Name:      "Explicit Empty Membership Replay",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "alice-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "alice-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "alice-phone", TransportPeerId: selfTransportPeerId, DeviceSigningPublicKey: "alice-phone-pub", Status: "active"},
+				},
+			},
+			{
+				PeerId:    "charlie-invited-account",
+				Role:      GroupRoleWriter,
+				PublicKey: "charlie-pub",
+				Devices: []GroupMemberDevice{
+					{DeviceId: "charlie-phone", TransportPeerId: "charlie-derived-transport", DeviceSigningPublicKey: "charlie-phone-pub", Status: "active"},
+				},
+			},
+		},
+		CreatedBy: "alice-account",
+		CreatedAt: "2026-05-23T00:00:00Z",
+	}
+	n.mu.Unlock()
+
+	if err := n.GroupInboxStoreWithOptions(
+		groupId,
+		`{"kind":"group_offline_replay","ciphertext":"opaque-empty"}`,
+		[]string{},
+		"ignored title",
+		"ignored body",
+		GroupInboxStoreOptions{PreserveRecipientPeerIds: true},
+	); err != nil {
+		t.Fatalf("GroupInboxStoreWithOptions: %v", err)
+	}
+	if got := streamAttempts.Load(); got != 0 {
+		t.Fatalf("relay stream attempts = %d, want 0 for explicit empty recipients", got)
+	}
+}
+
 func TestGroupInboxStoreFailsWhenJoinedGroupHasOnlyUndeliverableActiveRemotes(t *testing.T) {
 	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
@@ -453,6 +513,170 @@ func TestSendGroupMessageReliableStoresExactEnvelopeForActiveRecipients(t *testi
 	}
 }
 
+func TestSendGroupMessageReliablePreservesExplicitRecipientsForRelayCustody(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan groupInboxRequest, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requestSeen <- req
+		_ = writeFrame(s, []byte(`{"status":"OK"}`))
+	})
+
+	senderPriv, senderPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("GenerateGroupKey: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	groupId := "group-gsr-explicit-recipients"
+	config := &GroupConfig{
+		Name:      "GSR Explicit Recipients",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPub},
+			{PeerId: "peer-bob-accepted", Role: GroupRoleWriter, PublicKey: "bob-pub"},
+			{PeerId: "peer-charlie-invited", Role: GroupRoleWriter, PublicKey: "charlie-pub"},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-06-04T08:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 2}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	result, err := n.SendGroupMessageReliable(
+		groupId,
+		senderPriv,
+		n.PeerId(),
+		senderPub,
+		"Alice",
+		"explicit reliable hello",
+		"gsr-explicit-recipients-message",
+		map[string]interface{}{
+			"recipientPeerIds":         []string{"peer-bob-accepted", " peer-bob-accepted ", ""},
+			"preserveRecipientPeerIds": true,
+			"timestamp":                "2026-06-04T08:05:00Z",
+		},
+	)
+	if err != nil {
+		t.Fatalf("SendGroupMessageReliable: %v", err)
+	}
+	if result.ExpectedRecipientCount != 1 {
+		t.Fatalf("ExpectedRecipientCount = %d, want 1", result.ExpectedRecipientCount)
+	}
+	if len(result.RecipientPeerIds) != 1 || result.RecipientPeerIds[0] != "peer-bob-accepted" {
+		t.Fatalf("RecipientPeerIds = %#v, want [peer-bob-accepted]", result.RecipientPeerIds)
+	}
+
+	select {
+	case req := <-requestSeen:
+		if req.Message != result.Envelope {
+			t.Fatalf("inbox message does not match returned live envelope")
+		}
+		wantRecipients := []string{"peer-bob-accepted"}
+		if len(req.RecipientPeerIds) != len(wantRecipients) {
+			t.Fatalf("recipientPeerIds = %#v, want %#v", req.RecipientPeerIds, wantRecipients)
+		}
+		for i, want := range wantRecipients {
+			if req.RecipientPeerIds[i] != want {
+				t.Fatalf("recipientPeerIds[%d] = %q, want %q", i, req.RecipientPeerIds[i], want)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for explicit reliable group inbox store request")
+	}
+}
+
+func TestSendGroupMessageReliablePreservesExplicitEmptyRecipientsForRelayCustody(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	var streamAttempts atomic.Int32
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		streamAttempts.Add(1)
+		_ = s.Reset()
+	})
+
+	senderPriv, senderPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("GenerateGroupKey: %v", err)
+	}
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	groupId := "group-gsr-explicit-empty-recipients"
+	config := &GroupConfig{
+		Name:      "GSR Explicit Empty Recipients",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPub},
+			{PeerId: "peer-charlie-invited", Role: GroupRoleWriter, PublicKey: "charlie-pub"},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-06-04T08:00:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: groupKey, KeyEpoch: 2}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	result, err := n.SendGroupMessageReliable(
+		groupId,
+		senderPriv,
+		n.PeerId(),
+		senderPub,
+		"Alice",
+		"explicit empty reliable hello",
+		"gsr-explicit-empty-recipients-message",
+		map[string]interface{}{
+			"recipientPeerIds":         []string{},
+			"preserveRecipientPeerIds": true,
+			"timestamp":                "2026-06-04T08:05:00Z",
+		},
+	)
+	if err != nil {
+		t.Fatalf("SendGroupMessageReliable: %v", err)
+	}
+	if result.ExpectedRecipientCount != 0 {
+		t.Fatalf("ExpectedRecipientCount = %d, want 0", result.ExpectedRecipientCount)
+	}
+	if len(result.RecipientPeerIds) != 0 {
+		t.Fatalf("RecipientPeerIds = %#v, want []", result.RecipientPeerIds)
+	}
+	if result.InboxStored {
+		t.Fatal("InboxStored = true, want false for explicit empty recipients")
+	}
+	if got := streamAttempts.Load(); got != 0 {
+		t.Fatalf("relay stream attempts = %d, want 0 for explicit empty recipients", got)
+	}
+}
+
 func TestSendGroupMessageReliableReturnsLiveOnlyWhenInboxStoreFails(t *testing.T) {
 	senderPriv, senderPub := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()
@@ -532,6 +756,44 @@ func TestGM028BuildGroupInboxStoreRequestDropsBlankRecipientPeerIds(t *testing.T
 	}
 	if len(expect) != 2 || expect[0] != "peer-2" || expect[1] != "peer-3" {
 		t.Fatalf("recipientPeerIds = %#v, want [peer-2 peer-3]", expect)
+	}
+}
+
+func TestINV106GroupInboxStoreRequestTargetsOnlyAcceptedPushRecipients(t *testing.T) {
+	req := buildGroupInboxStoreRequest(
+		"group-inv106",
+		"peer-alice",
+		`{"kind":"opaque-group-replay","messageId":"inv106-provider-bound"}`,
+		[]string{"peer-bob-accepted"},
+		"ignored retired title",
+		"ignored retired body",
+	)
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	recipients, ok := decoded["recipientPeerIds"].([]interface{})
+	if !ok {
+		t.Fatal("expected recipientPeerIds in marshaled request")
+	}
+	if len(recipients) != 1 || recipients[0] != "peer-bob-accepted" {
+		t.Fatalf("recipientPeerIds = %#v, want [peer-bob-accepted]", recipients)
+	}
+	if strings.Contains(string(raw), "peer-charlie-invited") {
+		t.Fatalf("relay/provider-bound request leaked Charlie recipient: %s", raw)
+	}
+	if _, ok := decoded["pushTitle"]; ok {
+		t.Fatalf("pushTitle should not be marshaled in group inbox requests: %#v", decoded)
+	}
+	if _, ok := decoded["pushBody"]; ok {
+		t.Fatalf("pushBody should not be marshaled in group inbox requests: %#v", decoded)
 	}
 }
 

@@ -147,6 +147,7 @@ void main() {
       selectedContacts: [bobContact!],
       type: GroupType.chat,
       name: 'Smoke Test Group',
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     final groupId = groupResult.group.id;
     print('[ALICE-G] Group created: ${groupId.substring(0, 20)}...');
@@ -165,6 +166,11 @@ void main() {
     // Wait for Bob to join — measure discovery timing
     final discoveryStopwatch = Stopwatch()..start();
     await _waitForSignal('bob_group_joined');
+    await stack.groupInviteDeliveryAttemptRepo.markJoined(
+      groupId: groupId,
+      peerId: bobPeerId,
+      username: 'BobGroup',
+    );
     print('[ALICE-G] Bob joined group');
 
     // Wait for peer discovery (give GossipSub time to connect)
@@ -188,6 +194,7 @@ void main() {
         senderPublicKey: stack.identity.publicKey,
         senderPrivateKey: stack.identity.privateKey,
         senderUsername: stack.identity.username,
+        inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
       );
       sw.stop();
       return {

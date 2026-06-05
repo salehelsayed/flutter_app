@@ -41,9 +41,11 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
+    debugSetFlowEventSink(null);
     debugResetRecentBackgroundNotificationGate();
     debugResetRecentRemoteNotificationGate();
     debugResetBackgroundPushNotificationResolver();
+    debugResetBackgroundPushNotificationDisplayEligibilityResolver();
   });
 
   group('firebaseMessagingBackgroundHandler', () {
@@ -229,6 +231,9 @@ void main() {
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
         final gate = RecentRemoteNotificationGate(
           filePath:
               '${Directory.systemTemp.path}/gird006-background-display-failure-${DateTime.now().microsecondsSinceEpoch}.json',
@@ -276,10 +281,79 @@ void main() {
     );
 
     test(
+      'suppresses group background fallback when display eligibility denies it',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async =>
+              const PushFallbackNotificationDisplayEligibility.suppressed(
+                'group_missing',
+              ),
+        );
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/background-group-display-denied-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        debugSetRecentRemoteNotificationGate(gate);
+        addTearDown(gate.clear);
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        const message = RemoteMessage(
+          messageId: 'fcm-session03-denied',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-session03',
+            'message_id': 'msg-session03-denied',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:group-session03|message:msg-session03-denied',
+            messageId: 'msg-session03-denied',
+          ),
+          isFalse,
+        );
+        final suppressionEvent = events.lastWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+        );
+        expect(
+          suppressionEvent['details'],
+          containsPair('reason', 'group_missing'),
+        );
+        expect(
+          suppressionEvent['details'],
+          containsPair(
+            'payload',
+            'group:group-session03|message:msg-session03-denied',
+          ),
+        );
+      },
+    );
+
+    test(
       'GIRD-006 marks remote announcement after successful group fallback display',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
         final gate = RecentRemoteNotificationGate(
           filePath:
               '${Directory.systemTemp.path}/gird006-background-display-success-${DateTime.now().microsecondsSinceEpoch}.json',
@@ -323,6 +397,9 @@ void main() {
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
 
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (MethodCall call) async {

@@ -4,20 +4,26 @@
 - Issue type: bug
 - Output doc path: `Test-Flight-Improv/102-group-image-retry-duplicate-delivery-notifications-media-ux.md`
 
+## 1A. June 2026 Closure Lineage
+
+The original doc-102 image/media closure remains the lineage anchor. The June 2026 improvement-review follow-up at `Test-Flight-Improv/Group-Chat-Feature/Improvement-Review-2026-06/01-P0-duplicate-delivery-cascade.md` extends that closure to text retry, restored text same-id continuation, recorded-voice upload/re-record recovery, timeout/pending retry payloads, local outgoing status visibility, stuck-sending attempt timestamps, and live/replay one-notification dedup.
+
+Current accepted repo-local evidence was rerun on 2026-06-04 through the direct suites listed in that follow-up plan, reliability-sim commands `#8` (`integration_test/group_recovery_e2e_test.dart`) and `#2` (`integration_test/foreground_group_push_drain_test.dart`), the `transport` named gate, and the broad `groups` gate triaged to the carried non-owned `GCA-004` residual only. Real provider-backed iOS APNs/TestFlight background/terminated proof remains residual-only.
+
 ## 2. Problem Statement
 
 A group sender needs one intended group message to arrive once, even when send confirmation is slow, the app resumes after an interruption, or the sender retries after ambiguous feedback.
 
-The original image/media cascade in this doc is mostly implemented and no longer appears wide open: image retry identity, media loading, relay inbox idempotency, Android notification coalescing, and group reliability simulator closure have repo evidence. The unfinished problem is narrower but still user-visible:
+The original image/media cascade in this doc is implemented and no longer appears wide open: image retry identity, media loading, relay inbox idempotency, Android notification coalescing, and group reliability simulator closure have repo evidence. The later text/voice extension has also been accepted in repo-local evidence:
 
-- Plain-text group sends can still enter an ambiguous pending state, and the group UI does not expose the existing text retry capability from the failed row.
-- Retyping a failed or pending text message creates a fresh message id and timestamp, so recipients can see two user-visible copies if the original later arrives.
-- Recorded voice sends use a separate record-stop flow, mint a fresh id for every recording, and can leave a failed upload-pending voice row whose visible retry path does not immediately re-drive the upload.
-- The reliable-send timeout mismatch still makes some sends look unresolved even though native delivery may still be active.
-- Local-only retry/status sweeps and live-vs-replay duplicate paths still need explicit user-visible acceptance coverage.
-- Repo-level iOS notification proof is strong, but provider-backed background/terminated APNs proof remains residual.
+- Plain-text failed rows expose in-place same-id retry, and unchanged restored text continuation reuses the failed row id/timestamp.
+- Recorded voice retry, upload-pending recovery, durable-prep cleanup, and re-record continuation are covered under one logical id.
+- Reliable-send timeout handling and retained in-doubt pending retry payloads are covered by host and transport evidence.
+- Local-only status changes reach the open group screen, and stuck-sending recovery keys off a send-attempt timestamp rather than the original message timestamp.
+- Live pubsub plus inbox replay/drain converges on one row and one eligible notification path.
+- Repo-level iOS notification proof is strong; provider-backed background/terminated APNs proof remains residual.
 
-From the user's perspective, the failure is still the same trust break: "I sent this once" can become "other people saw duplicates" or "I do not know whether retrying will make things worse."
+From the user's perspective, the accepted repo-local behavior is now the intended trust contract: "I sent this once" recovers through one stable logical message rather than encouraging duplicate resend decisions. The remaining proof gap is provider-backed iOS APNs/TestFlight visibility, OS coalescing, tap route, and catch-up outside the repo-local harnesses.
 
 ## 3. Impact Analysis
 
@@ -42,60 +48,19 @@ From the user's perspective, the failure is still the same trust break: "I sent 
   - `Test-Flight-Improv/102-group-image-retry-duplicate-delivery-notifications-media-ux-session-breakdown.md:745` through `:747` records that no group reliability blocker remains; the remaining device-context item is only the provider-backed APNs proof.
   - Existing tests with reusable value include reliable in-doubt sender tests (`test/features/groups/application/send_group_message_use_case_test.dart:5872`), same-id failed-row replay repair (`test/features/groups/application/handle_incoming_group_message_use_case_test.dart:659`), restored image composer retry and upload-pending media feedback (`test/features/groups/presentation/group_conversation_wired_test.dart:6157`, `:6269`, `:6343`), recipient reminted-image dedupe (`test/features/groups/application/handle_incoming_group_message_use_case_test.dart:2282`; `test/features/groups/application/group_message_listener_test.dart:10940`), recoverable media-loading UI (`test/features/groups/presentation/group_conversation_wired_test.dart:3109`, `:3277`), and group notification fallback/open routing tests (`test/features/push/application/background_message_handler_test.dart:228`, `:322`; `test/features/push/application/chat_and_group_push_open_flow_test.dart:104`).
 
-- Reliable-send state is improved but still creates ambiguity:
-  - `lib/core/bridge/bridge_group_helpers.dart:394` defines `callGroupSendReliable`; `:410` keeps a Dart-side 10 second timeout; `:450` through `:455` returns `BRIDGE_TIMEOUT`.
-  - `go-mknoon/node/config.go:33` sets native inbox timeout to 15 seconds and `:45` sets pubsub timeout to 30 seconds.
-  - `lib/features/groups/application/send_group_message_use_case.dart:897` through `:946` now classifies reliable timeout or publish-without-custody as in-doubt `pending` and returns success instead of directly false-failing the row.
-  - `lib/features/groups/application/send_group_message_use_case.dart:949` through `:987` still has true failure branches when reliable evidence is absent.
-  - This means the old false-failed image path is mitigated, but a user can still face unresolved pending feedback while native delivery or replay may later settle.
+- June 2026 accepted text/voice extension state:
+  - Failed text retry UI and same-id application retry are covered by `test/features/groups/presentation/group_conversation_screen_test.dart`, `test/features/groups/presentation/group_conversation_wired_test.dart`, and `test/features/groups/application/retry_failed_group_messages_use_case_test.dart`.
+  - Restored text continuation id/timestamp reuse is covered by `group_conversation_wired_test.dart`, `send_group_message_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `integration_test/group_recovery_e2e_test.dart`.
+  - Recorded voice uploaded-audio retry, upload-pending retry, durable-prep cleanup, and re-record continuation are covered by `retry_failed_group_messages_use_case_test.dart`, `retry_incomplete_group_uploads_use_case_test.dart`, `group_conversation_wired_test.dart`, `group_conversation_wired_bg_task_test.dart`, and `integration_test/group_recovery_e2e_test.dart`.
+  - Timeout/pending retry-payload recovery is covered by `bridge_group_helpers_test.dart`, `send_group_message_use_case_test.dart`, DB helper/lifecycle suites, the `transport` named gate, and `integration_test/group_recovery_e2e_test.dart`.
+  - Local outgoing status visibility is covered by `group_message_repository_impl_test.dart`, `group_conversation_wired_test.dart`, and `integration_test/group_recovery_e2e_test.dart`.
+  - `last_send_attempt_at` stuck-sending recovery is covered by migration `073`, DB helper, repository, send/retry/recover use-case, lifecycle, and full migration-chain tests.
+  - Live/replay/drain one-materialization and one-notification behavior is covered by `group_message_listener_test.dart`, `handle_incoming_group_message_use_case_test.dart`, `drain_group_offline_inbox_use_case_test.dart`, `group_notification_dedupe_integration_test.dart`, and `foreground_group_push_drain_test.dart`.
 
-- Text-only group retry is present in application code but not exposed in the group screen:
-  - `lib/features/conversation/presentation/widgets/letter_card.dart:36` and `:294` through `:314` already support a failed text-message retry action.
-  - `lib/features/groups/presentation/screens/group_conversation_screen.dart:75` through `:76` only define failed media actions for the group screen, and `:543` through `:589` only passes retry/delete controls when a failed outgoing row has media.
-  - `lib/features/groups/application/retry_failed_group_messages_use_case.dart:68` through `:74` documents text-only failed row retry, and `:273` through `:289` retries using the original message id and timestamp.
-  - `test/features/groups/application/retry_failed_group_messages_use_case_test.dart:310` through `:340` proves the text-only retry use case can retry in place.
-  - `test/features/groups/presentation/group_conversation_screen_test.dart:1325` through `:1408` proves failed text-only rows do not show failed-media controls; repo evidence did not show a group-screen test proving a failed text row exposes a text retry action.
-
-- Retyped text is still a fresh logical send:
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:1559` through `:1591` creates a fresh UUID and current timestamp unless a restored continuation is available.
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:2133` through `:2166` tracks restored continuation only when failed composer state includes pending attachments; text-only restored state clears continuation tracking.
-  - `lib/features/groups/application/send_group_message_use_case.dart:208` through `:227` only allows id reuse when group, sender, text, quote, and timestamp match the existing failed/sending row.
-  - Therefore, a user who retypes a failed or pending text message can create a distinct stable id that recipient-side same-id dedupe and same-id self-replay repair do not collapse.
-
-- Recorded voice remains a separate retry surface:
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:2927` starts `_onRecordStop`; `:2982` through `:2984` mint a fresh message id, attachment id, and timestamp for every recording.
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:3032` through `:3063` persists the durable voice attachment as `upload_pending` and saves the optimistic group message.
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:3113` through `:3121` marks the row failed when the voice upload returns null.
-  - `test/features/groups/presentation/group_conversation_wired_test.dart:7119` through `:7263` proves that a failed voice upload keeps an `upload_pending` attachment and restores quote state.
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:2038` through `:2068` shows the manual failed-media retry path returns early with pending-upload feedback when persisted attachments are still `upload_pending`.
-  - `lib/features/groups/application/retry_failed_group_messages_use_case.dart:244` through `:270` skips failed rows whose persisted attachments remain `upload_pending`.
-  - A re-record after a failed or ambiguous voice send is a new id and new audio bytes, so recipient-side message-id or media-identity dedupe cannot reliably prove it was the same user intent.
-
-- Open-screen refresh is partially covered:
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:1200` through `:1219` listens to `groupMessageStream` and applies updates for messages in the open group.
-  - `lib/features/groups/presentation/screens/group_conversation_wired.dart:588` through `:594` reloads messages when the app resumes.
-  - `lib/features/groups/domain/repositories/group_message_repository_impl.dart:294` through `:297` writes local status updates directly through the DB helper.
-  - Repo evidence did not show a repository status-change stream or other immediate visible signal for purely local sweep-driven status flips while the group screen is already open.
-
-- Stale pending and stuck sending rows still have acceptance risk:
-  - `lib/features/groups/application/send_group_message_use_case.dart:786` through `:817` can leave `inboxRetryPayload` null when offline replay envelope creation fails.
-  - `lib/core/database/helpers/group_messages_db_helpers.dart:726` through `:734` only loads failed inbox-store rows when `inbox_retry_payload IS NOT NULL`.
-  - `lib/core/database/helpers/group_messages_db_helpers.dart:742` through `:756` transitions stuck `sending` rows by comparing the original message `timestamp`, not a status-change time.
-  - `lib/features/groups/application/recover_stuck_sending_group_messages_use_case.dart:4` through `:26` uses a 30 second stuck-sending threshold.
-  - A retried row that keeps its original old timestamp and a pending row without retry payload need explicit acceptance coverage so they do not become duplicate-inducing dead ends.
-
-- Recipient and notification dedupe are mostly covered, with one concurrency-shaped gap:
-  - `lib/features/groups/application/group_message_listener.dart:193` through `:205` sends replay envelopes directly to `_handleMessage`.
-  - `lib/features/groups/application/group_message_listener.dart:248` through `:249` serializes live stream messages through `asyncMap`, but that serialization does not wrap replay entry.
-  - `lib/features/groups/application/group_message_listener.dart:736` through `:772` emits and may notify after `handleIncomingGroupMessage` returns a result.
-  - Existing tests cover many same-id replay and duplicate notification cases, including `test/features/groups/application/group_message_listener_test.dart:10887` and `test/features/groups/application/group_message_listener_test.dart:11020`, but repo evidence did not show a targeted concurrent live-plus-replay race proving one emit and one notification.
-
-- Notification state is improved but iOS APNs remains residual:
-  - `lib/features/push/application/background_message_handler.dart:96` through `:119` suppresses recent duplicate fallback notifications.
-  - `lib/features/push/application/show_notification_use_case.dart:70` through `:87` suppresses notifications for the active viewed conversation, and `:89` through `:105` consumes recent remote announcements.
-  - `ios/NotificationService/NotificationPreviewResolver.swift:122` through `:125` applies message-id preview dedupe for notification service processing.
-  - `ios/NotificationService/NotificationPreviewResolver.swift:218` through `:246` handles group preview fallback when group decrypt inputs or keys are unavailable.
-  - Repo-level tests cover iOS preview resolver behavior, but the session breakdown still classifies real background/terminated provider APNs delivery, OS coalescing, tap route, and catch-up as residual-only.
+- Current residuals:
+  - Real background/terminated provider APNs delivery, OS coalescing, tap route, and catch-up remain residual-only until provider/device evidence exists.
+  - The broad `groups` gate has a carried non-owned residual in `test/features/groups/integration/invite_round_trip_test.dart`, `GCA-004 bridgeError recovery drains inbox after settled materialized invite`, assertion at `invite_round_trip_test.dart:2930`, `Expected: not null`, `Actual: <null>`.
+  - `group-real-network-nightly` remains fixture-backed release/nightly evidence and is not an implementation-scope blocker when relay/device fixtures are not configured.
 
 ## 5. Scope Clarification
 
@@ -189,17 +154,11 @@ Required acceptance evidence layers:
 - Residual provider-backed iOS APNs evidence:
   - Background and terminated iOS APNs group image notifications for same-id and re-minted-id cases, proving visible notification behavior, NSE preview/fallback, OS coalescing, tap routing, and catch-up.
 
-Reusable existing coverage and gaps:
+Reusable existing coverage and remaining gaps:
 
 - Reusable host evidence already proves text-only retry in the application use case, image/media retry ownership, same-id replay repair, recipient media dedupe, relay inbox idempotency, recoverable media loading, Android notification behavior, foreground group push drain, and full group reliability simulator closure.
 - Reusable gate evidence from the previous media work should be kept in the acceptance chain: focused `GIRD` host tests for the touched behavior, the named groups host gate, broad feature host coverage when shared group-adjacent code changes, completeness classification when test inventory changes, and group reliability simulator coverage for device-context/lifecycle risk.
 - These prior tests should be replayed or extended as preservation evidence; they should not be treated as red-first proof for residual text/voice behavior unless the exact residual failure is already reproduced by one of them.
-- Missing acceptance evidence: no current group-screen proof found for a failed text-only row exposing a text retry action.
-- Missing acceptance evidence: no current proof found that retyping after an ambiguous text send cannot produce duplicate recipient rows.
-- Missing acceptance evidence: no current proof found that a failed upload-pending voice row can be recovered without pushing the sender to re-record.
-- Missing acceptance evidence: no current proof found that a re-record-after-error voice path cannot create two visible voice notes for one intended send.
-- Missing acceptance evidence: no current proof found that local-only status sweeps immediately update an already-open group screen.
-- Missing acceptance evidence: no current proof found that stale pending rows without retry payload avoid indefinite ambiguity.
-- Missing acceptance evidence: no current proof found that old-timestamp retried rows avoid stuck-sweep false failure while a retry is in flight.
-- Missing acceptance evidence: no current proof found for a concurrent live-plus-replay race emitting one recipient row and one notification.
-- Missing acceptance evidence: provider-backed iOS APNs background/terminated proof remains residual-only.
+- Accepted evidence now covers failed text retry UI, unchanged restored text same-id continuation, failed upload-pending voice recovery, re-record continuation, local-only status visibility on an open group screen, stale pending retry-payload recovery, old-timestamp retry protection via `last_send_attempt_at`, and concurrent live-plus-replay one row / one notification behavior.
+- Remaining residual evidence: provider-backed iOS APNs background/terminated proof remains residual-only.
+- Remaining carried gate residual: broad `groups` may remain red only for the exact non-owned `GCA-004 bridgeError recovery drains inbox after settled materialized invite` failure at `invite_round_trip_test.dart:2930`; that is not doc-102 duplicate-delivery implementation scope.

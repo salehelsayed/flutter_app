@@ -1555,6 +1555,14 @@ void main() {
   });
 
   group('callGroupSendReliable', () {
+    test('uses a 40s default timeout above the native publish budget', () {
+      expect(groupSendReliableDefaultTimeout.inSeconds, 40);
+      expect(
+        groupSendReliableDefaultTimeout.inSeconds,
+        greaterThanOrEqualTo(35),
+      );
+    });
+
     test('returns BRIDGE_TIMEOUT map on timeout', () async {
       final result = await callGroupSendReliable(
         _SlowBridge(),
@@ -1618,6 +1626,75 @@ void main() {
         expect(payload['senderTransportPeerId'], 'alice-transport');
       },
     );
+
+    test(
+      'serializes explicit recipientPeerIds and preserve flag when provided',
+      () async {
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'messageId': 'msg-gsr-explicit',
+          'topicPeerCount': 1,
+          'expectedRecipientCount': 1,
+          'recipientPeerIds': ['peer-bob'],
+          'inboxStored': true,
+          'publishSucceeded': true,
+          'deliveryMode': 'live_and_inbox',
+        };
+
+        final result = await callGroupSendReliable(
+          bridge,
+          groupId: 'grp-gsr-explicit',
+          text: 'Reliable explicit recipients',
+          senderPeerId: 'peer-alice',
+          senderPublicKey: 'pk-alice',
+          senderPrivateKey: 'sk-alice',
+          senderUsername: 'Alice',
+          messageId: 'msg-gsr-explicit',
+          recipientPeerIds: const [' peer-bob ', '', 'peer-bob', 'peer-carol'],
+          preserveRecipientPeerIds: true,
+        );
+
+        expect(result['ok'], isTrue);
+
+        final sent =
+            jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+        expect(sent['cmd'], 'group:sendReliable');
+        final payload = sent['payload'] as Map<String, dynamic>;
+        expect(payload['recipientPeerIds'], ['peer-bob', 'peer-carol']);
+        expect(payload['preserveRecipientPeerIds'], isTrue);
+      },
+    );
+
+    test('preserves reliable explicit empty recipient fields', () async {
+      bridge.responses['group:sendReliable'] = {
+        'ok': true,
+        'messageId': 'msg-gsr-empty-recipients',
+        'topicPeerCount': 0,
+        'expectedRecipientCount': 0,
+        'recipientPeerIds': <String>[],
+        'inboxStored': false,
+        'publishSucceeded': true,
+        'deliveryMode': 'live_only',
+      };
+
+      await callGroupSendReliable(
+        bridge,
+        groupId: 'grp-gsr-empty-recipients',
+        text: 'Reliable empty recipients',
+        senderPeerId: 'peer-alice',
+        senderPublicKey: 'pk-alice',
+        senderPrivateKey: 'sk-alice',
+        senderUsername: 'Alice',
+        messageId: 'msg-gsr-empty-recipients',
+        recipientPeerIds: const ['', '   '],
+        preserveRecipientPeerIds: true,
+      );
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload['recipientPeerIds'], <String>[]);
+      expect(payload['preserveRecipientPeerIds'], isTrue);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1678,6 +1755,23 @@ void main() {
         expect(payload['preserveRecipientPeerIds'], isTrue);
       },
     );
+
+    test('preserves explicit empty recipientPeerIds when requested', () async {
+      bridge.responses['group:inboxStore'] = {'ok': true};
+
+      await callGroupInboxStore(
+        bridge,
+        'grp-inbox-empty-preserved',
+        'encrypted-msg-data',
+        recipientPeerIds: const [],
+        preserveRecipientPeerIds: true,
+      );
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload['recipientPeerIds'], <String>[]);
+      expect(payload['preserveRecipientPeerIds'], isTrue);
+    });
 
     test('omits optional fields when recipient list is empty', () async {
       bridge.responses['group:inboxStore'] = {'ok': true};

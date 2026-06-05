@@ -6,6 +6,7 @@
 // stack. Bob then replays the exact foreground push router to prove:
 //   S1: missed live group delivery is recovered in the same foreground session
 //   S2: live-first delivery followed by foreground replay does not duplicate
+//   S3: foreground fallback is suppressed when local group membership is missing
 //
 // It does not prove APNs delivery or physical-device OS behavior.
 
@@ -225,6 +226,17 @@ Future<void> main(List<String> args) async {
     final s2Pass = s2Verdict['programmaticPass'] == true;
     _log('ORCH', 'S2: ${s2Pass ? 'PASS' : 'FAIL'} — ${jsonEncode(s2Verdict)}');
     if (!s2Pass) failures.add('S2');
+
+    _log(
+      'ORCH',
+      '─── S3: non-current member foreground fallback suppression ───',
+    );
+    _writeSignal('s3_go');
+    final s3Verdict = await _readJsonSignal('s3_bob_verdict');
+    _writeSignal('s3_verified');
+    final s3Pass = s3Verdict['programmaticPass'] == true;
+    _log('ORCH', 'S3: ${s3Pass ? 'PASS' : 'FAIL'} — ${jsonEncode(s3Verdict)}');
+    if (!s3Pass) failures.add('S3');
 
     _writeSignal('all_done');
     await _waitForSignal('alice_done', timeout: const Duration(minutes: 5));

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_message.dart';
@@ -22,7 +24,8 @@ class GroupMessageRepositoryImpl
     implements
         GroupMessageRepository,
         GroupThreadSummaryRepository,
-        GroupMembershipRepairDeletionRepository {
+        GroupMembershipRepairDeletionRepository,
+        GroupOutgoingLocalMessageChangeSource {
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMessage;
   final Future<List<Map<String, Object?>>> Function(
     String groupId, {
@@ -74,6 +77,9 @@ class GroupMessageRepositoryImpl
   })?
   dbLoadGroupMessageReceiptsFn;
   final RunGroupInboxPageTransaction? dbRunGroupInboxPageTransactionFn;
+  final StreamController<GroupOutgoingLocalMessageChange>
+  _outgoingLocalMessageChangesController =
+      StreamController<GroupOutgoingLocalMessageChange>.broadcast();
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -101,6 +107,32 @@ class GroupMessageRepositoryImpl
     this.dbLoadGroupMessageReceiptsFn,
     this.dbRunGroupInboxPageTransactionFn,
   });
+
+  @override
+  Stream<GroupOutgoingLocalMessageChange> get outgoingLocalMessageChanges =>
+      _outgoingLocalMessageChangesController.stream;
+
+  void _emitOutgoingStatusChangeIfNeeded({
+    required GroupMessage? previous,
+    required GroupMessage saved,
+  }) {
+    if (previous == null || saved.isIncoming) return;
+    if (previous.status == saved.status) return;
+    _outgoingLocalMessageChangesController.add(
+      GroupOutgoingLocalMessageChange.status(
+        groupId: saved.groupId,
+        messageId: saved.id,
+        status: saved.status,
+      ),
+    );
+  }
+
+  void _emitOutgoingRowsChangedIfNeeded(int count) {
+    if (count <= 0) return;
+    _outgoingLocalMessageChangesController.add(
+      const GroupOutgoingLocalMessageChange.rowsChanged(),
+    );
+  }
 
   @override
   Future<bool> existsByMessageId(String messageId) async {
@@ -165,14 +197,18 @@ class GroupMessageRepositoryImpl
     final fn = dbRecoverStuckSendingGroupMessagesFn;
     if (fn == null) return 0;
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
-    return fn(olderThan: cutoff);
+    final count = await fn(olderThan: cutoff);
+    _emitOutgoingRowsChangedIfNeeded(count);
+    return count;
   }
 
   @override
   Future<int> transitionSendingToFailed() async {
     final fn = dbRecoverStuckSendingGroupMessagesFn;
     if (fn == null) return 0;
-    return fn();
+    final count = await fn();
+    _emitOutgoingRowsChangedIfNeeded(count);
+    return count;
   }
 
   @override
@@ -186,7 +222,12 @@ class GroupMessageRepositoryImpl
     );
 
     try {
+      final previousRow = await dbLoadGroupMessage(message.id);
+      final previous = previousRow == null
+          ? null
+          : GroupMessage.fromMap(previousRow);
       await dbInsertGroupMessage(message.toMap());
+      _emitOutgoingStatusChangeIfNeeded(previous: previous, saved: message);
 
       emitFlowEvent(
         layer: 'FL',
@@ -293,7 +334,21 @@ class GroupMessageRepositoryImpl
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {
+    final previousRow = await dbLoadGroupMessage(id);
+    final previous = previousRow == null
+        ? null
+        : GroupMessage.fromMap(previousRow);
     await dbUpdateGroupMessageStatus(id, status);
+    if (previous == null || previous.isIncoming || previous.status == status) {
+      return;
+    }
+    _outgoingLocalMessageChangesController.add(
+      GroupOutgoingLocalMessageChange.status(
+        groupId: previous.groupId,
+        messageId: previous.id,
+        status: status,
+      ),
+    );
   }
 
   @override

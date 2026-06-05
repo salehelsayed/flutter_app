@@ -163,6 +163,7 @@ void main() {
         selectedContacts: [cliContact!],
         type: GroupType.chat,
         name: 'Benchmark Group',
+        inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
       );
 
       final group = await stack.groupRepo.getGroup(groupResult.group.id);
@@ -181,6 +182,11 @@ void main() {
         ),
       );
       await _waitForSharedSignal('cli_joined');
+      await stack.groupInviteDeliveryAttemptRepo.markJoined(
+        groupId: group.id,
+        peerId: cliContact.peerId,
+        username: cliContact.username,
+      );
 
       // Allow the mesh to settle after the subscriber joins.
       await Future<void>.delayed(const Duration(seconds: 5));
@@ -198,6 +204,7 @@ void main() {
               senderPublicKey: stack.identity.publicKey,
               senderPrivateKey: stack.identity.privateKey,
               senderUsername: stack.identity.username,
+              inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
             );
             expect(
               result.$1,
@@ -281,6 +288,7 @@ void main() {
             senderPublicKey: stack.identity.publicKey,
             senderPrivateKey: stack.identity.privateKey,
             senderUsername: stack.identity.username,
+            inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
           );
           expect(
             result.$1,

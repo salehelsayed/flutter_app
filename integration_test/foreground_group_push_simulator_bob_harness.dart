@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -23,7 +24,9 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
+import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 
 import '../test/features/push/application/remote_message_fixtures.dart';
 import '../test/shared/fakes/fake_notification_service.dart';
@@ -110,7 +113,7 @@ void main() {
   initializeSqliteForCurrentPlatform();
 
   testWidgets(
-    'Bob(Foreground Group Push Simulator) — S1/S2',
+    'Bob(Foreground Group Push Simulator) — S1/S2/S3',
     (tester) async {
       print('\n${'═' * 60}');
       print('  BOB (FOREGROUND GROUP PUSH SIMULATOR)');
@@ -135,6 +138,7 @@ void main() {
         notificationService: notificationService,
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => currentLifecycle,
+        inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
       );
       foregroundGroupListener.start(stack.groupStreamController.stream);
 
@@ -309,6 +313,63 @@ void main() {
             s2NotificationDelta.length == 1,
       });
       _writeSignal('s2_verified', 'ok');
+
+      await _waitForSignal('s3_go');
+      final s3MissingGroupId =
+          'missing-${DateTime.now().microsecondsSinceEpoch}';
+      const s3MessageId = 'msg-s3-non-current';
+      final s3Data = groupMessageData(
+        groupId: s3MissingGroupId,
+        messageId: s3MessageId,
+      );
+      final s3BaselineGenericNotifications =
+          notificationService.shownGeneric.length;
+      var s3DrainAttempts = 0;
+
+      final s3Result = await handleForegroundRemoteMessage(
+        data: s3Data,
+        messageId: s3MessageId,
+        drainOfflineInbox: () async {},
+        drainGroupOfflineInboxForGroup: (targetGroupId) async {
+          s3DrainAttempts += 1;
+          throw StateError('simulated missing group drain for $targetGroupId');
+        },
+      );
+      final s3Shown = await showForegroundPushFallbackNotificationIfNeeded(
+        result: s3Result,
+        notificationService: notificationService,
+        message: RemoteMessage(messageId: s3MessageId, data: s3Data),
+        groupMessageDisplayEligibilityResolver: (targetGroupId) {
+          return resolveGroupMessageNotificationDisplayEligibility(
+            groupId: targetGroupId,
+            groupRepo: stack.groupRepo,
+            localPeerId: stack.identity.peerId,
+          );
+        },
+      );
+      final s3GenericNotificationDelta =
+          notificationService.shownGeneric.length -
+          s3BaselineGenericNotifications;
+
+      expect(s3Result, ForegroundRemoteMessageResult.notificationNeeded);
+      expect(s3DrainAttempts, 1);
+      expect(s3Shown, isFalse);
+      expect(s3GenericNotificationDelta, 0);
+
+      _writeJson('s3_bob_verdict', {
+        'scenarioId': 'S3',
+        'groupId': s3MissingGroupId,
+        'result': s3Result.name,
+        'drainAttempts': s3DrainAttempts,
+        'fallbackShown': s3Shown,
+        'genericNotificationCount': s3GenericNotificationDelta,
+        'programmaticPass':
+            s3Result == ForegroundRemoteMessageResult.notificationNeeded &&
+            s3DrainAttempts == 1 &&
+            !s3Shown &&
+            s3GenericNotificationDelta == 0,
+      });
+      _writeSignal('s3_verified', 'ok');
 
       await _waitForSignal('all_done');
       foregroundGroupListener.dispose();

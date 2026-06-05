@@ -407,7 +407,9 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
             group: group,
             payload: payload,
           );
-      if (!inboxDrained && !acceptedGroupAdvanced) {
+      if (!inboxDrained &&
+          !acceptedGroupAdvanced &&
+          payload.welcomeKeyPackage != null) {
         await _rollbackIncompleteAcceptedInviteState(
           groupRepo: groupRepo,
           groupId: acceptedId,
@@ -438,7 +440,10 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         );
       }
       if (group != null) {
-        return (AcceptPendingGroupInviteResult.success, group);
+        final acceptedResult = inboxDrained || acceptedGroupAdvanced
+            ? AcceptPendingGroupInviteResult.success
+            : AcceptPendingGroupInviteResult.bridgeError;
+        return (acceptedResult, group);
       }
       return (AcceptPendingGroupInviteResult.bridgeError, null);
     case HandleGroupInviteResult.duplicateGroup:

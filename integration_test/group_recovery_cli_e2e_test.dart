@@ -10,6 +10,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_invite_delivery_attempts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
@@ -81,6 +82,12 @@ import 'package:flutter_app/core/database/migrations/064_group_welcome_key_packa
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
+import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
+import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
+import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
+import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
+import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -90,6 +97,7 @@ import 'package:flutter_app/features/groups/application/drain_group_offline_inbo
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
@@ -185,6 +193,7 @@ class _TestStack {
   final ContactRepositoryImpl contactRepo;
   final GroupRepositoryImpl groupRepo;
   final GroupMessageRepositoryImpl groupMsgRepo;
+  final GroupInviteDeliveryAttemptRepositoryImpl groupInviteDeliveryAttemptRepo;
   final GroupMessageListener groupListener;
   final StreamController<Map<String, dynamic>> groupStreamController;
   final IdentityModel identity;
@@ -198,6 +207,7 @@ class _TestStack {
     required this.contactRepo,
     required this.groupRepo,
     required this.groupMsgRepo,
+    required this.groupInviteDeliveryAttemptRepo,
     required this.groupListener,
     required this.groupStreamController,
     required this.identity,
@@ -235,7 +245,7 @@ Future<_TestStack> _setupStack() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: _dbName,
-    version: 67,
+    version: 73,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -303,6 +313,12 @@ Future<_TestStack> _setupStack() async {
       await runGroupHistoryGapRepairsMigration(db);
       await runGroupSyncReceiptsMigration(db);
       await runGroupInviteDeliveryAttemptsMigration(db);
+      await runRemovedGroupMemberSnapshotsMigration(db);
+      await runGroupMessageLocalDeletionsMigration(db);
+      await runGroupKeyRotationDraftsMigration(db);
+      await runPendingIntroductionResponseTransportSenderMigration(db);
+      await runGroupPendingMembershipMessagesMigration(db);
+      await runGroupMessageLastSendAttemptAtMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -383,6 +399,18 @@ Future<_TestStack> _setupStack() async {
       if (oldVersion < 65) await runGroupHistoryGapRepairsMigration(db);
       if (oldVersion < 66) await runGroupSyncReceiptsMigration(db);
       if (oldVersion < 67) await runGroupInviteDeliveryAttemptsMigration(db);
+      if (oldVersion < 68) await runRemovedGroupMemberSnapshotsMigration(db);
+      if (oldVersion < 69) await runGroupMessageLocalDeletionsMigration(db);
+      if (oldVersion < 70) await runGroupKeyRotationDraftsMigration(db);
+      if (oldVersion < 71) {
+        await runPendingIntroductionResponseTransportSenderMigration(db);
+      }
+      if (oldVersion < 72) {
+        await runGroupPendingMembershipMessagesMigration(db);
+      }
+      if (oldVersion < 73) {
+        await runGroupMessageLastSendAttemptAtMigration(db);
+      }
     },
   );
 
@@ -458,6 +486,42 @@ Future<_TestStack> _setupStack() async {
     dbLoadGroupThreadSummaries: (groupIds) =>
         dbLoadGroupThreadSummaries(db, groupIds),
   );
+  final groupInviteDeliveryAttemptRepo =
+      GroupInviteDeliveryAttemptRepositoryImpl(
+        dbUpsertGroupInviteDeliveryAttempt: (row) =>
+            dbUpsertGroupInviteDeliveryAttempt(db, row),
+        dbLoadGroupInviteDeliveryAttempt:
+            ({required groupId, required peerId}) =>
+                dbLoadGroupInviteDeliveryAttempt(
+                  db,
+                  groupId: groupId,
+                  peerId: peerId,
+                ),
+        dbLoadGroupInviteDeliveryAttemptsForGroup: (groupId) =>
+            dbLoadGroupInviteDeliveryAttemptsForGroup(db, groupId),
+        dbUpdateGroupInviteDeliveryAttemptStatus:
+            ({
+              required groupId,
+              required peerId,
+              required status,
+              required updatedAt,
+            }) => dbUpdateGroupInviteDeliveryAttemptStatus(
+              db,
+              groupId: groupId,
+              peerId: peerId,
+              status: status,
+              updatedAt: updatedAt,
+            ),
+        dbDeleteGroupInviteDeliveryAttempt:
+            ({required groupId, required peerId}) =>
+                dbDeleteGroupInviteDeliveryAttempt(
+                  db,
+                  groupId: groupId,
+                  peerId: peerId,
+                ),
+        dbDeleteGroupInviteDeliveryAttemptsForGroup: (groupId) =>
+            dbDeleteGroupInviteDeliveryAttemptsForGroup(db, groupId),
+      );
 
   final bridge = GoBridgeClient();
   await bridge.initialize();
@@ -528,6 +592,7 @@ Future<_TestStack> _setupStack() async {
     msgRepo: groupMsgRepo,
     bridge: bridge,
     getSelfPeerId: () async => identity.peerId,
+    inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepo,
   );
   groupListener.start(groupStreamController.stream);
 
@@ -539,6 +604,7 @@ Future<_TestStack> _setupStack() async {
     contactRepo: contactRepo,
     groupRepo: groupRepo,
     groupMsgRepo: groupMsgRepo,
+    groupInviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepo,
     groupListener: groupListener,
     groupStreamController: groupStreamController,
     identity: identity,
@@ -589,6 +655,7 @@ void main() {
         selectedContacts: [stack.cliContact!],
         type: GroupType.chat,
         name: 'CLI Recovery Group',
+        inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
       );
 
       final keyInfo = await stack.groupRepo.getLatestKey(result.group.id);

@@ -2647,6 +2647,154 @@ func TestGroupSendReliable_MediaOnly_AcceptsEmptyText(t *testing.T) {
 	}
 }
 
+func TestGroupSendReliable_PreservesExplicitRecipientPeerIds(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  identity.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+
+	keyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+	groupId := "gsr-explicit-bridge"
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": groupId,
+		"groupConfig": map[string]interface{}{
+			"name":      "GSR Explicit Bridge",
+			"groupType": "chat",
+			"members": []map[string]interface{}{
+				{
+					"peerId":         identity.PeerId,
+					"username":       "Alice",
+					"role":           "admin",
+					"publicKey":      identity.PublicKey,
+					"mlKemPublicKey": "alice-mlkem",
+				},
+				{
+					"peerId":         "peer-bob-accepted",
+					"username":       "Bob",
+					"role":           "writer",
+					"publicKey":      "bob-public-key",
+					"mlKemPublicKey": "bob-mlkem",
+				},
+				{
+					"peerId":         "peer-charlie-invited",
+					"username":       "Charlie",
+					"role":           "writer",
+					"publicKey":      "charlie-public-key",
+					"mlKemPublicKey": "charlie-mlkem",
+				},
+			},
+			"createdBy": identity.PeerId,
+			"createdAt": "2026-06-04T08:00:00Z",
+		},
+		"groupKey": groupKey,
+		"keyEpoch": 3,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(joinInput))))
+
+	sendInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":                  groupId,
+		"text":                     "bridge explicit recipients",
+		"senderPeerId":             identity.PeerId,
+		"senderPublicKey":          identity.PublicKey,
+		"senderPrivateKey":         identity.PrivateKey,
+		"senderUsername":           "Alice",
+		"messageId":                "gsr-explicit-bridge-message",
+		"recipientPeerIds":         []string{"peer-bob-accepted", " peer-bob-accepted ", ""},
+		"preserveRecipientPeerIds": true,
+	})
+	sendMap := parseJSON(t, GroupSendReliable(string(sendInput)))
+	assertOk(t, sendMap)
+	if got := int(sendMap["expectedRecipientCount"].(float64)); got != 1 {
+		t.Fatalf("expectedRecipientCount = %d, want 1", got)
+	}
+	recipients, ok := sendMap["recipientPeerIds"].([]interface{})
+	if !ok {
+		t.Fatalf("recipientPeerIds = %#v, want list", sendMap["recipientPeerIds"])
+	}
+	if len(recipients) != 1 || recipients[0] != "peer-bob-accepted" {
+		t.Fatalf("recipientPeerIds = %#v, want [peer-bob-accepted]", recipients)
+	}
+}
+
+func TestGroupSendReliable_PreservesExplicitEmptyRecipientPeerIds(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  identity.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+
+	keyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+	groupId := "gsr-explicit-empty-bridge"
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": groupId,
+		"groupConfig": map[string]interface{}{
+			"name":      "GSR Explicit Empty Bridge",
+			"groupType": "chat",
+			"members": []map[string]interface{}{
+				{
+					"peerId":         identity.PeerId,
+					"username":       "Alice",
+					"role":           "admin",
+					"publicKey":      identity.PublicKey,
+					"mlKemPublicKey": "alice-mlkem",
+				},
+				{
+					"peerId":         "peer-charlie-invited",
+					"username":       "Charlie",
+					"role":           "writer",
+					"publicKey":      "charlie-public-key",
+					"mlKemPublicKey": "charlie-mlkem",
+				},
+			},
+			"createdBy": identity.PeerId,
+			"createdAt": "2026-06-04T08:00:00Z",
+		},
+		"groupKey": groupKey,
+		"keyEpoch": 3,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(joinInput))))
+
+	sendInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":                  groupId,
+		"text":                     "bridge explicit empty recipients",
+		"senderPeerId":             identity.PeerId,
+		"senderPublicKey":          identity.PublicKey,
+		"senderPrivateKey":         identity.PrivateKey,
+		"senderUsername":           "Alice",
+		"messageId":                "gsr-explicit-empty-bridge-message",
+		"recipientPeerIds":         []string{},
+		"preserveRecipientPeerIds": true,
+	})
+	sendMap := parseJSON(t, GroupSendReliable(string(sendInput)))
+	assertOk(t, sendMap)
+	if got := int(sendMap["expectedRecipientCount"].(float64)); got != 0 {
+		t.Fatalf("expectedRecipientCount = %d, want 0", got)
+	}
+	recipients, ok := sendMap["recipientPeerIds"].([]interface{})
+	if !ok {
+		t.Fatalf("recipientPeerIds = %#v, want empty list", sendMap["recipientPeerIds"])
+	}
+	if len(recipients) != 0 {
+		t.Fatalf("recipientPeerIds = %#v, want []", recipients)
+	}
+	if got, ok := sendMap["inboxStored"].(bool); !ok || got {
+		t.Fatalf("inboxStored = %#v, want false", sendMap["inboxStored"])
+	}
+}
+
 func TestGroupPublish_EmptyTextAndNoMedia_Fails(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupPublish(`{

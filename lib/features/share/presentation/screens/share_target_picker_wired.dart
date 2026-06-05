@@ -21,6 +21,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -58,6 +59,8 @@ class ShareTargetPickerWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupInviteDeliveryAttemptRepository?
+  groupInviteDeliveryAttemptRepository;
   final GroupMessageListener? groupMessageListener;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
@@ -87,6 +90,7 @@ class ShareTargetPickerWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupInviteDeliveryAttemptRepository,
     this.groupMessageListener,
     this.groupConversationTracker,
     this.introductionRepository,
@@ -447,6 +451,8 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
           mediaAttachmentRepository: widget.mediaAttachmentRepository,
           groupRepository: widget.groupRepository,
           groupMessageRepository: widget.groupMessageRepository,
+          groupInviteDeliveryAttemptRepository:
+              widget.groupInviteDeliveryAttemptRepository,
           bridge: widget.bridge,
           p2pService: widget.p2pService,
           mediaFileManager: widget.mediaFileManager,

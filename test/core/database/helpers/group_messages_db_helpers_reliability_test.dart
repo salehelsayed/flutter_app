@@ -6,6 +6,7 @@ import 'package:flutter_app/core/database/migrations/018_group_messages_tables.d
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
 import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 
@@ -23,6 +24,7 @@ void main() {
     await runGroupQuotedMessageIdMigration(db);
     await runGroupMessageReliabilityColumnsMigration(db);
     await runGroupMessageTransportPeerIdMigration(db);
+    await runGroupMessageLastSendAttemptAtMigration(db);
   });
 
   tearDown(() async {
@@ -47,6 +49,7 @@ void main() {
     String? wireEnvelope,
     int inboxStored = 0,
     String? inboxRetryPayload,
+    String? lastSendAttemptAt,
   }) {
     return {
       'id': id,
@@ -65,6 +68,7 @@ void main() {
       'wire_envelope': wireEnvelope,
       'inbox_stored': inboxStored,
       'inbox_retry_payload': inboxRetryPayload,
+      'last_send_attempt_at': lastSendAttemptAt,
     };
   }
 
@@ -358,6 +362,58 @@ void main() {
       },
     );
 
+    test(
+      'uses last_send_attempt_at for cutoff and falls back to timestamp',
+      () async {
+        final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
+        final recentTs = DateTime.utc(2026, 6, 1).toIso8601String();
+
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'old-logical-fresh-attempt',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: oldTs,
+            createdAt: oldTs,
+            lastSendAttemptAt: recentTs,
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'recent-logical-stale-attempt',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: recentTs,
+            createdAt: recentTs,
+            lastSendAttemptAt: oldTs,
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'legacy-null-attempt',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: oldTs,
+            createdAt: oldTs,
+            lastSendAttemptAt: null,
+          ),
+        );
+
+        final results = await dbLoadStuckSendingGroupMessages(
+          db,
+          olderThan: DateTime.utc(2026, 3, 1),
+        );
+
+        expect(results.map((row) => row['id']), [
+          'legacy-null-attempt',
+          'recent-logical-stale-attempt',
+        ]);
+      },
+    );
+
     test('excludes incoming messages', () async {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
 
@@ -451,6 +507,77 @@ void main() {
       expect(results[1]['id'], 'msg-2');
       expect(results[2]['id'], 'msg-3');
     });
+
+    test(
+      'orders matched rows by timestamp instead of last_send_attempt_at',
+      () async {
+        final ts1 = DateTime.utc(2026, 1, 1).toIso8601String();
+        final ts2 = DateTime.utc(2026, 1, 2).toIso8601String();
+        final ts3 = DateTime.utc(2026, 1, 3).toIso8601String();
+
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'msg-2',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: ts2,
+            createdAt: ts2,
+            lastSendAttemptAt: DateTime.utc(
+              2026,
+              1,
+              1,
+              0,
+              0,
+              2,
+            ).toIso8601String(),
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'msg-3',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: ts3,
+            createdAt: ts3,
+            lastSendAttemptAt: DateTime.utc(
+              2026,
+              1,
+              1,
+              0,
+              0,
+              1,
+            ).toIso8601String(),
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeRow(
+            id: 'msg-1',
+            status: 'sending',
+            isIncoming: 0,
+            timestamp: ts1,
+            createdAt: ts1,
+            lastSendAttemptAt: DateTime.utc(
+              2026,
+              1,
+              1,
+              0,
+              0,
+              3,
+            ).toIso8601String(),
+          ),
+        );
+
+        final results = await dbLoadStuckSendingGroupMessages(
+          db,
+          olderThan: DateTime.utc(2026, 3, 1),
+        );
+
+        expect(results.map((row) => row['id']), ['msg-1', 'msg-2', 'msg-3']);
+      },
+    );
 
     test('respects limit', () async {
       final oldTs = DateTime.utc(2026, 1, 1).toIso8601String();
@@ -646,6 +773,7 @@ void main() {
           await runGroupQuotedMessageIdMigration(fileDb);
           await runGroupMessageReliabilityColumnsMigration(fileDb);
           await runGroupMessageTransportPeerIdMigration(fileDb);
+          await runGroupMessageLastSendAttemptAtMigration(fileDb);
           await dbInsertGroupMessage(
             fileDb,
             makeRow(
@@ -1041,6 +1169,34 @@ void main() {
       expect(msg.inboxRetryPayload, '{"recipientPeerIds":["p2"]}');
     });
 
+    test('fromMap reads last_send_attempt_at as UTC DateTime', () {
+      final msg = GroupMessage.fromMap({
+        'id': 'msg-1',
+        'group_id': 'g1',
+        'sender_peer_id': 'p1',
+        'text': 'hi',
+        'timestamp': '2026-01-01T00:00:00.000Z',
+        'created_at': '2026-01-01T00:00:00.000Z',
+        'last_send_attempt_at': '2026-01-01T00:00:30.000Z',
+      });
+
+      expect(msg.lastSendAttemptAt, DateTime.parse('2026-01-01T00:00:30.000Z'));
+      expect(msg.lastSendAttemptAt!.isUtc, isTrue);
+    });
+
+    test('fromMap defaults missing last_send_attempt_at to null', () {
+      final msg = GroupMessage.fromMap({
+        'id': 'msg-1',
+        'group_id': 'g1',
+        'sender_peer_id': 'p1',
+        'text': 'hi',
+        'timestamp': '2026-01-01T00:00:00.000Z',
+        'created_at': '2026-01-01T00:00:00.000Z',
+      });
+
+      expect(msg.lastSendAttemptAt, isNull);
+    });
+
     test('toMap serializes inbox_stored as int', () {
       final msg = GroupMessage(
         id: 'msg-1',
@@ -1056,6 +1212,22 @@ void main() {
 
       final msgFalse = msg.copyWith(inboxStored: false);
       expect(msgFalse.toMap()['inbox_stored'], 0);
+    });
+
+    test('toMap serializes lastSendAttemptAt as UTC ISO string', () {
+      final msg = GroupMessage(
+        id: 'msg-1',
+        groupId: 'g1',
+        senderPeerId: 'p1',
+        text: 'hi',
+        timestamp: DateTime.utc(2026, 1, 1),
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastSendAttemptAt: DateTime.utc(2026, 1, 1, 0, 0, 30),
+      );
+
+      final map = msg.toMap();
+
+      expect(map['last_send_attempt_at'], '2026-01-01T00:00:30.000Z');
     });
 
     test('copyWith sentinel clears wireEnvelope to null', () {
@@ -1116,6 +1288,25 @@ void main() {
 
       final copy = msg.copyWith(status: 'failed');
       expect(copy.wireEnvelope, '{"data":"value"}');
+    });
+
+    test('copyWith preserves and clears lastSendAttemptAt', () {
+      final attemptAt = DateTime.utc(2026, 1, 1, 0, 0, 30);
+      final msg = GroupMessage(
+        id: 'msg-1',
+        groupId: 'g1',
+        senderPeerId: 'p1',
+        text: 'hi',
+        timestamp: DateTime.utc(2026, 1, 1),
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastSendAttemptAt: attemptAt,
+      );
+
+      final preserved = msg.copyWith(status: 'failed');
+      expect(preserved.lastSendAttemptAt, attemptAt);
+
+      final cleared = msg.copyWith(lastSendAttemptAt: null);
+      expect(cleared.lastSendAttemptAt, isNull);
     });
   });
 }

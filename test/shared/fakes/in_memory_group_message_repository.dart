@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
@@ -10,17 +12,47 @@ class InMemoryGroupMessageRepository
     implements
         GroupMessageRepository,
         GroupThreadSummaryRepository,
-        GroupMembershipRepairDeletionRepository {
+        GroupMembershipRepairDeletionRepository,
+        GroupOutgoingLocalMessageChangeSource {
   final Map<String, GroupMessage> _messages = {};
   final Map<String, String> _inboxCursors = {};
   final Map<String, GroupMessageReceipt> _receipts = {};
   final Set<String> _localDeletionTombstones = {};
+  final StreamController<GroupOutgoingLocalMessageChange>
+  _outgoingLocalMessageChangesController =
+      StreamController<GroupOutgoingLocalMessageChange>.broadcast();
   final Set<String> failSaveMessageIds = {};
   bool failInboxPageTransaction = false;
 
   Iterable<GroupMessage> get _visibleMessages => _messages.values.where(
     (message) => !isGroupRemovalCutoffMessageId(message.id),
   );
+
+  @override
+  Stream<GroupOutgoingLocalMessageChange> get outgoingLocalMessageChanges =>
+      _outgoingLocalMessageChangesController.stream;
+
+  void _emitOutgoingStatusChangeIfNeeded({
+    required GroupMessage? previous,
+    required GroupMessage saved,
+  }) {
+    if (previous == null || saved.isIncoming) return;
+    if (previous.status == saved.status) return;
+    _outgoingLocalMessageChangesController.add(
+      GroupOutgoingLocalMessageChange.status(
+        groupId: saved.groupId,
+        messageId: saved.id,
+        status: saved.status,
+      ),
+    );
+  }
+
+  void _emitOutgoingRowsChangedIfNeeded(int count) {
+    if (count <= 0) return;
+    _outgoingLocalMessageChangesController.add(
+      const GroupOutgoingLocalMessageChange.rowsChanged(),
+    );
+  }
 
   @override
   Future<void> saveMessage(GroupMessage message) async {
@@ -30,7 +62,9 @@ class InMemoryGroupMessageRepository
     if (_localDeletionTombstones.contains(message.id)) {
       return;
     }
+    final previous = _messages[message.id];
     _messages[message.id] = message;
+    _emitOutgoingStatusChangeIfNeeded(previous: previous, saved: message);
   }
 
   @override
@@ -105,6 +139,15 @@ class InMemoryGroupMessageRepository
     final msg = _messages[id];
     if (msg != null) {
       _messages[id] = msg.copyWith(status: status);
+      if (!msg.isIncoming && msg.status != status) {
+        _outgoingLocalMessageChangesController.add(
+          GroupOutgoingLocalMessageChange.status(
+            groupId: msg.groupId,
+            messageId: msg.id,
+            status: status,
+          ),
+        );
+      }
     }
   }
 
@@ -187,13 +230,15 @@ class InMemoryGroupMessageRepository
     var count = 0;
     for (final entry in _messages.entries.toList()) {
       final msg = entry.value;
+      final attemptedAt = msg.lastSendAttemptAt ?? msg.timestamp;
       if (!msg.isIncoming &&
           msg.status == 'sending' &&
-          msg.timestamp.isBefore(cutoff)) {
+          attemptedAt.isBefore(cutoff)) {
         _messages[entry.key] = msg.copyWith(status: 'failed');
         count++;
       }
     }
+    _emitOutgoingRowsChangedIfNeeded(count);
     return count;
   }
 
@@ -207,6 +252,7 @@ class InMemoryGroupMessageRepository
         count++;
       }
     }
+    _emitOutgoingRowsChangedIfNeeded(count);
     return count;
   }
 

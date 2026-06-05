@@ -42,6 +42,7 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_change.
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -98,6 +99,20 @@ class _RestoredGroupMediaContinuation {
     required this.draftText,
     required this.quotedMessageId,
     required this.attachmentFingerprint,
+  });
+}
+
+class _RestoredGroupVoiceContinuation {
+  final String groupId;
+  final String messageId;
+  final DateTime timestamp;
+  final String? quotedMessageId;
+
+  const _RestoredGroupVoiceContinuation({
+    required this.groupId,
+    required this.messageId,
+    required this.timestamp,
+    required this.quotedMessageId,
   });
 }
 
@@ -184,6 +199,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   String _senderPublicKey = '';
   String _senderPrivateKey = '';
   StreamSubscription<GroupMessage>? _messageSubscription;
+  StreamSubscription<GroupOutgoingLocalMessageChange>?
+  _outgoingLocalMessageChangeSubscription;
   StreamSubscription<String>? _removedSubscription;
   final ScrollController _scrollController = ScrollController();
   bool _initialLoadDone = false;
@@ -221,6 +238,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _allowPopDuringActiveUpload = false;
   _GroupActiveAttachmentUpload? _activeAttachmentUpload;
   _RestoredGroupMediaContinuation? _restoredMediaContinuation;
+  _RestoredGroupVoiceContinuation? _restoredVoiceContinuation;
 
   ConversationComposerViewState get _composerViewState => _composerState.value;
 
@@ -370,6 +388,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _loadMessages();
     unawaited(_loadSecurityStatus());
     _startListening();
+    _startListeningForOutgoingLocalMessageChanges();
     _startListeningForReactions();
   }
 
@@ -569,6 +588,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _resetForGroupChange(oldWidget);
       return;
     }
+    if (!identical(widget.msgRepo, oldWidget.msgRepo)) {
+      _restartOutgoingLocalMessageChangeSubscription();
+    }
     final oldCanWrite = _canWrite;
     final newCanWrite = _canWriteForGroup(widget.group);
     final shouldSyncGroupFromWidget =
@@ -600,9 +622,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
     widget.groupConversationTracker?.setActive(_activeGroupConversationKey);
     unawaited(_messageSubscription?.cancel());
+    unawaited(_outgoingLocalMessageChangeSubscription?.cancel());
     unawaited(_removedSubscription?.cancel());
     unawaited(_reactionSubscription?.cancel());
     _messageSubscription = null;
+    _outgoingLocalMessageChangeSubscription = null;
     _removedSubscription = null;
     _reactionSubscription = null;
 
@@ -619,6 +643,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _draftText = widget.initialText ?? '';
     _pendingAttachments = [];
     _clearRestoredMediaContinuationTracking();
+    _clearRestoredVoiceContinuationTracking();
     _updateComposerState(pendingAttachments: const [], isUploading: false);
     if (mounted) {
       setState(() {});
@@ -627,6 +652,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _loadMessages();
     unawaited(_loadSecurityStatus());
     _startListening();
+    _startListeningForOutgoingLocalMessageChanges();
     _startListeningForReactions();
   }
 
@@ -884,6 +910,102 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   void _clearRestoredMediaContinuationTracking() {
     _restoredMediaContinuation = null;
+  }
+
+  bool _isAudioAttachment(MediaAttachment attachment) {
+    return attachment.mediaType == 'audio' ||
+        GroupMediaMimePolicy.mediaTypeForMime(attachment.mime) == 'audio';
+  }
+
+  bool _isRetryableVoiceAttachment(MediaAttachment attachment) {
+    return _isAudioAttachment(attachment) &&
+        (attachment.downloadStatus == 'upload_pending' ||
+            attachment.downloadStatus == 'done');
+  }
+
+  bool _hasUploadPendingVoiceAttachment(List<MediaAttachment> attachments) {
+    return attachments.any(
+      (attachment) =>
+          _isAudioAttachment(attachment) &&
+          attachment.downloadStatus == 'upload_pending',
+    );
+  }
+
+  Future<void> _trackFailedVoiceContinuation({
+    required String messageId,
+    required DateTime timestamp,
+    required String? quotedMessageId,
+  }) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (mediaAttachmentRepo == null) {
+      _clearRestoredVoiceContinuationTracking(messageId: messageId);
+      return;
+    }
+    final message = await widget.msgRepo.getMessage(messageId);
+    final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    if (message == null ||
+        message.groupId != widget.group.id ||
+        message.isIncoming ||
+        message.status != 'failed' ||
+        !message.timestamp.toUtc().isAtSameMomentAs(timestamp.toUtc()) ||
+        !attachments.any(_isRetryableVoiceAttachment)) {
+      _clearRestoredVoiceContinuationTracking(messageId: messageId);
+      return;
+    }
+
+    _restoredVoiceContinuation = _RestoredGroupVoiceContinuation(
+      groupId: widget.group.id,
+      messageId: messageId,
+      timestamp: timestamp,
+      quotedMessageId: quotedMessageId,
+    );
+  }
+
+  Future<_RestoredGroupVoiceContinuation?>
+  _resolveRestoredVoiceContinuationForRecordStop({
+    required String? quotedMessageId,
+  }) async {
+    final continuation = _restoredVoiceContinuation;
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (continuation == null || mediaAttachmentRepo == null) {
+      return null;
+    }
+    if (continuation.groupId != widget.group.id ||
+        !_sameOptionalMessageId(
+          continuation.quotedMessageId,
+          quotedMessageId,
+        )) {
+      _clearRestoredVoiceContinuationTracking();
+      return null;
+    }
+
+    final message = await widget.msgRepo.getMessage(continuation.messageId);
+    final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+      continuation.messageId,
+    );
+    if (message == null ||
+        message.groupId != continuation.groupId ||
+        message.isIncoming ||
+        message.status != 'failed' ||
+        !message.timestamp.toUtc().isAtSameMomentAs(
+          continuation.timestamp.toUtc(),
+        ) ||
+        !attachments.any(_isRetryableVoiceAttachment)) {
+      _clearRestoredVoiceContinuationTracking();
+      return null;
+    }
+
+    _clearRestoredVoiceContinuationTracking(messageId: continuation.messageId);
+    return continuation;
+  }
+
+  void _clearRestoredVoiceContinuationTracking({String? messageId}) {
+    final continuation = _restoredVoiceContinuation;
+    if (messageId == null || continuation?.messageId == messageId) {
+      _restoredVoiceContinuation = null;
+    }
   }
 
   Future<bool?> _showAttachmentOverflowDialog({required int totalBudgetBytes}) {
@@ -1225,6 +1347,51 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             unawaited(_handleCurrentGroupRemoved());
           });
         });
+  }
+
+  void _restartOutgoingLocalMessageChangeSubscription() {
+    unawaited(_outgoingLocalMessageChangeSubscription?.cancel());
+    _outgoingLocalMessageChangeSubscription = null;
+    _startListeningForOutgoingLocalMessageChanges();
+  }
+
+  void _startListeningForOutgoingLocalMessageChanges() {
+    final source = widget.msgRepo is GroupOutgoingLocalMessageChangeSource
+        ? widget.msgRepo as GroupOutgoingLocalMessageChangeSource
+        : null;
+    if (source == null) return;
+    _outgoingLocalMessageChangeSubscription = source.outgoingLocalMessageChanges
+        .listen(
+          _handleOutgoingLocalMessageChange,
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_CONV_FL_LOCAL_STATUS_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+        );
+  }
+
+  void _handleOutgoingLocalMessageChange(
+    GroupOutgoingLocalMessageChange change,
+  ) {
+    if (!mounted) return;
+    final eventGroupId = change.groupId;
+    if (eventGroupId != null && eventGroupId != widget.group.id) {
+      return;
+    }
+
+    if (change.reloadRequired) {
+      unawaited(_loadMessages());
+      return;
+    }
+
+    if (eventGroupId != widget.group.id) return;
+    final messageId = change.messageId;
+    final status = change.status;
+    if (messageId == null || status == null) return;
+    _updateLocalMessageStatus(messageId, status);
   }
 
   Future<void> _handleCurrentGroupRemoved() async {
@@ -1814,6 +1981,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         senderTransportPeerId: senderDeviceId,
         mediaAttachments: uploadedAttachments,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
       );
 
       if ((result == SendGroupMessageResult.success ||
@@ -2058,12 +2226,89 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (persistedMedia.any(
       (attachment) => attachment.downloadStatus == 'upload_pending',
     )) {
+      if (_hasUploadPendingVoiceAttachment(persistedMedia)) {
+        if (!_tryBeginSendFlow()) return;
+        _clearRestoredVoiceContinuationTracking(messageId: messageId);
+        final bgTaskId = await _beginBackgroundTaskGuarded();
+        var retried = 0;
+        try {
+          retried = await retryIncompleteGroupUploads(
+            groupRepo: widget.groupRepo,
+            groupMsgRepo: widget.msgRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            bridge: widget.bridge,
+            p2pService: widget.p2pService,
+            identityRepo: widget.identityRepo,
+            uploadMediaFn: widget.uploadMediaFn,
+            mediaFileManager: mediaFileManager,
+            messageId: messageId,
+            inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          );
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_CONV_FL_VOICE_UPLOAD_PENDING_RETRY_ERROR',
+            details: {'error': e.toString()},
+          );
+        } finally {
+          try {
+            await _refreshMessageWithHydratedMedia(
+              messageId,
+              fallbackMedia: fallbackMedia,
+            );
+          } finally {
+            await _endBackgroundTaskGuarded(bgTaskId);
+            _endSendFlow();
+          }
+        }
+        if (retried == 0) {
+          _showFloatingSnackBar(
+            AppLocalizations.of(context)!.failed_media_retry_failed,
+            backgroundColor: Colors.red[700],
+          );
+        }
+        return;
+      }
       await _refreshMessageWithHydratedMedia(
         messageId,
         fallbackMedia: fallbackMedia,
       );
       _showFloatingSnackBar(
         AppLocalizations.of(context)!.failed_media_upload_pending_retry,
+      );
+      return;
+    }
+
+    _clearRestoredVoiceContinuationTracking(messageId: messageId);
+    final retried = await retryFailedGroupMessage(
+      messageId: messageId,
+      groupMsgRepo: widget.msgRepo,
+      groupRepo: widget.groupRepo,
+      identityRepo: widget.identityRepo,
+      bridge: widget.bridge,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+    );
+
+    await _refreshMessageWithHydratedMedia(
+      messageId,
+      fallbackMedia: fallbackMedia,
+    );
+
+    if (retried == 0) {
+      _showFloatingSnackBar(
+        AppLocalizations.of(context)!.failed_media_retry_failed,
+        backgroundColor: Colors.red[700],
+      );
+    }
+  }
+
+  Future<void> _onRetryFailedMessage(String messageId) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (mediaAttachmentRepo == null) {
+      _showFloatingSnackBar(
+        AppLocalizations.of(context)!.media_retry_unavailable_now,
+        backgroundColor: Colors.red[700],
       );
       return;
     }
@@ -2075,16 +2320,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       identityRepo: widget.identityRepo,
       bridge: widget.bridge,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
     );
 
-    await _refreshMessageWithHydratedMedia(
-      messageId,
-      fallbackMedia: fallbackMedia,
-    );
+    await _refreshMessageWithHydratedMedia(messageId);
 
     if (retried == 0) {
       _showFloatingSnackBar(
-        AppLocalizations.of(context)!.failed_media_retry_failed,
+        AppLocalizations.of(context)!.failed_message_retry_failed,
         backgroundColor: Colors.red[700],
       );
     }
@@ -2101,6 +2344,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
 
+    _clearRestoredVoiceContinuationTracking(messageId: messageId);
     final storedAttachments = await mediaAttachmentRepo
         .getAttachmentsForMessage(messageId);
     final storedPaths = storedAttachments.map(
@@ -2157,6 +2401,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     await _persistMessageStatus(messageId, 'failed');
     if (snapshot.pendingAttachments.isNotEmpty) {
       await _cleanupRestoredComposerRetryState(messageId);
+      await _trackRestoredMediaContinuation(
+        snapshot: snapshot,
+        messageId: messageId,
+      );
+    } else if (snapshot.draftText.isNotEmpty) {
       await _trackRestoredMediaContinuation(
         snapshot: snapshot,
         messageId: messageId,
@@ -2979,9 +3228,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         setState(() => _activeQuoteMessageId = null);
       }
 
-      final messageId = _uuid.v4();
+      final voiceContinuation =
+          await _resolveRestoredVoiceContinuationForRecordStop(
+            quotedMessageId: quotedMessageId,
+          );
+      final messageId = voiceContinuation?.messageId ?? _uuid.v4();
       final attachmentId = _uuid.v4();
-      final now = DateTime.now().toUtc();
+      final now = voiceContinuation?.timestamp ?? DateTime.now().toUtc();
       final optimisticMessage = GroupMessage(
         id: messageId,
         groupId: widget.group.id,
@@ -3067,11 +3320,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           event: 'GROUP_CONV_FL_VOICE_DURABLE_PREP_ERROR',
           details: {'error': e.toString()},
         );
+        if (voiceContinuation == null) {
+          await _cleanupUnsentVoiceArtifacts(
+            messageId: messageId,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          );
+        } else {
+          _restoredVoiceContinuation = voiceContinuation;
+        }
         if (mounted) {
           _updateComposerState(isUploading: false);
         }
-        _updateLocalMessageStatus(messageId, 'failed');
-        await _persistMessageStatus(messageId, 'failed');
         _restoreActiveQuoteIfNeeded(quotedMessageId);
         return;
       }
@@ -3117,6 +3377,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             _updateLocalMessageStatus(messageId, 'failed');
           }
           await _persistMessageStatus(messageId, 'failed');
+          await _trackFailedVoiceContinuation(
+            messageId: messageId,
+            timestamp: now,
+            quotedMessageId: quotedMessageId,
+          );
           _restoreActiveQuoteIfNeeded(quotedMessageId);
           return;
         }
@@ -3127,6 +3392,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           absoluteDurablePath: durableAbsolutePath,
           waveform: waveform,
         );
+        if (voiceContinuation != null) {
+          final staleAttachments = await mediaAttachmentRepo
+              .getAttachmentsForMessage(messageId);
+          for (final attachment in staleAttachments) {
+            await _deleteUnsafeLocalMediaFile(attachment);
+          }
+          await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+        }
+        await mediaAttachmentRepo.saveAttachment(stableVoiceAttachment);
         _markRelayUploadCompleted(recording.sizeBytes);
         await _stopRelayUploadTracking();
 
@@ -3152,6 +3426,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           senderTransportPeerId: senderDeviceId,
           mediaAttachments: [stableVoiceAttachment],
           mediaAttachmentRepo: mediaAttachmentRepo,
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
         );
 
         try {
@@ -3183,9 +3458,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             try {
               await mediaFileManager.deletePendingUploadDir(messageId);
             } catch (_) {}
+            _clearRestoredVoiceContinuationTracking(messageId: messageId);
           } else if (result == SendGroupMessageResult.groupNotFound ||
               result == SendGroupMessageResult.groupDissolved ||
               result == SendGroupMessageResult.unauthorized) {
+            _clearRestoredVoiceContinuationTracking(messageId: messageId);
             if (mounted) {
               _removeLocalMessage(messageId);
             }
@@ -3218,6 +3495,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           } else {
             _updateLocalMessageStatus(messageId, 'failed');
             await _persistMessageStatus(messageId, 'failed');
+            await _trackFailedVoiceContinuation(
+              messageId: messageId,
+              timestamp: now,
+              quotedMessageId: quotedMessageId,
+            );
             _restoreActiveQuoteIfNeeded(quotedMessageId);
           }
         } catch (_) {}
@@ -3228,6 +3510,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     } finally {
       _endSendFlow();
     }
+  }
+
+  Future<void> _cleanupUnsentVoiceArtifacts({
+    required String messageId,
+    required MediaAttachmentRepository mediaAttachmentRepo,
+    required MediaFileManager mediaFileManager,
+  }) async {
+    if (mounted) {
+      _removeLocalMessage(messageId);
+    }
+    try {
+      await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+    } catch (_) {}
+    try {
+      await mediaFileManager.deletePendingUploadDir(messageId);
+    } catch (_) {}
+    try {
+      await widget.msgRepo.deleteMessage(messageId);
+    } catch (_) {}
   }
 
   Future<MediaAttachment> _buildStableVoiceAttachment({
@@ -3305,6 +3606,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_canWrite) return;
     if (_activeQuoteMessageId != messageId) {
       _clearRestoredMediaContinuationTracking();
+      _clearRestoredVoiceContinuationTracking();
     }
     setState(() {
       _activeQuoteMessageId = messageId;
@@ -3314,6 +3616,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   void _onClearQuote() {
     if (_activeQuoteMessageId == null) return;
     _clearRestoredMediaContinuationTracking();
+    _clearRestoredVoiceContinuationTracking();
     setState(() {
       _activeQuoteMessageId = null;
     });
@@ -3905,6 +4208,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     WidgetsBinding.instance.removeObserver(this);
     widget.groupConversationTracker?.clearIfActive(_activeGroupConversationKey);
     _messageSubscription?.cancel();
+    _outgoingLocalMessageChangeSubscription?.cancel();
     _removedSubscription?.cancel();
     _reactionSubscription?.cancel();
     _mediaUploadProgressSubscription?.cancel();
@@ -3991,6 +4295,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             initialText: _draftText,
             onDraftChanged: _onDraftChanged,
             onQuoteReply: _canWrite ? _onQuoteReply : null,
+            onRetryFailedMessage:
+                _canWrite && widget.mediaAttachmentRepo != null
+                ? _onRetryFailedMessage
+                : null,
             onRetryFailedMedia:
                 _canWrite &&
                     widget.mediaAttachmentRepo != null &&

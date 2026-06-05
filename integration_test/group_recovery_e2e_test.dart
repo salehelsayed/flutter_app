@@ -1,9 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:path/path.dart' as p;
 
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -11,13 +15,18 @@ import 'package:flutter_app/features/groups/application/group_offline_replay_env
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../test/core/bridge/fake_bridge.dart';
 import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/identity/domain/repositories/fake_identity_repository.dart';
+import '../test/shared/fakes/fake_audio_recorder_service.dart';
+import '../test/shared/fakes/fake_media_file_manager.dart';
 import '../test/shared/fakes/fake_group_pubsub_network.dart';
 import '../test/shared/fakes/group_test_user.dart';
 import '../test/shared/fakes/in_memory_contact_repository.dart';
@@ -100,6 +109,64 @@ class _InboxPage {
   _InboxPage(this.messages, this.nextCursor);
 }
 
+class _SequentialMirroringGroupPublishBridge extends _CursorInboxBridge {
+  _SequentialMirroringGroupPublishBridge({
+    required this.network,
+    required this.senderPeerId,
+    required this.senderDeviceId,
+    required this.publishResponses,
+  });
+
+  final FakeGroupPubSubNetwork network;
+  final String senderPeerId;
+  final String senderDeviceId;
+  final List<Map<String, dynamic>> publishResponses;
+  int _publishIndex = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd != 'group:publish') {
+      return super.send(message);
+    }
+
+    commandLog.add(cmd!);
+    sendCallCount++;
+    lastSentMessage = message;
+    sentMessages.add(message);
+    lastCommand = cmd;
+
+    final payload = parsed['payload'] as Map<String, dynamic>;
+    final response =
+        publishResponses[_publishIndex < publishResponses.length
+            ? _publishIndex
+            : publishResponses.length - 1];
+    _publishIndex++;
+
+    if (response['ok'] == true) {
+      final groupId = payload['groupId'] as String;
+      await network.publish(groupId, senderPeerId, {
+        'groupId': groupId,
+        'senderId': payload['senderPeerId'] as String? ?? senderPeerId,
+        'senderUsername': payload['senderUsername'] as String? ?? '',
+        'keyEpoch': 1,
+        'text': payload['text'] as String? ?? '',
+        'timestamp':
+            payload['timestamp'] as String? ??
+            DateTime.now().toUtc().toIso8601String(),
+        'messageId': payload['messageId'] as String? ?? '',
+        if (payload['quotedMessageId'] is String)
+          'quotedMessageId': payload['quotedMessageId'],
+        if (payload['media'] is List<dynamic>)
+          'media': payload['media'] as List<dynamic>,
+      }, senderDeviceId: senderDeviceId);
+    }
+
+    return jsonEncode(response);
+  }
+}
+
 Future<void> _pumpNetwork() =>
     Future<void>.delayed(const Duration(milliseconds: 50));
 
@@ -166,6 +233,17 @@ Map<String, dynamic> _relayInboxMessage({
   };
 }
 
+List<Map<String, dynamic>> _groupPublishPayloads(FakeBridge bridge) {
+  return bridge.sentMessages
+      .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == 'group:publish')
+      .map(
+        (message) => (message['payload'] as Map<String, dynamic>)
+            .cast<String, dynamic>(),
+      )
+      .toList(growable: false);
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -174,6 +252,444 @@ void main() {
 
     setUp(() {
       network = FakeGroupPubSubNetwork();
+    });
+
+    testWidgets(
+      'open group screen reflects local outgoing status without listener echo',
+      (tester) async {
+        const alicePeerId = 'alice-local-status-peer';
+        const groupId = 'group-local-status-smoke';
+        const messageId = 'msg-local-status-smoke';
+        final alice = GroupTestUser.create(
+          peerId: alicePeerId,
+          username: 'Alice',
+          network: network,
+        );
+
+        await alice.createGroup(groupId: groupId, name: 'Local Status');
+        await alice.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'local-status-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        final timestamp = DateTime.utc(2026, 6, 3, 10, 15);
+        final failedMessage = GroupMessage(
+          id: messageId,
+          groupId: groupId,
+          senderPeerId: alice.peerId,
+          senderUsername: alice.username,
+          text: 'Local status simulator smoke',
+          timestamp: timestamp,
+          keyGeneration: 1,
+          status: 'failed',
+          isIncoming: false,
+          createdAt: timestamp,
+        );
+        await alice.msgRepo.saveMessage(failedMessage);
+
+        final identityRepo = FakeIdentityRepository()
+          ..seed(
+            FakeIdentityRepository.makeIdentity(
+              peerId: alice.peerId,
+              publicKey: alice.publicKey,
+              privateKey: alice.privateKey,
+              mlKemPublicKey: alice.mlKemPublicKey,
+            ),
+          );
+        final updatedGroup = await alice.groupRepo.getGroup(groupId);
+        expect(updatedGroup, isNotNull);
+
+        try {
+          await tester.pumpWidget(
+            MaterialApp(
+              locale: const Locale('en'),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: GroupConversationWired(
+                group: updatedGroup!,
+                groupRepo: alice.groupRepo,
+                msgRepo: alice.msgRepo,
+                groupMessageListener: alice.groupMessageListener,
+                bridge: alice.bridge,
+                identityRepo: identityRepo,
+                contactRepo: InMemoryContactRepository(),
+                p2pService: FakeP2PService(),
+              ),
+            ),
+          );
+          await _pumpFrames(tester, count: 20);
+
+          final initialScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            initialScreen.messages
+                .singleWhere((message) => message.id == messageId)
+                .status,
+            'failed',
+          );
+
+          await alice.msgRepo.saveMessage(
+            failedMessage.copyWith(status: 'sent'),
+          );
+          await _pumpFrames(tester, count: 20);
+
+          final updatedScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            updatedScreen.messages
+                .singleWhere((message) => message.id == messageId)
+                .status,
+            'sent',
+          );
+          expect(alice.bridge.commandLog, isNot(contains('group:publish')));
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          alice.dispose();
+        }
+      },
+    );
+
+    testWidgets('failed restored text continuation keeps one sender row id', (
+      tester,
+    ) async {
+      const alicePeerId = 'alice-text-continuation-peer';
+      const bobPeerId = 'bob-text-continuation-peer';
+      const groupId = 'group-text-continuation-smoke';
+      const text = 'Retry same restored simulator text';
+      final bridge = _SequentialMirroringGroupPublishBridge(
+        network: network,
+        senderPeerId: alicePeerId,
+        senderDeviceId: alicePeerId,
+        publishResponses: [
+          {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+          {'ok': true, 'messageId': 'restored-published', 'topicPeers': 1},
+        ],
+      );
+      final alice = GroupTestUser.create(
+        peerId: alicePeerId,
+        username: 'Alice',
+        network: network,
+        bridge: bridge,
+      );
+      final bob = GroupTestUser.create(
+        peerId: bobPeerId,
+        username: 'Bob',
+        network: network,
+      );
+
+      await alice.createGroup(groupId: groupId, name: 'Text Continuation');
+      await alice.groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'text-continuation-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      await alice.addMember(groupId: groupId, invitee: bob);
+      await bob.groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'text-continuation-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      bob.start();
+
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: alice.peerId,
+            publicKey: alice.publicKey,
+            privateKey: alice.privateKey,
+            mlKemPublicKey: alice.mlKemPublicKey,
+          ),
+        );
+      final updatedGroup = await alice.groupRepo.getGroup(groupId);
+      expect(updatedGroup, isNotNull);
+
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: GroupConversationWired(
+              group: updatedGroup!,
+              groupRepo: alice.groupRepo,
+              msgRepo: alice.msgRepo,
+              groupMessageListener: alice.groupMessageListener,
+              bridge: alice.bridge,
+              identityRepo: identityRepo,
+              contactRepo: InMemoryContactRepository(),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await _pumpFrames(tester, count: 20);
+
+        final firstScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final firstSend = firstScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await firstSend(text);
+        });
+        await _pumpFrames(tester, count: 20);
+
+        final failedRows = (await alice.loadGroupMessages(
+          groupId,
+        )).where((message) => message.text == text).toList();
+        expect(failedRows, hasLength(1));
+        final failedRow = failedRows.single;
+        expect(failedRow.status, 'failed');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          text,
+        );
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final retrySend = retryScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await retrySend(text);
+        });
+        await _pumpFrames(tester, count: 20);
+        await _pumpNetwork();
+
+        final storedRows = (await alice.loadGroupMessages(
+          groupId,
+        )).where((message) => message.text == text).toList();
+        expect(storedRows, hasLength(1));
+        final storedRow = storedRows.single;
+        expect(storedRow.id, failedRow.id);
+        expect(storedRow.timestamp, failedRow.timestamp);
+        expect(storedRow.status, 'sent');
+
+        final publishPayloads = _groupPublishPayloads(bridge);
+        expect(publishPayloads, hasLength(2));
+        expect(
+          publishPayloads.map((payload) => payload['messageId']).toList(),
+          [failedRow.id, failedRow.id],
+        );
+        expect(
+          publishPayloads.map((payload) => payload['timestamp']).toList(),
+          [
+            failedRow.timestamp.toUtc().toIso8601String(),
+            failedRow.timestamp.toUtc().toIso8601String(),
+          ],
+        );
+
+        final bobRows = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.text == text).toList();
+        expect(bobRows, hasLength(1));
+        expect(bobRows.single.id, failedRow.id);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        alice.dispose();
+        bob.dispose();
+      }
+    });
+
+    testWidgets('failed voice re-record keeps one sender and receiver row id', (
+      tester,
+    ) async {
+      const alicePeerId = 'alice-voice-continuation-peer';
+      const bobPeerId = 'bob-voice-continuation-peer';
+      const groupId = 'group-voice-continuation-smoke';
+      final bridge = _SequentialMirroringGroupPublishBridge(
+        network: network,
+        senderPeerId: alicePeerId,
+        senderDeviceId: alicePeerId,
+        publishResponses: [
+          {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+          {'ok': true, 'messageId': 'voice-published', 'topicPeers': 1},
+        ],
+      );
+      final alice = GroupTestUser.create(
+        peerId: alicePeerId,
+        username: 'Alice',
+        network: network,
+        bridge: bridge,
+      );
+      final bob = GroupTestUser.create(
+        peerId: bobPeerId,
+        username: 'Bob',
+        network: network,
+      );
+
+      await alice.createGroup(groupId: groupId, name: 'Voice Continuation');
+      await alice.groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'voice-continuation-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      await alice.addMember(groupId: groupId, invitee: bob);
+      await bob.groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'voice-continuation-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      bob.start();
+
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: alice.peerId,
+            publicKey: alice.publicKey,
+            privateKey: alice.privateKey,
+            mlKemPublicKey: alice.mlKemPublicKey,
+          ),
+        );
+      final updatedGroup = await alice.groupRepo.getGroup(groupId);
+      expect(updatedGroup, isNotNull);
+
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group-voice-continuation-smoke-',
+      );
+      final firstVoice = File(p.join(tempDir.path, 'voice-first.m4a'))
+        ..writeAsStringSync('first voice');
+      final secondVoice = File(p.join(tempDir.path, 'voice-second.m4a'))
+        ..writeAsStringSync('second voice');
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 2400
+        ..fakeSizeBytes = 32000
+        ..fakeOutputPath = firstVoice.path;
+      final mediaFileManager = FakeMediaFileManager();
+
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: GroupConversationWired(
+              group: updatedGroup!,
+              groupRepo: alice.groupRepo,
+              msgRepo: alice.msgRepo,
+              groupMessageListener: alice.groupMessageListener,
+              bridge: alice.bridge,
+              identityRepo: identityRepo,
+              contactRepo: InMemoryContactRepository(),
+              p2pService: FakeP2PService(),
+              mediaAttachmentRepo: alice.mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              audioRecorderService: recorder,
+              uploadMediaFn:
+                  ({
+                    required bridge,
+                    required localFilePath,
+                    required mime,
+                    required recipientPeerId,
+                    String? blobId,
+                    MediaFileManager? mediaFileManager,
+                    width,
+                    height,
+                    durationMs,
+                    waveform,
+                    allowedPeers,
+                  }) async {
+                    return MediaAttachment(
+                      id: blobId!,
+                      messageId: '',
+                      mime: mime,
+                      size: 1,
+                      mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                      localPath: mediaFileManager?.relativePathForAttachment(
+                        contactPeerId: recipientPeerId,
+                        blobId: blobId,
+                        mime: mime,
+                      ),
+                      downloadStatus: 'done',
+                      contentHash:
+                          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                      encryptionKeyBase64: 'key-$blobId',
+                      encryptionNonce: 'nonce-$blobId',
+                      encryptionScheme:
+                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                      durationMs: durationMs,
+                      waveform: waveform,
+                      createdAt: DateTime.now().toUtc().toIso8601String(),
+                    );
+                  },
+            ),
+          ),
+        );
+        await _pumpFrames(tester, count: 20);
+
+        Future<void> recordVoice() async {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          await (screen.onRecordStart! as Future<void> Function())();
+          await _pumpFrames(tester, count: 10);
+          final recordingScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          await tester.runAsync(() async {
+            await (recordingScreen.onRecordStop! as Future<void> Function())();
+          });
+          await _pumpFrames(tester, count: 20);
+        }
+
+        await recordVoice();
+        final failedRows = (await alice.loadGroupMessages(groupId))
+            .where((message) => !message.isIncoming && message.text.isEmpty)
+            .toList();
+        expect(failedRows, hasLength(1));
+        final failedRow = failedRows.single;
+        expect(failedRow.status, 'failed');
+
+        recorder.fakeOutputPath = secondVoice.path;
+        await recordVoice();
+        await _pumpNetwork();
+
+        final senderRows = (await alice.loadGroupMessages(groupId))
+            .where((message) => !message.isIncoming && message.text.isEmpty)
+            .toList();
+        expect(senderRows, hasLength(1));
+        expect(senderRows.single.id, failedRow.id);
+        expect(senderRows.single.timestamp, failedRow.timestamp);
+        expect(senderRows.single.status, 'sent');
+
+        final publishPayloads = _groupPublishPayloads(bridge);
+        expect(publishPayloads, hasLength(2));
+        expect(
+          publishPayloads.map((payload) => payload['messageId']).toList(),
+          [failedRow.id, failedRow.id],
+        );
+
+        final bobRows = (await bob.loadGroupMessages(groupId))
+            .where((message) => message.isIncoming && message.text.isEmpty)
+            .toList();
+        expect(bobRows, hasLength(1));
+        expect(bobRows.single.id, failedRow.id);
+        expect(
+          await bob.mediaAttachmentRepo.getAttachmentsForMessage(failedRow.id),
+          hasLength(1),
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+        alice.dispose();
+        bob.dispose();
+      }
     });
 
     testWidgets(

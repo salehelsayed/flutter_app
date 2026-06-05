@@ -32,6 +32,24 @@ const _validContentHash =
 const _retryJpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
 const _retryPdfBytes = <int>[0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37];
 const _retryGifBytes = <int>[0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
+const _retryMp4Bytes = <int>[
+  0x00,
+  0x00,
+  0x00,
+  0x18,
+  0x66,
+  0x74,
+  0x79,
+  0x70,
+  0x6d,
+  0x70,
+  0x34,
+  0x32,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+];
 
 String _retryFixturePath(String localPath) {
   if (localPath.startsWith('/')) return localPath;
@@ -41,6 +59,7 @@ String _retryFixturePath(String localPath) {
 List<int> _retryFixtureBytesForMime(String mime) {
   return switch (mime) {
     'image/gif' => _retryGifBytes,
+    'audio/mp4' => _retryMp4Bytes,
     'application/pdf' => _retryPdfBytes,
     _ => _retryJpegBytes,
   };
@@ -127,6 +146,17 @@ MediaAttachment _doneAttachment({
     encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     createdAt: DateTime.now().toUtc().toIso8601String(),
   );
+}
+
+List<Map<String, dynamic>> _publishedGroupPayloads(FakeBridge bridge) {
+  return bridge.sentMessages
+      .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == 'group:publish')
+      .map(
+        (message) => (message['payload'] as Map<String, dynamic>)
+            .cast<String, dynamic>(),
+      )
+      .toList(growable: false);
 }
 
 void main() {
@@ -536,6 +566,121 @@ void main() {
           isTrue,
           reason: '1:1 upload_pending rows must be skipped',
         );
+      },
+    );
+
+    test(
+      'message-scoped voice upload retry reuploads and resends only that failed row',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-voice-targeted',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: '',
+            timestamp: DateTime.utc(2026, 1, 1, 12, 3, 4),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1, 12, 3, 4),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-unrelated-pending',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Do not sweep me',
+            timestamp: DateTime.utc(2026, 1, 1, 12, 4),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1, 12, 4),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'voice-pending-target',
+            messageId: 'msg-voice-targeted',
+            localPath: 'pending_uploads/msg-voice-targeted/voice.m4a',
+            mime: 'audio/mp4',
+            size: _retryMp4Bytes.length,
+          ).copyWith(durationMs: 4200, waveform: const [0.1, 0.5, 0.2]),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'image-pending-unrelated',
+            messageId: 'msg-unrelated-pending',
+            localPath: 'pending_uploads/msg-unrelated-pending/photo.jpg',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'voice-pending-target',
+            messageId: 'msg-voice-targeted',
+            mime: 'audio/mp4',
+            size: _retryMp4Bytes.length,
+          ).copyWith(durationMs: 4200, waveform: const [0.1, 0.5, 0.2]),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+          messageId: 'msg-voice-targeted',
+        );
+
+        expect(count, 1);
+        expect(uploadFn.callCount, 1);
+        expect(uploadFn.lastBlobId, 'voice-pending-target');
+        expect(uploadFn.lastDurationMs, 4200);
+        expect(uploadFn.lastAllowedPeers, ['peer-admin', 'peer-2']);
+        expect(
+          uploadFn.lastLocalPath,
+          endsWith('test_docs/pending_uploads/msg-voice-targeted/voice.m4a'),
+        );
+
+        final savedTarget = await groupMsgRepo.getMessage('msg-voice-targeted');
+        expect(savedTarget, isNotNull);
+        expect(savedTarget!.status, 'sent');
+        expect(savedTarget.timestamp, DateTime.utc(2026, 1, 1, 12, 3, 4));
+        expect(
+          (await groupMsgRepo.getMessage('msg-unrelated-pending'))?.status,
+          'failed',
+        );
+
+        final targetAttachments = await mediaRepo.getAttachmentsForMessage(
+          'msg-voice-targeted',
+        );
+        expect(targetAttachments, hasLength(1));
+        expect(targetAttachments.single.id, 'voice-pending-target');
+        expect(targetAttachments.single.downloadStatus, 'done');
+        expect(targetAttachments.single.mediaType, 'audio');
+        expect(targetAttachments.single.durationMs, 4200);
+        expect(targetAttachments.single.waveform, [0.1, 0.5, 0.2]);
+        expect(
+          (await mediaRepo.getAttachmentsForMessage(
+            'msg-unrelated-pending',
+          )).single.downloadStatus,
+          'upload_pending',
+        );
+
+        final publishPayloads = _publishedGroupPayloads(bridge);
+        expect(publishPayloads, hasLength(1));
+        expect(publishPayloads.single['messageId'], 'msg-voice-targeted');
+        expect(publishPayloads.single['timestamp'], '2026-01-01T12:03:04.000Z');
+        final media = (publishPayloads.single['media'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(media, hasLength(1));
+        expect(media.single['id'], 'voice-pending-target');
+        expect(media.single['mediaType'], 'audio');
+        expect(media.single['durationMs'], 4200);
+        expect(media.single['waveform'], [0.1, 0.5, 0.2]);
       },
     );
 

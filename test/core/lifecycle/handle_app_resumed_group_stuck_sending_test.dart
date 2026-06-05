@@ -2,8 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
@@ -114,5 +116,50 @@ void main() {
 
       expect(callOrder, ['rejoin', 'drain', 'recoverStuck', 'retryFailed']);
     });
+
+    test(
+      'resume recovery does not immediately fail a freshly retried old group row',
+      () async {
+        final oldLogicalTimestamp = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 5),
+        );
+        final freshAttemptTimestamp = DateTime.now().toUtc().subtract(
+          const Duration(seconds: 10),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'fresh-retry-old-logical',
+            groupId: 'group-1',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Alice',
+            text: 'Retry still in flight',
+            timestamp: oldLogicalTimestamp,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: oldLogicalTimestamp,
+            lastSendAttemptAt: freshAttemptTimestamp,
+          ),
+        );
+
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          recoverStuckSendingGroupMessagesFn: () =>
+              recoverStuckSendingGroupMessages(
+                groupMsgRepo: groupMsgRepo,
+                threshold: const Duration(seconds: 30),
+              ),
+          retryFailedGroupMessagesFn: () async => 0,
+        );
+
+        final message = await groupMsgRepo.getMessage(
+          'fresh-retry-old-logical',
+        );
+        expect(message, isNotNull);
+        expect(message!.status, 'sending');
+      },
+    );
   });
 }

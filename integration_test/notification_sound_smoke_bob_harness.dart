@@ -273,6 +273,7 @@ void main() {
       notificationService: notificationService,
       groupConversationTracker: groupConversationTracker,
       getAppLifecycleState: () => currentLifecycle,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     realGroupListener.start(stack.groupStreamController.stream);
 

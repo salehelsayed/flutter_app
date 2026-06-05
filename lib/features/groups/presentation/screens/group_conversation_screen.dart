@@ -72,6 +72,7 @@ class GroupConversationScreen extends StatelessWidget {
   final String? initialText;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<String>? onQuoteReply;
+  final ValueChanged<String>? onRetryFailedMessage;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
   final void Function(String messageId, String attachmentId)?
@@ -128,6 +129,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.initialText,
     this.onDraftChanged,
     this.onQuoteReply,
+    this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
     this.onRetryUnavailableMedia,
@@ -545,6 +547,13 @@ class GroupConversationScreen extends StatelessWidget {
             isSent &&
             message.status == 'failed' &&
             messageMedia.isNotEmpty;
+        final showFailedTextRetry =
+            canWrite &&
+            isSent &&
+            message.status == 'failed' &&
+            messageMedia.isEmpty &&
+            message.text.trim().isNotEmpty &&
+            onRetryFailedMessage != null;
         final isHighlighted = highlightedMessageId == message.id;
         final canReplyFromContext = canWrite && onQuoteReply != null;
         final canCopyFromContext = message.text.trim().isNotEmpty;
@@ -579,6 +588,10 @@ class GroupConversationScreen extends StatelessWidget {
               ? (emoji) => onReactionTap!(message.id, emoji)
               : null,
           onLongPress: onLongPress,
+          onRetryFailedMessage: showFailedTextRetry
+              ? () => onRetryFailedMessage!(message.id)
+              : null,
+          failedMessageActionKeySuffix: message.id,
           onRetryFailedMedia:
               showFailedMediaActions && onRetryFailedMedia != null
               ? () => onRetryFailedMedia!(message.id)

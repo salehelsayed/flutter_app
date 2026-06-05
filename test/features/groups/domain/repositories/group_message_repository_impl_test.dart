@@ -6,10 +6,12 @@ import 'package:flutter_app/core/database/migrations/041_group_message_reliabili
 import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
+import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -113,6 +115,7 @@ void main() {
     await runGroupMessageTransportPeerIdMigration(db);
     await runGroupSyncReceiptsMigration(db);
     await runGroupMessageLocalDeletionsMigration(db);
+    await runGroupMessageLastSendAttemptAtMigration(db);
 
     repo = buildRepo(db, enableTransactions: true);
   });
@@ -137,6 +140,7 @@ void main() {
     bool isIncoming = true,
     DateTime? readAt,
     DateTime? createdAt,
+    DateTime? lastSendAttemptAt,
   }) {
     return GroupMessage(
       id: id,
@@ -152,6 +156,7 @@ void main() {
       isIncoming: isIncoming,
       readAt: readAt,
       createdAt: createdAt ?? now,
+      lastSendAttemptAt: lastSendAttemptAt,
     );
   }
 
@@ -176,6 +181,23 @@ void main() {
       final result = await repo.getMessage('msg-001');
       expect(result, isNotNull);
       expect(result!.quotedMessageId, 'msg-parent-1');
+    });
+
+    test('round-trip preserves lastSendAttemptAt', () async {
+      final attemptAt = DateTime.utc(2026, 1, 15, 12, 0, 30);
+      final msg = makeMessage(
+        id: 'last-attempt-round-trip',
+        status: 'sending',
+        isIncoming: false,
+        lastSendAttemptAt: attemptAt,
+      );
+
+      await repo.saveMessage(msg);
+
+      final result = await repo.getMessage('last-attempt-round-trip');
+      expect(result, isNotNull);
+      expect(result!.lastSendAttemptAt, attemptAt);
+      expect(result.timestamp, now);
     });
 
     test('returns null for non-existent', () async {
@@ -223,6 +245,194 @@ void main() {
 
       expect(await repo.getMessage(msg.id), isNull);
     });
+  });
+
+  group('local outgoing status changes', () {
+    test(
+      'saveMessage emits one local status event when an outgoing row changes status',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'local-save-status',
+            status: 'failed',
+            isIncoming: false,
+          ),
+        );
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
+
+        await repo.saveMessage(
+          makeMessage(
+            id: 'local-save-status',
+            status: 'sent',
+            isIncoming: false,
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(events, hasLength(1));
+        expect(events.single.reloadRequired, isFalse);
+        expect(events.single.groupId, 'group-1');
+        expect(events.single.messageId, 'local-save-status');
+        expect(events.single.status, 'sent');
+      },
+    );
+
+    test(
+      'updateMessageStatus emits one local status event after an outgoing write succeeds',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'local-update-status',
+            status: 'sending',
+            isIncoming: false,
+          ),
+        );
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
+
+        await repo.updateMessageStatus('local-update-status', 'failed');
+        await pumpEventQueue();
+
+        expect(events, hasLength(1));
+        expect(events.single.reloadRequired, isFalse);
+        expect(events.single.groupId, 'group-1');
+        expect(events.single.messageId, 'local-update-status');
+        expect(events.single.status, 'failed');
+      },
+    );
+
+    test(
+      'incoming saves and updates do not emit outgoing status events',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'incoming-local-status',
+            status: 'failed',
+            isIncoming: true,
+          ),
+        );
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
+
+        await repo.saveMessage(
+          makeMessage(
+            id: 'incoming-local-status',
+            status: 'sent',
+            isIncoming: true,
+          ),
+        );
+        await repo.updateMessageStatus('incoming-local-status', 'delivered');
+        await pumpEventQueue();
+
+        expect(events, isEmpty);
+      },
+    );
+
+    test(
+      'same-status saves and updates do not emit duplicate events',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'same-status-local',
+            status: 'sent',
+            isIncoming: false,
+          ),
+        );
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
+
+        await repo.saveMessage(
+          makeMessage(
+            id: 'same-status-local',
+            text: 'updated body only',
+            status: 'sent',
+            isIncoming: false,
+          ),
+        );
+        await repo.updateMessageStatus('same-status-local', 'sent');
+        await pumpEventQueue();
+
+        expect(events, isEmpty);
+      },
+    );
+
+    test(
+      'count-only sending sweeps emit one batch event only when rows changed',
+      () async {
+        final oldTs = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 5),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'recover-local-status',
+            status: 'sending',
+            isIncoming: false,
+            timestamp: oldTs,
+            createdAt: oldTs,
+          ),
+        );
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
+
+        final recovered = await repo.recoverStuckSendingMessages(
+          olderThan: const Duration(seconds: 30),
+        );
+        await pumpEventQueue();
+
+        expect(recovered, 1);
+        expect(events, hasLength(1));
+        expect(events.single.reloadRequired, isTrue);
+        expect(events.single.groupId, isNull);
+        expect(events.single.messageId, isNull);
+        expect(events.single.status, isNull);
+
+        events.clear();
+        final noRecovered = await repo.recoverStuckSendingMessages(
+          olderThan: const Duration(seconds: 30),
+        );
+        await pumpEventQueue();
+
+        expect(noRecovered, 0);
+        expect(events, isEmpty);
+
+        await repo.saveMessage(
+          makeMessage(
+            id: 'transition-local-status',
+            status: 'sending',
+            isIncoming: false,
+          ),
+        );
+        final transitioned = await repo.transitionSendingToFailed();
+        await pumpEventQueue();
+
+        expect(transitioned, 1);
+        expect(events, hasLength(1));
+        expect(events.single.reloadRequired, isTrue);
+
+        events.clear();
+        final noTransition = await repo.transitionSendingToFailed();
+        await pumpEventQueue();
+
+        expect(noTransition, 0);
+        expect(events, isEmpty);
+      },
+    );
   });
 
   group('pause recovery', () {

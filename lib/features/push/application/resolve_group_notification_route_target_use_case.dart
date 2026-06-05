@@ -22,6 +22,22 @@ class GroupNotificationRouteResolution {
   bool get hasPendingInvite => pendingInvite != null;
 }
 
+class GroupMessageNotificationDisplayEligibility {
+  final bool shouldDisplay;
+  final String reason;
+
+  const GroupMessageNotificationDisplayEligibility._({
+    required this.shouldDisplay,
+    required this.reason,
+  });
+
+  const GroupMessageNotificationDisplayEligibility.allowCurrentMember()
+    : this._(shouldDisplay: true, reason: 'current_member');
+
+  const GroupMessageNotificationDisplayEligibility.suppressed(String reason)
+    : this._(shouldDisplay: false, reason: reason);
+}
+
 Future<GroupNotificationRouteResolution> resolveGroupNotificationRouteTarget({
   required String groupId,
   required GroupRepository groupRepo,
@@ -77,4 +93,49 @@ Future<GroupNotificationRouteResolution> resolveGroupNotificationRouteTarget({
   }
 
   return const GroupNotificationRouteResolution.missing();
+}
+
+Future<GroupMessageNotificationDisplayEligibility>
+resolveGroupMessageNotificationDisplayEligibility({
+  required String groupId,
+  required GroupRepository groupRepo,
+  PendingGroupInviteRepository? pendingInviteRepo,
+  required String? localPeerId,
+}) async {
+  final normalizedLocalPeerId = localPeerId?.trim();
+  if (normalizedLocalPeerId == null || normalizedLocalPeerId.isEmpty) {
+    return const GroupMessageNotificationDisplayEligibility.suppressed(
+      'unknown_local_identity',
+    );
+  }
+
+  final existingGroup = await groupRepo.getGroup(groupId);
+  if (existingGroup != null) {
+    final localMember = await groupRepo.getMember(
+      groupId,
+      normalizedLocalPeerId,
+    );
+    if (localMember != null) {
+      return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+    }
+  }
+
+  final existingPendingInvite = await pendingInviteRepo?.getPendingInvite(
+    groupId,
+  );
+  if (existingPendingInvite != null) {
+    return const GroupMessageNotificationDisplayEligibility.suppressed(
+      'pending_invite',
+    );
+  }
+
+  if (existingGroup != null) {
+    return const GroupMessageNotificationDisplayEligibility.suppressed(
+      'local_member_missing',
+    );
+  }
+
+  return const GroupMessageNotificationDisplayEligibility.suppressed(
+    'group_missing',
+  );
 }

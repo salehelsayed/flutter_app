@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -69,7 +70,10 @@ void main() {
     String? recipientKeyPackagePublicMaterial,
     int keyEpoch = 1,
     String groupConfigStateHash = 'group-config-state-hash-v1',
+    DateTime? issuedAt,
+    DateTime? expiresAt,
   }) {
+    final effectiveIssuedAt = issuedAt ?? DateTime.utc(2026, 3, 2, 12);
     return GroupInviteMembershipFreshnessProof(
       inviteId: inviteId,
       groupId: groupId,
@@ -88,8 +92,9 @@ void main() {
       keyEpoch: keyEpoch,
       groupConfigStateHash: groupConfigStateHash,
       membershipWatermark: groupConfigStateHash,
-      issuedAt: DateTime.utc(2026, 3, 2, 12),
-      expiresAt: DateTime.utc(2026, 3, 3, 12),
+      issuedAt: effectiveIssuedAt,
+      expiresAt:
+          expiresAt ?? effectiveIssuedAt.add(groupInviteMembershipFreshnessTtl),
       inviterMemberSnapshot: {
         'peerId': '12D3KooWAlice',
         'username': 'Alice',
@@ -107,6 +112,8 @@ void main() {
     String timestamp = '2026-03-02T12:00:00.000Z',
     int keyEpoch = 1,
     bool signed = true,
+    DateTime? membershipProofIssuedAt,
+    DateTime? membershipProofExpiresAt,
   }) {
     final payload = GroupInvitePayload(
       id: 'invite-uuid-001',
@@ -124,6 +131,8 @@ void main() {
         keyEpoch: keyEpoch,
         groupConfigStateHash:
             groupConfig['stateHash'] as String? ?? 'group-config-state-hash-v1',
+        issuedAt: membershipProofIssuedAt,
+        expiresAt: membershipProofExpiresAt,
       ),
     );
     return signed
@@ -748,7 +757,11 @@ void main() {
     test(
       'G3-003 current-time validation is opt-in for parse-only inspection',
       () {
-        final staleFreshnessPayload = makePayload();
+        final issuedAt = DateTime.utc(2026, 3, 2, 12);
+        final staleFreshnessPayload = makePayload(
+          membershipProofIssuedAt: issuedAt,
+          membershipProofExpiresAt: issuedAt.add(const Duration(hours: 24)),
+        );
 
         expect(
           GroupInvitePayload.fromInnerJson(staleFreshnessPayload.toInnerJson()),
@@ -782,6 +795,33 @@ void main() {
         expect(
           expiredPolicyResult.failure,
           GroupInvitePayloadParseFailure.expired,
+        );
+      },
+    );
+
+    test(
+      'G3-003 normal freshness proof remains current through the visible pending invite window',
+      () {
+        final issuedAt = DateTime.utc(2026, 3, 2, 12);
+        final validationTime = issuedAt.add(const Duration(hours: 25));
+        final payload = makePayload(
+          timestamp: issuedAt.toIso8601String(),
+          invitePolicy: makePolicy(
+            expiresAt: issuedAt.add(pendingGroupInviteTtl),
+          ),
+          membershipProofIssuedAt: issuedAt,
+        );
+
+        final result = GroupInvitePayload.parseInnerJsonDetailed(
+          payload.toInnerJson(),
+          validationTime: validationTime,
+        );
+
+        expect(result.failure, isNull);
+        expect(result.payload, isNotNull);
+        expect(
+          result.payload!.membershipFreshnessProof!.expiresAt,
+          issuedAt.add(groupInviteMembershipFreshnessTtl),
         );
       },
     );

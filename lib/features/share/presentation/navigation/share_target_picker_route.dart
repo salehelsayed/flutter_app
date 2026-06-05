@@ -15,6 +15,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -41,6 +42,7 @@ Route<void> buildShareTargetPickerRoute({
   ReactionListener? reactionListener,
   GroupRepository? groupRepository,
   GroupMessageRepository? groupMessageRepository,
+  GroupInviteDeliveryAttemptRepository? groupInviteDeliveryAttemptRepository,
   GroupMessageListener? groupMessageListener,
   ActiveConversationTracker? groupConversationTracker,
   IntroductionRepository? introductionRepository,
@@ -67,6 +69,8 @@ Route<void> buildShareTargetPickerRoute({
       reactionListener: reactionListener,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
+      groupInviteDeliveryAttemptRepository:
+          groupInviteDeliveryAttemptRepository,
       groupMessageListener: groupMessageListener,
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,

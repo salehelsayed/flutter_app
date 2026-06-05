@@ -29,10 +29,12 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -136,6 +138,24 @@ const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const _md012MediaKey = 'md012-media-key';
 const _md012MediaNonce = 'md012-media-nonce';
+const _tinyMp4Bytes = <int>[
+  0x00,
+  0x00,
+  0x00,
+  0x18,
+  0x66,
+  0x74,
+  0x79,
+  0x70,
+  0x6d,
+  0x70,
+  0x34,
+  0x32,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+];
 
 List<int> _md012EncryptedBytes(
   List<int> plaintext, {
@@ -406,6 +426,27 @@ class TrackingDurableMediaFileManager extends FakeMediaFileManager {
   }
 }
 
+class ThrowingAfterCopyDurableMediaFileManager
+    extends TrackingDurableMediaFileManager {
+  ThrowingAfterCopyDurableMediaFileManager(super.rootDir);
+
+  @override
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    await super.copyToDurableStorage(
+      sourceFilePath: sourceFilePath,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      mime: mime,
+    );
+    throw StateError('simulated durable copy failure');
+  }
+}
+
 class _DelayedNotFoundGroupRepository extends InMemoryGroupRepository {
   _DelayedNotFoundGroupRepository(this.delay);
 
@@ -500,6 +541,114 @@ class CountingMediaAttachmentRepository
   ) async {
     getAttachmentsForMessagesCalls++;
     return super.getAttachmentsForMessages(messageIds);
+  }
+}
+
+class _InMemoryInviteDeliveryAttemptRepository
+    implements GroupInviteDeliveryAttemptRepository {
+  final Map<String, GroupInviteDeliveryAttempt> _attempts = {};
+
+  String _key(String groupId, String peerId) => '$groupId::$peerId';
+
+  @override
+  Future<void> saveAttempt(GroupInviteDeliveryAttempt attempt) async {
+    _attempts[_key(attempt.groupId, attempt.peerId)] = attempt;
+  }
+
+  @override
+  Future<GroupInviteDeliveryAttempt?> getAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => _attempts[_key(groupId, peerId)];
+
+  @override
+  Future<List<GroupInviteDeliveryAttempt>> getAttemptsForGroup(
+    String groupId,
+  ) async => _attempts.values
+      .where((attempt) => attempt.groupId == groupId)
+      .toList(growable: false);
+
+  @override
+  Future<GroupInviteDeliveryStatus> getStatusForMember({
+    required String groupId,
+    required String peerId,
+  }) async =>
+      _attempts[_key(groupId, peerId)]?.status ??
+      GroupInviteDeliveryStatus.unknown;
+
+  @override
+  Future<Map<String, GroupInviteDeliveryStatus>> getStatusesForGroupMembers(
+    String groupId,
+  ) async => {
+    for (final attempt in _attempts.values.where(
+      (attempt) => attempt.groupId == groupId,
+    ))
+      attempt.peerId: attempt.status,
+  };
+
+  @override
+  Future<void> updateStatus({
+    required String groupId,
+    required String peerId,
+    required GroupInviteDeliveryStatus status,
+    DateTime? updatedAt,
+  }) async {
+    final now = (updatedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: status,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(status: status, updatedAt: now);
+  }
+
+  @override
+  Future<void> markJoined({
+    required String groupId,
+    required String peerId,
+    String? username,
+    DateTime? joinedAt,
+  }) async {
+    final now = (joinedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<int> deleteAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => _attempts.remove(_key(groupId, peerId)) == null ? 0 : 1;
+
+  @override
+  Future<int> deleteAttemptsForGroup(String groupId) async {
+    final keys = _attempts.keys
+        .where((key) => key.startsWith('$groupId::'))
+        .toList(growable: false);
+    for (final key in keys) {
+      _attempts.remove(key);
+    }
+    return keys.length;
   }
 }
 
@@ -664,6 +813,44 @@ Future<StartedScreenSend> startScreenSend(
   return StartedScreenSend(sendFuture);
 }
 
+List<Map<String, dynamic>> groupPublishPayloads(FakeBridge bridge) {
+  return bridge.sentMessages
+      .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == 'group:publish')
+      .map(
+        (message) => (message['payload'] as Map<String, dynamic>)
+            .cast<String, dynamic>(),
+      )
+      .toList();
+}
+
+Map<String, dynamic> groupSendReliablePayloadForMessage(
+  FakeBridge bridge,
+  String messageId,
+) {
+  for (final raw in bridge.sentMessages.reversed) {
+    final parsed = jsonDecode(raw) as Map<String, dynamic>;
+    if (parsed['cmd'] != 'group:sendReliable') continue;
+    final payload = (parsed['payload'] as Map).cast<String, dynamic>();
+    if (payload['messageId'] == messageId) return payload;
+  }
+  fail('missing group:sendReliable for $messageId');
+}
+
+Map<String, dynamic> groupInboxStorePayloadForMessage(
+  FakeBridge bridge,
+  String messageId,
+) {
+  for (final raw in bridge.sentMessages.reversed) {
+    final parsed = jsonDecode(raw) as Map<String, dynamic>;
+    if (parsed['cmd'] != 'group:inboxStore') continue;
+    final payload = (parsed['payload'] as Map).cast<String, dynamic>();
+    final envelope = jsonDecode(payload['message'] as String) as Map;
+    if (envelope['messageId'] == messageId) return payload;
+  }
+  fail('missing group:inboxStore for $messageId');
+}
+
 void main() {
   group('GroupConversationWired', () {
     late InMemoryGroupRepository groupRepo;
@@ -730,8 +917,11 @@ void main() {
       StreamController<ReactionChange>? reactionStreamController,
       StreamController<String>? removedStreamController,
       ActiveConversationTracker? groupConversationTracker,
+      CountingGroupMessageRepository? messageRepo,
+      GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
     }) {
       final g = group ?? makeChatGroup();
+      final effectiveMsgRepo = messageRepo ?? msgRepo;
       return MaterialApp(
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -739,7 +929,7 @@ void main() {
         home: GroupConversationWired(
           group: g,
           groupRepo: groupRepo,
-          msgRepo: msgRepo,
+          msgRepo: effectiveMsgRepo,
           groupMessageListener: FakeGroupMessageListener(
             messageStreamController.stream,
             reactionStream: reactionStreamController?.stream,
@@ -765,6 +955,7 @@ void main() {
           reactionRepo: reactionRepo,
           groupReactionReplayOutboxRepository: reactionReplayOutboxRepo,
           groupConversationTracker: groupConversationTracker,
+          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
         ),
       );
     }
@@ -2556,6 +2747,250 @@ void main() {
         expect(
           mediaAttachmentRepo.getAttachmentsForMessageCalls,
           initialSingleMessageMediaCalls + 1,
+        );
+      },
+    );
+
+    testWidgets(
+      'local outgoing status event updates visible row without listener stream',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final failed = makeMessage(
+          id: 'local-status-visible',
+          text: 'Local status visible',
+          groupId: group.id,
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: 'failed',
+        );
+        await msgRepo.saveMessage(failed);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'local-status-visible' &&
+                message.status == 'failed',
+          );
+        });
+        final initialPageLoads = msgRepo.getMessagesPageCalls;
+
+        await msgRepo.saveMessage(failed.copyWith(status: 'sent'));
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'local-status-visible' &&
+                message.status == 'sent',
+          );
+        });
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.messages
+              .singleWhere((message) => message.id == 'local-status-visible')
+              .status,
+          'sent',
+        );
+        expect(msgRepo.getMessagesPageCalls, initialPageLoads);
+      },
+    );
+
+    testWidgets('local status event for another group is ignored', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final visible = makeMessage(
+        id: 'local-status-current-group',
+        text: 'Current group row',
+        groupId: group.id,
+        isIncoming: false,
+        senderPeerId: testIdentity.peerId,
+        senderUsername: testIdentity.username,
+        status: 'failed',
+      );
+      final other = makeMessage(
+        id: 'local-status-other-group',
+        text: 'Other group row',
+        groupId: 'group-other',
+        isIncoming: false,
+        senderPeerId: testIdentity.peerId,
+        senderUsername: testIdentity.username,
+        status: 'failed',
+      );
+      await msgRepo.saveMessage(visible);
+      await msgRepo.saveMessage(other);
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester, count: 20);
+      final initialPageLoads = msgRepo.getMessagesPageCalls;
+
+      await msgRepo.saveMessage(other.copyWith(status: 'sent'));
+      await pumpFrames(tester, count: 20);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(
+        screen.messages
+            .singleWhere(
+              (message) => message.id == 'local-status-current-group',
+            )
+            .status,
+        'failed',
+      );
+      expect(msgRepo.getMessagesPageCalls, initialPageLoads);
+    });
+
+    testWidgets(
+      'batch local rows-changed event reloads visible sending row status',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'local-status-batch',
+            text: 'Batch status row',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'sending',
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'local-status-batch' &&
+                message.status == 'sending',
+          );
+        });
+        final initialPageLoads = msgRepo.getMessagesPageCalls;
+
+        final transitioned = await msgRepo.transitionSendingToFailed();
+        expect(transitioned, 1);
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'local-status-batch' &&
+                message.status == 'failed',
+          );
+        });
+
+        expect(msgRepo.getMessagesPageCalls, greaterThan(initialPageLoads));
+      },
+    );
+
+    testWidgets('local status stream is cancelled after unmount', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final failed = makeMessage(
+        id: 'local-status-after-unmount',
+        text: 'Unmounted status row',
+        groupId: group.id,
+        isIncoming: false,
+        senderPeerId: testIdentity.peerId,
+        senderUsername: testIdentity.username,
+        status: 'failed',
+      );
+      await msgRepo.saveMessage(failed);
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester, count: 20);
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await pumpFrames(tester, count: 5);
+
+      await msgRepo.saveMessage(failed.copyWith(status: 'sent'));
+      await pumpFrames(tester, count: 5);
+
+      expect(find.byType(GroupConversationScreen), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'local status subscription switches when message repository changes',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final originalRepo = msgRepo;
+        final replacementRepo = CountingGroupMessageRepository();
+        final failed = makeMessage(
+          id: 'local-status-repo-switch',
+          text: 'Repo switch row',
+          groupId: group.id,
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: 'failed',
+        );
+        await originalRepo.saveMessage(failed);
+        await replacementRepo.saveMessage(failed);
+
+        await tester.pumpWidget(
+          buildWidget(group: group, messageRepo: originalRepo),
+        );
+        await pumpFrames(tester, count: 20);
+        await tester.pumpWidget(
+          buildWidget(group: group, messageRepo: replacementRepo),
+        );
+        await pumpFrames(tester, count: 5);
+
+        await originalRepo.saveMessage(failed.copyWith(status: 'sent'));
+        await pumpFrames(tester, count: 10);
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.messages
+              .singleWhere(
+                (message) => message.id == 'local-status-repo-switch',
+              )
+              .status,
+          'failed',
+        );
+
+        await replacementRepo.saveMessage(failed.copyWith(status: 'sent'));
+        await pumpUntil(tester, () {
+          final updatedScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return updatedScreen.messages.any(
+            (message) =>
+                message.id == 'local-status-repo-switch' &&
+                message.status == 'sent',
+          );
+        });
+
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.messages
+              .singleWhere(
+                (message) => message.id == 'local-status-repo-switch',
+              )
+              .status,
+          'sent',
         );
       },
     );
@@ -6007,6 +6442,260 @@ void main() {
     );
 
     testWidgets(
+      'retry control re-sends the targeted failed outgoing text row',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        String retryPayload({
+          required String messageId,
+          required String text,
+          required String timestamp,
+        }) {
+          return jsonEncode({
+            'groupId': group.id,
+            'message': jsonEncode({
+              'groupId': group.id,
+              'senderId': testIdentity.peerId,
+              'senderUsername': testIdentity.username,
+              'keyEpoch': 0,
+              'text': text,
+              'timestamp': timestamp,
+              'messageId': messageId,
+              'media': const <Object>[],
+            }),
+          });
+        }
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-text-targeted',
+            text: 'Retry this text row',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            inboxRetryPayload: retryPayload(
+              messageId: 'msg-text-targeted',
+              text: 'Retry this text row',
+              timestamp: '2026-01-15T12:00:00.000Z',
+            ),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-text-untouched',
+            text: 'Leave this text failed',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            inboxRetryPayload: retryPayload(
+              messageId: 'msg-text-untouched',
+              text: 'Leave this text failed',
+              timestamp: '2026-01-15T12:01:00.000Z',
+            ),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.ownPeerId == testIdentity.peerId &&
+              screen.messages.any(
+                (message) =>
+                    message.id == 'msg-text-targeted' &&
+                    message.status == 'failed',
+              );
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.ownPeerId, testIdentity.peerId);
+        expect(retryScreen.onRetryFailedMessage, isNotNull);
+        expect(retryScreen.onRetryFailedMedia, isNull);
+
+        final initialGetMessageCalls = msgRepo.getMessageCalls;
+        retryScreen.onRetryFailedMessage!('msg-text-targeted');
+        await pumpUntil(
+          tester,
+          () =>
+              bridge.commandLog.where((cmd) => cmd == 'group:publish').length ==
+              1,
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'msg-text-targeted' && message.status == 'sent',
+          );
+        });
+
+        expect((await msgRepo.getMessage('msg-text-targeted'))?.status, 'sent');
+        expect(
+          (await msgRepo.getMessage('msg-text-untouched'))?.status,
+          'failed',
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          1,
+        );
+        expect(msgRepo.getMessageCalls, greaterThan(initialGetMessageCalls));
+
+        final refreshedScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final refreshedRow = refreshedScreen.messages.singleWhere(
+          (message) => message.id == 'msg-text-targeted',
+        );
+        expect(refreshedRow.status, 'sent');
+        expect(find.text('Could not retry message.'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'retry control preserves accepted-recipient filtering for failed outgoing text row',
+      (tester) async {
+        final group = makeChatGroup().copyWith(
+          createdAt: DateTime.utc(2026, 5, 1, 9),
+        );
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-charlie',
+            mlKemPublicKey: 'mlkem-peer-charlie',
+            joinedAt: DateTime.utc(2026, 5, 1, 10, 2),
+          ),
+        );
+
+        final inviteAttemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+        await inviteAttemptRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: group.id,
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            status: GroupInviteDeliveryStatus.sent,
+            attemptedAt: DateTime.utc(2026, 5, 1, 10, 3),
+            updatedAt: DateTime.utc(2026, 5, 1, 10, 3),
+          ),
+        );
+
+        const messageId = 'msg-text-filtered';
+        final timestamp = DateTime.utc(2026, 5, 15, 12);
+        final retryPayload = jsonEncode({
+          'groupId': group.id,
+          'message': jsonEncode({
+            'groupId': group.id,
+            'senderId': testIdentity.peerId,
+            'senderUsername': testIdentity.username,
+            'keyEpoch': 0,
+            'text': 'Retry with filtered recipients',
+            'timestamp': timestamp.toIso8601String(),
+            'messageId': messageId,
+            'media': const <Object>[],
+          }),
+        });
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: messageId,
+            text: 'Retry with filtered recipients',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            inboxRetryPayload: retryPayload,
+            timestamp: timestamp,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            inviteDeliveryAttemptRepo: inviteAttemptRepo,
+          ),
+        );
+        await tester.pump();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.ownPeerId == testIdentity.peerId &&
+              screen.messages.any(
+                (message) =>
+                    message.id == messageId && message.status == 'failed',
+              );
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.onRetryFailedMessage, isNotNull);
+
+        retryScreen.onRetryFailedMessage!(messageId);
+        await pumpUntil(
+          tester,
+          () =>
+              bridge.commandLog
+                  .where((cmd) => cmd == 'group:inboxStore')
+                  .length ==
+              1,
+          maxPumps: 80,
+        );
+        await pumpUntilAsync(tester, () async {
+          return (await msgRepo.getMessage(messageId))?.status == 'sent';
+        }, maxPumps: 80);
+
+        final reliablePayload = groupSendReliablePayloadForMessage(
+          bridge,
+          messageId,
+        );
+        expect(
+          (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          <String>['peer-bob'],
+        );
+        expect(
+          reliablePayload['recipientPeerIds'],
+          isNot(contains('peer-charlie')),
+        );
+        expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+
+        final inboxPayload = groupInboxStorePayloadForMessage(
+          bridge,
+          messageId,
+        );
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          <String>['peer-bob'],
+        );
+        expect(
+          inboxPayload['recipientPeerIds'],
+          isNot(contains('peer-charlie')),
+        );
+        expect(inboxPayload['preserveRecipientPeerIds'], isTrue);
+        expect(find.text('Could not retry message.'), findsNothing);
+      },
+    );
+
+    testWidgets(
       'retry control re-sends only the targeted failed outgoing media row',
       (tester) async {
         final group = makeChatGroup();
@@ -6154,6 +6843,142 @@ void main() {
     );
 
     testWidgets(
+      'restored text-only composer continuation reuses the failed group row id',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        bridge = _SequentialGroupPublishBridge([
+          {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+          {'ok': true, 'messageId': 'retry-published', 'topicPeers': 1},
+        ]);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        final firstScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final firstSend = firstScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await firstSend('Retry same restored text');
+        });
+        await pumpFrames(tester, count: 20);
+
+        final failedRows = (await msgRepo.getMessagesPage(group.id))
+            .where((message) => message.text == 'Retry same restored text')
+            .toList();
+        expect(failedRows, hasLength(1));
+        final failedRow = failedRows.single;
+        expect(failedRow.status, 'failed');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry same restored text',
+        );
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final retrySend = retryScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await retrySend('Retry same restored text');
+        });
+        await pumpFrames(tester, count: 20);
+
+        final storedRows = (await msgRepo.getMessagesPage(group.id))
+            .where((message) => message.text == 'Retry same restored text')
+            .toList();
+        expect(storedRows, hasLength(1));
+        final storedRow = storedRows.single;
+        expect(storedRow.id, failedRow.id);
+        expect(storedRow.timestamp, failedRow.timestamp);
+        expect(storedRow.status, 'sent');
+
+        final publishPayloads = groupPublishPayloads(bridge);
+        expect(publishPayloads, hasLength(2));
+        expect(
+          publishPayloads.map((payload) => payload['messageId']).toList(),
+          [failedRow.id, failedRow.id],
+        );
+        expect(
+          publishPayloads.map((payload) => payload['timestamp']).toList(),
+          [
+            failedRow.timestamp.toUtc().toIso8601String(),
+            failedRow.timestamp.toUtc().toIso8601String(),
+          ],
+        );
+      },
+    );
+
+    testWidgets(
+      'editing restored text-only composer continuation creates a new group row id',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        bridge = _SequentialGroupPublishBridge([
+          {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+          {'ok': true, 'messageId': 'retry-published', 'topicPeers': 1},
+        ]);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        final firstScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final firstSend = firstScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await firstSend('Retry then edit restored text');
+        });
+        await pumpFrames(tester, count: 20);
+
+        final failedRows = (await msgRepo.getMessagesPage(group.id))
+            .where((message) => message.text == 'Retry then edit restored text')
+            .toList();
+        expect(failedRows, hasLength(1));
+        final failedRow = failedRows.single;
+        expect(failedRow.status, 'failed');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry then edit restored text',
+        );
+
+        await tester.enterText(find.byType(TextField), 'Edited restored text');
+        await tester.pump();
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final retrySend = retryScreen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await retrySend('Edited restored text');
+        });
+        await pumpFrames(tester, count: 20);
+
+        final originalRow = await msgRepo.getMessage(failedRow.id);
+        expect(originalRow, isNotNull);
+        expect(originalRow!.text, 'Retry then edit restored text');
+        expect(originalRow.status, 'failed');
+
+        final editedRows = (await msgRepo.getMessagesPage(
+          group.id,
+        )).where((message) => message.text == 'Edited restored text').toList();
+        expect(editedRows, hasLength(1));
+        final editedRow = editedRows.single;
+        expect(editedRow.id, isNot(failedRow.id));
+        expect(editedRow.status, 'sent');
+
+        final publishPayloads = groupPublishPayloads(bridge);
+        expect(publishPayloads, hasLength(2));
+        expect(publishPayloads.first['messageId'], failedRow.id);
+        expect(publishPayloads.first['text'], 'Retry then edit restored text');
+        expect(publishPayloads.last['messageId'], editedRow.id);
+        expect(publishPayloads.last['text'], 'Edited restored text');
+      },
+    );
+
+    testWidgets(
       'GIRD-002 restored media composer continuation reuses the failed group row id',
       (tester) async {
         final group = makeChatGroup();
@@ -6262,6 +7087,200 @@ void main() {
             })
             .toList();
         expect(publishMessageIds, [originalMessageId, originalMessageId]);
+      },
+    );
+
+    testWidgets(
+      'upload-pending failed voice retry uploads and publishes the same row immediately',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-upload-pending-retry-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final voiceFile = File(
+          p.join(
+            tempDir.path,
+            'pending_uploads',
+            'msg-voice-upload-pending',
+            'voice.m4a',
+          ),
+        );
+        voiceFile.parent.createSync(recursive: true);
+        voiceFile.writeAsBytesSync(_tinyMp4Bytes, flush: true);
+
+        final timestamp = DateTime.utc(2026, 1, 15, 12, 3, 4);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-voice-upload-pending',
+            text: '',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            timestamp: timestamp,
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-unrelated-pending-image',
+            text: 'Still uploading image',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-voice-upload-pending',
+            messageId: 'msg-voice-upload-pending',
+            mime: 'audio/mp4',
+            size: 16,
+            mediaType: 'audio',
+            localPath: 'pending_uploads/msg-voice-upload-pending/voice.m4a',
+            downloadStatus: 'upload_pending',
+            durationMs: 4100,
+            waveform: [0.1, 0.6, 0.2],
+            createdAt: '2026-01-15T12:03:04.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-unrelated-pending-image',
+            messageId: 'msg-unrelated-pending-image',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath: 'pending_uploads/msg-unrelated-pending-image/image.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-01-15T12:04:00.000Z',
+          ),
+        );
+
+        var uploadCallCount = 0;
+        String? uploadBlobId;
+        int? uploadDurationMs;
+        List<double>? uploadWaveform;
+        List<String>? uploadAllowedPeers;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  uploadCallCount++;
+                  uploadBlobId = blobId;
+                  uploadDurationMs = durationMs;
+                  uploadWaveform = List<double>.from(waveform!);
+                  uploadAllowedPeers = List<String>.from(allowedPeers!);
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: _tinyMp4Bytes.length,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.ownPeerId == testIdentity.peerId &&
+              (screen.mediaMap['msg-voice-upload-pending']?.isNotEmpty ??
+                  false);
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.onRetryFailedMedia, isNotNull);
+        retryScreen.onRetryFailedMedia!('msg-voice-upload-pending');
+        await pumpUntilAsync(tester, () async {
+          return (await msgRepo.getMessage(
+                'msg-voice-upload-pending',
+              ))?.status ==
+              'sent';
+        }, maxPumps: 160);
+
+        expect(uploadCallCount, 1);
+        expect(uploadBlobId, 'att-voice-upload-pending');
+        expect(uploadDurationMs, 4100);
+        expect(uploadWaveform, [0.1, 0.6, 0.2]);
+        expect(uploadAllowedPeers, [testIdentity.peerId, 'peer-bob']);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          hasLength(1),
+        );
+        final publishPayloads = groupPublishPayloads(bridge);
+        expect(publishPayloads, hasLength(1));
+        expect(publishPayloads.single['messageId'], 'msg-voice-upload-pending');
+        expect(
+          publishPayloads.single['timestamp'],
+          timestamp.toUtc().toIso8601String(),
+        );
+
+        final saved = await msgRepo.getMessage('msg-voice-upload-pending');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'sent');
+        expect(saved.timestamp, timestamp);
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-voice-upload-pending',
+        );
+        expect(attachments, hasLength(1));
+        expect(attachments.single.id, 'att-voice-upload-pending');
+        expect(attachments.single.downloadStatus, 'done');
+        expect(attachments.single.durationMs, 4100);
+        expect(attachments.single.waveform, [0.1, 0.6, 0.2]);
+        expect(
+          (await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-unrelated-pending-image',
+          )).single.downloadStatus,
+          'upload_pending',
+        );
+        expect(
+          find.text('Media upload is still finishing. It will retry soon.'),
+          findsNothing,
+        );
       },
     );
 
@@ -7264,6 +8283,91 @@ void main() {
     );
 
     testWidgets(
+      'voice durable prep failure leaves no empty failed row or pending upload dir',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-parent-voice-prep',
+            text: 'Voice prep parent',
+            groupId: group.id,
+            isIncoming: true,
+          ),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-prep-fail-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final mediaFileManager = ThrowingAfterCopyDurableMediaFileManager(
+          tempDir,
+        );
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 2800
+          ..fakeSizeBytes = 44100
+          ..fakeOutputPath = tempVoice.path;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onQuoteReply!.call('msg-parent-voice-prep');
+        await tester.pump();
+        expect(find.text('Replying to'), findsOneWidget);
+
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await tester.runAsync(() async {
+          await (recordingScreen.onRecordStop! as Future<void> Function())();
+        });
+        await pumpFrames(tester, count: 20);
+
+        final messages = await msgRepo.getMessagesPage(group.id);
+        expect(messages.map((message) => message.id), [
+          'msg-parent-voice-prep',
+        ]);
+        expect(
+          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          isEmpty,
+        );
+        expect(mediaAttachmentRepo.count, 0);
+        expect(mediaFileManager.deletedPendingUploadDirs, hasLength(1));
+        final pendingRoot = Directory(p.join(tempDir.path, 'pending_uploads'));
+        if (pendingRoot.existsSync()) {
+          expect(pendingRoot.listSync(recursive: true), isEmpty);
+        }
+        final settledScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(settledScreen.isSending, isFalse);
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
       'PL-005 voice media upload allowedPeers match active membership at upload time',
       (tester) async {
         final group = makeChatGroup();
@@ -7382,6 +8486,153 @@ void main() {
         expect(capturedAllowedPeers.single, [testIdentity.peerId, 'peer-bob']);
         expect(capturedAllowedPeers.single, isNot(contains('peer-charlie')));
         expect(capturedAllowedPeers.single, isNot(contains('peer-dave')));
+      },
+    );
+
+    testWidgets(
+      'voice re-record after retryable publish failure reuses the failed row id',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        bridge = _SequentialGroupPublishBridge([
+          {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+          {
+            'ok': true,
+            'messageId': 'voice-rerecord-published',
+            'topicPeers': 1,
+          },
+        ]);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-rerecord-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final firstVoice = File(p.join(tempDir.path, 'voice-first.m4a'))
+          ..writeAsStringSync('first voice');
+        final secondVoice = File(p.join(tempDir.path, 'voice-second.m4a'))
+          ..writeAsStringSync('second voice');
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3100
+          ..fakeSizeBytes = 46000
+          ..fakeOutputPath = firstVoice.path;
+        final uploadedBlobIds = <String>[];
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  uploadedBlobIds.add(blobId!);
+                  return MediaAttachment(
+                    id: blobId,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        Future<void> recordVoice() async {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          await (screen.onRecordStart! as Future<void> Function())();
+          await pumpUntil(
+            tester,
+            () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          );
+          final recordingScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          await tester.runAsync(() async {
+            await (recordingScreen.onRecordStop! as Future<void> Function())();
+          });
+          await pumpFrames(tester, count: 20);
+        }
+
+        await recordVoice();
+        final failedRows = (await msgRepo.getMessagesPage(group.id))
+            .where((message) => !message.isIncoming && message.text.isEmpty)
+            .toList();
+        expect(failedRows, hasLength(1));
+        final failedRow = failedRows.single;
+        expect(failedRow.status, 'failed');
+        final failedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(failedRow.id);
+        expect(failedAttachments, hasLength(1));
+        expect(failedAttachments.single.downloadStatus, 'done');
+        final firstBlobId = failedAttachments.single.id;
+
+        recorder.fakeOutputPath = secondVoice.path;
+        await recordVoice();
+
+        final storedRows = (await msgRepo.getMessagesPage(group.id))
+            .where((message) => !message.isIncoming && message.text.isEmpty)
+            .toList();
+        expect(storedRows, hasLength(1));
+        final storedRow = storedRows.single;
+        expect(storedRow.id, failedRow.id);
+        expect(storedRow.timestamp, failedRow.timestamp);
+        expect(storedRow.status, 'sent');
+
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          failedRow.id,
+        );
+        expect(attachments, hasLength(1));
+        expect(attachments.single.id, uploadedBlobIds.last);
+        expect(attachments.single.id, isNot(firstBlobId));
+        expect(attachments.single.downloadStatus, 'done');
+
+        final publishPayloads = groupPublishPayloads(bridge);
+        expect(publishPayloads, hasLength(2));
+        expect(
+          publishPayloads.map((payload) => payload['messageId']).toList(),
+          [failedRow.id, failedRow.id],
+        );
+        expect(
+          publishPayloads.map((payload) => payload['timestamp']).toList(),
+          [
+            failedRow.timestamp.toUtc().toIso8601String(),
+            failedRow.timestamp.toUtc().toIso8601String(),
+          ],
+        );
       },
     );
 

@@ -339,4 +339,96 @@ void main() {
       },
     );
   });
+
+  group('resolveGroupMessageNotificationDisplayEligibility', () {
+    test('allows display only for an existing current local member', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+
+      await groupRepo.saveGroup(_makeGroup());
+      await groupRepo.saveMember(_makeMember(peerId: 'peer-user-a'));
+
+      final result = await resolveGroupMessageNotificationDisplayEligibility(
+        groupId: _groupId,
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        localPeerId: 'peer-user-a',
+      );
+
+      expect(result.shouldDisplay, isTrue);
+      expect(result.reason, 'current_member');
+    });
+
+    test('suppresses display when local identity is unavailable', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+
+      await groupRepo.saveGroup(_makeGroup());
+
+      final result = await resolveGroupMessageNotificationDisplayEligibility(
+        groupId: _groupId,
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        localPeerId: null,
+      );
+
+      expect(result.shouldDisplay, isFalse);
+      expect(result.reason, 'unknown_local_identity');
+    });
+
+    test(
+      'suppresses display for an existing group without local membership',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+
+        await groupRepo.saveGroup(_makeGroup());
+
+        final result = await resolveGroupMessageNotificationDisplayEligibility(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+        );
+
+        expect(result.shouldDisplay, isFalse);
+        expect(result.reason, 'local_member_missing');
+      },
+    );
+
+    test(
+      'suppresses ordinary group-message display for pending invites',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+
+        await pendingInviteRepo.savePendingInvite(_makePendingInvite());
+
+        final result = await resolveGroupMessageNotificationDisplayEligibility(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          localPeerId: 'peer-user-a',
+        );
+
+        expect(result.shouldDisplay, isFalse);
+        expect(result.reason, 'pending_invite');
+      },
+    );
+
+    test('suppresses display when group and invite are missing', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+
+      final result = await resolveGroupMessageNotificationDisplayEligibility(
+        groupId: _groupId,
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        localPeerId: 'peer-user-a',
+      );
+
+      expect(result.shouldDisplay, isFalse);
+      expect(result.reason, 'group_missing');
+    });
+  });
 }

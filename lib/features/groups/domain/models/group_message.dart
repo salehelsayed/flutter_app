@@ -25,6 +25,9 @@ class GroupMessage {
   /// When the message was sent/received.
   final DateTime timestamp;
 
+  /// When an outgoing send attempt most recently entered `sending`.
+  final DateTime? lastSendAttemptAt;
+
   /// The message ID this message is quoting, if any.
   final String? quotedMessageId;
 
@@ -67,6 +70,7 @@ class GroupMessage {
     this.senderUsername,
     required this.text,
     required this.timestamp,
+    this.lastSendAttemptAt,
     this.quotedMessageId,
     this.keyGeneration = 0,
     this.status = 'sent',
@@ -89,6 +93,9 @@ class GroupMessage {
       senderUsername: map['sender_username'] as String?,
       text: map['text'] as String,
       timestamp: DateTime.parse(map['timestamp'] as String),
+      lastSendAttemptAt: map['last_send_attempt_at'] != null
+          ? DateTime.parse(map['last_send_attempt_at'] as String).toUtc()
+          : null,
       quotedMessageId: map['quoted_message_id'] as String?,
       keyGeneration: map['key_generation'] as int? ?? 0,
       status: map['status'] as String? ?? 'sent',
@@ -113,6 +120,7 @@ class GroupMessage {
       'sender_username': senderUsername,
       'text': text,
       'timestamp': timestamp.toUtc().toIso8601String(),
+      'last_send_attempt_at': lastSendAttemptAt?.toUtc().toIso8601String(),
       'quoted_message_id': quotedMessageId,
       'key_generation': keyGeneration,
       'status': status,
@@ -134,6 +142,7 @@ class GroupMessage {
     String? senderUsername,
     String? text,
     DateTime? timestamp,
+    Object? lastSendAttemptAt = _sentinel,
     Object? quotedMessageId = _sentinel,
     int? keyGeneration,
     String? status,
@@ -155,6 +164,9 @@ class GroupMessage {
       senderUsername: senderUsername ?? this.senderUsername,
       text: text ?? this.text,
       timestamp: timestamp ?? this.timestamp,
+      lastSendAttemptAt: lastSendAttemptAt == _sentinel
+          ? this.lastSendAttemptAt
+          : lastSendAttemptAt as DateTime?,
       quotedMessageId: quotedMessageId == _sentinel
           ? this.quotedMessageId
           : quotedMessageId as String?,

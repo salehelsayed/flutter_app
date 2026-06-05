@@ -9571,6 +9571,174 @@ void _validateMl018InviteTerminalProof({
       );
     }
   }
+
+  _validateReport106MixedInviteNotificationProof(
+    byRole: byRole,
+    peerIdByRole: peerIdByRole,
+    failures: failures,
+  );
+}
+
+void _validateReport106MixedInviteNotificationProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'report106MixedInviteNotificationProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  final bobPeerId = peerIdByRole['bob'];
+  final charliePeerId = peerIdByRole['charlie'];
+  final alicePostTerminalMessageIds = _messageIdsForKeys(
+    verdict: byRole['alice'],
+    collection: 'sentMessages',
+    keys: const <String>['aliceAfterInviteTerminalStates'],
+  );
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'INV-106') {
+      failures.add('$role: $proofName.rowId must be INV-106');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing Report 106 mixed invite proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'sentPostTerminalMessage',
+      'acceptedRecipientIncluded',
+      'noTerminalInviteeRecipient',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (bobPeerId != null) {
+      _requireProofStringListEquals(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: 'acceptedRecipientPeerIds',
+        expected: <String>[bobPeerId],
+        failures: failures,
+        description: 'accepted recipient peer IDs',
+      );
+      _requireProofStringListEquals(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: 'sentRecipientPeerIds',
+        expected: <String>[bobPeerId],
+        failures: failures,
+        description: 'sent recipient peer IDs',
+      );
+    }
+    if (charliePeerId != null) {
+      _requireProofStringListEquals(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: 'excludedRecipientPeerIds',
+        expected: <String>[charliePeerId],
+        failures: failures,
+        description: 'excluded recipient peer IDs',
+      );
+    }
+    if (alicePostTerminalMessageIds.isNotEmpty) {
+      _requireProofStringListEquals(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: 'postTerminalMessageIds',
+        expected: alicePostTerminalMessageIds,
+        failures: failures,
+      );
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing Report 106 mixed invite proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'receivedAcceptedMessage',
+      'acceptedMemberCurrent',
+      'noTerminalInviteeMember',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (alicePostTerminalMessageIds.isNotEmpty) {
+      _requireProofStringListEquals(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: 'receivedMessageIds',
+        expected: alicePostTerminalMessageIds,
+        failures: failures,
+      );
+    }
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing Report 106 mixed invite proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'noLocalGroup',
+      'noUsableKey',
+      'noPostTerminalPlaintext',
+      'noLocalFallbackNotifications',
+      'rejectedOwnPostTerminalSend',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final plaintextCount = _intValue(
+      charlieProof['postTerminalPlaintextCount'],
+    );
+    if (plaintextCount != 0) {
+      failures.add('charlie: $proofName.postTerminalPlaintextCount must be 0');
+    }
+    final notificationCount = _intValue(
+      charlieProof['postTerminalNotificationCount'],
+    );
+    if (notificationCount != 0) {
+      failures.add(
+        'charlie: $proofName.postTerminalNotificationCount must be 0',
+      );
+    }
+    if (_stringList(charlieProof['receivedMessageIds']).isNotEmpty) {
+      failures.add('charlie: $proofName.receivedMessageIds must be empty');
+    }
+    final sendOutcome = _stringValue(charlieProof['postTerminalSendOutcome']);
+    if (sendOutcome != 'groupNotFound' && sendOutcome != 'unauthorized') {
+      failures.add(
+        'charlie: $proofName.postTerminalSendOutcome must be groupNotFound '
+        'or unauthorized',
+      );
+    }
+    if (charliePeerId != null &&
+        _stringValue(charlieProof['terminalInviteePeerId']) != charliePeerId) {
+      failures.add('charlie: $proofName.terminalInviteePeerId must be charlie');
+    }
+  }
 }
 
 void _validateMl019StaleInviteProof({

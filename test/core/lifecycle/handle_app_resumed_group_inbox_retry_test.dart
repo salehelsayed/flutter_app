@@ -62,13 +62,16 @@ void main() {
     expect(step8eCalled, isTrue);
   });
 
-  test('resume handler continues normally when retryFailedGroupInboxStoresFn is null', () async {
-    // Should not throw when the callback is not provided
-    final result = await handleAppResumed(
-      bridge: bridge,
-      p2pService: p2pService,
-    );
+  test(
+    'resume handler continues normally when retryFailedGroupInboxStoresFn is null',
+    () async {
+      // Should not throw when the callback is not provided
+      final result = await handleAppResumed(
+        bridge: bridge,
+        p2pService: p2pService,
+      );
 
-    expect(result, isTrue);
-  });
+      expect(result, isTrue);
+    },
+  );
 }

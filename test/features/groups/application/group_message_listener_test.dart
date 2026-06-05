@@ -430,6 +430,48 @@ class _ContendedGroupMessageRepository extends InMemoryGroupMessageRepository {
   }
 }
 
+class _LiveReplayRaceGroupMessageRepository
+    extends InMemoryGroupMessageRepository {
+  _LiveReplayRaceGroupMessageRepository({required this.targetMessageId});
+
+  final String targetMessageId;
+  final Completer<void> firstTargetSaveStarted = Completer<void>();
+  final Completer<void> replayTargetSaveStarted = Completer<void>();
+  final Completer<void> firstTargetSaveFinished = Completer<void>();
+  final Completer<void> _releaseFirstTargetSave = Completer<void>();
+  int targetSaveCount = 0;
+
+  void releaseFirstTargetSave() {
+    if (!_releaseFirstTargetSave.isCompleted) {
+      _releaseFirstTargetSave.complete();
+    }
+  }
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    if (message.id == targetMessageId) {
+      targetSaveCount++;
+      if (targetSaveCount == 1) {
+        firstTargetSaveStarted.complete();
+        await _releaseFirstTargetSave.future;
+        try {
+          await super.saveMessage(message);
+        } finally {
+          if (!firstTargetSaveFinished.isCompleted) {
+            firstTargetSaveFinished.complete();
+          }
+        }
+        return;
+      }
+      if (targetSaveCount == 2 && !replayTargetSaveStarted.isCompleted) {
+        replayTargetSaveStarted.complete();
+      }
+    }
+
+    await super.saveMessage(message);
+  }
+}
+
 class _GateableReactionRepository extends FakeReactionRepository {
   final Completer<void> firstSaveStarted = Completer<void>();
   final Completer<void> _releaseSave = Completer<void>();
@@ -10740,6 +10782,84 @@ void main() {
 
       notifListener.dispose();
     });
+
+    test(
+      'live and replay delivery for one message id emit and notify once when raced',
+      () async {
+        await saveSelfMember();
+        const messageId = 'live-replay-race-message';
+        final raceRepo = _LiveReplayRaceGroupMessageRepository(
+          targetMessageId: messageId,
+        );
+        msgRepo = raceRepo;
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/group-listener-live-replay-race-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        addTearDown(gate.clear);
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: raceRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          remoteNotificationGate: gate,
+        );
+        addTearDown(notifListener.dispose);
+
+        final emitted = <GroupMessage>[];
+        final sub = notifListener.groupMessageStream.listen(emitted.add);
+        addTearDown(sub.cancel);
+        notifListener.start(sourceController.stream);
+
+        final message = {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'messageId': messageId,
+          'text': 'One raced delivery',
+          'timestamp': DateTime.utc(2026, 6, 3, 20, 15).toIso8601String(),
+          'transportPeerId': 'peer-sender',
+        };
+
+        sourceController.add(message);
+        await raceRepo.firstTargetSaveStarted.future.timeout(
+          const Duration(seconds: 2),
+        );
+
+        final replayFuture = notifListener.handleReplayEnvelope(message);
+        await raceRepo.replayTargetSaveStarted.future.timeout(
+          const Duration(seconds: 1),
+          onTimeout: () {},
+        );
+        raceRepo.releaseFirstTargetSave();
+
+        await Future.wait<void>([
+          replayFuture,
+          raceRepo.firstTargetSaveFinished.future,
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final saved = await raceRepo.getMessage(messageId);
+        expect(saved, isNotNull);
+        expect(raceRepo.count, 1);
+        expect(
+          emitted.where((message) => message.id == messageId),
+          hasLength(1),
+        );
+        expect(notifService.shown, hasLength(1));
+        expect(notifService.shown.single.payload, contains(messageId));
+        expect(await raceRepo.getUnreadCount('group-1'), 1);
+
+        notifListener.dispose();
+      },
+    );
 
     test(
       'NW-008 duplicate connection path delivery keeps one visible row and status',

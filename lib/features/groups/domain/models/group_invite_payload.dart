@@ -16,7 +16,7 @@ const groupInviteSignatureAlgorithm = 'ed25519';
 const groupInviteSignatureSchemaVersion = 1;
 const groupInviteMembershipFreshnessProofField = 'membershipFreshnessProof';
 const groupInviteMembershipFreshnessProofSchemaVersion = 1;
-const groupInviteMembershipFreshnessTtl = Duration(hours: 24);
+const groupInviteMembershipFreshnessTtl = Duration(days: 7);
 const groupInviteMembershipFreshnessClockSkew = Duration(minutes: 5);
 
 enum GroupInvitePayloadParseFailure {

@@ -1458,6 +1458,33 @@ void main() {
       );
       expect(find.text('Joined'), findsOneWidget);
       expect(find.text('Invite unknown'), findsOneWidget);
+
+      Finder statusBadge(String peerId) => find.byKey(
+        ValueKey('group-member-invite-status-$peerId'),
+      );
+      for (final peerId in const [
+        'peer-sent',
+        'peer-queued',
+        'peer-resend',
+        'peer-cannot',
+        'peer-unknown',
+      ]) {
+        expect(
+          find.descendant(
+            of: statusBadge(peerId),
+            matching: find.text('Joined'),
+          ),
+          findsNothing,
+          reason: '$peerId must remain distinguishable from accepted members',
+        );
+      }
+      expect(
+        find.descendant(
+          of: statusBadge('peer-joined'),
+          matching: find.text('Joined'),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets(

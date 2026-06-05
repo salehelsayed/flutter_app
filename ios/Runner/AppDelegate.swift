@@ -45,9 +45,26 @@ import UserNotifications
     // Forward the APNs token explicitly so Firebase Messaging can mint the
     // FCM token even if iOS release/TestFlight delivery differs from debug.
     Messaging.messaging().apnsToken = deviceToken
+    logApnsProviderProbeFcmToken(context: "didRegisterForRemoteNotifications")
     super.application(
       application,
       didRegisterForRemoteNotificationsWithDeviceToken: deviceToken
+    )
+  }
+
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    logApnsProviderProbeNotification(
+      context: "willPresent",
+      userInfo: notification.request.content.userInfo
+    )
+    super.userNotificationCenter(
+      center,
+      willPresent: notification,
+      withCompletionHandler: completionHandler
     )
   }
 
@@ -96,6 +113,10 @@ import UserNotifications
       userInfo.count,
       flnKeys.isEmpty ? "none" : flnKeys.joined(separator: ","),
       fcmKeys.isEmpty ? "none" : fcmKeys.joined(separator: ",")
+    )
+    logApnsProviderProbeNotification(
+      context: "didReceive",
+      userInfo: userInfo
     )
     forwardIosNotificationOpenIfNeeded(userInfo: userInfo)
     super.userNotificationCenter(
@@ -153,6 +174,66 @@ import UserNotifications
         UIApplication.shared.isRegisteredForRemoteNotifications ? "true" : "false"
       )
     }
+  }
+
+  private func apnsProviderProbeEnabled() -> Bool {
+    let environment = ProcessInfo.processInfo.environment
+    if environment["MKNOON_APNS_PROVIDER_PROBE"] == "1" {
+      return true
+    }
+    return ProcessInfo.processInfo.arguments.contains("--mknoon-apns-provider-probe")
+  }
+
+  private func logApnsProviderProbeFcmToken(context: String) {
+    guard apnsProviderProbeEnabled() else {
+      return
+    }
+    Messaging.messaging().token { token, error in
+      if let error = error {
+        NSLog(
+          "MKNOON_APNS_PROVIDER_PROBE_NATIVE event=fcm_token_error context=%@ error=%@",
+          context,
+          String(describing: error)
+        )
+        return
+      }
+      guard let token = token, !token.isEmpty else {
+        NSLog(
+          "MKNOON_APNS_PROVIDER_PROBE_NATIVE event=fcm_token_missing context=%@",
+          context
+        )
+        return
+      }
+      NSLog(
+        "MKNOON_APNS_PROVIDER_PROBE_NATIVE event=fcm_token_ready context=%@ token=%@ length=%d",
+        context,
+        token,
+        token.count
+      )
+    }
+  }
+
+  private func logApnsProviderProbeNotification(
+    context: String,
+    userInfo: [AnyHashable: Any]
+  ) {
+    guard apnsProviderProbeEnabled() else {
+      return
+    }
+    let keys = userInfo.keys.map { String(describing: $0) }.sorted().joined(separator: ",")
+    let probeId = trimmedString(userInfo["probe_id"]) ?? "none"
+    let type = trimmedString(userInfo["type"]) ?? "none"
+    let messageId = trimmedString(userInfo["message_id"]) ??
+      trimmedString(userInfo["messageId"]) ??
+      "none"
+    NSLog(
+      "MKNOON_APNS_PROVIDER_PROBE_NATIVE event=notification_received context=%@ probe_id=%@ type=%@ message_id=%@ keys=%@",
+      context,
+      probeId,
+      type,
+      messageId,
+      keys
+    )
   }
 
   private func logNotificationSettings(context: String) {

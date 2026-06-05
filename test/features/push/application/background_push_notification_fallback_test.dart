@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 
 import '../../../shared/fakes/fake_notification_service.dart';
 
@@ -203,6 +204,8 @@ void main() {
           result: ForegroundRemoteMessageResult.notificationNeeded,
           notificationService: notificationService,
           message: message,
+          groupMessageDisplayEligibilityResolver: (_) async =>
+              const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
         );
 
         expect(shown, isTrue);
@@ -216,6 +219,83 @@ void main() {
           notificationService.shownGeneric.single.payload,
           'group:group-abc-123|message:msg-123',
         );
+      },
+    );
+
+    test(
+      'foreground fallback shows current-member group_message with visible FCM payload',
+      () async {
+        final notificationService = FakeNotificationService();
+        const message = RemoteMessage(
+          notification: RemoteNotification(
+            title: 'Team Chat',
+            body: 'Alice: Hello',
+          ),
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'message_id': 'msg-123',
+            'title': 'Team Chat',
+            'body': 'Alice: Hello',
+          },
+        );
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: message,
+          groupMessageDisplayEligibilityResolver: (groupId) async {
+            expect(groupId, 'group-abc-123');
+            return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+          },
+        );
+
+        expect(shown, isTrue);
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(notificationService.shownGeneric.single.title, 'New Message');
+        expect(
+          notificationService.shownGeneric.single.body,
+          'You have a new message',
+        );
+        expect(
+          notificationService.shownGeneric.single.payload,
+          'group:group-abc-123|message:msg-123',
+        );
+      },
+    );
+
+    test(
+      'foreground fallback suppresses non-current group_message with visible FCM payload',
+      () async {
+        final notificationService = FakeNotificationService();
+        const message = RemoteMessage(
+          notification: RemoteNotification(
+            title: 'Team Chat',
+            body: 'Alice: Hello',
+          ),
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'message_id': 'msg-123',
+            'title': 'Team Chat',
+            'body': 'Alice: Hello',
+          },
+        );
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: message,
+          groupMessageDisplayEligibilityResolver: (groupId) async {
+            expect(groupId, 'group-abc-123');
+            return const GroupMessageNotificationDisplayEligibility.suppressed(
+              'local_member_missing',
+            );
+          },
+        );
+
+        expect(shown, isFalse);
+        expect(notificationService.shownGeneric, isEmpty);
       },
     );
 
@@ -234,6 +314,155 @@ void main() {
       expect(shown, isFalse);
       expect(notificationService.shownGeneric, isEmpty);
     });
+
+    test(
+      'display eligibility suppresses ordinary group_message fallback without current membership',
+      () async {
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'message_id': 'msg-123',
+          },
+        );
+
+        final result = await resolveBackgroundPushFallbackDisplayEligibility(
+          message,
+          groupMessageDisplayEligibilityResolver: (groupId) async {
+            expect(groupId, 'group-abc-123');
+            return const GroupMessageNotificationDisplayEligibility.suppressed(
+              'group_missing',
+            );
+          },
+        );
+
+        expect(result.shouldDisplay, isFalse);
+        expect(result.reason, 'group_missing');
+      },
+    );
+
+    test(
+      'display eligibility preserves ordinary group_message fallback for current members',
+      () async {
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'message_id': 'msg-123',
+          },
+        );
+
+        final result = await resolveBackgroundPushFallbackDisplayEligibility(
+          message,
+          groupMessageDisplayEligibilityResolver: (groupId) async {
+            expect(groupId, 'group-abc-123');
+            return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+          },
+        );
+
+        expect(result.shouldDisplay, isTrue);
+        expect(result.reason, 'display_allowed');
+      },
+    );
+
+    test(
+      'display eligibility suppresses payload-only group route without current membership',
+      () async {
+        const message = RemoteMessage(
+          data: {'payload': 'group:group-abc-123|message:msg-legacy'},
+        );
+
+        final result = await resolveBackgroundPushFallbackDisplayEligibility(
+          message,
+          groupMessageDisplayEligibilityResolver: (groupId) async {
+            expect(groupId, 'group-abc-123');
+            return const GroupMessageNotificationDisplayEligibility.suppressed(
+              'local_member_missing',
+            );
+          },
+        );
+
+        expect(result.shouldDisplay, isFalse);
+        expect(result.reason, 'local_member_missing');
+      },
+    );
+
+    test(
+      'foreground fallback preserves payload-only group route for current members',
+      () async {
+        final notificationService = FakeNotificationService();
+        const message = RemoteMessage(
+          data: {'payload': 'group:group-abc-123|message:msg-legacy'},
+        );
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: message,
+          groupMessageDisplayEligibilityResolver: (groupId) async {
+            expect(groupId, 'group-abc-123');
+            return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+          },
+        );
+
+        expect(shown, isTrue);
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(
+          notificationService.shownGeneric.single.payload,
+          'group:group-abc-123|message:msg-legacy',
+        );
+      },
+    );
+
+    test(
+      'display eligibility leaves group_invite fallback on the intros route',
+      () async {
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_invite',
+            'groupId': 'group-abc-123',
+            'title': 'Book Club',
+          },
+        );
+
+        final result = await resolveBackgroundPushFallbackDisplayEligibility(
+          message,
+        );
+
+        expect(result.shouldDisplay, isTrue);
+        expect(
+          buildBackgroundPushFallbackNotification(message).payload,
+          'intros',
+        );
+      },
+    );
+
+    test(
+      'foreground fallback helper suppresses group_message when display eligibility denies it',
+      () async {
+        final notificationService = FakeNotificationService();
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'message_id': 'msg-123',
+          },
+        );
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: message,
+          groupMessageDisplayEligibilityResolver: (_) async =>
+              const GroupMessageNotificationDisplayEligibility.suppressed(
+                'local_member_missing',
+              ),
+        );
+
+        expect(shown, isFalse);
+        expect(notificationService.shownGeneric, isEmpty);
+      },
+    );
 
     test(
       'shows group fallback on iOS when Flutter sees only the data payload',

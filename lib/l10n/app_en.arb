@@ -798,6 +798,7 @@
   "media_unavailable_now": "Media unavailable right now.",
   "media_still_unavailable": "Media is still unavailable.",
   "failed_media_retry_failed": "Could not retry media message.",
+  "failed_message_retry_failed": "Could not retry message.",
   "failed_media_upload_pending_retry": "Media upload is still finishing. It will retry soon.",
   "failed_media_delete_unavailable": "Delete unavailable right now.",
   "picker_media_library": "Media Library",

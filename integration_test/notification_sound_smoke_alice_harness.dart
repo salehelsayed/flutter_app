@@ -29,8 +29,10 @@ import 'group_multi_device_real_harness.dart';
 // Config from dart-defines
 // ---------------------------------------------------------------------------
 
-const _sharedDir =
-    String.fromEnvironment('E2E_SHARED_DIR', defaultValue: '/tmp');
+const _sharedDir = String.fromEnvironment(
+  'E2E_SHARED_DIR',
+  defaultValue: '/tmp',
+);
 const _runId = String.fromEnvironment('SMOKE_RUN_ID', defaultValue: 'adhoc');
 const _dbName = String.fromEnvironment(
   'E2E_DB_NAME',
@@ -76,8 +78,10 @@ Future<Map<String, dynamic>> _waitForJson(
   throw TimeoutException('Alice(notif): timed out waiting for json: $name');
 }
 
-Future<bool> _waitForOnline(dynamic service,
-    {Duration timeout = const Duration(seconds: 60)}) async {
+Future<bool> _waitForOnline(
+  dynamic service, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
   final sw = Stopwatch()..start();
   while (sw.elapsed < timeout) {
     if (healthFromState(service.currentState) == ConnectionHealth.online) {
@@ -124,33 +128,51 @@ void main() {
       dbCountTotalUnread: () => dbCountTotalUnread(stack.db),
       dbCountTotalUnreadExcludingArchived: () =>
           dbCountTotalUnreadExcludingArchived(stack.db),
-      dbDeleteMessagesForContact: (p) => dbDeleteMessagesForContact(stack.db, p),
+      dbDeleteMessagesForContact: (p) =>
+          dbDeleteMessagesForContact(stack.db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
       dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(stack.db, p,
-              limit: limit, beforeTimestamp: beforeTimestamp),
-      dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(stack.db),
+          dbLoadMessagesPage(
+            stack.db,
+            p,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
+      dbLoadFailedOutgoingMessages: () =>
+          dbLoadFailedOutgoingMessages(stack.db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
-          dbLoadUnackedOutgoingMessages(stack.db,
-              olderThan: olderThan, limit: limit),
+          dbLoadUnackedOutgoingMessages(
+            stack.db,
+            olderThan: olderThan,
+            limit: limit,
+          ),
       dbLoadConversationThreadSummaries: (ids) =>
           dbLoadConversationThreadSummaries(stack.db, ids),
-      dbRecoverStuckSendingMessages: (
-              {required DateTime olderThan, int limit = 50}) =>
-          dbRecoverStuckSendingMessages(stack.db,
-              olderThan: olderThan, limit: limit),
-      dbUpdateWireEnvelope: (id, we) =>
-          dbUpdateWireEnvelope(stack.db, id, we),
-      dbLoadStuckSendingOutgoingMessages: (
-              {required DateTime olderThan, int limit = 50}) =>
-          dbLoadStuckSendingOutgoingMessages(stack.db,
-              olderThan: olderThan, limit: limit),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(stack.db, id, we),
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbLoadSendingOutgoingMessages: () =>
           dbLoadSendingOutgoingMessages(stack.db),
-      dbConditionalTransitionStatus: (id,
-              {required fromStatus, required toStatus}) =>
-          dbConditionalTransitionStatus(stack.db, id,
-              fromStatus: fromStatus, toStatus: toStatus),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                stack.db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
     );
 
     // ── Identity exchange ──
@@ -166,15 +188,17 @@ void main() {
     final bobPeerId = bobFixture['peerId'] as String;
     final bobMlKemPk = bobFixture['mlKemPublicKey'] as String?;
 
-    await stack.contactRepo.addContact(ContactModel(
-      peerId: bobPeerId,
-      publicKey: bobFixture['publicKey'] as String,
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'BobNotif',
-      signature: 'sig-bob-notif',
-      scannedAt: DateTime.now().toUtc().toIso8601String(),
-      mlKemPublicKey: bobMlKemPk,
-    ));
+    await stack.contactRepo.addContact(
+      ContactModel(
+        peerId: bobPeerId,
+        publicKey: bobFixture['publicKey'] as String,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'BobNotif',
+        signature: 'sig-bob-notif',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: bobMlKemPk,
+      ),
+    );
     await _waitForSignal('bob_ready');
     final bobContact = await stack.contactRepo.getContact(bobPeerId);
     if (bobContact == null) {
@@ -196,10 +220,7 @@ void main() {
       bridge: stack.bridge,
       recipientMlKemPublicKey: bobMlKemPk,
     );
-    _writeSignal(
-      's1_alice_sent',
-      jsonEncode({'outcome': s1Result.$1.name}),
-    );
+    _writeSignal('s1_alice_sent', jsonEncode({'outcome': s1Result.$1.name}));
     print('[ALICE-N] S1 sent: ${s1Result.$1.name}');
     await _waitForSignal('s1_verdict_ack');
 
@@ -215,12 +236,15 @@ void main() {
       selectedContacts: [bobContact],
       type: GroupType.chat,
       name: 'Notif Sound Discussion',
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     final chatGroup = await stack.groupRepo.getGroup(chatGroupResult.group.id);
-    final chatKeyInfo =
-        await stack.groupRepo.getLatestKey(chatGroupResult.group.id);
-    final chatMembers =
-        await stack.groupRepo.getMembers(chatGroupResult.group.id);
+    final chatKeyInfo = await stack.groupRepo.getLatestKey(
+      chatGroupResult.group.id,
+    );
+    final chatMembers = await stack.groupRepo.getMembers(
+      chatGroupResult.group.id,
+    );
     _writeJson(
       'group_chat_fixture.json',
       buildGroupFixture(
@@ -231,6 +255,11 @@ void main() {
     );
     _writeSignal('alice_group_chat_ready', 'ok');
     await _waitForSignal('bob_group_chat_joined');
+    await stack.groupInviteDeliveryAttemptRepo.markJoined(
+      groupId: chatGroup.id,
+      peerId: bobPeerId,
+      username: 'BobNotif',
+    );
     // Let GossipSub peer discovery + mesh form on both sides.
     await Future<void>.delayed(const Duration(seconds: 5));
 
@@ -245,11 +274,9 @@ void main() {
       senderPublicKey: stack.identity.publicKey,
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
-    _writeSignal(
-      's2_alice_sent',
-      jsonEncode({'outcome': s2Result.$1.name}),
-    );
+    _writeSignal('s2_alice_sent', jsonEncode({'outcome': s2Result.$1.name}));
     print('[ALICE-N] S2 sent: ${s2Result.$1.name}');
     await _waitForSignal('s2_verdict_ack');
 
@@ -265,12 +292,15 @@ void main() {
       selectedContacts: [bobContact],
       type: GroupType.announcement,
       name: 'Notif Sound Announcement',
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     final annGroup = await stack.groupRepo.getGroup(annGroupResult.group.id);
-    final annKeyInfo =
-        await stack.groupRepo.getLatestKey(annGroupResult.group.id);
-    final annMembers =
-        await stack.groupRepo.getMembers(annGroupResult.group.id);
+    final annKeyInfo = await stack.groupRepo.getLatestKey(
+      annGroupResult.group.id,
+    );
+    final annMembers = await stack.groupRepo.getMembers(
+      annGroupResult.group.id,
+    );
     _writeJson(
       'group_announcement_fixture.json',
       buildGroupFixture(
@@ -281,6 +311,11 @@ void main() {
     );
     _writeSignal('alice_group_announcement_ready', 'ok');
     await _waitForSignal('bob_group_announcement_joined');
+    await stack.groupInviteDeliveryAttemptRepo.markJoined(
+      groupId: annGroup.id,
+      peerId: bobPeerId,
+      username: 'BobNotif',
+    );
     await Future<void>.delayed(const Duration(seconds: 5));
 
     await _waitForSignal('s3_go');
@@ -294,11 +329,9 @@ void main() {
       senderPublicKey: stack.identity.publicKey,
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
-    _writeSignal(
-      's3_alice_sent',
-      jsonEncode({'outcome': s3Result.$1.name}),
-    );
+    _writeSignal('s3_alice_sent', jsonEncode({'outcome': s3Result.$1.name}));
     print('[ALICE-N] S3 sent: ${s3Result.$1.name}');
     await _waitForSignal('s3_verdict_ack');
 
@@ -319,10 +352,7 @@ void main() {
       bridge: stack.bridge,
       recipientMlKemPublicKey: bobMlKemPk,
     );
-    _writeSignal(
-      's4_alice_sent',
-      jsonEncode({'outcome': s4Result.$1.name}),
-    );
+    _writeSignal('s4_alice_sent', jsonEncode({'outcome': s4Result.$1.name}));
     print('[ALICE-N] S4 sent: ${s4Result.$1.name}');
     await _waitForSignal('s4_verdict_ack');
 

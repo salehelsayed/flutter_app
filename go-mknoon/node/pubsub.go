@@ -360,13 +360,22 @@ func (n *Node) SendGroupMessageReliable(groupId, privateKeyB64, senderPeerId, se
 	if err != nil {
 		return GroupReliableSendResult{}, err
 	}
-	recipients, err := activeGroupInboxRecipientsForConfig(
-		groupId,
-		config,
-		senderBinding.transportPeerId,
-	)
-	if err != nil {
-		return GroupReliableSendResult{}, err
+	preserveRecipientPeerIds := groupPublishBoolOpt(opts, "preserveRecipientPeerIds")
+	var recipients []string
+	if preserveRecipientPeerIds {
+		recipients = normalizeGroupInboxRecipientPeerIds(groupPublishStringListOpt(opts, "recipientPeerIds"))
+		if recipients == nil {
+			recipients = []string{}
+		}
+	} else {
+		recipients, err = activeGroupInboxRecipientsForConfig(
+			groupId,
+			config,
+			senderBinding.transportPeerId,
+		)
+		if err != nil {
+			return GroupReliableSendResult{}, err
+		}
 	}
 	result := GroupReliableSendResult{
 		MessageId:              built.messageId,
@@ -382,7 +391,24 @@ func (n *Node) SendGroupMessageReliable(groupId, privateKeyB64, senderPeerId, se
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			inboxErr = n.GroupInboxStore(groupId, built.envelopeJSON, recipients, "", "")
+			if preserveRecipientPeerIds {
+				inboxErr = n.GroupInboxStoreWithOptions(
+					groupId,
+					built.envelopeJSON,
+					recipients,
+					"",
+					"",
+					GroupInboxStoreOptions{PreserveRecipientPeerIds: true},
+				)
+				return
+			}
+			inboxErr = n.GroupInboxStore(
+				groupId,
+				built.envelopeJSON,
+				recipients,
+				"",
+				"",
+			)
 		}()
 	}
 
@@ -1718,6 +1744,42 @@ func groupPublishStringOpt(opts map[string]interface{}, key string) string {
 		return ""
 	}
 	return str
+}
+
+func groupPublishBoolOpt(opts map[string]interface{}, key string) bool {
+	if opts == nil {
+		return false
+	}
+	value, ok := opts[key]
+	if !ok {
+		return false
+	}
+	boolValue, ok := value.(bool)
+	return ok && boolValue
+}
+
+func groupPublishStringListOpt(opts map[string]interface{}, key string) []string {
+	if opts == nil {
+		return nil
+	}
+	value, ok := opts[key]
+	if !ok {
+		return nil
+	}
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []interface{}:
+		result := make([]string, 0, len(typed))
+		for _, entry := range typed {
+			if str, ok := entry.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
 }
 
 func buildGroupMessageReceivedEvent(groupId string, env *internal.GroupEnvelope, payload *internal.GroupMessagePayload) map[string]interface{} {

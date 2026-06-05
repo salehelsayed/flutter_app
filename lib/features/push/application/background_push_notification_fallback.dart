@@ -1,10 +1,15 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 
 const backgroundPushDefaultTitle = 'New Message';
 const backgroundPushDefaultBody = 'You have a new message';
+
+typedef GroupMessageNotificationDisplayEligibilityResolver =
+    Future<GroupMessageNotificationDisplayEligibility> Function(String groupId);
 
 class BackgroundPushNotificationFallback {
   final String title;
@@ -18,6 +23,22 @@ class BackgroundPushNotificationFallback {
   });
 }
 
+class PushFallbackNotificationDisplayEligibility {
+  final bool shouldDisplay;
+  final String reason;
+
+  const PushFallbackNotificationDisplayEligibility._({
+    required this.shouldDisplay,
+    required this.reason,
+  });
+
+  const PushFallbackNotificationDisplayEligibility.allow()
+    : this._(shouldDisplay: true, reason: 'display_allowed');
+
+  const PushFallbackNotificationDisplayEligibility.suppressed(String reason)
+    : this._(shouldDisplay: false, reason: reason);
+}
+
 bool shouldShowBackgroundPushFallbackNotification(RemoteMessage message) {
   if (message.notification != null) return false;
 
@@ -29,6 +50,83 @@ bool shouldShowBackgroundPushFallbackNotification(RemoteMessage message) {
   }
 
   return true;
+}
+
+Future<PushFallbackNotificationDisplayEligibility>
+resolveBackgroundPushFallbackDisplayEligibility(
+  RemoteMessage message, {
+  GroupMessageNotificationDisplayEligibilityResolver?
+  groupMessageDisplayEligibilityResolver,
+}) async {
+  return _resolvePushFallbackDisplayEligibility(
+    message,
+    suppressVisibleProviderNotification: true,
+    groupMessageDisplayEligibilityResolver:
+        groupMessageDisplayEligibilityResolver,
+  );
+}
+
+Future<PushFallbackNotificationDisplayEligibility>
+resolveForegroundPushFallbackDisplayEligibility(
+  RemoteMessage message, {
+  GroupMessageNotificationDisplayEligibilityResolver?
+  groupMessageDisplayEligibilityResolver,
+}) async {
+  return _resolvePushFallbackDisplayEligibility(
+    message,
+    suppressVisibleProviderNotification: false,
+    groupMessageDisplayEligibilityResolver:
+        groupMessageDisplayEligibilityResolver,
+  );
+}
+
+Future<PushFallbackNotificationDisplayEligibility>
+_resolvePushFallbackDisplayEligibility(
+  RemoteMessage message, {
+  required bool suppressVisibleProviderNotification,
+  GroupMessageNotificationDisplayEligibilityResolver?
+  groupMessageDisplayEligibilityResolver,
+}) async {
+  if (suppressVisibleProviderNotification && message.notification != null) {
+    return const PushFallbackNotificationDisplayEligibility.suppressed(
+      'not_routable_for_local_fallback',
+    );
+  }
+
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  );
+  if (routeTarget == null) {
+    return const PushFallbackNotificationDisplayEligibility.suppressed(
+      'not_routable_for_local_fallback',
+    );
+  }
+
+  if (routeTarget.kind != NotificationRouteTargetKind.group) {
+    return const PushFallbackNotificationDisplayEligibility.allow();
+  }
+
+  final groupId = routeTarget.groupId?.trim();
+  if (groupId == null || groupId.isEmpty) {
+    return const PushFallbackNotificationDisplayEligibility.suppressed(
+      'group_route_missing',
+    );
+  }
+
+  final resolver = groupMessageDisplayEligibilityResolver;
+  if (resolver == null) {
+    return const PushFallbackNotificationDisplayEligibility.suppressed(
+      'group_display_eligibility_unavailable',
+    );
+  }
+
+  final eligibility = await resolver(groupId);
+  if (eligibility.shouldDisplay) {
+    return const PushFallbackNotificationDisplayEligibility.allow();
+  }
+  return PushFallbackNotificationDisplayEligibility.suppressed(
+    eligibility.reason,
+  );
 }
 
 BackgroundPushNotificationFallback buildBackgroundPushFallbackNotification(
@@ -49,8 +147,29 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   required ForegroundRemoteMessageResult result,
   required NotificationService notificationService,
   required RemoteMessage message,
+  GroupMessageNotificationDisplayEligibilityResolver?
+  groupMessageDisplayEligibilityResolver,
 }) async {
   if (result != ForegroundRemoteMessageResult.notificationNeeded) {
+    return false;
+  }
+
+  final displayEligibility =
+      await resolveForegroundPushFallbackDisplayEligibility(
+        message,
+        groupMessageDisplayEligibilityResolver:
+            groupMessageDisplayEligibilityResolver,
+      );
+  if (!displayEligibility.shouldDisplay) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+      details: {
+        'messageId': message.messageId,
+        'reason': displayEligibility.reason,
+        'payload': _payloadFromMessage(message) ?? '',
+      },
+    );
     return false;
   }
 
