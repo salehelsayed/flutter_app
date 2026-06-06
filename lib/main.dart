@@ -95,6 +95,7 @@ import 'package:flutter_app/core/database/migrations/070_group_key_rotation_draf
 import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
+import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -206,6 +207,8 @@ import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge
 import 'package:flutter_app/core/notifications/notification_open_dedupe_gate.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -316,7 +319,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 73,
+    version: 74,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -391,6 +394,7 @@ void main() async {
       await runPendingIntroductionResponseTransportSenderMigration(db);
       await runGroupPendingMembershipMessagesMigration(db);
       await runGroupMessageLastSendAttemptAtMigration(db);
+      await runGroupMessageLogicalDeliveryIdMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -606,6 +610,9 @@ void main() async {
       }
       if (oldVersion < 73) {
         await runGroupMessageLastSendAttemptAtMigration(db);
+      }
+      if (oldVersion < 74) {
+        await runGroupMessageLogicalDeliveryIdMigration(db);
       }
     },
   );
@@ -1061,6 +1068,14 @@ void main() async {
             offset: offset,
           ),
       dbLoadGroupMessage: (id) => dbLoadGroupMessage(executor, id),
+      dbLoadGroupMessageByLogicalDeliveryIdFn:
+          (groupId, senderPeerId, logicalDeliveryId) =>
+              dbLoadGroupMessageByLogicalDeliveryId(
+                executor,
+                groupId,
+                senderPeerId,
+                logicalDeliveryId,
+              ),
       dbLoadLatestGroupMessage: (groupId) =>
           dbLoadLatestGroupMessage(executor, groupId),
       dbLoadLatestRemovalTimestampForSenderFn: (groupId, senderPeerId) =>
@@ -2621,6 +2636,25 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     try {
       _notificationTappedAt = DateTime.now();
       final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+      final markedRecentAnnouncement =
+          await markRemoteNotificationOpenAsRecentAnnouncement(
+            data: data,
+            gate: recentRemoteNotificationGate,
+          );
+      if (markedRecentAnnouncement) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'REMOTE_NOTIFICATION_OPEN_MARKED_RECENT',
+          details: {
+            'kind': routeTarget?.kind.name ?? '',
+            'hasMessageId':
+                (remoteNotificationMessageIdFromData(data) ??
+                        routeTarget?.messageId)
+                    ?.isNotEmpty ==
+                true,
+          },
+        );
+      }
       routeSucceeded = await _withContactRequestPresentationSuppressed(
         routeTarget: routeTarget,
         action: () => routeAppRootRemoteNotificationOpenWithResult(
@@ -2768,6 +2802,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           return;
         }
         final group = resolution.group!;
+        if (isNotificationRouteTargetAlreadyActive(
+          routeTarget: routeTarget,
+          groupConversationTracker: widget.groupConversationTracker,
+        )) {
+          _notificationTappedAt = null;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_NOTIFICATION_ROUTE_ALREADY_ACTIVE',
+            details: {
+              'groupId': routeTarget.groupId!.length > 8
+                  ? routeTarget.groupId!.substring(0, 8)
+                  : routeTarget.groupId!,
+              'hasMessageId': routeTarget.messageId?.isNotEmpty == true,
+            },
+          );
+          return;
+        }
         final tappedAt = _notificationTappedAt;
         _notificationTappedAt = null;
         navigator.push(

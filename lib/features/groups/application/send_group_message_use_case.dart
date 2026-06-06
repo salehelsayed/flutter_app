@@ -284,6 +284,11 @@ String? _nativeReliableInboxRetryPayload({
 
 String _defaultGroupMessageIdFactory() => const Uuid().v4();
 
+String? _normalizeLogicalDeliveryId(String? value) {
+  final normalized = value?.trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
+}
+
 GroupMemberDeviceIdentity? _resolveOutgoingSenderDevice({
   required GroupMember? senderMember,
   required String senderPublicKey,
@@ -612,6 +617,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   String? senderDeviceId,
   String? senderTransportPeerId,
   String? messageId,
+  String? logicalDeliveryId,
   GroupMessageIdFactory? messageIdFactory,
   DateTime? timestamp,
   String? quotedMessageId,
@@ -829,6 +835,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     emitGroupSendTiming(outcome: 'message_id_collision');
     return (SendGroupMessageResult.error, null);
   }
+  final resolvedLogicalDeliveryId =
+      _normalizeLogicalDeliveryId(logicalDeliveryId) ?? resolvedMessageId;
   final keyEpoch = latestKey.keyGeneration;
   GroupMember? senderMember;
   for (final member in members) {
@@ -869,6 +877,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final mediaJson = groupMediaAttachments?.map((a) => a.toJson()).toList();
   final recipientPeerIds = sendMembership.recipientPeerIds;
   final expectedRecipientCount = recipientPeerIds.length;
+  final resolvedGroupName = group.name.trim();
   // 3b. Build wireEnvelope (plaintext publish params for retry — NO senderPrivateKey)
   final wireEnvelope = jsonEncode({
     'groupId': groupId,
@@ -879,6 +888,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     'senderPublicKey': senderPublicKey,
     'senderUsername': senderUsername,
     'messageId': resolvedMessageId,
+    'logicalDeliveryId': resolvedLogicalDeliveryId,
     if (quotedMessageId != null && quotedMessageId.isNotEmpty)
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
@@ -887,6 +897,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   // 3c. Build inboxRetryPayload (exact inputs for callGroupInboxStore)
   final inboxPayload = jsonEncode({
     'groupId': groupId,
+    if (resolvedGroupName.isNotEmpty) 'groupName': resolvedGroupName,
     'senderId': senderPeerId,
     'senderDeviceId': resolvedSenderDeviceId,
     'transportPeerId': resolvedSenderTransportPeerId,
@@ -895,6 +906,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     'text': sanitizedText,
     'timestamp': now.toIso8601String(),
     'messageId': resolvedMessageId,
+    'logicalDeliveryId': resolvedLogicalDeliveryId,
     if (quotedMessageId != null && quotedMessageId.isNotEmpty)
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
@@ -945,6 +957,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     timestamp: now,
     lastSendAttemptAt: sendAttemptAt,
     quotedMessageId: quotedMessageId,
+    logicalDeliveryId: resolvedLogicalDeliveryId,
     keyGeneration: keyEpoch,
     status: 'sending',
     isIncoming: false,
@@ -974,6 +987,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       senderDevicePublicKey: resolvedSenderDevicePublicKey,
       senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
       messageId: resolvedMessageId,
+      logicalDeliveryId: resolvedLogicalDeliveryId,
+      groupName: resolvedGroupName,
       timestamp: now,
       quotedMessageId: quotedMessageId,
       media: mediaJson,
@@ -1178,6 +1193,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderDevicePublicKey: resolvedSenderDevicePublicKey,
     senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
     messageId: resolvedMessageId,
+    logicalDeliveryId: resolvedLogicalDeliveryId,
+    groupName: resolvedGroupName,
     timestamp: now,
     quotedMessageId: quotedMessageId,
     media: mediaJson,

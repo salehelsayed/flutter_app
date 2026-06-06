@@ -93,6 +93,7 @@ void main() {
     GroupSecurityStatusViewState? securityStatus,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
+    String? highlightedMessageId,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -130,6 +131,7 @@ void main() {
           historyGapRepairNotice: historyGapRepairNotice,
           securityStatus: securityStatus,
           backgroundPreference: backgroundPreference,
+          highlightedMessageId: highlightedMessageId,
         ),
       ),
     );
@@ -142,6 +144,31 @@ void main() {
     of: messageRow(messageId),
     matching: find.byType(BackdropFilter),
   );
+
+  Finder highlightShell(String messageId) =>
+      find.byKey(ValueKey('grp-highlight-$messageId'));
+
+  Finder highlightCue(String messageId) =>
+      find.byKey(ValueKey('grp-highlight-cue-$messageId'));
+
+  void expectSingleRowFocusCue(WidgetTester tester, String messageId) {
+    final shell = highlightShell(messageId);
+    expect(shell, findsOneWidget);
+    expect(tester.widget<Stack>(shell).clipBehavior, Clip.none);
+    expect(
+      find.descendant(of: shell, matching: messageRow(messageId)),
+      findsOneWidget,
+    );
+
+    final cue = tester.widget<AnimatedContainer>(highlightCue(messageId));
+    expect(cue.constraints?.minWidth, 3);
+    expect(cue.constraints?.maxWidth, 3);
+    final decoration = cue.decoration;
+    expect(decoration, isA<BoxDecoration>());
+    final boxDecoration = decoration! as BoxDecoration;
+    expect(boxDecoration.border, isNull);
+    expect(boxDecoration.borderRadius, isNotNull);
+  }
 
   testWidgets('renders messages', (tester) async {
     await tester.pumpWidget(buildTestWidget(messages: testMessages));
@@ -798,6 +825,149 @@ void main() {
 
       expect(messageRow(message.id), findsOneWidget);
       expect(rowBackdropFilter(message.id), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'notification focus cue stays single-row across highlighted variants and backgrounds',
+    (tester) async {
+      final timestamp = DateTime.utc(2026, 4, 11, 12);
+      final parent = GroupMessage(
+        id: 'msg-focus-parent',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Original focus parent',
+        timestamp: timestamp,
+        createdAt: timestamp,
+        isIncoming: true,
+      );
+      final incoming = GroupMessage(
+        id: 'msg-focus-incoming',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Incoming highlight target',
+        timestamp: timestamp.add(const Duration(minutes: 1)),
+        createdAt: timestamp.add(const Duration(minutes: 1)),
+        isIncoming: true,
+      );
+      final outgoing = GroupMessage(
+        id: 'msg-focus-outgoing',
+        groupId: 'group-1',
+        senderPeerId: 'peer-1',
+        senderUsername: 'You',
+        text: 'Outgoing highlight target',
+        timestamp: timestamp.add(const Duration(minutes: 2)),
+        createdAt: timestamp.add(const Duration(minutes: 2)),
+        isIncoming: false,
+      );
+      final quoted = GroupMessage(
+        id: 'msg-focus-quoted',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Quoted highlight target',
+        quotedMessageId: parent.id,
+        timestamp: timestamp.add(const Duration(minutes: 3)),
+        createdAt: timestamp.add(const Duration(minutes: 3)),
+        isIncoming: true,
+      );
+      final media = GroupMessage(
+        id: 'msg-focus-media',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Media highlight target',
+        timestamp: timestamp.add(const Duration(minutes: 4)),
+        createdAt: timestamp.add(const Duration(minutes: 4)),
+        isIncoming: true,
+        media: [
+          makeImageAttachment(
+            id: 'att-focus-media',
+            messageId: 'msg-focus-media',
+          ),
+        ],
+      );
+      final reacted = GroupMessage(
+        id: 'msg-focus-reacted',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Reaction highlight target',
+        timestamp: timestamp.add(const Duration(minutes: 5)),
+        createdAt: timestamp.add(const Duration(minutes: 5)),
+        isIncoming: true,
+      );
+      final reactions = {
+        reacted.id: [
+          MessageReaction(
+            id: 'rx-focus-self',
+            messageId: reacted.id,
+            emoji: '🔥',
+            senderPeerId: 'peer-1',
+            timestamp: timestamp.toIso8601String(),
+            createdAt: timestamp.toIso8601String(),
+          ),
+        ],
+      };
+
+      Future<void> pumpHighlighted(
+        List<GroupMessage> visibleMessages,
+        String messageId, {
+        BackgroundPreference backgroundPreference =
+            BackgroundPreference.defaultBackground,
+      }) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: visibleMessages,
+            onQuoteReply: (_) {},
+            reactions: reactions,
+            backgroundPreference: backgroundPreference,
+            highlightedMessageId: messageId,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      await pumpHighlighted([parent, incoming], incoming.id);
+      expectSingleRowFocusCue(tester, incoming.id);
+      expect(highlightShell(parent.id), findsNothing);
+      expectTextContrast(
+        BackgroundReadableColors.dark.textPrimary,
+        BackgroundReadableColors.dark.surfaceRaised,
+      );
+
+      await pumpHighlighted([outgoing], outgoing.id);
+      expectSingleRowFocusCue(tester, outgoing.id);
+
+      await pumpHighlighted([parent, quoted], quoted.id);
+      expectSingleRowFocusCue(tester, quoted.id);
+      expect(find.text('Original focus parent'), findsWidgets);
+
+      await pumpHighlighted([media], media.id);
+      expectSingleRowFocusCue(tester, media.id);
+      expect(find.byType(MediaGridCell), findsOneWidget);
+
+      await pumpHighlighted([reacted], reacted.id);
+      expectSingleRowFocusCue(tester, reacted.id);
+      expect(find.text('🔥'), findsOneWidget);
+
+      await pumpHighlighted(
+        [incoming],
+        incoming.id,
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+      );
+      expectSingleRowFocusCue(tester, incoming.id);
+      expectTextContrast(
+        BackgroundReadableColors.representativeLight.textPrimary,
+        BackgroundReadableColors.representativeLight.surfaceRaised,
+      );
+
+      await tester.pumpWidget(buildTestWidget(messages: [incoming]));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(highlightShell(incoming.id), findsNothing);
+      expect(highlightCue(incoming.id), findsNothing);
     },
   );
 

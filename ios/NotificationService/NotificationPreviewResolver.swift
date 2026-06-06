@@ -101,7 +101,7 @@ final class NotificationPreviewResolver {
     fallbackThreadIdentifier: String? = nil
   ) -> NotificationPreviewResult {
     let data = PushRouteData(userInfo: userInfo)
-    guard let type = data.string("type") else {
+    guard let type = data.string("type", aliases: "t") else {
       return fallback(
         title: fallbackTitle,
         body: fallbackBody,
@@ -153,15 +153,22 @@ final class NotificationPreviewResolver {
     fallbackBody: String,
     fallbackThreadIdentifier: String?
   ) -> NotificationPreviewResult {
-    guard let kem = data.string("kem"),
-          let ciphertext = data.string("ciphertext"),
-          let nonce = data.string("nonce") else {
+    guard let kem = data.string("kem", aliases: "k"),
+          let ciphertext = data.string("ciphertext", aliases: "c"),
+          let nonce = data.string("nonce", aliases: "n") else {
       return fallback(
         title: fallbackTitle,
         body: fallbackBody,
         threadIdentifier: fallbackThreadIdentifier,
         reason: "missing_chat_decrypt_input",
-        eventKind: "chat"
+        eventKind: "chat",
+        eventDetails: data.decryptInputPresenceDetails(
+          requiredKeys: [
+            ("kem", ["k"]),
+            ("ciphertext", ["c"]),
+            ("nonce", ["n"]),
+          ]
+        )
       )
     }
     guard let secretKey = keyReader.readString(
@@ -200,7 +207,7 @@ final class NotificationPreviewResolver {
           text: trimmedString(payload["text"]) ?? "",
           media: payload["media"]
         ),
-        threadIdentifier: data.string("sender_id") ?? fallbackThreadIdentifier,
+        threadIdentifier: data.string("sender_id", aliases: "s") ?? fallbackThreadIdentifier,
         didDecrypt: true,
         reason: "chat"
       )
@@ -221,17 +228,25 @@ final class NotificationPreviewResolver {
     fallbackBody: String,
     fallbackThreadIdentifier: String?
   ) -> NotificationPreviewResult {
-    guard let groupId = data.string("groupId"),
-          let keyEpochString = data.string("keyEpoch"),
+    guard let groupId = data.string("groupId", aliases: "g"),
+          let keyEpochString = data.string("keyEpoch", aliases: "e"),
           let keyEpoch = Int(keyEpochString),
-          let ciphertext = data.string("ciphertext"),
-          let nonce = data.string("nonce") else {
+          let ciphertext = data.string("ciphertext", aliases: "c"),
+          let nonce = data.string("nonce", aliases: "n") else {
       return fallback(
         title: fallbackTitle,
         body: fallbackBody,
         threadIdentifier: fallbackThreadIdentifier,
         reason: "missing_group_decrypt_input",
-        eventKind: "group"
+        eventKind: "group",
+        eventDetails: data.decryptInputPresenceDetails(
+          requiredKeys: [
+            ("groupId", ["g"]),
+            ("keyEpoch", ["e"]),
+            ("ciphertext", ["c"]),
+            ("nonce", ["n"]),
+          ]
+        )
       )
     }
     guard let groupKey = keyReader.readString(
@@ -263,19 +278,23 @@ final class NotificationPreviewResolver {
       }
 
       let text = trimmedString(payload["text"]) ?? ""
-      let senderUsername = trimmedString(payload["senderUsername"])
+      let extra = payload["extra"] as? [String: Any]
+      let groupName =
+        trimmedString(payload["groupName"]) ?? trimmedString(extra?["groupName"])
+      let senderUsername =
+        trimmedString(payload["senderUsername"]) ?? trimmedString(payload["username"])
       let systemPreview = groupSystemPreviewBody(
         text: text,
         senderUsername: senderUsername
       )
       let body = systemPreview ?? groupUserPreviewBody(
         text: text,
-        media: payload["media"],
+        media: payload["media"] ?? extra?["media"],
         senderUsername: senderUsername
       )
       emitDecryptOK(kind: "group")
       return NotificationPreviewResult(
-        title: fallbackTitle,
+        title: groupName ?? fallbackTitle,
         body: body,
         threadIdentifier: groupId,
         didDecrypt: true,
@@ -297,10 +316,11 @@ final class NotificationPreviewResolver {
     body: String,
     threadIdentifier: String?,
     reason: String,
-    eventKind: String? = nil
+    eventKind: String? = nil,
+    eventDetails: [String: String] = [:]
   ) -> NotificationPreviewResult {
     if let eventKind {
-      emitDecryptFail(kind: eventKind, reason: reason)
+      emitDecryptFail(kind: eventKind, reason: reason, details: eventDetails)
     }
     return NotificationPreviewResult(
       title: title,
@@ -318,13 +338,17 @@ final class NotificationPreviewResolver {
     )
   }
 
-  private func emitDecryptFail(kind: String, reason: String) {
+  private func emitDecryptFail(
+    kind: String,
+    reason: String,
+    details: [String: String] = [:]
+  ) {
+    var eventDetails = details
+    eventDetails["kind"] = kind
+    eventDetails["reason"] = reason
     eventEmitter.emit(
       event: "PUSH_NSE_DECRYPT_FAIL",
-      details: [
-        "kind": kind,
-        "reason": reason,
-      ]
+      details: eventDetails
     )
   }
 }
@@ -463,12 +487,38 @@ private struct PushRouteData {
     values = flattened
   }
 
-  func string(_ key: String) -> String? {
-    trimmedString(values[key])
+  func string(_ key: String, aliases: String...) -> String? {
+    string(key, aliases: aliases)
+  }
+
+  func string(_ key: String, aliases: [String]) -> String? {
+    if let value = trimmedString(values[key]) {
+      return value
+    }
+    for alias in aliases {
+      if let value = trimmedString(values[alias]) {
+        return value
+      }
+    }
+    return nil
   }
 
   var messageId: String? {
-    string("message_id") ?? string("messageId") ?? string("id") ?? string("msgId")
+    string("message_id", aliases: "messageId", "id", "msgId", "m")
+  }
+
+  func decryptInputPresenceDetails(
+    requiredKeys: [(canonical: String, aliases: [String])]
+  ) -> [String: String] {
+    var details: [String: String] = [
+      "dataKeys": values.keys.sorted().joined(separator: ","),
+    ]
+    for key in requiredKeys {
+      let present = string(key.canonical, aliases: key.aliases) != nil
+      details["has\(key.canonical.prefix(1).uppercased())\(key.canonical.dropFirst())"] =
+        present ? "true" : "false"
+    }
+    return details
   }
 }
 

@@ -4201,6 +4201,18 @@ void main() {
           findsOneWidget,
         );
         expect(
+          tester
+              .widget<Stack>(
+                find.byKey(const ValueKey('grp-highlight-msg-targeted')),
+              )
+              .clipBehavior,
+          Clip.none,
+        );
+        expect(
+          find.byKey(const ValueKey('grp-highlight-cue-msg-targeted')),
+          findsOneWidget,
+        );
+        expect(
           find.byKey(const ValueKey('grp-highlight-msg-older')),
           findsNothing,
         );
@@ -4298,6 +4310,18 @@ void main() {
 
         expect(
           find.byKey(const ValueKey('grp-highlight-msg-anchor-targeted')),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<Stack>(
+                find.byKey(const ValueKey('grp-highlight-msg-anchor-targeted')),
+              )
+              .clipBehavior,
+          Clip.none,
+        );
+        expect(
+          find.byKey(const ValueKey('grp-highlight-cue-msg-anchor-targeted')),
           findsOneWidget,
         );
         expect(find.text('🔥 2'), findsOneWidget);

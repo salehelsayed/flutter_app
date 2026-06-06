@@ -31,6 +31,10 @@ class GroupMessage {
   /// The message ID this message is quoting, if any.
   final String? quotedMessageId;
 
+  /// Sender-generated identity for one logical delivery, stable across
+  /// retry/replay even when local row ids diverge.
+  final String? logicalDeliveryId;
+
   /// The key generation used to encrypt this message.
   final int keyGeneration;
 
@@ -72,6 +76,7 @@ class GroupMessage {
     required this.timestamp,
     this.lastSendAttemptAt,
     this.quotedMessageId,
+    this.logicalDeliveryId,
     this.keyGeneration = 0,
     this.status = 'sent',
     this.isIncoming = true,
@@ -97,6 +102,7 @@ class GroupMessage {
           ? DateTime.parse(map['last_send_attempt_at'] as String).toUtc()
           : null,
       quotedMessageId: map['quoted_message_id'] as String?,
+      logicalDeliveryId: map['logical_delivery_id'] as String?,
       keyGeneration: map['key_generation'] as int? ?? 0,
       status: map['status'] as String? ?? 'sent',
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
@@ -112,7 +118,7 @@ class GroupMessage {
 
   /// Converts the model to a database row map.
   Map<String, dynamic> toMap() {
-    return {
+    final row = <String, dynamic>{
       'id': id,
       'group_id': groupId,
       'sender_peer_id': senderPeerId,
@@ -131,6 +137,10 @@ class GroupMessage {
       'inbox_stored': inboxStored ? 1 : 0,
       'inbox_retry_payload': inboxRetryPayload,
     };
+    if (logicalDeliveryId != null) {
+      row['logical_delivery_id'] = logicalDeliveryId;
+    }
+    return row;
   }
 
   /// Creates a copy with updated fields.
@@ -144,6 +154,7 @@ class GroupMessage {
     DateTime? timestamp,
     Object? lastSendAttemptAt = _sentinel,
     Object? quotedMessageId = _sentinel,
+    Object? logicalDeliveryId = _sentinel,
     int? keyGeneration,
     String? status,
     bool? isIncoming,
@@ -170,6 +181,9 @@ class GroupMessage {
       quotedMessageId: quotedMessageId == _sentinel
           ? this.quotedMessageId
           : quotedMessageId as String?,
+      logicalDeliveryId: logicalDeliveryId == _sentinel
+          ? this.logicalDeliveryId
+          : logicalDeliveryId as String?,
       keyGeneration: keyGeneration ?? this.keyGeneration,
       status: status ?? this.status,
       isIncoming: isIncoming ?? this.isIncoming,

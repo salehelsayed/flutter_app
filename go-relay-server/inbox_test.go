@@ -676,6 +676,12 @@ func TestBuildChatPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *tes
 	if msg.Data["kem"] != "k" || msg.Data["ciphertext"] != "c" || msg.Data["nonce"] != "n" {
 		t.Fatalf("encrypted push data missing or wrong: %#v", msg.Data)
 	}
+	assertAPNSCustomString(t, msg, "type", "new_message")
+	assertAPNSCustomString(t, msg, "sender_id", "peer-from")
+	assertAPNSCustomString(t, msg, "message_id", "msg-chat-2")
+	assertAPNSCustomString(t, msg, "kem", "k")
+	assertAPNSCustomString(t, msg, "ciphertext", "c")
+	assertAPNSCustomString(t, msg, "nonce", "n")
 	assertNoDirectPushSchemaVersionKeys(t, msg.Data)
 	if _, ok := msg.Data["sender_username"]; ok {
 		t.Fatalf("sender_username should be omitted, got %q", msg.Data["sender_username"])
@@ -909,6 +915,14 @@ func TestBuildGroupPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *te
 	if msg.Data["ciphertext"] != "gc" || msg.Data["nonce"] != "gn" {
 		t.Fatalf("encrypted group push data missing or wrong: %#v", msg.Data)
 	}
+	assertAPNSCustomString(t, msg, "type", "group_message")
+	assertAPNSCustomString(t, msg, "groupId", "group-1")
+	assertAPNSCustomString(t, msg, "message_id", "group-msg-1")
+	assertAPNSCustomString(t, msg, "kind", "group_offline_replay")
+	assertAPNSCustomString(t, msg, "payloadType", "group_message")
+	assertAPNSCustomString(t, msg, "keyEpoch", "7")
+	assertAPNSCustomString(t, msg, "ciphertext", "gc")
+	assertAPNSCustomString(t, msg, "nonce", "gn")
 	assertNoDirectPushSchemaVersionKeys(t, msg.Data)
 	if _, ok := msg.Data["title"]; ok {
 		t.Fatalf("title should be omitted, got %q", msg.Data["title"])
@@ -946,6 +960,59 @@ func TestBuildGroupPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *te
 	}
 }
 
+func TestBuildGroupPushMessage_CarriesNativeV3EnvelopeEncryptedPreview(t *testing.T) {
+	msg := buildGroupPushMessage(
+		"fcm-token",
+		"group-native",
+		"",
+		`{"version":"3","type":"group_message","groupId":"group-native","messageId":"native-msg-1","senderId":"peer-alice","senderPublicKey":"pub","signature":"sig","keyEpoch":7,"encrypted":{"ciphertext":"native-ct","nonce":"native-nonce"}}`,
+	)
+
+	if msg.Notification != nil {
+		t.Fatal("native group message pushes should omit top-level FCM notification payload")
+	}
+	if msg.Data["type"] != "group_message" {
+		t.Fatalf("type = %q, want group_message", msg.Data["type"])
+	}
+	if msg.Data["groupId"] != "group-native" {
+		t.Fatalf("groupId = %q, want group-native", msg.Data["groupId"])
+	}
+	if msg.Data["message_id"] != "native-msg-1" {
+		t.Fatalf("message_id = %q, want native-msg-1", msg.Data["message_id"])
+	}
+	if msg.Data["payloadType"] != "group_message" {
+		t.Fatalf("payloadType = %q, want group_message", msg.Data["payloadType"])
+	}
+	if msg.Data["keyEpoch"] != "7" {
+		t.Fatalf("keyEpoch = %q, want 7", msg.Data["keyEpoch"])
+	}
+	if msg.Data["ciphertext"] != "native-ct" || msg.Data["nonce"] != "native-nonce" {
+		t.Fatalf("encrypted native group push data missing or wrong: %#v", msg.Data)
+	}
+	assertAPNSCustomString(t, msg, "type", "group_message")
+	assertAPNSCustomString(t, msg, "groupId", "group-native")
+	assertAPNSCustomString(t, msg, "message_id", "native-msg-1")
+	assertAPNSCustomString(t, msg, "payloadType", "group_message")
+	assertAPNSCustomString(t, msg, "keyEpoch", "7")
+	assertAPNSCustomString(t, msg, "ciphertext", "native-ct")
+	assertAPNSCustomString(t, msg, "nonce", "native-nonce")
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil ||
+		!msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("expected mutable APNS payload for iOS NSE preview")
+	}
+	if msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("expected APNS fallback alert")
+	}
+	if msg.APNS.Payload.Aps.Alert.Title != pushNotificationTitle ||
+		msg.APNS.Payload.Aps.Alert.Body != pushNotificationBody {
+		t.Fatalf(
+			"APNS fallback alert = %q/%q, want generic ciphertext-only fallback",
+			msg.APNS.Payload.Aps.Alert.Title,
+			msg.APNS.Payload.Aps.Alert.Body,
+		)
+	}
+}
+
 func TestGIRD006BuildGroupImagePushMessageUsesCanonicalDataOnlyIdentity(t *testing.T) {
 	msg := buildGroupPushMessage(
 		"fcm-token",
@@ -978,6 +1045,9 @@ func TestGIRD006BuildGroupImagePushMessageUsesCanonicalDataOnlyIdentity(t *testi
 	if msg.APNS.Payload.Aps.ThreadID != "group-gird006" {
 		t.Fatalf("APNS thread id = %q, want group-gird006", msg.APNS.Payload.Aps.ThreadID)
 	}
+	assertAPNSCustomString(t, msg, "message_id", "msg-gird006-image")
+	assertAPNSCustomString(t, msg, "ciphertext", "gc")
+	assertAPNSCustomString(t, msg, "nonce", "gn")
 	if !msg.APNS.Payload.Aps.MutableContent {
 		t.Fatal("expected mutable-content for iOS NSE preview")
 	}
@@ -996,6 +1066,21 @@ func assertNoDirectPushSchemaVersionKeys(t *testing.T, data map[string]string) {
 		if value, ok := data[key]; ok {
 			t.Fatalf("push data should omit direct schema version key %q, got %q", key, value)
 		}
+	}
+}
+
+func assertAPNSCustomString(t *testing.T, msg *messaging.Message, key, want string) {
+	t.Helper()
+
+	if msg.APNS == nil || msg.APNS.Payload == nil {
+		t.Fatal("expected APNS payload")
+	}
+	got, ok := msg.APNS.Payload.CustomData[key].(string)
+	if !ok {
+		t.Fatalf("APNS custom data missing string %q: %#v", key, msg.APNS.Payload.CustomData)
+	}
+	if got != want {
+		t.Fatalf("APNS custom data %q = %q, want %q", key, got, want)
 	}
 }
 

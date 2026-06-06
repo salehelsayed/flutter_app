@@ -18,6 +18,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	mcrypto "github.com/mknoon/go-mknoon/crypto"
+	"github.com/mknoon/go-mknoon/internal"
 	"github.com/mknoon/go-mknoon/node"
 )
 
@@ -2705,6 +2707,7 @@ func TestGroupSendReliable_PreservesExplicitRecipientPeerIds(t *testing.T) {
 		"senderPublicKey":          identity.PublicKey,
 		"senderPrivateKey":         identity.PrivateKey,
 		"senderUsername":           "Alice",
+		"groupName":                "GSR Explicit Bridge",
 		"messageId":                "gsr-explicit-bridge-message",
 		"recipientPeerIds":         []string{"peer-bob-accepted", " peer-bob-accepted ", ""},
 		"preserveRecipientPeerIds": true,
@@ -2720,6 +2723,33 @@ func TestGroupSendReliable_PreservesExplicitRecipientPeerIds(t *testing.T) {
 	}
 	if len(recipients) != 1 || recipients[0] != "peer-bob-accepted" {
 		t.Fatalf("recipientPeerIds = %#v, want [peer-bob-accepted]", recipients)
+	}
+	envelopeJSON, ok := sendMap["envelope"].(string)
+	if !ok || envelopeJSON == "" {
+		t.Fatalf("envelope = %#v, want non-empty native envelope", sendMap["envelope"])
+	}
+	env, err := internal.ParseGroupEnvelope(envelopeJSON)
+	if err != nil {
+		t.Fatalf("ParseGroupEnvelope: %v", err)
+	}
+	plaintext, err := mcrypto.DecryptGroupMessage(
+		groupKey,
+		env.Encrypted.Ciphertext,
+		env.Encrypted.Nonce,
+	)
+	if err != nil {
+		t.Fatalf("DecryptGroupMessage: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
+		t.Fatalf("unmarshal decrypted payload: %v", err)
+	}
+	extra, ok := payload["extra"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("payload extra = %#v, want map", payload["extra"])
+	}
+	if got := extra["groupName"]; got != "GSR Explicit Bridge" {
+		t.Fatalf("encrypted extra groupName = %v, want GSR Explicit Bridge", got)
 	}
 }
 
@@ -2832,6 +2862,42 @@ func TestGroupPublish_MediaOnly_AcceptsEmptyText(t *testing.T) {
 
 func TestPL002GroupPublishMediaOnlyAcceptsEmptyText(t *testing.T) {
 	assertGroupPublishMediaOnlyAcceptsEmptyText(t)
+}
+
+func TestGroupPublish_AcceptsLogicalDeliveryId(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupPublish(`{
+		"groupId": "g1",
+		"text": "logical delivery",
+		"senderPeerId": "peer1",
+		"senderPublicKey": "pk1",
+		"senderPrivateKey": "sk1",
+		"senderUsername": "Alice",
+		"messageId": "msg-logical",
+		"logicalDeliveryId": "logical-delivery-1"
+	}`)
+	m := parseJSON(t, result)
+	if code, ok := m["errorCode"].(string); ok && code == "INVALID_INPUT" {
+		t.Fatalf("expected logicalDeliveryId publish to pass validation, got INVALID_INPUT")
+	}
+}
+
+func TestGroupSendReliable_AcceptsLogicalDeliveryId(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupSendReliable(`{
+		"groupId": "g1",
+		"text": "logical delivery",
+		"senderPeerId": "peer1",
+		"senderPublicKey": "pk1",
+		"senderPrivateKey": "sk1",
+		"senderUsername": "Alice",
+		"messageId": "msg-logical",
+		"logicalDeliveryId": "logical-delivery-1"
+	}`)
+	m := parseJSON(t, result)
+	if code, ok := m["errorCode"].(string); ok && code == "INVALID_INPUT" {
+		t.Fatalf("expected logicalDeliveryId reliable send to pass validation, got INVALID_INPUT")
+	}
 }
 
 func TestPL012GroupPublishOptsPreserveMediaSchemaVariants(t *testing.T) {

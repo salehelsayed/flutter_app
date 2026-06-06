@@ -202,6 +202,7 @@ class GroupMessageListener {
       msgRepoOverride: msgRepoOverride,
       rethrowOnError: rethrowOnError,
       allowMembershipBuffer: allowMembershipBuffer,
+      deliverySource: 'replay',
     );
   }
 
@@ -323,7 +324,11 @@ class GroupMessageListener {
 
   Future<void> _handleLiveMessage(Map<String, dynamic> data) {
     return _trackInFlight(
-      _handleQueuedUserMessage(data, requestRecoveryOnError: true),
+      _handleQueuedUserMessage(
+        data,
+        requestRecoveryOnError: true,
+        deliverySource: 'live',
+      ),
     );
   }
 
@@ -370,6 +375,7 @@ class GroupMessageListener {
     bool rethrowOnError = false,
     bool allowMembershipBuffer = true,
     bool requestRecoveryOnError = false,
+    String deliverySource = 'listener',
   }) {
     final queueKey = _userMessageWorkKey(data);
     if (queueKey == null) {
@@ -379,6 +385,7 @@ class GroupMessageListener {
         rethrowOnError: rethrowOnError,
         allowMembershipBuffer: allowMembershipBuffer,
         requestRecoveryOnError: requestRecoveryOnError,
+        deliverySource: deliverySource,
       );
     }
 
@@ -393,6 +400,7 @@ class GroupMessageListener {
             rethrowOnError: rethrowOnError,
             allowMembershipBuffer: allowMembershipBuffer,
             requestRecoveryOnError: requestRecoveryOnError,
+            deliverySource: deliverySource,
           ),
         )
         .whenComplete(() {
@@ -585,6 +593,7 @@ class GroupMessageListener {
       'text',
       'timestamp',
       'messageId',
+      'logicalDeliveryId',
       'quotedMessageId',
       'transportPeerId',
       'senderDeviceId',
@@ -647,6 +656,7 @@ class GroupMessageListener {
     bool rethrowOnError = false,
     bool allowMembershipBuffer = true,
     bool requestRecoveryOnError = false,
+    String deliverySource = 'listener',
   }) async {
     try {
       final schemaRejectReason = _groupMessageEventSchemaRejectReason(data);
@@ -695,6 +705,7 @@ class GroupMessageListener {
       }
 
       final wireMessageId = data['messageId'] as String?;
+      final wireLogicalDeliveryId = data['logicalDeliveryId'] as String?;
       final isSystemPayload = text.startsWith('{"__sys":');
       if (isSystemPayload) {
         if (allowMembershipBuffer &&
@@ -810,10 +821,12 @@ class GroupMessageListener {
         senderDeviceId: senderDeviceId,
         selfPeerId: selfPeerId,
         messageId: wireMessageId,
+        logicalDeliveryId: wireLogicalDeliveryId,
         quotedMessageId: wireQuotedMessageId,
         media: media,
         mediaAttachmentRepo: _mediaAttachmentRepo,
         appendGroupEventLogEntry: _appendGroupEventLogEntry,
+        deliverySource: deliverySource,
       );
 
       if (result != null) {
@@ -1255,6 +1268,7 @@ class GroupMessageListener {
           msgRepoOverride: msgRepo,
           allowMembershipBuffer: false,
           rethrowOnError: true,
+          deliverySource: 'membershipBuffer',
         );
         await _deleteDurableMembershipDependentMessage(pending);
       } catch (e) {

@@ -728,6 +728,151 @@ void main() {
   });
 
   test(
+    'identity diagnostic marks live listener raw message id source',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final ts = DateTime.utc(2026, 6, 5, 12, 3).toIso8601String();
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Live identity diagnostic',
+        'timestamp': ts,
+        'messageId': 'identity-listener-live',
+        'logicalDeliveryId': 'logical-listener-live',
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final saved = await msgRepo.getMessage('identity-listener-live');
+      expect(saved, isNotNull);
+      expect(saved!.logicalDeliveryId, 'logical-listener-live');
+      final success = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+      );
+      final details = success['details'] as Map<String, dynamic>;
+      expect(details['deliverySource'], 'live');
+      expect(details['rawMessageId'], 'identity-listener-live');
+      expect(details['logicalDeliveryId'], 'logical-listener-live');
+      expect(details['messageId'], 'identity-listener-live');
+      expect(details['localRowId'], 'identity-listener-live');
+      expect(details['groupId'], 'group-1');
+      expect(details['senderId'], 'peer-sender');
+      expect(details['text'], 'Live identity diagnostic');
+      expect(details['timestamp'], ts);
+      expect(details['incoming'], true);
+    },
+  );
+
+  test(
+    'identity diagnostic marks replay envelope raw message id source',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final ts = DateTime.utc(2026, 6, 5, 12, 4).toIso8601String();
+
+      await listener.handleReplayEnvelope({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Replay identity diagnostic',
+        'timestamp': ts,
+        'messageId': 'identity-listener-replay',
+        'logicalDeliveryId': 'logical-listener-replay',
+      });
+
+      final saved = await msgRepo.getMessage('identity-listener-replay');
+      expect(saved, isNotNull);
+      expect(saved!.logicalDeliveryId, 'logical-listener-replay');
+      final success = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+      );
+      final details = success['details'] as Map<String, dynamic>;
+      expect(details['deliverySource'], 'replay');
+      expect(details['rawMessageId'], 'identity-listener-replay');
+      expect(details['logicalDeliveryId'], 'logical-listener-replay');
+      expect(details['messageId'], 'identity-listener-replay');
+      expect(details['localRowId'], 'identity-listener-replay');
+      expect(details['groupId'], 'group-1');
+      expect(details['senderId'], 'peer-sender');
+      expect(details['text'], 'Replay identity diagnostic');
+      expect(details['timestamp'], ts);
+      expect(details['incoming'], true);
+    },
+  );
+
+  test(
+    'logical delivery convergence keeps one row across live and replay divergent ids',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final ts = DateTime.utc(2026, 6, 5, 12, 5).toIso8601String();
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Listener logical convergence',
+        'timestamp': ts,
+        'messageId': 'logical-listener-live-row',
+        'logicalDeliveryId': 'logical-listener-shared',
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      await listener.handleReplayEnvelope({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'Listener logical convergence',
+        'timestamp': ts,
+        'messageId': 'logical-listener-replay-row',
+        'logicalDeliveryId': 'logical-listener-shared',
+      });
+
+      expect(await msgRepo.getMessage('logical-listener-live-row'), isNotNull);
+      expect(await msgRepo.getMessage('logical-listener-replay-row'), isNull);
+      expect(msgRepo.count, 1);
+
+      final duplicate = flowEvents.singleWhere(
+        (event) =>
+            event['event'] == 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE' &&
+            (event['details'] as Map<String, dynamic>)['dedupeBy'] ==
+                'logicalDeliveryId',
+      );
+      final details = duplicate['details'] as Map<String, dynamic>;
+      expect(details['deliverySource'], 'replay');
+      expect(details['rawMessageId'], 'logical-listener-replay-row');
+      expect(details['candidateLocalRowId'], 'logical-listener-replay-row');
+      expect(details['logicalDeliveryId'], 'logical-listener-shared');
+      expect(details['messageId'], 'logical-listener-live-row');
+      expect(details['localRowId'], 'logical-listener-live-row');
+      expect(details['existingLocalRowId'], 'logical-listener-live-row');
+
+      final successEvents = flowEvents
+          .where(
+            (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+          )
+          .toList();
+      expect(successEvents, hasLength(1));
+    },
+  );
+
+  test(
     'UP-013 persists incoming group message without UI stream subscriber',
     () async {
       listener.start(sourceController.stream);

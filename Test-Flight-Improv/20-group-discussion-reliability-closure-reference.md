@@ -475,6 +475,54 @@ That is the correct level of honesty for a publish + inbox-backed, receipt-less 
   ordinary group message or dead-end group-message notification, or an
   accepted/current member loses the preserved normal message/notification path.
 
+### 17. Group notification duplicate-row and focus closure
+
+- Report 107 is accepted with explicit follow-up on `2026-06-05` for the
+  group notification double-card report.
+- The repo-owned closure contract is intentionally narrow: one logical group
+  delivery may converge only through exact `messageId`, current
+  `logicalMediaRetry`, legacy id-less content dedupe, or a shared non-empty
+  `logicalDeliveryId` under the same validated group and sender. Same
+  group/sender/text/timestamp rows with different non-empty stable ids and no
+  shared logical identity remain legitimate distinct sends.
+- A nullable durable `logicalDeliveryId` now survives new sends, retries, Go
+  bridge extras, live listener delivery, signed offline replay/drain, recovery
+  replay, reload row loading, and notification-anchor row loading. The receive
+  handler uses that identity to enrich the canonical row and suppress the
+  divergent duplicate row instead of merging by visible content.
+- The notification-anchor visual path now uses a single-row cue rather than an
+  extra rounded bordered wrapper around the normal group message card. Direct
+  widget/wired proof covers targeted text, quote, media, reaction-bearing rows,
+  dark/light readable backgrounds, normal no-highlight entry, and reaction
+  inspection from the targeted row.
+- Manual follow-up on `2026-06-05` closed the APNs-open duplicate local
+  notification and route stacking regressions at the deterministic seams:
+  remote group notification opens are marked as recent announcements before
+  inbox drain, notification taps for an already-active group do not push another
+  group route, and encrypted group previews now supply the group title through
+  the iOS Notification Service Extension and Dart decrypt preview while keeping
+  relay-visible plaintext preview fields absent.
+- Accepted evidence includes focused receive/listener/drain acceptance filters,
+  `test/integration/group_notification_dedupe_integration_test.dart`, targeted
+  widget/wired focus filters, session `02` persistence/migration/send/retry/Go
+  propagation tests, session `03` convergence tests, focused manual follow-up
+  notification/push/group filters, iOS `NotificationPreviewResolverTests` on
+  iPhone 17 simulator `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`, the `groups`
+  gate (`+321`), pinned `baseline` on that iPhone 17 simulator, the session
+  `02` `./scripts/run_test_gates.sh completeness-check` (`769/769`
+  classified), and `git diff --check`.
+- Explicit follow-up: a fresh provider-backed APNs/TestFlight visual pass after
+  the manual follow-up remains complementary confidence evidence. Do not treat
+  that confidence gap as a reason to reopen the repo-owned closure unless
+  provider/device evidence shows a real route/focus/duplicate-notification
+  regression.
+- Reopen Report 107 only if shared non-empty `logicalDeliveryId` deliveries can
+  again produce duplicate persisted or visible rows, notification-anchor focus
+  regresses into a second card-like wrapper, APNs-open drain can again display a
+  second local notification for the same group message, repeated notification
+  taps can stack the same group route, or PGC-007 legitimate distinct stable-id
+  sends are collapsed without shared logical-delivery proof.
+
 ---
 
 ## Accepted Architectural Differences From 1:1

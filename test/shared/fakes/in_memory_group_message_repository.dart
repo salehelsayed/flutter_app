@@ -86,6 +86,27 @@ class InMemoryGroupMessageRepository
   }
 
   @override
+  Future<GroupMessage?> getMessageByLogicalDeliveryId(
+    String groupId,
+    String senderPeerId,
+    String logicalDeliveryId,
+  ) async {
+    final normalizedLogicalDeliveryId = logicalDeliveryId.trim();
+    if (normalizedLogicalDeliveryId.isEmpty) return null;
+    final matches = _visibleMessages
+        .where(
+          (message) =>
+              message.groupId == groupId &&
+              message.senderPeerId == senderPeerId &&
+              message.logicalDeliveryId == normalizedLogicalDeliveryId,
+        )
+        .toList();
+    if (matches.isEmpty) return null;
+    matches.sort(compareGroupMessagesAscending);
+    return matches.first;
+  }
+
+  @override
   Future<GroupMessage?> getLatestMessage(String groupId) async {
     final messages = _visibleMessages
         .where((m) => m.groupId == groupId)

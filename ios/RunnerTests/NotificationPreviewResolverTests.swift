@@ -59,7 +59,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
 
     XCTAssertTrue(result.didDecrypt)
     XCTAssertEqual(result.reason, "group")
-    XCTAssertEqual(result.title, "New Message")
+    XCTAssertEqual(result.title, "Team Chat")
     XCTAssertEqual(result.body, "Alice: Hello secret")
     XCTAssertEqual(result.threadIdentifier, "group-team")
     XCTAssertEqual(decryptor.groupCalls, 1)
@@ -67,6 +67,84 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(eventEmitter.events.count, 1)
     XCTAssertEqual(eventEmitter.events[0].event, "PUSH_NSE_DECRYPT_OK")
     XCTAssertEqual(eventEmitter.events[0].details, ["kind": "group"])
+  }
+
+  func testDecryptsNativeV3GroupPreviewFromEncryptedExtra() throws {
+    let plaintext = try jsonString([
+      "text": "Hello group",
+      "timestamp": "2026-06-05T19:33:38.064850Z",
+      "username": "Alice",
+      "extra": [
+        "groupName": "Team Chat",
+        "messageId": "native-msg-1",
+      ],
+    ])
+    let keyReader = MemoryPushKeyReader([
+      PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7): "group-secret",
+    ])
+    let decryptor = MemoryPushDecryptor(groupPlaintext: plaintext)
+    let resolver = NotificationPreviewResolver(
+      keyReader: keyReader,
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore()
+    )
+
+    let result = resolver.resolve(
+      userInfo: [
+        "type": "group_message",
+        "groupId": "group-team",
+        "message_id": "native-msg-1",
+        "keyEpoch": "7",
+        "ciphertext": "ciphertext",
+        "nonce": "nonce",
+      ],
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(result.didDecrypt)
+    XCTAssertEqual(result.reason, "group")
+    XCTAssertEqual(result.title, "Team Chat")
+    XCTAssertEqual(result.body, "Alice: Hello group")
+    XCTAssertEqual(result.threadIdentifier, "group-team")
+  }
+
+  func testDecryptsNativeV3GroupPreviewFromCompactApnsAliases() throws {
+    let plaintext = try jsonString([
+      "text": "Alias group",
+      "timestamp": "2026-06-05T19:33:38.064850Z",
+      "username": "Alice",
+      "extra": [
+        "groupName": "Team Chat",
+      ],
+    ])
+    let keyReader = MemoryPushKeyReader([
+      PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7): "group-secret",
+    ])
+    let decryptor = MemoryPushDecryptor(groupPlaintext: plaintext)
+    let resolver = NotificationPreviewResolver(
+      keyReader: keyReader,
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore()
+    )
+
+    let result = resolver.resolve(
+      userInfo: [
+        "t": "group_message",
+        "g": "group-team",
+        "m": "native-msg-1",
+        "e": "7",
+        "c": "ciphertext",
+        "n": "nonce",
+      ],
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(result.didDecrypt)
+    XCTAssertEqual(result.title, "Team Chat")
+    XCTAssertEqual(result.body, "Alice: Alias group")
+    XCTAssertEqual(result.threadIdentifier, "group-team")
   }
 
   func testSanitizesGroupMemberJoinedSystemPreview() throws {

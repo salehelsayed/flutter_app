@@ -37,6 +37,16 @@ abstract class GroupMessageRepository {
   /// Retrieves a single message by ID.
   Future<GroupMessage?> getMessage(String id);
 
+  /// Retrieves the first visible row with a shared logical delivery identity.
+  ///
+  /// Implementations without this indexed lookup return null so existing
+  /// lightweight fakes remain conservative and never infer content identity.
+  Future<GroupMessage?> getMessageByLogicalDeliveryId(
+    String groupId,
+    String senderPeerId,
+    String logicalDeliveryId,
+  ) async => null;
+
   /// Retrieves the most recent message for a group.
   Future<GroupMessage?> getLatestMessage(String groupId);
 

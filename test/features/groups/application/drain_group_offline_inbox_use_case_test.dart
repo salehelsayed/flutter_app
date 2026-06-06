@@ -898,6 +898,7 @@ void main() {
     String senderPublicKey = 'pk-sender',
     String senderPrivateKey = 'sk-sender',
     String senderUsername = 'Sender',
+    String? logicalDeliveryId,
     List<Map<String, dynamic>>? receipts,
   }) async {
     final payload = repairMessage(
@@ -906,6 +907,9 @@ void main() {
       timestamp: timestamp ?? DateTime.utc(2026, 5, 1, 12),
       senderId: senderId,
     )..['senderUsername'] = senderUsername;
+    if (logicalDeliveryId != null) {
+      payload['logicalDeliveryId'] = logicalDeliveryId;
+    }
     if (receipts != null) {
       payload['receipts'] = receipts;
     }
@@ -921,6 +925,117 @@ void main() {
       ),
     };
   }
+
+  test(
+    'logical delivery identity survives signed offline replay drain',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await saveDefaultReplayKey();
+
+      bridge.addPage('group-1', '', [
+        await signedRelayMessage(
+          id: 'logical-drain-replay-row',
+          text: 'Logical drain replay',
+          timestamp: DateTime.utc(2026, 6, 5, 12, 7),
+          logicalDeliveryId: 'logical-drain-replay-1',
+        ),
+      ], '');
+
+      final result = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+      );
+
+      expect(result.isSuccessful, isTrue);
+      final saved = await msgRepo.getMessage('logical-drain-replay-row');
+      expect(saved, isNotNull);
+      expect(saved!.logicalDeliveryId, 'logical-drain-replay-1');
+
+      final success = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+      );
+      final details = success['details'] as Map<String, dynamic>;
+      expect(details['deliverySource'], 'replay');
+      expect(details['rawMessageId'], 'logical-drain-replay-row');
+      expect(details['logicalDeliveryId'], 'logical-drain-replay-1');
+      expect(details['messageId'], 'logical-drain-replay-row');
+    },
+  );
+
+  test(
+    'logical delivery convergence skips signed offline replay divergent row',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await saveDefaultReplayKey();
+
+      final ts = DateTime.utc(2026, 6, 5, 12, 8);
+      final live = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Logical drain convergence',
+        timestamp: ts.toIso8601String(),
+        messageId: 'logical-drain-live-row',
+        logicalDeliveryId: 'logical-drain-shared-1',
+        deliverySource: 'live',
+      );
+      expect(live, isNotNull);
+
+      bridge.addPage('group-1', '', [
+        await signedRelayMessage(
+          id: 'logical-drain-replay-row-2',
+          text: 'Logical drain convergence',
+          timestamp: ts,
+          logicalDeliveryId: 'logical-drain-shared-1',
+        ),
+      ], '');
+
+      final result = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+      );
+
+      expect(result.isSuccessful, isTrue);
+      expect(await msgRepo.getMessage('logical-drain-live-row'), isNotNull);
+      expect(await msgRepo.getMessage('logical-drain-replay-row-2'), isNull);
+      expect(msgRepo.count, 1);
+
+      final duplicate = flowEvents.singleWhere(
+        (event) =>
+            event['event'] == 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE' &&
+            (event['details'] as Map<String, dynamic>)['dedupeBy'] ==
+                'logicalDeliveryId',
+      );
+      final details = duplicate['details'] as Map<String, dynamic>;
+      expect(details['deliverySource'], 'replay');
+      expect(details['rawMessageId'], 'logical-drain-replay-row-2');
+      expect(details['candidateLocalRowId'], 'logical-drain-replay-row-2');
+      expect(details['logicalDeliveryId'], 'logical-drain-shared-1');
+      expect(details['messageId'], 'logical-drain-live-row');
+      expect(details['localRowId'], 'logical-drain-live-row');
+      expect(details['existingLocalRowId'], 'logical-drain-live-row');
+
+      final successEvents = flowEvents
+          .where(
+            (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+          )
+          .toList();
+      expect(successEvents, hasLength(1));
+    },
+  );
 
   Map<String, dynamic> historyGap({
     required String expectedRangeHash,

@@ -631,21 +631,62 @@ class GroupConversationScreen extends StatelessWidget {
         }
 
         if (isHighlighted) {
-          final readableColors = context.backgroundReadableColors;
-          bubble = AnimatedContainer(
-            key: ValueKey('grp-highlight-${message.id}'),
-            duration: const Duration(milliseconds: 180),
-            decoration: BoxDecoration(
-              color: readableColors.surfaceSubtle,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: readableColors.border),
-            ),
+          bubble = _buildHighlightedMessageCue(
+            context,
+            messageId: message.id,
+            isSent: isSent,
             child: bubble,
           );
         }
 
         return bubble;
       },
+    );
+  }
+
+  Widget _buildHighlightedMessageCue(
+    BuildContext context, {
+    required String messageId,
+    required bool isSent,
+    required Widget child,
+  }) {
+    final readableColors = context.backgroundReadableColors;
+    final focusAccent = readableColors.isLightSurface
+        ? const Color(0xFF0F766E)
+        : const Color(0xFF4ECDC4);
+
+    return Stack(
+      key: ValueKey('grp-highlight-$messageId'),
+      clipBehavior: Clip.none,
+      children: [
+        child,
+        PositionedDirectional(
+          start: isSent ? null : 2,
+          end: isSent ? 2 : null,
+          top: 10,
+          bottom: 22,
+          child: IgnorePointer(
+            child: AnimatedContainer(
+              key: ValueKey('grp-highlight-cue-$messageId'),
+              duration: const Duration(milliseconds: 180),
+              width: 3,
+              decoration: BoxDecoration(
+                color: focusAccent,
+                borderRadius: BorderRadius.circular(999),
+                boxShadow: [
+                  BoxShadow(
+                    color: focusAccent.withValues(
+                      alpha: readableColors.isLightSurface ? 0.24 : 0.36,
+                    ),
+                    blurRadius: 10,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

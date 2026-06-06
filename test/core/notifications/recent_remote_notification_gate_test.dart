@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 
 void main() {
   group('RecentRemoteNotificationGate', () {
@@ -71,6 +72,36 @@ void main() {
           await gate.consumeIfRecentAnnouncement(
             payload: 'peer-123',
             messageId: 'msg-2',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'marks remote group notification opens as exact recent announcements',
+      () async {
+        final marked = await markRemoteNotificationOpenAsRecentAnnouncement(
+          gate: gate,
+          data: const <String, dynamic>{
+            'type': 'group_message',
+            'groupId': 'group-123',
+            'message_id': 'msg-123',
+          },
+        );
+
+        expect(marked, isTrue);
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:group-123|message:msg-123',
+            messageId: 'msg-123',
+          ),
+          isTrue,
+        );
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:group-123|message:msg-123',
+            messageId: 'msg-123',
           ),
           isFalse,
         );

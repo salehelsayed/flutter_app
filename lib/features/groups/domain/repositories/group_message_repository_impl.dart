@@ -34,6 +34,12 @@ class GroupMessageRepositoryImpl
   })
   dbLoadGroupMessagesPage;
   final Future<Map<String, Object?>?> Function(String id) dbLoadGroupMessage;
+  final Future<Map<String, Object?>?> Function(
+    String groupId,
+    String senderPeerId,
+    String logicalDeliveryId,
+  )?
+  dbLoadGroupMessageByLogicalDeliveryIdFn;
   final Future<Map<String, Object?>?> Function(String groupId)
   dbLoadLatestGroupMessage;
   final Future<String?> Function(String groupId, String senderPeerId)?
@@ -85,6 +91,7 @@ class GroupMessageRepositoryImpl
     required this.dbInsertGroupMessage,
     required this.dbLoadGroupMessagesPage,
     required this.dbLoadGroupMessage,
+    this.dbLoadGroupMessageByLogicalDeliveryIdFn,
     required this.dbLoadLatestGroupMessage,
     this.dbLoadLatestRemovalTimestampForSenderFn,
     required this.dbUpdateGroupMessageStatus,
@@ -264,6 +271,23 @@ class GroupMessageRepositoryImpl
   @override
   Future<GroupMessage?> getMessage(String id) async {
     final row = await dbLoadGroupMessage(id);
+    if (row == null) return null;
+    return GroupMessage.fromMap(row);
+  }
+
+  @override
+  Future<GroupMessage?> getMessageByLogicalDeliveryId(
+    String groupId,
+    String senderPeerId,
+    String logicalDeliveryId,
+  ) async {
+    final normalizedLogicalDeliveryId = logicalDeliveryId.trim();
+    if (normalizedLogicalDeliveryId.isEmpty) {
+      return null;
+    }
+    final fn = dbLoadGroupMessageByLogicalDeliveryIdFn;
+    if (fn == null) return null;
+    final row = await fn(groupId, senderPeerId, normalizedLogicalDeliveryId);
     if (row == null) return null;
     return GroupMessage.fromMap(row);
   }

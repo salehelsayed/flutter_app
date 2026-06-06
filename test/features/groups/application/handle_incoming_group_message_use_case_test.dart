@@ -818,6 +818,109 @@ void main() {
     },
   );
 
+  test(
+    'identity diagnostic captures successful incoming row evidence',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      const messageId = 'identity-diagnostic-success';
+      final ts = DateTime.utc(2026, 6, 5, 12).toIso8601String();
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Identity diagnostic text',
+        timestamp: ts,
+        messageId: messageId,
+        deliverySource: 'live',
+      );
+
+      expect(result, isNotNull);
+      final success = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+      );
+      final details = success['details'] as Map<String, dynamic>;
+      expect(details['messageId'], messageId);
+      expect(details['localRowId'], messageId);
+      expect(details['candidateLocalRowId'], messageId);
+      expect(details['rawMessageId'], messageId);
+      expect(details['groupId'], 'group-1');
+      expect(details['senderId'], 'peer-sender');
+      expect(details['text'], 'Identity diagnostic text');
+      expect(details['timestamp'], ts);
+      expect(details['rowTimestamp'], ts);
+      expect(details['createdAt'], result!.createdAt.toIso8601String());
+      expect(details['incoming'], true);
+      expect(details['deliverySource'], 'live');
+      expect(details.containsKey('dedupeBy'), isFalse);
+      expect(details.containsKey('existingLocalRowId'), isFalse);
+    },
+  );
+
+  test(
+    'identity diagnostic captures exact messageId duplicate evidence',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final existingCreatedAt = DateTime.utc(2026, 6, 5, 12, 1);
+      final existingTimestamp = DateTime.utc(2026, 6, 5, 12, 0);
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'identity-diagnostic-duplicate',
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          senderUsername: 'Sender',
+          text: 'Existing duplicate text',
+          timestamp: existingTimestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: existingCreatedAt,
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Existing duplicate text',
+        timestamp: existingTimestamp.toIso8601String(),
+        messageId: 'identity-diagnostic-duplicate',
+        deliverySource: 'replay',
+      );
+
+      expect(result, isNull);
+      final duplicate = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+      );
+      final details = duplicate['details'] as Map<String, dynamic>;
+      expect(details['dedupeBy'], 'messageId');
+      expect(details['messageId'], 'identity-diagnostic-duplicate');
+      expect(details['localRowId'], 'identity-diagnostic-duplicate');
+      expect(details['existingLocalRowId'], 'identity-diagnostic-duplicate');
+      expect(details['candidateLocalRowId'], 'identity-diagnostic-duplicate');
+      expect(details['rawMessageId'], 'identity-diagnostic-duplicate');
+      expect(details['groupId'], 'group-1');
+      expect(details['senderId'], 'peer-sender');
+      expect(details['text'], 'Existing duplicate text');
+      expect(details['timestamp'], existingTimestamp.toIso8601String());
+      expect(details['rowTimestamp'], existingTimestamp.toIso8601String());
+      expect(details['createdAt'], existingCreatedAt.toIso8601String());
+      expect(details['incoming'], true);
+      expect(details['deliverySource'], 'replay');
+    },
+  );
+
   test('persists quotedMessageId from incoming payload', () async {
     final result = await handleIncomingGroupMessage(
       groupRepo: groupRepo,
@@ -1353,8 +1456,69 @@ void main() {
   });
 
   test(
-    'PGC-007 distinct stable message IDs with same content and timestamp both persist',
+    'identity diagnostic captures legacy id-less content duplicate',
     () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final ts = DateTime.utc(2026, 6, 5, 12, 2).toIso8601String();
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Legacy id-less diagnostic',
+        timestamp: ts,
+        deliverySource: 'live',
+      );
+      final duplicate = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Legacy id-less diagnostic',
+        timestamp: ts,
+        deliverySource: 'replay',
+      );
+
+      expect(first, isNotNull);
+      expect(duplicate, isNull);
+      expect(msgRepo.count, 1);
+
+      final duplicateEvent = flowEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+      );
+      final details = duplicateEvent['details'] as Map<String, dynamic>;
+      expect(details['dedupeBy'], 'content');
+      expect(details['messageId'], first!.id);
+      expect(details['localRowId'], first.id);
+      expect(details['existingLocalRowId'], first.id);
+      expect(details.containsKey('rawMessageId'), isFalse);
+      expect(details.containsKey('candidateLocalRowId'), isFalse);
+      expect(details['groupId'], 'group-1');
+      expect(details['senderId'], 'peer-sender');
+      expect(details['text'], 'Legacy id-less diagnostic');
+      expect(details['timestamp'], ts);
+      expect(details['rowTimestamp'], ts);
+      expect(details['createdAt'], first.createdAt.toIso8601String());
+      expect(details['incoming'], true);
+      expect(details['deliverySource'], 'replay');
+    },
+  );
+
+  test(
+    'PGC-007 identity diagnostic distinct stable message IDs with same content and timestamp both persist',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
       final ts = DateTime.utc(2026, 5, 23, 12).toIso8601String();
 
       final first = await handleIncomingGroupMessage(
@@ -1392,6 +1556,130 @@ void main() {
         page.map((message) => message.id),
         containsAll(['pgc007-stable-id-1', 'pgc007-stable-id-2']),
       );
+
+      final successEvents = flowEvents
+          .where(
+            (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+          )
+          .toList();
+      expect(successEvents, hasLength(2));
+      expect(
+        successEvents
+            .map(
+              (event) =>
+                  (event['details'] as Map<String, dynamic>)['messageId'],
+            )
+            .toSet(),
+        {'pgc007-stable-id-1', 'pgc007-stable-id-2'},
+      );
+      expect(
+        flowEvents.where(
+          (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+        ),
+        isEmpty,
+      );
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_LOGICAL_DELIVERY_MATCH',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'logical delivery convergence skips divergent stable id replay with shared logicalDeliveryId',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+
+      final ts = DateTime.utc(2026, 6, 5, 12, 6).toIso8601String();
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Shared logical delivery body',
+        timestamp: ts,
+        messageId: 'logical-local-row-a',
+        logicalDeliveryId: 'logical-delivery-shared-1',
+        deliverySource: 'live',
+      );
+      final second = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Shared logical delivery body',
+        timestamp: ts,
+        messageId: 'logical-local-row-b',
+        logicalDeliveryId: 'logical-delivery-shared-1',
+        quotedMessageId: 'logical-parent-row',
+        media: _gird003Media(
+          id: 'logical-delivery-media-1',
+          createdAt: DateTime.utc(2026, 6, 5, 12, 6, 1).toIso8601String(),
+        ),
+        mediaAttachmentRepo: mediaRepo,
+        deliverySource: 'replay',
+      );
+
+      expect(first, isNotNull);
+      expect(second, isNull);
+      expect(msgRepo.count, 1);
+      expect(first!.logicalDeliveryId, 'logical-delivery-shared-1');
+      expect(await msgRepo.getMessage('logical-local-row-b'), isNull);
+
+      final canonical = await msgRepo.getMessage('logical-local-row-a');
+      expect(canonical, isNotNull);
+      expect(canonical!.logicalDeliveryId, 'logical-delivery-shared-1');
+      expect(canonical.quotedMessageId, 'logical-parent-row');
+      expect(
+        await mediaRepo.getAttachmentsForMessage('logical-local-row-a'),
+        hasLength(1),
+      );
+      expect(
+        await mediaRepo.getAttachmentsForMessage('logical-local-row-b'),
+        isEmpty,
+      );
+
+      final duplicateEvent = flowEvents.singleWhere(
+        (event) =>
+            event['event'] == 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE' &&
+            (event['details'] as Map<String, dynamic>)['dedupeBy'] ==
+                'logicalDeliveryId',
+      );
+      final details = duplicateEvent['details'] as Map<String, dynamic>;
+      expect(details['dedupeBy'], 'logicalDeliveryId');
+      expect(details['rawMessageId'], 'logical-local-row-b');
+      expect(details['candidateLocalRowId'], 'logical-local-row-b');
+      expect(details['logicalDeliveryId'], 'logical-delivery-shared-1');
+      expect(details['messageId'], 'logical-local-row-a');
+      expect(details['localRowId'], 'logical-local-row-a');
+      expect(details['existingLocalRowId'], 'logical-local-row-a');
+      expect(details['quotedMessageId'], 'logical-parent-row');
+      expect(details['groupId'], 'group-1');
+      expect(details['senderId'], 'peer-sender');
+      expect(details['text'], 'Shared logical delivery body');
+      expect(details['timestamp'], ts);
+      expect(details['rowTimestamp'], ts);
+      expect(details['incoming'], true);
+      expect(details['deliverySource'], 'replay');
+
+      final successEvents = flowEvents
+          .where(
+            (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+          )
+          .toList();
+      expect(successEvents, hasLength(1));
     },
   );
 

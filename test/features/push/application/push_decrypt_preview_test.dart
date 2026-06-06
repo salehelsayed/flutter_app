@@ -154,15 +154,57 @@ void main() {
                 expect(nonce, 'nonce');
                 return jsonEncode({
                   'messageId': 'msg-group-1',
+                  'groupName': 'Team Chat',
                   'senderUsername': 'Alice',
                   'text': 'Hello group',
                 });
               },
         );
 
-        expect(resolved.title, backgroundPushDefaultTitle);
+        expect(resolved.title, 'Team Chat');
         expect(resolved.body, 'Alice: Hello group');
         expect(resolved.payload, 'group:group-team|message:msg-group-1');
+      },
+    );
+
+    test(
+      'decrypts native v3 group preview from encrypted extra metadata',
+      () async {
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-team',
+            'message_id': 'native-msg-1',
+            'keyEpoch': '7',
+            'ciphertext': 'ciphertext',
+            'nonce': 'nonce',
+          },
+        );
+
+        final resolved = await resolveBackgroundPushNotification(
+          message,
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async {
+                return jsonEncode({
+                  'text': 'Hello native',
+                  'timestamp': '2026-06-05T19:33:38.064850Z',
+                  'username': 'Alice',
+                  'extra': {
+                    'groupName': 'Team Chat',
+                    'messageId': 'native-msg-1',
+                  },
+                });
+              },
+        );
+
+        expect(resolved.title, 'Team Chat');
+        expect(resolved.body, 'Alice: Hello native');
+        expect(resolved.payload, 'group:group-team|message:native-msg-1');
       },
     );
 

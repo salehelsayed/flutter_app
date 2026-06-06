@@ -129,9 +129,21 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       nonce: nonce,
     );
     final payload = jsonDecode(plaintext) as Map<String, dynamic>;
-    final senderUsername = _trimToNull(payload['senderUsername']?.toString());
+    final extra = payload['extra'] is Map
+        ? Map<dynamic, dynamic>.from(payload['extra'] as Map)
+        : const <dynamic, dynamic>{};
+    final groupName =
+        _trimToNull(payload['groupName']?.toString()) ??
+        _trimToNull(extra['groupName']?.toString());
+    final senderUsername =
+        _trimToNull(payload['senderUsername']?.toString()) ??
+        _trimToNull(payload['username']?.toString());
     final text = payload['text']?.toString() ?? '';
-    final media = payload['media'] as List<dynamic>?;
+    final media = payload['media'] is List
+        ? payload['media'] as List<dynamic>
+        : extra['media'] is List
+        ? extra['media'] as List<dynamic>
+        : null;
     final systemPreview = _groupSystemPreviewBody(
       text: text,
       senderUsername: senderUsername,
@@ -150,7 +162,7 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       details: {'kind': 'group'},
     );
     return BackgroundPushNotificationFallback(
-      title: fallback.title,
+      title: groupName ?? fallback.title,
       body: body,
       payload: fallback.payload,
     );

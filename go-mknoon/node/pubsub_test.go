@@ -1159,8 +1159,9 @@ func TestPublishGroupMessage_BuildsCorrectEnvelope(t *testing.T) {
 
 func TestBuildGroupMessageExtra_PreservesQuotedMessageId(t *testing.T) {
 	opts := map[string]interface{}{
-		"quotedMessageId": "parent-msg-1",
-		"timestamp":       "2026-05-12T14:36:16.419641Z",
+		"quotedMessageId":   "parent-msg-1",
+		"logicalDeliveryId": "logical-delivery-1",
+		"timestamp":         "2026-05-12T14:36:16.419641Z",
 		"media": []map[string]interface{}{
 			{"id": "blob-1", "mime": "image/jpeg"},
 		},
@@ -1173,6 +1174,9 @@ func TestBuildGroupMessageExtra_PreservesQuotedMessageId(t *testing.T) {
 	}
 	if got := extra["quotedMessageId"]; got != "parent-msg-1" {
 		t.Fatalf("quotedMessageId = %v, want %q", got, "parent-msg-1")
+	}
+	if got := extra["logicalDeliveryId"]; got != "logical-delivery-1" {
+		t.Fatalf("logicalDeliveryId = %v, want %q", got, "logical-delivery-1")
 	}
 	if _, ok := extra["media"]; !ok {
 		t.Fatal("expected media in extra")

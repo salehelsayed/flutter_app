@@ -3191,6 +3191,10 @@ void main() {
     final inboxPayload = _lastGroupInboxStorePayload(bridge);
     expect(inboxPayload.containsKey('pushTitle'), isFalse);
     expect(inboxPayload.containsKey('pushBody'), isFalse);
+    expect(inboxPayload.containsKey('groupName'), isFalse);
+
+    final replayPayload = _decodedGroupInboxReplayPayload(bridge);
+    expect(replayPayload['groupName'], 'Test Group');
   });
 
   test(
@@ -4510,6 +4514,58 @@ void main() {
       expect(message!.id, isNotEmpty);
       expect(message.id, isNot('pre-created-id'));
     });
+
+    test(
+      'logical delivery id is generated once and carried through send payloads',
+      () async {
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'logical-send-row',
+          'topicPeers': 1,
+        };
+        const messageId = 'logical-send-row';
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Logical delivery send',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.logicalDeliveryId, messageId);
+        final saved = await msgRepo.getMessage(messageId);
+        expect(saved, isNotNull);
+        expect(saved!.logicalDeliveryId, messageId);
+
+        final reliablePayload = _groupSendReliablePayloadForMessage(
+          bridge,
+          messageId,
+        );
+        expect(reliablePayload['logicalDeliveryId'], messageId);
+
+        final publishPayload = bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:publish')
+            .map(
+              (message) => (message['payload'] as Map).cast<String, dynamic>(),
+            )
+            .single;
+        expect(publishPayload['messageId'], messageId);
+        expect(publishPayload['logicalDeliveryId'], messageId);
+
+        final replayPayload = _decodedGroupInboxReplayPayload(bridge);
+        expect(replayPayload['messageId'], messageId);
+        expect(replayPayload['logicalDeliveryId'], messageId);
+      },
+    );
 
     test('SP003 default message ids are unique UUID v4 values', () async {
       final (firstResult, firstMessage) = await sendGroupMessage(

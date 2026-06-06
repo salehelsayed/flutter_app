@@ -315,6 +315,8 @@ Future<Map<String, dynamic>> callGroupPublish(
   String? senderDevicePublicKey,
   String? senderKeyPackageId,
   String? messageId,
+  String? logicalDeliveryId,
+  String? groupName,
   DateTime? timestamp,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
@@ -352,6 +354,12 @@ Future<Map<String, dynamic>> callGroupPublish(
   }
   if (messageId != null && messageId.isNotEmpty) {
     payload['messageId'] = messageId;
+  }
+  if (logicalDeliveryId != null && logicalDeliveryId.isNotEmpty) {
+    payload['logicalDeliveryId'] = logicalDeliveryId;
+  }
+  if (groupName != null && groupName.trim().isNotEmpty) {
+    payload['groupName'] = groupName.trim();
   }
   if (timestamp != null) {
     payload['timestamp'] = timestamp.toUtc().toIso8601String();
@@ -406,6 +414,8 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   String? senderDevicePublicKey,
   String? senderKeyPackageId,
   String? messageId,
+  String? logicalDeliveryId,
+  String? groupName,
   DateTime? timestamp,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
@@ -438,6 +448,12 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   }
   if (messageId != null && messageId.isNotEmpty) {
     payload['messageId'] = messageId;
+  }
+  if (logicalDeliveryId != null && logicalDeliveryId.isNotEmpty) {
+    payload['logicalDeliveryId'] = logicalDeliveryId;
+  }
+  if (groupName != null && groupName.trim().isNotEmpty) {
+    payload['groupName'] = groupName.trim();
   }
   if (timestamp != null) {
     payload['timestamp'] = timestamp.toUtc().toIso8601String();

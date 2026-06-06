@@ -409,10 +409,19 @@ func buildCiphertextOnlyPushMessage(token string, data map[string]string, thread
 				"apns-push-type": "alert",
 			},
 			Payload: &messaging.APNSPayload{
-				Aps: aps,
+				Aps:        aps,
+				CustomData: apnsCustomDataFromPushData(data),
 			},
 		},
 	}
+}
+
+func apnsCustomDataFromPushData(data map[string]string) map[string]interface{} {
+	customData := make(map[string]interface{}, len(data))
+	for key, value := range data {
+		customData[key] = value
+	}
+	return customData
 }
 
 func addChatEncryptedPushData(data map[string]string, message string) bool {
@@ -444,13 +453,27 @@ func addGroupEncryptedPushData(data map[string]string, message string) bool {
 	addTrimmedData(data, "kind", envelope["kind"])
 	addJSONScalarData(data, "envelope_version", envelope["version"])
 	addTrimmedData(data, "payloadType", envelope["payloadType"])
+	if data["payloadType"] == "" {
+		addTrimmedData(data, "payloadType", envelope["type"])
+	}
 	addJSONScalarData(data, "keyEpoch", envelope["keyEpoch"])
-	addTrimmedData(data, "ciphertext", envelope["ciphertext"])
-	addTrimmedData(data, "nonce", envelope["nonce"])
+	if encrypted, ok := envelope["encrypted"].(map[string]interface{}); ok {
+		addTrimmedData(data, "ciphertext", encrypted["ciphertext"])
+		addTrimmedData(data, "nonce", encrypted["nonce"])
+	}
+	if data["ciphertext"] == "" {
+		addTrimmedData(data, "ciphertext", envelope["ciphertext"])
+	}
+	if data["nonce"] == "" {
+		addTrimmedData(data, "nonce", envelope["nonce"])
+	}
 	if data["message_id"] == "" {
 		addTrimmedData(data, "message_id", envelope["messageId"])
 	}
-	return data["kind"] != "" &&
+	if data["groupId"] == "" {
+		addTrimmedData(data, "groupId", envelope["groupId"])
+	}
+	return data["keyEpoch"] != "" &&
 		data["ciphertext"] != "" &&
 		data["nonce"] != ""
 }

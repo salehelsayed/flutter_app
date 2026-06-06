@@ -541,6 +541,8 @@ Future<int> retryIncompleteGroupUploads({
           senderPrivateKey: identity.privateKey,
           senderUsername: identity.username,
           messageId: refreshedMessage.id,
+          logicalDeliveryId:
+              refreshedMessage.logicalDeliveryId ?? refreshedMessage.id,
           timestamp: refreshedMessage.timestamp,
           quotedMessageId: refreshedMessage.quotedMessageId,
           senderDeviceId: currentSenderDeviceId,

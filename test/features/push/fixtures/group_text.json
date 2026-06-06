@@ -15,6 +15,7 @@
   },
   "plaintext": {
     "groupId": "group-team",
+    "groupName": "Team Chat",
     "senderId": "peer-alice",
     "senderUsername": "Alice",
     "keyEpoch": 7,

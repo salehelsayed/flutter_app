@@ -290,6 +290,7 @@ _retryFailedGroupMessageCandidate({
       senderPrivateKey: identity.privateKey,
       senderUsername: msg.senderUsername ?? identity.username,
       messageId: msg.id,
+      logicalDeliveryId: msg.logicalDeliveryId ?? msg.id,
       timestamp: msg.timestamp,
       quotedMessageId: msg.quotedMessageId,
       mediaAttachments: retryAttachments,

@@ -570,6 +570,62 @@ void main() {
     );
 
     test(
+      'logical delivery id is reused when retrying an incomplete group upload',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-logical-upload-retry',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Logical upload retry',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+            logicalDeliveryId: 'logical-upload-original',
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-logical-upload',
+            messageId: 'msg-logical-upload-retry',
+            localPath: 'pending_uploads/msg-logical-upload-retry/photo.jpg',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-logical-upload',
+            messageId: 'msg-logical-upload-retry',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        final saved = await groupMsgRepo.getMessage('msg-logical-upload-retry');
+        expect(saved, isNotNull);
+        expect(saved!.logicalDeliveryId, 'logical-upload-original');
+        final publishPayloads = _publishedGroupPayloads(bridge);
+        expect(publishPayloads, hasLength(1));
+        expect(publishPayloads.single['messageId'], 'msg-logical-upload-retry');
+        expect(
+          publishPayloads.single['logicalDeliveryId'],
+          'logical-upload-original',
+        );
+      },
+    );
+
+    test(
       'message-scoped voice upload retry reuploads and resends only that failed row',
       () async {
         await groupMsgRepo.saveMessage(

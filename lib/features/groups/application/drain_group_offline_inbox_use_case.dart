@@ -600,6 +600,8 @@ Future<void> _drainGroupInbox({
           if (senderDeviceId != null && senderDeviceId.isNotEmpty)
             'senderDeviceId': senderDeviceId,
           if (payload['messageId'] is String) 'messageId': payload['messageId'],
+          if (payload['logicalDeliveryId'] is String)
+            'logicalDeliveryId': payload['logicalDeliveryId'],
           if (payload['quotedMessageId'] is String)
             'quotedMessageId': payload['quotedMessageId'],
           'media': ?media,
@@ -679,6 +681,8 @@ Future<void> _drainGroupInbox({
           if (senderDeviceId != null && senderDeviceId.isNotEmpty)
             'senderDeviceId': senderDeviceId,
           if (payload['messageId'] is String) 'messageId': payload['messageId'],
+          if (payload['logicalDeliveryId'] is String)
+            'logicalDeliveryId': payload['logicalDeliveryId'],
           if (payload['quotedMessageId'] is String)
             'quotedMessageId': payload['quotedMessageId'],
           'media': ?media,
@@ -728,10 +732,12 @@ Future<void> _drainGroupInbox({
         senderDeviceId: senderDeviceId,
         selfPeerId: selfPeerId,
         messageId: wireMessageId,
+        logicalDeliveryId: payload['logicalDeliveryId'] as String?,
         quotedMessageId: payload['quotedMessageId'] as String?,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
         enforceSelfJoinedAtLowerBound: true,
+        deliverySource: 'replay',
       );
       // Re-derive the local-delivered receipt even when the message dedup'd
       // (handleIncomingGroupMessage returns null on dedup). Without this, a
@@ -1396,6 +1402,8 @@ Future<List<String>> _applyRepairedHistoryMessages({
         if (senderDeviceId != null && senderDeviceId.isNotEmpty)
           'senderDeviceId': senderDeviceId,
         'messageId': messageId,
+        if (payload['logicalDeliveryId'] is String)
+          'logicalDeliveryId': payload['logicalDeliveryId'],
         if (payload['quotedMessageId'] is String)
           'quotedMessageId': payload['quotedMessageId'],
         'media': ?media,
@@ -1416,10 +1424,12 @@ Future<List<String>> _applyRepairedHistoryMessages({
         senderDeviceId: senderDeviceId,
         selfPeerId: selfPeerId,
         messageId: messageId,
+        logicalDeliveryId: payload['logicalDeliveryId'] as String?,
         quotedMessageId: payload['quotedMessageId'] as String?,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
         enforceSelfJoinedAtLowerBound: true,
+        deliverySource: 'replay',
       );
     }
 

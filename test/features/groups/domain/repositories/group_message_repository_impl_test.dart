@@ -7,6 +7,7 @@ import 'package:flutter_app/core/database/migrations/061_group_message_transport
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
+import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -43,6 +44,14 @@ void main() {
       dbLoadGroupMessage:
           dbLoadGroupMessageOverride ??
           (id) => dbLoadGroupMessage(executor, id),
+      dbLoadGroupMessageByLogicalDeliveryIdFn:
+          (groupId, senderPeerId, logicalDeliveryId) =>
+              dbLoadGroupMessageByLogicalDeliveryId(
+                executor,
+                groupId,
+                senderPeerId,
+                logicalDeliveryId,
+              ),
       dbLoadLatestGroupMessage: (groupId) =>
           dbLoadLatestGroupMessage(executor, groupId),
       dbUpdateGroupMessageStatus: (id, status) =>
@@ -116,6 +125,7 @@ void main() {
     await runGroupSyncReceiptsMigration(db);
     await runGroupMessageLocalDeletionsMigration(db);
     await runGroupMessageLastSendAttemptAtMigration(db);
+    await runGroupMessageLogicalDeliveryIdMigration(db);
 
     repo = buildRepo(db, enableTransactions: true);
   });
@@ -141,6 +151,7 @@ void main() {
     DateTime? readAt,
     DateTime? createdAt,
     DateTime? lastSendAttemptAt,
+    String? logicalDeliveryId,
   }) {
     return GroupMessage(
       id: id,
@@ -151,6 +162,7 @@ void main() {
       text: text,
       timestamp: timestamp ?? now,
       quotedMessageId: quotedMessageId,
+      logicalDeliveryId: logicalDeliveryId,
       keyGeneration: keyGeneration,
       status: status,
       isIncoming: isIncoming,
@@ -198,6 +210,70 @@ void main() {
       expect(result, isNotNull);
       expect(result!.lastSendAttemptAt, attemptAt);
       expect(result.timestamp, now);
+    });
+
+    test('round-trip preserves logicalDeliveryId', () async {
+      final msg = makeMessage(
+        id: 'logical-delivery-round-trip',
+        logicalDeliveryId: 'logical-delivery-1',
+      );
+
+      await repo.saveMessage(msg);
+
+      final result = await repo.getMessage('logical-delivery-round-trip');
+      expect(result, isNotNull);
+      expect(result!.logicalDeliveryId, 'logical-delivery-1');
+    });
+
+    test(
+      'loads first visible row by group, sender, and logicalDeliveryId',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'logical-first',
+            logicalDeliveryId: 'logical-shared',
+            timestamp: now,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'logical-second',
+            logicalDeliveryId: 'logical-shared',
+            timestamp: now.add(const Duration(seconds: 1)),
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'logical-other-sender',
+            senderPeerId: 'peer-other',
+            logicalDeliveryId: 'logical-shared',
+          ),
+        );
+
+        final result = await repo.getMessageByLogicalDeliveryId(
+          'group-1',
+          'peer-sender',
+          'logical-shared',
+        );
+
+        expect(result, isNotNull);
+        expect(result!.id, 'logical-first');
+      },
+    );
+
+    test('logicalDeliveryId lookup ignores empty id', () async {
+      await repo.saveMessage(
+        makeMessage(id: 'logical-empty-control', logicalDeliveryId: 'ld-1'),
+      );
+
+      expect(
+        await repo.getMessageByLogicalDeliveryId(
+          'group-1',
+          'peer-sender',
+          '   ',
+        ),
+        isNull,
+      );
     });
 
     test('returns null for non-existent', () async {

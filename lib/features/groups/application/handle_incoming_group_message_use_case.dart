@@ -36,11 +36,13 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   String? transportPeerId,
   String? senderDeviceId,
   String? messageId,
+  String? logicalDeliveryId,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
   bool enforceSelfJoinedAtLowerBound = false,
+  String deliverySource = 'direct',
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -54,6 +56,10 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   final sanitizedText = sanitizeMessageText(text);
   final stableMessageId = messageId != null && messageId.isNotEmpty
       ? messageId
+      : null;
+  final stableLogicalDeliveryId =
+      logicalDeliveryId != null && logicalDeliveryId.trim().isNotEmpty
+      ? logicalDeliveryId.trim()
       : null;
   final normalizedTransportPeerId = transportPeerId?.trim();
   final resolvedTransportPeerId =
@@ -126,11 +132,18 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'dedupeBy': 'messageId',
-        },
+        details: _incomingMessageIdentityDetails(
+          groupId: groupId,
+          senderId: senderId,
+          sanitizedText: sanitizedText,
+          timestamp: timestamp,
+          deliverySource: deliverySource,
+          rawMessageId: stableMessageId,
+          logicalDeliveryId: stableLogicalDeliveryId,
+          candidateLocalRowId: stableMessageId,
+          localRow: existingById,
+          dedupeBy: 'messageId',
+        ),
       );
       return null;
     }
@@ -444,6 +457,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       sourceTimestamp: normalizedTimestamp.toIso8601String(),
       payload: {
         'messageId': messageId,
+        'logicalDeliveryId': stableLogicalDeliveryId,
         'groupId': groupId,
         'senderId': senderId,
         'senderUsername': resolvedSenderUsername,
@@ -501,11 +515,58 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'dedupeBy': 'messageId',
-        },
+        details: _incomingMessageIdentityDetails(
+          groupId: groupId,
+          senderId: senderId,
+          sanitizedText: sanitizedText,
+          timestamp: normalizedTimestamp.toIso8601String(),
+          deliverySource: deliverySource,
+          rawMessageId: stableMessageId,
+          logicalDeliveryId: stableLogicalDeliveryId,
+          candidateLocalRowId: stableMessageId,
+          localRow: existingById,
+          dedupeBy: 'messageId',
+        ),
+      );
+      return null;
+    }
+  }
+
+  if (stableMessageId != null && stableLogicalDeliveryId != null) {
+    final existingByLogicalDelivery = await msgRepo
+        .getMessageByLogicalDeliveryId(
+          groupId,
+          senderId,
+          stableLogicalDeliveryId,
+        );
+    if (existingByLogicalDelivery != null &&
+        existingByLogicalDelivery.id != stableMessageId &&
+        !_isRepairPlaceholder(existingByLogicalDelivery)) {
+      await _enrichExistingDuplicateMessage(
+        msgRepo: msgRepo,
+        messageId: existingByLogicalDelivery.id,
+        quotedMessageId: quotedMessageId,
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+      final canonicalMessage =
+          await msgRepo.getMessage(existingByLogicalDelivery.id) ??
+          existingByLogicalDelivery;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+        details: _incomingMessageIdentityDetails(
+          groupId: groupId,
+          senderId: senderId,
+          sanitizedText: sanitizedText,
+          timestamp: normalizedTimestamp.toIso8601String(),
+          deliverySource: deliverySource,
+          rawMessageId: stableMessageId,
+          logicalDeliveryId: stableLogicalDeliveryId,
+          candidateLocalRowId: stableMessageId,
+          localRow: canonicalMessage,
+          dedupeBy: 'logicalDeliveryId',
+        ),
       );
       return null;
     }
@@ -542,14 +603,22 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
+      final canonicalMessage = await msgRepo.getMessage(canonicalMessageId);
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'dedupeBy': 'logicalMediaRetry',
-        },
+        details: _incomingMessageIdentityDetails(
+          groupId: groupId,
+          senderId: senderId,
+          sanitizedText: sanitizedText,
+          timestamp: normalizedTimestamp.toIso8601String(),
+          deliverySource: deliverySource,
+          rawMessageId: stableMessageId,
+          logicalDeliveryId: stableLogicalDeliveryId,
+          candidateLocalRowId: stableMessageId,
+          localRow: canonicalMessage,
+          dedupeBy: 'logicalMediaRetry',
+        ),
       );
       return null;
     }
@@ -573,14 +642,25 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       normalizedTimestamp,
     );
     if (isDuplicate) {
+      final existingByContent = await _findExistingIncomingContentDuplicate(
+        msgRepo: msgRepo,
+        groupId: groupId,
+        senderId: senderId,
+        sanitizedText: sanitizedText,
+        normalizedTimestamp: normalizedTimestamp,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'dedupeBy': 'content',
-        },
+        details: _incomingMessageIdentityDetails(
+          groupId: groupId,
+          senderId: senderId,
+          sanitizedText: sanitizedText,
+          timestamp: normalizedTimestamp.toIso8601String(),
+          deliverySource: deliverySource,
+          localRow: existingByContent,
+          dedupeBy: 'content',
+        ),
       );
       return null;
     }
@@ -599,6 +679,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     text: sanitizedText,
     timestamp: normalizedTimestamp,
     quotedMessageId: quotedMessageId,
+    logicalDeliveryId: stableLogicalDeliveryId,
     keyGeneration: keyEpoch,
     status: isSelfDelivery ? 'sent' : 'delivered',
     isIncoming: !isSelfDelivery,
@@ -618,14 +699,102 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
-    details: {
-      'messageId': resolvedMessageId.length > 8
-          ? resolvedMessageId.substring(0, 8)
-          : resolvedMessageId,
-    },
+    details: _incomingMessageIdentityDetails(
+      groupId: groupId,
+      senderId: senderId,
+      sanitizedText: sanitizedText,
+      timestamp: normalizedTimestamp.toIso8601String(),
+      deliverySource: deliverySource,
+      rawMessageId: stableMessageId,
+      logicalDeliveryId: stableLogicalDeliveryId,
+      candidateLocalRowId: resolvedMessageId,
+      localRow: message,
+    ),
   );
 
   return message;
+}
+
+Map<String, dynamic> _incomingMessageIdentityDetails({
+  required String groupId,
+  required String senderId,
+  required String sanitizedText,
+  required String timestamp,
+  required String deliverySource,
+  String? rawMessageId,
+  String? logicalDeliveryId,
+  String? candidateLocalRowId,
+  GroupMessage? localRow,
+  String? dedupeBy,
+}) {
+  final details = <String, dynamic>{
+    'groupId': groupId,
+    'senderId': senderId,
+    'text': sanitizedText,
+    'timestamp': timestamp,
+    'deliverySource': deliverySource,
+  };
+  if (dedupeBy != null) {
+    details['dedupeBy'] = dedupeBy;
+  }
+  if (rawMessageId != null && rawMessageId.isNotEmpty) {
+    details['rawMessageId'] = rawMessageId;
+  }
+  if (logicalDeliveryId != null && logicalDeliveryId.isNotEmpty) {
+    details['logicalDeliveryId'] = logicalDeliveryId;
+  }
+  if (candidateLocalRowId != null && candidateLocalRowId.isNotEmpty) {
+    details['candidateLocalRowId'] = candidateLocalRowId;
+  }
+  if (localRow != null) {
+    details.addAll({
+      'messageId': localRow.id,
+      'localRowId': localRow.id,
+      'createdAt': localRow.createdAt.toUtc().toIso8601String(),
+      'incoming': localRow.isIncoming,
+      'rowTimestamp': localRow.timestamp.toUtc().toIso8601String(),
+    });
+    if (dedupeBy != null) {
+      details['existingLocalRowId'] = localRow.id;
+    }
+    final quotedMessageId = localRow.quotedMessageId;
+    if (quotedMessageId != null && quotedMessageId.isNotEmpty) {
+      details['quotedMessageId'] = quotedMessageId;
+    }
+  }
+  return details;
+}
+
+Future<GroupMessage?> _findExistingIncomingContentDuplicate({
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required String senderId,
+  required String sanitizedText,
+  required DateTime normalizedTimestamp,
+}) async {
+  const pageSize = 500;
+  var offset = 0;
+  while (true) {
+    final page = await msgRepo.getMessagesPage(
+      groupId,
+      limit: pageSize,
+      offset: offset,
+    );
+    for (final message in page) {
+      if (message.groupId == groupId &&
+          message.senderPeerId == senderId &&
+          message.text == sanitizedText &&
+          message.timestamp.toUtc().isAtSameMomentAs(
+            normalizedTimestamp.toUtc(),
+          )) {
+        return message;
+      }
+    }
+    if (page.length < pageSize) {
+      return null;
+    }
+    offset += page.length;
+  }
 }
 
 bool _isRepairPlaceholder(GroupMessage message) {

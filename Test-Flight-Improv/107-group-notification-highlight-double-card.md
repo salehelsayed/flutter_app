@@ -157,3 +157,43 @@
 - Simulator evidence is required for device-context notification confidence: foreground or background notification-open behavior must route to the intended group message and show a polished focus state without a stacked-card impression.
 - Visual evidence is required for both dark and light readable backgrounds so the acceptance cannot pass while the issue remains visible only under one background style.
 - The final acceptance evidence must explicitly include the regression and preservation cases `TC-107-R01`, `TC-107-R02`, and `TC-107-R08`; passing tests that only assert a `grp-highlight-*` key exists or only collapse same-content rows are not sufficient.
+
+## Final Closure Evidence - 2026-06-05
+
+- Final rollout verdict: `accepted_with_explicit_follow_up`.
+- Repo-owned closure: `TC-107-R01`, `TC-107-R02`, and `TC-107-R08` are closed by sessions `01` through `04`.
+- Explicit follow-up: provider-backed APNs/TestFlight or simulator notification-open visual proof was not run in this rollout. The direct route/widget/application/integration evidence below is the accepted repo-owned closure layer, and the provider/device check remains a confidence follow-up rather than a blocker to the landed host-side fix.
+- Follow-up update, `2026-06-05 17:24 CEST`: the manual APNs-open regression where Bob saw a second local group notification after opening the first notification, plus repeated taps stacking the same group route, is closed at the deterministic app/NSE seams. Remote group notification opens now mark the same target as a recent remote announcement before inbox drain, so later live/replay materialization does not display a second local notification for that message. Group notification routing now skips pushing another group conversation route when the tapped target is already active. Group push preview parity with 1:1 messages is also tightened: the encrypted group replay payload carries `groupName`, iOS/Dart decrypt preview uses that as the notification title, and relay-visible payload fields still omit plaintext preview values.
+
+### Closed Regression Cases
+
+- `TC-107-R01`: closed for proven logical duplicate deliveries. Modern group sends now carry a durable nullable `logicalDeliveryId` generated once per logical send and preserved through send/retry, Go bridge extras, live listener events, signed offline replay/drain, recovery replay, reload row loading, and notification-anchor row loading. The receive handler converges only shared non-empty `logicalDeliveryId` duplicates under the same validated group/sender, enriches the canonical row, emits `GROUP_HANDLE_INCOMING_MSG_DUPLICATE` with `dedupeBy: logicalDeliveryId`, and does not persist the divergent duplicate row.
+- `TC-107-R02`: closed for the notification-anchor focus artifact. Targeted group rows now use a single-row cue/accent treatment instead of a second rounded bordered wrapper around the normal message card, while preserving reaction inspection, quote/media variants, dark/light readable backgrounds, and normal no-highlight entry.
+- `TC-107-R08`: closed as preserved. PGC-007 same group/sender/text/timestamp rows with different non-empty stable ids and no shared `logicalDeliveryId` still persist as two legitimate rows. Content-only convergence for stable-id rows remains forbidden.
+
+### Final Evidence Commands
+
+- `flutter test test/features/groups/application/handle_incoming_group_message_use_case_test.dart --name "logical delivery convergence|PGC-007"` -> all tests passed (`+3`).
+- `flutter test test/features/groups/application/group_message_listener_test.dart --name "logical delivery convergence|replayed duplicate group message does not create a second local notification|GP-025"` -> all tests passed (`+3`).
+- `flutter test test/features/groups/application/drain_group_offline_inbox_use_case_test.dart --name "logical delivery convergence|GI-024|GI-034"` -> all tests passed (`+3`).
+- `flutter test test/features/groups/presentation/group_conversation_screen_test.dart --name "notification focus cue stays single-row|group rows keep a single glass shell|row shell stays single"` -> all tests passed (`+3`).
+- `flutter test test/features/groups/presentation/group_conversation_wired_test.dart --name "highlights the targeted message context|notification-anchor entry keeps group reaction inspection"` -> all tests passed (`+2`).
+- `flutter test test/integration/group_notification_dedupe_integration_test.dart` -> all tests passed (`+1`).
+- Session `02` additionally passed the focused persistence/receive/listener/replay/send/retry/migration tests, targeted Go bridge/pubsub tests, full migration-chain test, `./scripts/run_test_gates.sh groups` (`+321`), `./scripts/run_test_gates.sh completeness-check` (`769/769` classified), and `git diff --check`.
+- Session `03` additionally passed the focused receive/listener/drain/widget/wired convergence tests, `./scripts/run_test_gates.sh groups` (`+321`), and `git diff --check`.
+
+### Manual Follow-up Evidence Commands
+
+- `flutter test test/core/notifications/recent_remote_notification_gate_test.dart test/core/notifications/app_root_notification_open_test.dart test/features/push/application/push_decrypt_preview_test.dart` -> all tests passed (`+25`).
+- `flutter test test/features/groups/application/send_group_message_use_case_test.dart --name "text group message does not send plaintext preview fields|PL-014 media metadata omits group keys plaintext and private keys from diagnostics and relay replay|includes media in inbox payload"` -> all tests passed (`+3`).
+- `flutter test test/features/groups/application/group_message_listener_test.dart --name "suppresses local notification when a recent remote push already announced the same group message|replayed duplicate group message does not create a second local notification|GIRD-006 local group replay suppresses same remote-announced id but not a distinct id"` -> all tests passed (`+3`).
+- `flutter test test/integration/group_notification_dedupe_integration_test.dart test/features/push/application/background_message_handler_test.dart --name "background push announcement suppresses later local group notification for the same message|records a recent remote notification target even when FCM already carries a visible notification|GIRD-006 does not mark remote announcement when group fallback display fails|suppresses group background fallback when display eligibility denies it"` -> all tests passed (`+4`).
+- `xcodebuild build-for-testing -quiet -workspace ios/Runner.xcworkspace -scheme Runner -destination 'platform=iOS Simulator,id=5BA69F1C-B112-47BE-B1FF-8C1003728C8F' -only-testing:RunnerTests/NotificationPreviewResolverTests -parallel-testing-enabled NO` -> exit `0`; only existing project warnings.
+- `xcodebuild test-without-building -quiet -xctestrun /Users/I560101/Library/Developer/Xcode/DerivedData/Runner-fdlavkflmiabpyeuegpuipvnubvr/Build/Products/Runner_iphonesimulator26.5-arm64.xctestrun -destination 'platform=iOS Simulator,id=5BA69F1C-B112-47BE-B1FF-8C1003728C8F' -only-testing:RunnerTests/NotificationPreviewResolverTests -parallel-testing-enabled NO` -> exit `0` on the existing booted iPhone 17 simulator.
+- `./scripts/run_test_gates.sh groups` -> all tests passed (`+321`).
+- `./scripts/run_test_gates.sh baseline` -> host baseline tests passed (`+100`) but the command exited `1` at the device integration step because multiple devices were connected and no device id was specified.
+- `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh baseline` -> all baseline stages passed: host tests (`+100`), `integration_test/loading_states_smoke_test.dart` (`+7`), and `integration_test/posts_phase1_fake_test.dart` (`+1`) on the existing iPhone 17 simulator.
+
+### Maintenance Rule
+
+Do not reopen Report 107 for same-content/timestamp stable-id rows unless a shared logical-delivery identity is present. Reopen it if a shared non-empty `logicalDeliveryId` can again produce two persisted or user-visible rows, if notification-anchor focus regresses into a second card-like wrapper, if APNs-open drain can again show a second local notification for the same group message, if repeated notification taps can stack the same group route, or if PGC-007 legitimate distinct stable-id sends are collapsed.

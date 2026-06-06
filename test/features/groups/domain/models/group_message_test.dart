@@ -12,6 +12,7 @@ void main() {
       String text = 'Hello group',
       String timestamp = '2026-01-15T12:00:00.000Z',
       String? quotedMessageId,
+      String? logicalDeliveryId,
       int keyGeneration = 1,
       String status = 'sent',
       int isIncoming = 1,
@@ -26,6 +27,7 @@ void main() {
         'text': text,
         'timestamp': timestamp,
         'quoted_message_id': quotedMessageId,
+        if (logicalDeliveryId != null) 'logical_delivery_id': logicalDeliveryId,
         'key_generation': keyGeneration,
         'status': status,
         'is_incoming': isIncoming,
@@ -59,6 +61,14 @@ void main() {
 
       expect(model.quotedMessageId, 'msg-parent-1');
       expect(model.toMap()['quoted_message_id'], 'msg-parent-1');
+    });
+
+    test('round-trip preserves logical_delivery_id', () {
+      final map = makeMap(logicalDeliveryId: 'logical-delivery-1');
+      final model = GroupMessage.fromMap(map);
+
+      expect(model.logicalDeliveryId, 'logical-delivery-1');
+      expect(model.toMap()['logical_delivery_id'], 'logical-delivery-1');
     });
 
     test('isIncoming bool correctly converts from int', () {
@@ -139,6 +149,21 @@ void main() {
       expect(cleared.quotedMessageId, isNull);
       expect(replaced.quotedMessageId, 'msg-parent-2');
       expect(msg.quotedMessageId, 'msg-parent-1');
+    });
+
+    test('copyWith preserves, replaces, and clears logicalDeliveryId', () {
+      final msg = GroupMessage.fromMap(
+        makeMap(logicalDeliveryId: 'logical-original'),
+      );
+
+      final preserved = msg.copyWith(text: 'changed body');
+      final replaced = msg.copyWith(logicalDeliveryId: 'logical-replaced');
+      final cleared = msg.copyWith(logicalDeliveryId: null);
+
+      expect(preserved.logicalDeliveryId, 'logical-original');
+      expect(replaced.logicalDeliveryId, 'logical-replaced');
+      expect(cleared.logicalDeliveryId, isNull);
+      expect(msg.logicalDeliveryId, 'logical-original');
     });
   });
 }

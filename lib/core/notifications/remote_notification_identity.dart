@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 
 String? remoteNotificationMessageIdFromData(Map<String, dynamic> data) {
   return _trimToNull(data['message_id']?.toString()) ??
@@ -15,6 +16,24 @@ bool routeTargetSupportsMessageAwareRemoteDedupe(
     NotificationRouteTargetKind.group => true,
     _ => false,
   };
+}
+
+Future<bool> markRemoteNotificationOpenAsRecentAnnouncement({
+  required Map<String, dynamic> data,
+  required RecentRemoteNotificationGate gate,
+}) async {
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+  if (routeTarget == null ||
+      !routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind)) {
+    return false;
+  }
+
+  await gate.markAnnouncement(
+    payload: routeTarget.toPayload(),
+    messageId:
+        remoteNotificationMessageIdFromData(data) ?? routeTarget.messageId,
+  );
+  return true;
 }
 
 String? _trimToNull(String? value) {

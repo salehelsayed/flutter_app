@@ -1607,6 +1607,7 @@ void main() {
           senderDevicePublicKey: 'alice-device-pk',
           senderKeyPackageId: 'alice-key-package',
           messageId: 'msg-gsr-001',
+          groupName: 'Reliable Team',
         );
 
         expect(result['ok'], isTrue);
@@ -1623,6 +1624,7 @@ void main() {
         final payload = sent['payload'] as Map<String, dynamic>;
         expect(payload['groupId'], 'grp-gsr');
         expect(payload['messageId'], 'msg-gsr-001');
+        expect(payload['groupName'], 'Reliable Team');
         expect(payload['senderTransportPeerId'], 'alice-transport');
       },
     );

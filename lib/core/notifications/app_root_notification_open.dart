@@ -1,4 +1,6 @@
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 
 typedef NotificationOpenSideEffect = Future<void> Function();
 
@@ -64,4 +66,14 @@ Future<bool> routeAppRootRemoteNotificationOpenWithResult({
     onMissingGroupRouteId: onMissingGroupRouteId,
     onMissingRouteTarget: onMissingRouteTarget,
   );
+}
+
+bool isNotificationRouteTargetAlreadyActive({
+  required NotificationRouteTarget routeTarget,
+  required ActiveConversationTracker groupConversationTracker,
+}) {
+  if (routeTarget.kind != NotificationRouteTargetKind.group) {
+    return false;
+  }
+  return groupConversationTracker.isViewing(routeTarget.toPayload());
 }

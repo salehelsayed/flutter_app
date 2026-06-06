@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/notification_open_dedupe_gate.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
@@ -201,6 +202,38 @@ void main() {
       }
 
       expect(gate.tryBegin(data), isTrue);
+    });
+
+    test('active group notification route can be skipped without stacking', () {
+      final tracker = ActiveConversationTracker()..setActive('group:group-123');
+
+      expect(
+        isNotificationRouteTargetAlreadyActive(
+          routeTarget: NotificationRouteTarget.group(
+            'group-123',
+            messageId: 'msg-123',
+          ),
+          groupConversationTracker: tracker,
+        ),
+        isTrue,
+      );
+      expect(
+        isNotificationRouteTargetAlreadyActive(
+          routeTarget: NotificationRouteTarget.group(
+            'group-456',
+            messageId: 'msg-123',
+          ),
+          groupConversationTracker: tracker,
+        ),
+        isFalse,
+      );
+      expect(
+        isNotificationRouteTargetAlreadyActive(
+          routeTarget: NotificationRouteTarget.conversation('peer-123'),
+          groupConversationTracker: tracker,
+        ),
+        isFalse,
+      );
     });
   });
 }

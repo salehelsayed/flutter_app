@@ -378,6 +378,62 @@ Future<Map<String, Object?>?> dbLoadGroupMessage(
   }
 }
 
+/// Loads the first visible row with a shared logical delivery identity.
+Future<Map<String, Object?>?> dbLoadGroupMessageByLogicalDeliveryId(
+  DatabaseExecutor db,
+  String groupId,
+  String senderPeerId,
+  String logicalDeliveryId,
+) async {
+  final normalizedLogicalDeliveryId = logicalDeliveryId.trim();
+  if (normalizedLogicalDeliveryId.isEmpty) {
+    return null;
+  }
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_MESSAGES_DB_LOAD_LOGICAL_DELIVERY_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'senderId': senderPeerId.length > 8
+          ? senderPeerId.substring(0, 8)
+          : senderPeerId,
+    },
+  );
+
+  try {
+    final results = await db.query(
+      'group_messages',
+      where:
+          'group_id = ? AND sender_peer_id = ? AND logical_delivery_id = ? AND id NOT LIKE ?',
+      whereArgs: [
+        groupId,
+        senderPeerId,
+        normalizedLogicalDeliveryId,
+        _groupRemovalCutoffMessageIdLike,
+      ],
+      orderBy: 'timestamp ASC, id ASC',
+      limit: 1,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: results.isEmpty
+          ? 'GROUP_MESSAGES_DB_LOAD_LOGICAL_DELIVERY_NOT_FOUND'
+          : 'GROUP_MESSAGES_DB_LOAD_LOGICAL_DELIVERY_FOUND',
+      details: {'count': results.length},
+    );
+    return results.isNotEmpty ? results.first : null;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MESSAGES_DB_LOAD_LOGICAL_DELIVERY_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Updates the status of a group message by ID.
 Future<void> dbUpdateGroupMessageStatus(
   DatabaseExecutor db,

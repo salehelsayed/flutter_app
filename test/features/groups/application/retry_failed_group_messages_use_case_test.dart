@@ -84,6 +84,7 @@ GroupMessage _makeFailedGroupMessage({
   required String timestampIso,
   String? inboxRetryPayload,
   String? quotedMessageId,
+  String? logicalDeliveryId,
   List<Map<String, Object?>> media = const [],
 }) {
   final messageJson = {
@@ -94,6 +95,7 @@ GroupMessage _makeFailedGroupMessage({
     'text': text,
     'timestamp': timestampIso,
     'messageId': id,
+    if (logicalDeliveryId != null) 'logicalDeliveryId': logicalDeliveryId,
     ...quotedMessageId == null
         ? const <String, Object?>{}
         : {'quotedMessageId': quotedMessageId},
@@ -107,6 +109,7 @@ GroupMessage _makeFailedGroupMessage({
     text: text,
     timestamp: DateTime.parse(timestampIso),
     quotedMessageId: quotedMessageId,
+    logicalDeliveryId: logicalDeliveryId,
     keyGeneration: 0,
     status: 'failed',
     isIncoming: false,
@@ -117,6 +120,7 @@ GroupMessage _makeFailedGroupMessage({
       'senderPeerId': 'peer-1',
       'senderUsername': 'Alice',
       'messageId': id,
+      if (logicalDeliveryId != null) 'logicalDeliveryId': logicalDeliveryId,
       ...quotedMessageId == null
           ? const <String, Object?>{}
           : {'quotedMessageId': quotedMessageId},
@@ -341,6 +345,42 @@ void main() {
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
           1,
+        );
+      },
+    );
+
+    test(
+      'logical delivery id is reused when retrying a failed text row',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-logical-retry',
+            text: 'Retry with logical id',
+            timestampIso: '2026-01-15T12:00:00.000Z',
+            logicalDeliveryId: 'logical-retry-original',
+          ),
+        );
+
+        final count = await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage('msg-logical-retry');
+        expect(saved, isNotNull);
+        expect(saved!.logicalDeliveryId, 'logical-retry-original');
+        final publishPayloads = _publishedGroupPayloads(bridge);
+        expect(publishPayloads, hasLength(1));
+        expect(publishPayloads.single['messageId'], 'msg-logical-retry');
+        expect(
+          publishPayloads.single['logicalDeliveryId'],
+          'logical-retry-original',
         );
       },
     );

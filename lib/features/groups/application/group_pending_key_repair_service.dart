@@ -506,10 +506,12 @@ class GroupPendingKeyRepairRunner {
             transportPeerId: payload['transportPeerId'] as String?,
             senderDeviceId: payload['senderDeviceId'] as String?,
             messageId: payload['messageId'] as String?,
+            logicalDeliveryId: payload['logicalDeliveryId'] as String?,
             quotedMessageId: payload['quotedMessageId'] as String?,
             media: (payload['media'] as List<dynamic>?)
                 ?.cast<Map<String, dynamic>>(),
             mediaAttachmentRepo: mediaAttachmentRepo,
+            deliverySource: 'replay',
           );
           if (result == null) {
             throw StateError('replay validation rejected');

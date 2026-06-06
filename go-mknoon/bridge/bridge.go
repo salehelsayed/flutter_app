@@ -1745,6 +1745,8 @@ func GroupPublish(paramsJSON string) (result string) {
 		SenderDevicePublicKey    string                   `json:"senderDevicePublicKey,omitempty"`
 		SenderKeyPackageId       string                   `json:"senderKeyPackageId,omitempty"`
 		MessageId                string                   `json:"messageId,omitempty"`
+		LogicalDeliveryId        string                   `json:"logicalDeliveryId,omitempty"`
+		GroupName                string                   `json:"groupName,omitempty"`
 		Timestamp                string                   `json:"timestamp,omitempty"`
 		QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
 		Media                    []map[string]interface{} `json:"media,omitempty"`
@@ -1781,6 +1783,12 @@ func GroupPublish(paramsJSON string) (result string) {
 	}
 	if params.Timestamp != "" {
 		opts["timestamp"] = params.Timestamp
+	}
+	if params.LogicalDeliveryId != "" {
+		opts["logicalDeliveryId"] = params.LogicalDeliveryId
+	}
+	if params.GroupName != "" {
+		opts["groupName"] = params.GroupName
 	}
 
 	msgId, topicPeers, err := n.PublishGroupMessage(
@@ -1833,6 +1841,8 @@ func GroupSendReliable(paramsJSON string) (result string) {
 		SenderDevicePublicKey    string                   `json:"senderDevicePublicKey,omitempty"`
 		SenderKeyPackageId       string                   `json:"senderKeyPackageId,omitempty"`
 		MessageId                string                   `json:"messageId,omitempty"`
+		LogicalDeliveryId        string                   `json:"logicalDeliveryId,omitempty"`
+		GroupName                string                   `json:"groupName,omitempty"`
 		Timestamp                string                   `json:"timestamp,omitempty"`
 		QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
 		Media                    []map[string]interface{} `json:"media,omitempty"`
@@ -1868,6 +1878,12 @@ func GroupSendReliable(paramsJSON string) (result string) {
 	}
 	if params.Timestamp != "" {
 		opts["timestamp"] = params.Timestamp
+	}
+	if params.LogicalDeliveryId != "" {
+		opts["logicalDeliveryId"] = params.LogicalDeliveryId
+	}
+	if params.GroupName != "" {
+		opts["groupName"] = params.GroupName
 	}
 	if params.PreserveRecipientPeerIds {
 		opts["recipientPeerIds"] = params.RecipientPeerIds
