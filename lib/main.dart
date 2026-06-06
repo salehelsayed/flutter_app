@@ -1111,6 +1111,8 @@ void main() async {
           dbLoadGroupThreadSummaries(executor, groupIds),
       dbLoadFailedOutgoingGroupMessagesFn: () =>
           dbLoadFailedOutgoingGroupMessages(executor),
+      dbLoadRetryableOutgoingGroupMessagesFn: () =>
+          dbLoadRetryableOutgoingGroupMessages(executor),
       dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
           dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
       dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>

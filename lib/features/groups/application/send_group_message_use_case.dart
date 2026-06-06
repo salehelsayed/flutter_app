@@ -331,9 +331,12 @@ bool _canReuseOutgoingMessageId({
   required String text,
   required DateTime timestamp,
   String? quotedMessageId,
+  String? logicalDeliveryId,
 }) {
   if (existing.isIncoming) return false;
-  if (existing.status != 'sending' && existing.status != 'failed') {
+  if (existing.status != 'sending' &&
+      existing.status != 'failed' &&
+      existing.status != 'pending') {
     return false;
   }
   if (existing.groupId != groupId || existing.senderPeerId != senderPeerId) {
@@ -341,6 +344,17 @@ bool _canReuseOutgoingMessageId({
   }
   if (existing.text != text) return false;
   if (!_sameOptionalString(existing.quotedMessageId, quotedMessageId)) {
+    return false;
+  }
+  final existingLogicalDeliveryId = _normalizeLogicalDeliveryId(
+    existing.logicalDeliveryId,
+  );
+  final requestedLogicalDeliveryId = _normalizeLogicalDeliveryId(
+    logicalDeliveryId,
+  );
+  if (existingLogicalDeliveryId != null &&
+      requestedLogicalDeliveryId != null &&
+      existingLogicalDeliveryId != requestedLogicalDeliveryId) {
     return false;
   }
   return existing.timestamp.toUtc().isAtSameMomentAs(timestamp.toUtc());
@@ -355,6 +369,7 @@ Future<String?> _resolveOutgoingMessageId({
   required GroupMessageIdFactory messageIdFactory,
   String? requestedMessageId,
   String? quotedMessageId,
+  String? logicalDeliveryId,
 }) async {
   String nextCandidate() => messageIdFactory().trim();
   var candidate = requestedMessageId?.trim().isNotEmpty == true
@@ -377,6 +392,7 @@ Future<String?> _resolveOutgoingMessageId({
       text: text,
       timestamp: timestamp,
       quotedMessageId: quotedMessageId,
+      logicalDeliveryId: logicalDeliveryId,
     )) {
       return candidate;
     }
@@ -821,6 +837,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     text: sanitizedText,
     timestamp: now,
     quotedMessageId: quotedMessageId,
+    logicalDeliveryId: logicalDeliveryId,
     requestedMessageId: messageId,
     messageIdFactory: messageIdFactory ?? _defaultGroupMessageIdFactory,
   );

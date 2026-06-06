@@ -65,6 +65,8 @@ class GroupMessageRepositoryImpl
   dbLoadGroupThreadSummaries;
   final Future<List<Map<String, dynamic>>> Function()?
   dbLoadFailedOutgoingGroupMessagesFn;
+  final Future<List<Map<String, dynamic>>> Function()?
+  dbLoadRetryableOutgoingGroupMessagesFn;
   final Future<int> Function({DateTime? olderThan})?
   dbRecoverStuckSendingGroupMessagesFn;
   final Future<List<Map<String, dynamic>>> Function({int limit})?
@@ -105,6 +107,7 @@ class GroupMessageRepositoryImpl
     required this.dbDeleteGroupMessagesForGroup,
     required this.dbLoadGroupThreadSummaries,
     this.dbLoadFailedOutgoingGroupMessagesFn,
+    this.dbLoadRetryableOutgoingGroupMessagesFn,
     this.dbRecoverStuckSendingGroupMessagesFn,
     this.dbLoadGroupMessagesWithFailedInboxStore,
     this.dbUpdateGroupMessageInboxStoredFn,
@@ -193,6 +196,17 @@ class GroupMessageRepositoryImpl
   @override
   Future<List<GroupMessage>> getFailedOutgoingMessages() async {
     final fn = dbLoadFailedOutgoingGroupMessagesFn;
+    if (fn == null) return const [];
+    final rows = await fn();
+    final messages = rows.map((row) => GroupMessage.fromMap(row));
+    return orderGroupMessagesForTimeline(messages);
+  }
+
+  @override
+  Future<List<GroupMessage>> getRetryableOutgoingMessages() async {
+    final fn =
+        dbLoadRetryableOutgoingGroupMessagesFn ??
+        dbLoadFailedOutgoingGroupMessagesFn;
     if (fn == null) return const [];
     final rows = await fn();
     final messages = rows.map((row) => GroupMessage.fromMap(row));

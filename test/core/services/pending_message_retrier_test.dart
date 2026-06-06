@@ -879,6 +879,276 @@ void main() {
       });
     });
 
+    test('GFR-002 readiness return runs queued group retry once', () {
+      fakeAsync((async) {
+        final callOrder = <String>[];
+
+        p2pService = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/p2p-circuit/relay-visible'],
+            relayState: 'online',
+            sendCapabilityReady: false,
+            inboxCapabilityReady: false,
+          ),
+        );
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          retryDebounce: Duration.zero,
+          rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
+            callOrder.add('rejoinGroupTopics');
+            return true;
+          },
+          drainGroupOfflineInboxFn: () async {
+            callOrder.add('drainGroupOfflineInbox');
+          },
+          acknowledgeGroupRecoveryFn: () async {
+            callOrder.add('acknowledgeRecovery');
+          },
+          recoverStuckSendingGroupMessagesFn: () async {
+            callOrder.add('recoverStuckSendingGroupMessages');
+            return 0;
+          },
+          retryIncompleteGroupUploadsFn: () async {
+            callOrder.add('retryIncompleteGroupUploads');
+            return 0;
+          },
+          retryFailedGroupMessagesFn: () async {
+            callOrder.add('retryFailedGroupMessages');
+            return 1;
+          },
+          retryFailedMessagesOverride: () async {
+            callOrder.add('retryFailedMessages');
+            return 0;
+          },
+          retryUnackedMessagesOverride: () async {
+            callOrder.add('retryUnackedMessages');
+            return 0;
+          },
+          retryFailedGroupInboxStoresFn: () async {
+            callOrder.add('retryFailedGroupInboxStores');
+            return 0;
+          },
+        );
+        retrier.start();
+
+        async.elapse(Duration.zero);
+        async.flushMicrotasks();
+
+        expect(callOrder, <String>[
+          'retryFailedMessages',
+          'retryUnackedMessages',
+        ]);
+        callOrder.clear();
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/p2p-circuit/relay-visible'],
+            relayState: 'online',
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+          ),
+        );
+
+        async.elapse(Duration.zero);
+        async.flushMicrotasks();
+
+        expect(callOrder, <String>[
+          'rejoinGroupTopics',
+          'drainGroupOfflineInbox',
+          'acknowledgeRecovery',
+          'recoverStuckSendingGroupMessages',
+          'retryIncompleteGroupUploads',
+          'retryFailedGroupMessages',
+          'retryFailedMessages',
+          'retryUnackedMessages',
+          'retryFailedGroupInboxStores',
+        ]);
+      });
+    });
+
+    test('GFR-002 readiness flapping coalesces queued group retry', () {
+      fakeAsync((async) {
+        final retryGate = Completer<void>();
+        var retryFailedGroupMessagesCalls = 0;
+
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          retryDebounce: Duration.zero,
+          retryFailedGroupMessagesFn: () {
+            retryFailedGroupMessagesCalls++;
+            return retryGate.future.then((_) => 1);
+          },
+          retryFailedMessagesOverride: () async => 0,
+          retryUnackedMessagesOverride: () async => 0,
+        );
+        retrier.start();
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/p2p-circuit/relay-visible'],
+            relayState: 'online',
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+          ),
+        );
+        async.elapse(Duration.zero);
+        async.flushMicrotasks();
+
+        expect(retryFailedGroupMessagesCalls, 1);
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/p2p-circuit/relay-visible'],
+            relayState: 'online',
+            sendCapabilityReady: false,
+            inboxCapabilityReady: false,
+          ),
+        );
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/p2p-circuit/relay-visible'],
+            relayState: 'online',
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+          ),
+        );
+        async.elapse(Duration.zero);
+        async.flushMicrotasks();
+
+        expect(retryFailedGroupMessagesCalls, 1);
+
+        retryGate.complete();
+        async.flushMicrotasks();
+
+        expect(retryFailedGroupMessagesCalls, 1);
+      });
+    });
+
+    test(
+      'GFR-002 app resume external recovery suppresses relay-ready auto recovery',
+      () {
+        fakeAsync((async) {
+          var rejoinCalled = false;
+          var drainCalled = false;
+          var retryFailedGroupMessagesCalled = false;
+
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            retryDebounce: Duration.zero,
+            rejoinGroupTopicsFn: () async {
+              rejoinCalled = true;
+            },
+            drainGroupOfflineInboxFn: () async {
+              drainCalled = true;
+            },
+            retryFailedGroupMessagesFn: () async {
+              retryFailedGroupMessagesCalled = true;
+              return 0;
+            },
+            retryFailedMessagesOverride: () async => 0,
+            retryUnackedMessagesOverride: () async => 0,
+            isExternalRecoveryInProgressFn: () => true,
+          );
+          retrier.start();
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/p2p-circuit/relay-visible'],
+              relayState: 'online',
+              sendCapabilityReady: true,
+              inboxCapabilityReady: true,
+            ),
+          );
+          async.elapse(Duration.zero);
+          async.flushMicrotasks();
+
+          expect(rejoinCalled, isFalse);
+          expect(drainCalled, isFalse);
+          expect(retryFailedGroupMessagesCalled, isFalse);
+        });
+      },
+    );
+
+    test(
+      'GFR-002 enableResumeGroupRecovery false disables auto group retry',
+      () {
+        fakeAsync((async) {
+          var rejoinCalled = false;
+          var drainCalled = false;
+          var retryFailedGroupMessagesCalled = false;
+          var retryFailedMessagesCalled = false;
+
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            retryDebounce: Duration.zero,
+            rejoinGroupTopicsFn: () async {
+              rejoinCalled = true;
+            },
+            drainGroupOfflineInboxFn: () async {
+              drainCalled = true;
+            },
+            retryFailedGroupMessagesFn: () async {
+              retryFailedGroupMessagesCalled = true;
+              return 0;
+            },
+            retryFailedMessagesOverride: () async {
+              retryFailedMessagesCalled = true;
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async => 0,
+          );
+          retrier.start();
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/p2p-circuit/relay-visible'],
+              relayState: 'online',
+              featureFlags: {'enableResumeGroupRecovery': false},
+              sendCapabilityReady: true,
+              inboxCapabilityReady: true,
+            ),
+          );
+          async.elapse(Duration.zero);
+          async.flushMicrotasks();
+
+          expect(rejoinCalled, isFalse);
+          expect(drainCalled, isFalse);
+          expect(retryFailedGroupMessagesCalled, isFalse);
+          expect(retryFailedMessagesCalled, isTrue);
+        });
+      },
+    );
+
     test(
       'periodic sweep does not replay a row already settled by manual recovery',
       () {

@@ -1224,6 +1224,28 @@ Future<void> _waitForTimelineTexts({
   }, timeout: const Duration(seconds: 120));
 }
 
+Future<void> _markDirectFixtureInviteesJoined({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, Map<String, dynamic>> identities,
+  required Iterable<String> roles,
+}) async {
+  final joinedAt = DateTime.now().toUtc();
+  for (final role in roles) {
+    final identity = identities[role];
+    final peerId = (identity?['peerId'] as String?)?.trim();
+    if (peerId == null || peerId.isEmpty) {
+      throw StateError('Missing identity peerId for joined fixture role $role');
+    }
+    await stack.groupInviteDeliveryAttemptRepo.markJoined(
+      groupId: groupId,
+      peerId: peerId,
+      username: identity?['username'] as String? ?? _usernameForRole(role),
+      joinedAt: joinedAt,
+    );
+  }
+}
+
 Map<String, dynamic> _ml001AliceProof({
   required Map<String, dynamic> createProof,
   required bool bobAcceptedSignal,
@@ -2699,7 +2721,7 @@ Future<Map<String, dynamic>> _waitForReceivedProofMessageFromOfflineDrain({
     text: text,
     senderPeerId: senderPeerId,
     timeout: timeout,
-    drainWhileWaiting: false,
+    drainWhileWaiting: true,
   );
   final enriched = <String, dynamic>{
     ...received,
@@ -6793,6 +6815,12 @@ Future<void> _runNw004Alice(
 
     await waitForSharedSignal(_signalName('bob_nw004_group_joined'));
     await waitForSharedSignal(_signalName('charlie_nw004_group_joined'));
+    await _markDirectFixtureInviteesJoined(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      roles: const <String>['bob', 'charlie'],
+    );
     await Future<void>.delayed(const Duration(seconds: 5));
 
     writeSharedText(_signalName('nw004_prepare_relay_drop'), 'ok');
@@ -7136,6 +7164,12 @@ Future<void> _runNw006Alice(
 
     await waitForSharedSignal(_signalName('bob_nw006_group_joined'));
     await waitForSharedSignal(_signalName('charlie_nw006_group_joined'));
+    await _markDirectFixtureInviteesJoined(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      roles: const <String>['bob', 'charlie'],
+    );
     final membersBefore = (await _memberPeerIds(stack, groupId)).toSet();
     final epochBefore = await _keyEpoch(stack, groupId);
     await Future<void>.delayed(const Duration(seconds: 5));
@@ -7543,6 +7577,12 @@ Future<void> _runNw010Alice(
 
     await waitForSharedSignal(_signalName('bob_nw010_group_joined'));
     await waitForSharedSignal(_signalName('charlie_nw010_group_joined'));
+    await _markDirectFixtureInviteesJoined(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      roles: const <String>['bob', 'charlie'],
+    );
     final epochBefore = await _keyEpoch(stack, groupId);
     await Future<void>.delayed(const Duration(seconds: 5));
 

@@ -205,6 +205,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   final ScrollController _scrollController = ScrollController();
   bool _initialLoadDone = false;
   bool _isSending = false;
+  Set<String> _retryingFailedMessageIds = const {};
   String? _activeQuoteMessageId;
   String _draftText = '';
   String? _messageLoadErrorText;
@@ -338,6 +339,27 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       setState(() => _isSending = false);
     } else {
       _isSending = false;
+    }
+  }
+
+  bool _tryBeginFailedMessageRetry(String messageId) {
+    if (_retryingFailedMessageIds.contains(messageId)) return false;
+    final next = {..._retryingFailedMessageIds, messageId};
+    if (mounted) {
+      setState(() => _retryingFailedMessageIds = next);
+    } else {
+      _retryingFailedMessageIds = next;
+    }
+    return true;
+  }
+
+  void _endFailedMessageRetry(String messageId) {
+    if (!_retryingFailedMessageIds.contains(messageId)) return;
+    final next = {..._retryingFailedMessageIds}..remove(messageId);
+    if (mounted) {
+      setState(() => _retryingFailedMessageIds = next);
+    } else {
+      _retryingFailedMessageIds = next;
     }
   }
 
@@ -2304,6 +2326,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _onRetryFailedMessage(String messageId) async {
+    if (!_canWrite) return;
+    if (groupRecoveryGate.activeDepthListenable.value > 0) return;
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
     if (mediaAttachmentRepo == null) {
       _showFloatingSnackBar(
@@ -2313,23 +2337,28 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
 
-    final retried = await retryFailedGroupMessage(
-      messageId: messageId,
-      groupMsgRepo: widget.msgRepo,
-      groupRepo: widget.groupRepo,
-      identityRepo: widget.identityRepo,
-      bridge: widget.bridge,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
-    );
-
-    await _refreshMessageWithHydratedMedia(messageId);
-
-    if (retried == 0) {
-      _showFloatingSnackBar(
-        AppLocalizations.of(context)!.failed_message_retry_failed,
-        backgroundColor: Colors.red[700],
+    if (!_tryBeginFailedMessageRetry(messageId)) return;
+    try {
+      final retried = await retryFailedGroupMessage(
+        messageId: messageId,
+        groupMsgRepo: widget.msgRepo,
+        groupRepo: widget.groupRepo,
+        identityRepo: widget.identityRepo,
+        bridge: widget.bridge,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
       );
+
+      await _refreshMessageWithHydratedMedia(messageId);
+
+      if (retried == 0) {
+        _showFloatingSnackBar(
+          AppLocalizations.of(context)!.failed_message_retry_failed,
+          backgroundColor: Colors.red[700],
+        );
+      }
+    } finally {
+      _endFailedMessageRetry(messageId);
     }
   }
 
@@ -2374,12 +2403,45 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     } catch (_) {}
   }
 
+  Future<void> _markFailedTextMessageWithoutComposerRestore(
+    String messageId, {
+    String? snackText,
+    bool showSnackBar = false,
+  }) async {
+    _draftText = '';
+    _pendingAttachments = [];
+    _clearRestoredMediaContinuationTracking();
+    if (mounted) {
+      _updateComposerState(pendingAttachments: const [], isUploading: false);
+    }
+    _updateLocalMessageStatus(messageId, 'failed');
+    if (mounted) {
+      setState(() {
+        _activeQuoteMessageId = null;
+      });
+    } else {
+      _activeQuoteMessageId = null;
+    }
+    await _persistMessageStatus(messageId, 'failed');
+    if (showSnackBar && snackText != null) {
+      _showFloatingSnackBar(snackText);
+    }
+  }
+
   Future<void> _restoreComposerSnapshot(
     _GroupComposerSnapshot snapshot,
     String messageId, {
     String? snackText,
     bool showSnackBar = false,
   }) async {
+    if (snapshot.pendingAttachments.isEmpty) {
+      await _markFailedTextMessageWithoutComposerRestore(
+        messageId,
+        snackText: snackText,
+        showSnackBar: showSnackBar,
+      );
+      return;
+    }
     _draftText = snapshot.draftText;
     _pendingAttachments = List<PendingComposerMedia>.from(
       snapshot.pendingAttachments,
@@ -4299,6 +4361,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 _canWrite && widget.mediaAttachmentRepo != null
                 ? _onRetryFailedMessage
                 : null,
+            retryingFailedMessageIds: _retryingFailedMessageIds,
             onRetryFailedMedia:
                 _canWrite &&
                     widget.mediaAttachmentRepo != null &&

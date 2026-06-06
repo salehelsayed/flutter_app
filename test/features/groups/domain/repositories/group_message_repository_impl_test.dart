@@ -81,6 +81,8 @@ void main() {
           dbLoadGroupThreadSummaries(executor, groupIds),
       dbLoadFailedOutgoingGroupMessagesFn: () =>
           dbLoadFailedOutgoingGroupMessages(executor),
+      dbLoadRetryableOutgoingGroupMessagesFn: () =>
+          dbLoadRetryableOutgoingGroupMessages(executor),
       dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
           dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
       dbLoadGroupInboxCursorFn: (groupId) async {
@@ -876,6 +878,43 @@ void main() {
       expect(failed, hasLength(1));
       expect(failed.single.id, 'failed-outgoing');
     });
+
+    test(
+      'GFR-002 loads failed and pending outgoing retryable messages',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'failed-outgoing',
+            status: 'failed',
+            isIncoming: false,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'pending-outgoing',
+            status: 'pending',
+            isIncoming: false,
+            timestamp: DateTime.utc(2026, 6, 6, 8, 1),
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'pending-incoming',
+            status: 'pending',
+            isIncoming: true,
+          ),
+        );
+
+        final retryable = await repo.getRetryableOutgoingMessages();
+        final failedOnly = await repo.getFailedOutgoingMessages();
+
+        expect(retryable.map((message) => message.id), [
+          'failed-outgoing',
+          'pending-outgoing',
+        ]);
+        expect(failedOnly.map((message) => message.id), ['failed-outgoing']);
+      },
+    );
 
     test('recovers stuck sending messages older than threshold', () async {
       final now = DateTime.now().toUtc();

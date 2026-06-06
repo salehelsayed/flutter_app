@@ -97,6 +97,7 @@ import 'package:flutter_app/core/database/migrations/070_group_key_rotation_draf
 import 'package:flutter_app/core/database/migrations/071_pending_introduction_response_transport_sender.dart';
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
+import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -344,7 +345,7 @@ Future<sqlcipher.Database> _openTestDatabase({
   return openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 73,
+    version: 74,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -418,6 +419,7 @@ Future<sqlcipher.Database> _openTestDatabase({
       await runPendingIntroductionResponseTransportSenderMigration(db);
       await runGroupPendingMembershipMessagesMigration(db);
       await runGroupMessageLastSendAttemptAtMigration(db);
+      await runGroupMessageLogicalDeliveryIdMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -506,6 +508,7 @@ Future<sqlcipher.Database> _openTestDatabase({
       }
       if (oldVersion < 72) await runGroupPendingMembershipMessagesMigration(db);
       if (oldVersion < 73) await runGroupMessageLastSendAttemptAtMigration(db);
+      if (oldVersion < 74) await runGroupMessageLogicalDeliveryIdMigration(db);
     },
   );
 }

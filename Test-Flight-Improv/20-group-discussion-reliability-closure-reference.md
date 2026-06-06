@@ -29,7 +29,10 @@ The current group discussion system should be treated as **reliably closed for c
 3. the current reachable text send surfaces share one interruption-safe sender entry contract,
 4. ordinary media remains durable across send-then-lock and publish-failure retry paths,
 5. one conversation screen does not run overlapping local send pipelines,
-6. user-visible statuses stay honest for a receipt-less group transport model.
+6. user-visible statuses stay honest for a receipt-less group transport model,
+7. failed, queued, retrying, pending, and auto-recovered group text attempts
+   preserve one user intent as one sender-visible row and one
+   recipient-visible delivery.
 
 This is the closure bar for current group discussions.
 
@@ -523,6 +526,59 @@ That is the correct level of honesty for a publish + inbox-backed, receipt-less 
   taps can stack the same group route, or PGC-007 legitimate distinct stable-id
   sends are collapsed without shared logical-delivery proof.
 
+### 18. Group failed/queued text retry duplicate-send closure
+
+- Report 108 is closed on `2026-06-06` for the group text failed-message retry
+  duplicate-send UX.
+- The accepted contract is client-side one-attempt/one-copy recovery: one group
+  text user intent keeps one stable outgoing attempt across failed, queued,
+  retrying, pending/in-doubt, sent, and delivered states. Manual Retry, repeated
+  Retry taps, Retry overlapping composer Send, relay-ready auto recovery, and
+  app-resume recovery coalesce on that attempt instead of creating an
+  independent second send.
+- The open-conversation contract is now explicit: a no-usable-transport send
+  leaves one queued/in-progress row, clears the composer of that text, updates
+  the existing row through local outgoing status or rows-changed signals, and
+  does not restore the same failed text as a separate composer-send
+  opportunity while the row is retryable.
+- Closure evidence:
+  - GFR-001 accepted stable retry attempt identity, pending retry eligibility,
+    receiver duplicate suppression, and distinct intentional same-text sends
+    after settlement.
+  - GFR-002 accepted queued auto-send on readiness return and coalescing between
+    relay-ready and app-resume recovery, with the whole-journey simulator
+    follow-up carried to GFR-004.
+  - GFR-003 closed the conversation UX: row-scoped retry in-flight state,
+    composer clearing for the failed text path, failed media preservation, and
+    local row update proof.
+  - GFR-004 accepted the required simulator proof after the harness/schema
+    blockers were fixed. `run_with_devices.sh group --list` passed,
+    `private_relay_reconnect_group_recovery` run `1780758396971` passed, and
+    `private_background_resume_group_delivery` run `1780758894898` passed.
+    In both accepted simulator runs Alice, Bob, and Charlie logged migration
+    `074_group_message_logical_delivery_id` success with no missing-column
+    failure. Alice's target-message publish debug showed
+    `deliveryMode:"live_and_inbox"`, `expectedRecipientCount:2`, and
+    `inboxStored:true`; Bob wrote the required received-proof JSON with
+    `liveOnly:false`, `usedOfflineDrain:true`, and `persistedCount:1`; all
+    Alice/Bob/Charlie role verdicts and both orchestrator verdicts were
+    written.
+- Accepted differences: this closure does not add relay-side uniqueness,
+  per-recipient ACKs, read receipts, or a group status redesign. It accepts the
+  existing receipt-less group status semantics while closing the duplicate-send
+  user-intent bug at the client recovery layer.
+- Residual-only: none for Report 108. Broader provider/device-lab release
+  confidence can still be run, but it is not a Report 108 blocker unless it
+  exposes a real duplicate-send regression.
+- Reopen Report 108 only if a failed, queued, retrying, pending, or
+  auto-recovered group text can again produce a second sender-visible row or
+  second recipient-visible delivery for one user intent; if no-usable-transport
+  group sends no longer queue once and auto-recover once; if pending rows become
+  stranded outside recovery; if open conversation recovery resurrects the same
+  failed text as a separate composer send opportunity; or if the accepted GFR-004
+  simulator target messages stop producing Bob received-proof and role verdict
+  artifacts.
+
 ---
 
 ## Accepted Architectural Differences From 1:1
@@ -617,7 +673,10 @@ Reopen this area only if one of these happens:
 5. resume recovery stops restoring sender work safely, including exact-once closure of interrupted pending rows or the `retryFailedGroupInboxStores(...)` recovery step,
 6. the one-thread send guard regresses,
 7. voice publish-failure retry becomes a real escaped bug or clearly justified trust gap,
-8. a direct regression or named gate proves an escaped bug in shared group send/retry/recovery behavior.
+8. Report 108's one-attempt/one-copy group text recovery regresses across
+   failed, queued, retrying, pending, manual retry, auto recovery, or
+   app-resume recovery paths,
+9. a direct regression or named gate proves an escaped bug in shared group send/retry/recovery behavior.
 
 Do **not** reopen group reliability just because someone notices that group semantics are weaker than 1:1 in the abstract.
 
@@ -661,6 +720,7 @@ Future changes should preserve:
 - resume-oriented repair,
 - exact-once closure of interrupted pending rows,
 - one-thread send determinism,
+- one-attempt/one-copy failed and queued group text recovery,
 - honest receipt-less status semantics,
 - the settled general-media size contract,
 - and honest foreground-only upload protection plus batch-bounded failed-media

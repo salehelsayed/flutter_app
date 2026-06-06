@@ -77,6 +77,7 @@ class GroupConversationScreen extends StatelessWidget {
   final ValueChanged<String>? onDeleteFailedMedia;
   final void Function(String messageId, String attachmentId)?
   onRetryUnavailableMedia;
+  final Set<String> retryingFailedMessageIds;
   final String? activeQuoteText;
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
@@ -133,6 +134,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
     this.onRetryUnavailableMedia,
+    this.retryingFailedMessageIds = const {},
     this.activeQuoteText,
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
@@ -554,6 +556,11 @@ class GroupConversationScreen extends StatelessWidget {
             messageMedia.isEmpty &&
             message.text.trim().isNotEmpty &&
             onRetryFailedMessage != null;
+        final isRetryingFailedText = retryingFailedMessageIds.contains(
+          message.id,
+        );
+        final isFailedTextRetryEnabled =
+            showFailedTextRetry && !isRecovering && !isRetryingFailedText;
         final isHighlighted = highlightedMessageId == message.id;
         final canReplyFromContext = canWrite && onQuoteReply != null;
         final canCopyFromContext = message.text.trim().isNotEmpty;
@@ -591,6 +598,7 @@ class GroupConversationScreen extends StatelessWidget {
           onRetryFailedMessage: showFailedTextRetry
               ? () => onRetryFailedMessage!(message.id)
               : null,
+          isRetryFailedMessageEnabled: isFailedTextRetryEnabled,
           failedMessageActionKeySuffix: message.id,
           onRetryFailedMedia:
               showFailedMediaActions && onRetryFailedMedia != null

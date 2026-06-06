@@ -246,6 +246,18 @@ class InMemoryGroupMessageRepository
   }
 
   @override
+  Future<List<GroupMessage>> getRetryableOutgoingMessages() async {
+    final retryable = _messages.values
+        .where(
+          (m) =>
+              !m.isIncoming && (m.status == 'failed' || m.status == 'pending'),
+        )
+        .toList();
+    retryable.sort(compareGroupMessagesAscending);
+    return retryable;
+  }
+
+  @override
   Future<int> recoverStuckSendingMessages({required Duration olderThan}) async {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     var count = 0;

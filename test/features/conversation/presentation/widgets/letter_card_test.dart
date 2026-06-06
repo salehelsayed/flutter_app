@@ -33,6 +33,7 @@ void main() {
     VoidCallback? onRetryFailedMedia,
     VoidCallback? onDeleteFailedMedia,
     void Function(String attachmentId)? onRetryUnavailableMedia,
+    bool isRetryFailedMessageEnabled = true,
     String? failedMessageActionKeySuffix,
     String? failedMediaActionKeySuffix,
     bool requireVerifiedContentHash = false,
@@ -65,6 +66,7 @@ void main() {
             onRetryFailedMedia: onRetryFailedMedia,
             onDeleteFailedMedia: onDeleteFailedMedia,
             onRetryUnavailableMedia: onRetryUnavailableMedia,
+            isRetryFailedMessageEnabled: isRetryFailedMessageEnabled,
             failedMessageActionKeySuffix: failedMessageActionKeySuffix,
             failedMediaActionKeySuffix: failedMediaActionKeySuffix,
             requireVerifiedContentHash: requireVerifiedContentHash,
@@ -932,6 +934,36 @@ void main() {
 
         expect(retried, isTrue);
       });
+
+      testWidgets(
+        'GFR-003 disables retry control when row retry is in flight',
+        (tester) async {
+          var retried = false;
+
+          await tester.pumpWidget(
+            buildTestWidget(
+              isIncoming: false,
+              status: 'failed',
+              text: 'Retry this text',
+              onRetryFailedMessage: () => retried = true,
+              isRetryFailedMessageEnabled: false,
+              failedMessageActionKeySuffix: 'failed-text',
+            ),
+          );
+
+          final retryFinder = find.byKey(
+            const ValueKey('failed-message-retry-failed-text'),
+          );
+          expect(retryFinder, findsOneWidget);
+          expect(tester.widget<OutlinedButton>(retryFinder).onPressed, isNull);
+
+          await tester.ensureVisible(retryFinder);
+          await tester.tap(retryFinder);
+          await tester.pump();
+
+          expect(retried, isFalse);
+        },
+      );
     });
   });
 }

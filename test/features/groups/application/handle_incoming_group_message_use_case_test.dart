@@ -1684,6 +1684,73 @@ void main() {
   );
 
   test(
+    'GFR-001 logical delivery replay keeps one receiver-visible row',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final ts = DateTime.utc(2026, 6, 5, 12, 7).toIso8601String();
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'GFR-001 shared logical delivery body',
+        timestamp: ts,
+        messageId: 'gfr001-receiver-row-a',
+        logicalDeliveryId: 'gfr001-logical-delivery-shared',
+        deliverySource: 'live',
+      );
+      final second = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'GFR-001 shared logical delivery body',
+        timestamp: ts,
+        messageId: 'gfr001-receiver-row-b',
+        logicalDeliveryId: 'gfr001-logical-delivery-shared',
+        deliverySource: 'replay',
+      );
+
+      expect(first, isNotNull);
+      expect(second, isNull);
+      expect(msgRepo.count, 1);
+      expect(await msgRepo.getMessage('gfr001-receiver-row-b'), isNull);
+
+      final canonical = await msgRepo.getMessage('gfr001-receiver-row-a');
+      expect(canonical, isNotNull);
+      expect(canonical!.logicalDeliveryId, 'gfr001-logical-delivery-shared');
+      expect(canonical.text, 'GFR-001 shared logical delivery body');
+      expect(canonical.isIncoming, true);
+
+      final duplicateEvent = flowEvents.singleWhere(
+        (event) =>
+            event['event'] == 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE' &&
+            (event['details'] as Map<String, dynamic>)['dedupeBy'] ==
+                'logicalDeliveryId',
+      );
+      final details = duplicateEvent['details'] as Map<String, dynamic>;
+      expect(details['messageId'], 'gfr001-receiver-row-a');
+      expect(details['rawMessageId'], 'gfr001-receiver-row-b');
+      expect(details['logicalDeliveryId'], 'gfr001-logical-delivery-shared');
+
+      final successEvents = flowEvents
+          .where(
+            (event) => event['event'] == 'GROUP_HANDLE_INCOMING_MSG_SUCCESS',
+          )
+          .toList();
+      expect(successEvents, hasLength(1));
+    },
+  );
+
+  test(
     'PGC-007 event-log path keeps distinct stable message IDs despite same content',
     () async {
       final eventLog = _FakeEventLog();

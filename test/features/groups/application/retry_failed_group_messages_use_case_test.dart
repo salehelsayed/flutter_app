@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -182,6 +183,28 @@ class _FailFirstPublishBridge extends FakeBridge {
       if (_publishCalls == 1) {
         throw Exception('Simulated publish failure');
       }
+    }
+
+    return super.send(message);
+  }
+}
+
+class _Gfr001GatedPublishBridge extends FakeBridge {
+  final Completer<void> publishGate = Completer<void>();
+  final Completer<void> publishStarted = Completer<void>();
+  var publishCalls = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:publish') {
+      publishCalls++;
+      if (!publishStarted.isCompleted) {
+        publishStarted.complete();
+      }
+      await publishGate.future;
     }
 
     return super.send(message);
@@ -384,6 +407,183 @@ void main() {
         );
       },
     );
+
+    test(
+      'GFR-001 rapid same-row retry calls coalesce into one publish',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        final gatedBridge = _Gfr001GatedPublishBridge()
+          ..responses['group:publish'] = {
+            'ok': true,
+            'messageId': 'gfr001-coalesce',
+            'topicPeers': 1,
+          };
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'gfr001-coalesce',
+            text: 'Recover once',
+            timestampIso: '2026-06-06T08:00:00.000Z',
+            logicalDeliveryId: 'gfr001-logical-coalesce',
+          ),
+        );
+
+        final firstRetry = retryFailedGroupMessage(
+          messageId: 'gfr001-coalesce',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: gatedBridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        await gatedBridge.publishStarted.future;
+        final secondRetry = retryFailedGroupMessage(
+          messageId: 'gfr001-coalesce',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: gatedBridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(gatedBridge.publishCalls, 1);
+        gatedBridge.publishGate.complete();
+        expect(await Future.wait([firstRetry, secondRetry]), [1, 1]);
+        expect(
+          gatedBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          hasLength(1),
+        );
+        final saved = await msgRepo.getMessage('gfr001-coalesce');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'sent');
+        expect(saved.logicalDeliveryId, 'gfr001-logical-coalesce');
+        expect(await msgRepo.getMessagesPage('group-1'), hasLength(1));
+      },
+    );
+
+    test(
+      'GFR-001 targeted retry includes pending in-doubt text rows',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'gfr001-pending-retry',
+          'topicPeers': 1,
+        };
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'gfr001-pending-retry',
+            text: 'Pending should retry',
+            timestampIso: '2026-06-06T08:01:00.000Z',
+            quotedMessageId: 'quote-gfr001',
+            logicalDeliveryId: 'gfr001-logical-pending',
+          ).copyWith(status: 'pending'),
+        );
+
+        final count = await retryFailedGroupMessage(
+          messageId: 'gfr001-pending-retry',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage('gfr001-pending-retry');
+        expect(saved, isNotNull);
+        expect(saved!.id, 'gfr001-pending-retry');
+        expect(saved.status, 'sent');
+        expect(saved.timestamp, DateTime.parse('2026-06-06T08:01:00.000Z'));
+        expect(saved.quotedMessageId, 'quote-gfr001');
+        expect(saved.logicalDeliveryId, 'gfr001-logical-pending');
+        expect(await msgRepo.getMessagesPage('group-1'), hasLength(1));
+        final publishPayloads = _publishedGroupPayloads(bridge);
+        expect(publishPayloads, hasLength(1));
+        expect(publishPayloads.single['messageId'], 'gfr001-pending-retry');
+        expect(
+          publishPayloads.single['logicalDeliveryId'],
+          'gfr001-logical-pending',
+        );
+        expect(publishPayloads.single['quotedMessageId'], 'quote-gfr001');
+      },
+    );
+
+    test(
+      'GFR-002 bulk auto retry includes pending in-doubt text rows once',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'gfr002-pending-auto-retry',
+          'topicPeers': 1,
+        };
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'gfr002-pending-auto-retry',
+            text: 'Auto retry pending',
+            timestampIso: '2026-06-06T08:03:00.000Z',
+            logicalDeliveryId: 'gfr002-logical-pending-auto',
+          ).copyWith(status: 'pending'),
+        );
+
+        final count = await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage('gfr002-pending-auto-retry');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'sent');
+        expect(saved.logicalDeliveryId, 'gfr002-logical-pending-auto');
+        expect(await msgRepo.getMessagesPage('group-1'), hasLength(1));
+        final publishPayloads = _publishedGroupPayloads(bridge);
+        expect(publishPayloads, hasLength(1));
+        expect(
+          publishPayloads.single['messageId'],
+          'gfr002-pending-auto-retry',
+        );
+        expect(
+          publishPayloads.single['logicalDeliveryId'],
+          'gfr002-logical-pending-auto',
+        );
+      },
+    );
+
+    test('GFR-001 settled rows are not retried as a new attempt', () async {
+      identityRepo.seed(_makeIdentity());
+      await saveRetryGroupWithMembers();
+      await msgRepo.saveMessage(
+        _makeFailedGroupMessage(
+          id: 'gfr001-settled',
+          text: 'Already sent',
+          timestampIso: '2026-06-06T08:02:00.000Z',
+          logicalDeliveryId: 'gfr001-logical-settled',
+        ).copyWith(status: 'sent', wireEnvelope: null, inboxRetryPayload: null),
+      );
+
+      final count = await retryFailedGroupMessage(
+        messageId: 'gfr001-settled',
+        groupMsgRepo: msgRepo,
+        groupRepo: groupRepo,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(count, 0);
+      expect(bridge.commandLog, isEmpty);
+      final saved = await msgRepo.getMessage('gfr001-settled');
+      expect(saved, isNotNull);
+      expect(saved!.status, 'sent');
+      expect(await msgRepo.getMessagesPage('group-1'), hasLength(1));
+    });
 
     test(
       'does not replay a failed text row after sender was removed locally',

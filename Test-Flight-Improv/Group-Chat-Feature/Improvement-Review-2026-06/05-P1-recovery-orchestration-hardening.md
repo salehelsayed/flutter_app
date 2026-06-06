@@ -6,6 +6,8 @@
 
 **Priority: P1** — reliability / performance / UX. Effort: **Large** (multiple touched subsystems, one schema migration, broad test surface).
 
+> **Audit 2026-06-06:** all 7 current-behaviour findings and all 7 proposed improvements (P1.1–P1.7) are still unimplemented and accurate. The duplicate-delivery cascade work (doc 01) did NOT absorb any of this doc's fixes: the gate is still a counter, the retrier provider still watches only `_isResuming`, the resume drain is still all-pages, the ack is still all-or-nothing, and there is no jitter/backoff/terminal status. (Line numbers refreshed; proposed migration renumbered from 073 to 076 — 073/074 now exist.)
+
 This theme turns the group-chat recovery layer from a collection of independently-firing passes guarded by an *advisory* flag into a properly serialized, correctly scoped, fast-first-page, jitter/backoff-aware pipeline. The work is significant but largely mechanical: it adds real mutual exclusion, widens the gate to the right boundaries, splits the resume drain into fast/background phases, makes the recovery ack per-group instead of all-or-nothing, and adds jitter + bounded exponential backoff to the retry timers and per-row retries.
 
 ---
@@ -21,21 +23,21 @@ The net effect is that "coming back online" feels janky and slow. Fixing this ma
 ## Current behaviour & evidence
 
 ### 1. The gate is advisory, not a lock
-`GroupRecoveryGate` is a re-entrant *counter*. `begin()`/`end()` only increment/decrement `_activeDepth`; `run()` never serializes — it just brackets the action with `begin()`/`end()` (`lib/features/groups/application/group_recovery_gate.dart:10-30`). The design doc states this explicitly: it "does not itself reject or serialize concurrent callers" (`Test-Flight-Improv/Group-Chat-Feature/C4-05-Recovery-And-Reliability.md:142`).
+`GroupRecoveryGate` is a re-entrant *counter*. `begin()`/`end()` only increment/decrement `_activeDepth`; `run()` never serializes — it just brackets the action with `begin()`/`end()` (`lib/features/groups/application/group_recovery_gate.dart:10-30`, run() at :23-30). The design doc states this explicitly: it "does not itself reject or serialize concurrent callers" (`Test-Flight-Improv/Group-Chat-Feature/C4-05-Recovery-And-Reliability.md:142`).
 
 Mutual exclusion is a patchwork across three entry points:
 - **Startup** wraps recovery fire-and-forget in `runWithGroupRecoveryGate` with no other guard (`lib/features/identity/presentation/startup_router.dart:578-602`).
-- **Resume** sets `_isResuming = true` (`lib/main.dart:3035`) which the retrier reads via its external-recovery provider, wired to `() => _isResuming` (`lib/main.dart:2397-2398`).
-- The **retrier** observes only `_isResuming` — **not** the startup fire-and-forget. Its first online sweep is debounced 5s and scheduled in `start()` (`lib/core/services/pending_message_retrier.dart:125-127, 163-171`), and `pendingMessageRetrier.start()` runs during the same startup sequence (`lib/main.dart:2071`).
+- **Resume** sets `_isResuming = true` (`lib/main.dart:3103`) which the retrier reads via its external-recovery provider, wired to `() => _isResuming` (`lib/main.dart:2425-2426`).
+- The **retrier** observes only `_isResuming` — **not** the startup fire-and-forget. Its first online sweep is debounced 5s and scheduled in `start()` (`lib/core/services/pending_message_retrier.dart:125-127, 163-171`), and `pendingMessageRetrier.start()` runs during the same startup sequence (`lib/main.dart:2099`).
 
-So the retrier's `_retryIfNeeded` (which itself calls rejoin + drain + recover-stuck + retry-failed, `pending_message_retrier.dart:290-489`) can fire while startup's drain is still running — both calling `rejoinGroupTopics` + `drainGroupOfflineInbox` on the full group set with no mutual exclusion.
+So the retrier's `_retryIfNeeded` (which itself calls rejoin + drain + recover-stuck + retry-failed, `pending_message_retrier.dart:290-530`) can fire while startup's drain is still running — both calling `rejoinGroupTopics` + `drainGroupOfflineInbox` on the full group set with no mutual exclusion.
 
 ### 2. Follow-on retries run OUTSIDE the gate (scoping is inconsistent)
 In `handle_app_resumed.dart` the `runWithGroupRecoveryGate` block opens at line 148 and **closes at line 222**. Everything after runs outside the gate: `recoverStuckSendingGroupMessagesFn` (line 270), `retryIncompleteGroupUploadsFn` (line 293), `retryFailedGroupMessagesFn` (line 314), and all of steps 8a-8f (lines 408-528). While those run, `isGroupRecoveryInProgress()` reads `false`.
 
-That flag is the guard that protects mutating operations: announcement sends gate on it (`send_group_message_use_case.dart:570`), as do member-role changes (`update_group_member_role_use_case.dart:38`), avatar updates (`group_info_wired.dart:1442/1542`), and (per the same pattern) `add_group_member`, `remove_group_member`, and `update_group_metadata`. So while the stuck-sweep is actively re-sending group messages, those mutations are no longer blocked.
+That flag is the guard that protects mutating operations: announcement sends gate on it (`send_group_message_use_case.dart:691`, now conditioned on `group.type == GroupType.announcement && isGroupRecoveryInProgress()`), as do member-role changes (`update_group_member_role_use_case.dart:38`), avatar updates (`group_info_wired.dart:1443/1543`), and (per the same pattern) `add_group_member`, `remove_group_member`, and `update_group_metadata`. So while the stuck-sweep is actively re-sending group messages, those mutations are no longer blocked.
 
-The same inconsistency is *worse* in the retrier: only `_runGroupContinuitySweepIfNeeded` (the 30s sweep) wraps its rejoin+drain in `runWithGroupRecoveryGate` (`pending_message_retrier.dart:252-284`). The main `_retryIfNeeded` path (lines 290-489) wraps **nothing** — even its rejoin/drain/ack/recover-stuck/retry-failed all run with the gate reading false.
+The same inconsistency is *worse* in the retrier: only `_runGroupContinuitySweepIfNeeded` (the 30s sweep) wraps its rejoin+drain in `runWithGroupRecoveryGate` (`pending_message_retrier.dart:235-288`). The main `_retryIfNeeded` path (lines 290-530) wraps **nothing** — even its rejoin/drain/ack/recover-stuck/retry-failed all run with the gate reading false.
 
 ### 3. Resume blocks on draining ALL pages of ALL groups
 `drainGroupOfflineInbox` defaults `drainAllPages = true`, `maxPages = 100`, `pageSize = 50`, `maxConcurrentGroupDrains = 4` (`drain_group_offline_inbox_use_case.dart:75-78, 27-28`). The function's own doc describes a "first page synchronous + background continuation via `drainGroupOfflineInboxContinuation`" design (lines 56-61) — but the resume caller awaits `drainGroupOfflineInbox` **without** passing `drainAllPages: false` (`handle_app_resumed.dart:180-191`), and the whole call sits inside the awaited gate block. **Note:** the cited continuation function `drainGroupOfflineInboxContinuation` does not actually exist in the codebase — the doc comment is aspirational. So resume blocks on the full multi-page drain of every group before completing, and the background-continuation path it claims to support has never been implemented.
@@ -44,13 +46,13 @@ The same inconsistency is *worse* in the retrier: only `_runGroupContinuitySweep
 `canAcknowledgeGroupRecovery` requires `!skipped && skippedNoKeyCount == 0 && errorCount == 0` across the entire batch (`rejoin_group_topics_use_case.dart:36-37`). Any single per-group exception increments `errorCount` (lines 162-182). Resume only acks when `needsGroupRecovery && rejoinResult.canAcknowledgeGroupRecovery && groupDrainResult.isSuccessful` (`handle_app_resumed.dart:200-202`); otherwise it emits `APP_LIFECYCLE_RESUME_GROUP_ACK_SKIPPED` and leaves `needsGroupRecovery` set (lines 213-221). The next online transition then re-triggers the entire pipeline (`pending_message_retrier.dart:101-128`). There is **no per-group recovery tracking** — one transient failure on one topic blocks the ack for all groups, potentially forever, with only a flow-log signal.
 
 ### 5. No backoff / no jitter anywhere
-Timers use fixed intervals scheduled bare via `Timer` / `Timer.periodic`: `periodicRetryInterval = 5min`, `groupContinuitySweepInterval = 30s`, `retryDebounce = 5s` (`pending_message_retrier.dart:22-26, 163-177`). `retryFailedGroupMessages` re-sends every failed row each pass with no per-message backoff or attempt cap (`retry_failed_group_messages_use_case.dart:193-207`). `retryFailedGroupInboxStores` has only a per-pass limit (default 20) and no per-row attempt cap/delay (`retry_failed_group_inbox_stores_use_case.dart:28, 76-106`). Only uploads have a ceiling (`kMaxUploadRetries`, `retry_incomplete_group_uploads_use_case.dart:365, 472`). History-gap repair runs on every drain when gaps exist, iterating `authorizedSources` (`drain_group_offline_inbox_use_case.dart:1192`) — though it breaks on the first successful source (lines 1291-1292), so it only fans out to all peers while each is failing.
+Timers use fixed intervals scheduled bare via `Timer` / `Timer.periodic`: `periodicRetryInterval = 5min`, `groupContinuitySweepInterval = 30s`, `retryDebounce = 5s` (`pending_message_retrier.dart:22-26, 163-177`). `retryFailedGroupMessages` re-sends every failed row each pass with no per-message backoff or attempt cap (`retry_failed_group_messages_use_case.dart:193-207`). `retryFailedGroupInboxStores` has only a per-pass limit (default 20) and no per-row attempt cap/delay (`retry_failed_group_inbox_stores_use_case.dart:28, 76-106`). Only uploads have a ceiling (`kMaxUploadRetries`, `retry_incomplete_group_uploads_use_case.dart:373, 480`). History-gap repair runs on every drain when gaps exist, iterating `authorizedSources` (`drain_group_offline_inbox_use_case.dart:1192`) — though it breaks on the first successful source (lines 1291-1292), so it only fans out to all peers while each is failing.
 
 ### 6. The 30s sweep skips outbound repair
-`_runGroupContinuitySweepIfNeeded` does rejoin + drain + ack only (`pending_message_retrier.dart:252-288`); it omits `recoverStuckSendingGroupMessagesFn` / `retryIncompleteGroupUploadsFn` / `retryFailedGroupMessagesFn`, which live only in `_retryIfNeeded` (lines 350-385). So a foreground-but-alive app that never hits a fresh offline→online transition only repairs outbound sends every 5 minutes, even though inbound catch-up runs every 30s.
+`_runGroupContinuitySweepIfNeeded` does rejoin + drain + ack only (`pending_message_retrier.dart:235-288`); it omits `recoverStuckSendingGroupMessagesFn` / `retryIncompleteGroupUploadsFn` / `retryFailedGroupMessagesFn`, which live only in `_retryIfNeeded` (lines 350-385). So a foreground-but-alive app that never hits a fresh offline→online transition only repairs outbound sends every 5 minutes, even though inbound catch-up runs every 30s.
 
 ### 7. Recovery is largely silent per-message
-Recovery use cases communicate only via `emitFlowEvent` (e.g. `RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED`, `retry_failed_group_messages_use_case.dart:302-314`). There is no terminal `permanently_failed` status distinct from `failed`, so the UI cannot tell "still retrying" from "gave up." A gate-driven "catching up" shell *does* already exist (`group_conversation_wired.dart:3966` passes `isRecovering` into `group_conversation_screen.dart:323`), so the genuine remaining gap is a **per-message** terminal-failure state + manual-retry affordance — not the overall indicator.
+Recovery use cases communicate only via `emitFlowEvent` (e.g. `RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED`, `retry_failed_group_messages_use_case.dart:314-321`). There is no terminal `permanently_failed` status distinct from `failed`, so the UI cannot tell "still retrying" from "gave up." A gate-driven "catching up" shell *does* already exist (`group_conversation_wired.dart:4270` passes `isRecovering` into `group_conversation_screen.dart:325`), so the genuine remaining gap is a **per-message** terminal-failure state + manual-retry affordance — not the overall indicator.
 
 ---
 
@@ -116,7 +118,7 @@ Add a top-level `runWithGroupRecoveryGateOrSkip` mirroring `runWithGroupRecovery
 - **Retrier sweeps** (`_retryIfNeeded`, `_runGroupContinuitySweepIfNeeded`): use `tryRun()` — if recovery is already active, skip this tick entirely instead of piling on. This is the core de-duplication.
 
 ### P1.2 — Make the retrier observe ALL external recovery, not just resume
-The retrier should treat *any* active gate as "external recovery in progress." Extend the provider to OR-in the gate state. In `lib/main.dart:2397-2398`:
+The retrier should treat *any* active gate as "external recovery in progress." Extend the provider to OR-in the gate state. In `lib/main.dart:2425-2426`:
 
 ```dart
 widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(
@@ -150,20 +152,20 @@ Replace the all-or-nothing batch ack with per-group recovery state so one transi
 - Add **bounded retry of just the failed groups** before giving up: track a per-group `rejoin_attempt_count` + `next_eligible_at` (see P1.6 schema) so the next pass retries only the still-failing groups, with backoff, instead of re-running the whole batch on every state change.
 - Surface a diagnostic when a group has exceeded its rejoin attempt budget so a permanently-stuck `needsGroupRecovery` is observable (greppable flow event, e.g. `GROUP_REJOIN_PERMANENTLY_STUCK`).
 
-**Wire/Go impact:** `callGroupAcknowledgeRecovery` is currently node-wide. If Go can accept a per-group ack, prefer acking each successfully-recovered group individually; otherwise keep the node-wide ack but only fire it once the *eligible* set is fully recovered (the Dart-side change alone already unblocks the common single-transient-failure case). Confirm the Go ack contract before choosing.
+**Wire/Go impact:** `callGroupAcknowledgeRecovery` is currently node-wide. If Go can accept a per-group ack, prefer acking each successfully-recovered group individually; otherwise keep the node-wide ack but only fire it once the *eligible* set is fully recovered (the Dart-side change alone already unblocks the common single-transient-failure case). Confirm the Go ack contract before choosing — as of 2026-06-06 `GroupAcknowledgeRecovery()` (`go-mknoon/bridge/bridge.go:656`) is still node-wide, so this open question stands.
 
 ### P1.6 — Jitter + bounded exponential backoff
 Add jitter to the timers and a per-row backoff schedule.
 
 - **Timers** (`pending_message_retrier.dart:163-177`): apply ±20% jitter. Replace `Timer.periodic` with a self-rescheduling `Timer` that recomputes a jittered delay each tick (e.g. `interval * (0.8 + random.nextDouble() * 0.4)`), so clients de-synchronize after a shared relay outage.
-- **Per-row backoff (DB migration 073):** add `retry_attempt_count INTEGER NOT NULL DEFAULT 0` and `next_eligible_at INTEGER` (epoch ms, nullable) to the `group_messages` table and the group-inbox-store + (per P1.5) a small `group_rejoin_state` tracking surface. Follow the existing `upload_retry_count` precedent (`042_media_attachment_reliability_columns.dart`). Latest migration is **072**, so this is **073**.
+- **Per-row backoff (DB migration 076):** add `retry_attempt_count INTEGER NOT NULL DEFAULT 0` and `next_eligible_at INTEGER` (epoch ms, nullable) to the `group_messages` table and the group-inbox-store + (per P1.5) a small `group_rejoin_state` tracking surface. Follow the existing `upload_retry_count` precedent (`042_media_attachment_reliability_columns.dart`). Latest migration is **074**, so this is **076**. (Note: `073_group_message_last_send_attempt_at.dart` already added a `last_send_attempt_at` column to `group_messages`, but NOT the proposed `retry_attempt_count`/`next_eligible_at` columns — those remain to be added.)
   - `retry_failed_group_messages_use_case.dart`: only select rows where `next_eligible_at IS NULL OR next_eligible_at <= now`; on each failed attempt set `retry_attempt_count += 1` and `next_eligible_at = now + base * 2^attempt` (capped, e.g. base 30s, cap 30min, ±20% jitter). When `retry_attempt_count` exceeds a cap (mirror `kMaxUploadRetries`), flip the row to a terminal status (see P1.7).
   - `retry_failed_group_inbox_stores_use_case.dart`: same backoff + attempt cap.
 - **Gap repair** is already first-success-stop; lower priority. Optionally gate re-running gap detection behind a per-group cooldown so it doesn't re-scan on every drain.
 
 ### P1.7 — Outbound repair in the 30s sweep + terminal per-message state (lower priority, folds in cleanly)
 - In `_runGroupContinuitySweepIfNeeded`, after drain, add a lightweight outbound-repair step: `recoverStuckSendingGroupMessagesFn` + `retryFailedGroupMessagesFn` (text-only). Keep the heavier `retryIncompleteGroupUploadsFn` on the 5min cadence. This closes the "outbound sits failed up to 5min" gap for foreground-alive apps.
-- Introduce a terminal `send_failed` (permanently-failed) status distinct from `failed`, set when `retry_attempt_count` exceeds cap, and render a per-message manual-retry affordance in the group timeline (the single-message `retryFailedGroupMessage` entry point already exists, `retry_failed_group_messages_use_case.dart:94`). This is the genuine per-message UX gap from finding 7.
+- Introduce a terminal `send_failed` (permanently-failed) status distinct from `failed`, set when `retry_attempt_count` exceeds cap, and render a per-message manual-retry affordance in the group timeline (the single-message `retryFailedGroupMessage` entry point already exists, `retry_failed_group_messages_use_case.dart:97`). This is the genuine per-message UX gap from finding 7.
 
 ---
 
@@ -180,7 +182,7 @@ Add jitter to the timers and a per-row backoff schedule.
 | `lib/features/groups/application/rejoin_group_topics_use_case.dart` | Per-group outcomes; transient-vs-permanent split; revised `canAcknowledgeGroupRecovery`; bounded per-group retry (P1.5) |
 | `lib/features/groups/application/retry_failed_group_messages_use_case.dart` | Backoff schedule, attempt cap, terminal status (P1.6/1.7) |
 | `lib/features/groups/application/retry_failed_group_inbox_stores_use_case.dart` | Backoff schedule + attempt cap (P1.6) |
-| `lib/core/database/migrations/073_group_retry_backoff_columns.dart` (new) | `retry_attempt_count`, `next_eligible_at`, group-rejoin state (P1.5/1.6) |
+| `lib/core/database/migrations/076_group_retry_backoff_columns.dart` (new) | `retry_attempt_count`, `next_eligible_at`, group-rejoin state (P1.5/1.6) |
 | `lib/features/groups/domain/repositories/group_message_repository.dart` (+impl/db helpers) | New query: eligible failed rows by `next_eligible_at`; setters for attempt/next-eligible/terminal status |
 | `lib/features/groups/presentation/screens/group_conversation_wired.dart` / `group_conversation_screen.dart` | Per-message terminal `send_failed` badge + manual retry affordance (P1.7) |
 
@@ -194,7 +196,7 @@ Add jitter to the timers and a per-row backoff schedule.
 - `handle_app_resumed` test (`app_lifecycle_recovery_test.dart`): drain called with `drainAllPages: false`; continuation scheduled (unawaited) outside the gate; `isGroupRecoveryInProgress()` reads true across recover-stuck/retry-failed steps via a probe injected into those fns.
 - `rejoin_group_topics_use_case_test.dart`: one transient per-group error does NOT block ack of the other groups; no-key groups do not block ack; per-group attempt count increments and only failed groups are retried next pass.
 - `retry_failed_group_messages_use_case_test.dart`: rows with `next_eligible_at` in the future are skipped; attempt count climbs; exceeding cap flips to terminal `send_failed`; manual single-message retry still works.
-- Migration test for `073` (idempotent ALTER, default values, CHECK-free additive columns) following the `042` test pattern.
+- Migration test for `076` (idempotent ALTER, default values, CHECK-free additive columns) following the `042` test pattern.
 
 **Integration harnesses (this repo's `integration_test/`):**
 - `integration_test/group_recovery_e2e_test.dart` — extend to assert no duplicate decode/DB writes across overlapping startup + retrier passes (e.g. count `GROUP_DRAIN_*` flow events for a group during a single recovery and assert single-pass), and that a node with one un-rejoinable group still acks recovery for the rest (no sticky `needsGroupRecovery`).
@@ -214,10 +216,10 @@ Add jitter to the timers and a per-row backoff schedule.
 | Widening the gate **lengthens the window** where mutations (sends, membership) are blocked | P1.4 (first-page-fast) keeps the *blocking* window short; the long-tail continuation runs outside the gate, so user-facing mutations are only blocked during the fast phase. |
 | Per-group ack changes **Go's recovery contract** | Confirm whether Go supports per-group ack; if not, keep node-wide ack but compute eligibility over the *recoverable* set only — a Dart-only change that still fixes the common case. Feature-flag behind `enableResumeGroupRecovery` (already exists). |
 | Backoff could **delay legitimate retries** of a row that would now succeed | Cap backoff (e.g. 30min) and reset `retry_attempt_count`/`next_eligible_at` on a successful send or on a fresh offline→online transition, so reconnect always gives one immediate attempt. |
-| Migration 073 on existing installs | Additive, idempotent ALTER with defaults (mirror `042`); no CHECK constraints; safe on upgrade. |
+| Migration 076 on existing installs | Additive, idempotent ALTER with defaults (mirror `042`); no CHECK constraints; safe on upgrade. |
 | Terminal `send_failed` status touches UI + every status read | Treat `send_failed` as a strict superset behavior of `failed` for read paths; only the retry-eligibility query and the per-message badge branch on it. |
 
-**Rollout:** ship behind the existing `enableResumeGroupRecovery` flag in phases — (1) gate serialization + provider OR-in + scoping (pure correctness, no schema); (2) first-page-fast drain + continuation (UX latency); (3) per-group ack (Go-contract-dependent); (4) migration 073 + backoff/jitter + terminal status + manual-retry UI. Each phase is independently shippable and independently testable.
+**Rollout:** ship behind the existing `enableResumeGroupRecovery` flag in phases — (1) gate serialization + provider OR-in + scoping (pure correctness, no schema); (2) first-page-fast drain + continuation (UX latency); (3) per-group ack (Go-contract-dependent); (4) migration 076 + backoff/jitter + terminal status + manual-retry UI. Each phase is independently shippable and independently testable.
 
 ---
 
@@ -228,6 +230,6 @@ Add jitter to the timers and a per-row backoff schedule.
 | 1 | Gate → serializing mutex + `tryRun`; provider OR-in; widen scope in resume + retrier | **M** (no schema; high test value, low blast radius) |
 | 2 | First-page-fast resume drain + implement continuation | **M** |
 | 3 | Per-group recovery tracking + ack-what-can-be-acked | **M-L** (depends on Go ack contract) |
-| 4 | Migration 073 + jitter/backoff/attempt caps + terminal `send_failed` + manual-retry UI | **L** |
+| 4 | Migration 076 + jitter/backoff/attempt caps + terminal `send_failed` + manual-retry UI | **L** |
 
 **Overall: Large.** Phases 1-2 deliver most of the felt latency/jank win and carry the lowest risk; phases 3-4 deliver the convergence/self-healing and thundering-herd wins and carry the schema + Go-contract dependencies.

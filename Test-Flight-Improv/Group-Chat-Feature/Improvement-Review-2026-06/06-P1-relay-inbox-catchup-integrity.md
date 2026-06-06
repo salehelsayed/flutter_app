@@ -29,30 +29,30 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
 ### Cursor IDs are ephemeral and not backend-portable
 - Memory backend assigns IDs from an in-process counter that **resets to 0 on restart** and is never seeded from existing data: `go-relay-server/backend_memory.go:313` (`idCounter` field), `:318-324` (`newMemoryGroupInboxBackend` starts at zero), `:372-377` (`b.idCounter++`, `ID: fmt.Sprintf("%d", b.idCounter)`).
 - Redis backend assigns from a **global `INCR ginbox:idseq`**: `go-relay-server/backend_redis.go:560-562` (`sequenceKey`), `:626-635`.
-- The raw ID is handed to clients verbatim as the cursor: `go-relay-server/inbox.go:1018` (`nextCursor = result[...].ID`), serialized via the `id` json field at `inbox.go:784`.
-- On an unknown cursor, both production and backend paths reset `startIdx=0` / `cursorFound=false`: `inbox.go:984-994` (authorized path), `backend_memory.go:427-430`, `backend_redis.go:715-717`.
+- The raw ID is handed to clients verbatim as the cursor: `go-relay-server/inbox.go:1041` (`nextCursor = result[...].ID`), serialized via the `id` json field at `inbox.go:807`.
+- On an unknown cursor, both production and backend paths reset `startIdx=0` / `cursorFound=false`: `inbox.go:1009-1017` (authorized path), `backend_memory.go:427-430`, `backend_redis.go:715-717`.
 - The only timestamp-based fallback is the **synthetic since-cursor** (`mknoon-since-ms:` prefix, `go-mknoon/node/group_inbox.go:17,446,482-491`) — it fires only on that literal prefix, never on a stale opaque numeric cursor.
 
 ### Cap eviction is silent and orphans cursors
 - `maxMessagesPerGroup = 500`, TTL 7 days: `go-relay-server/inbox.go:30-31`.
 - Memory drops oldest via `msgs[overflow:]` with no record: `backend_memory.go:366-370`. Redis drops via `values[len-maxPerGroup:]`: `backend_redis.go:645-647`.
-- A cursor pointing at an evicted ID yields `cursorFound=false`. The history-gap detector fires only when `cursor != "" && !cursorFound && len(repairMessages) > 0`: `inbox.go:1073`. So when an authorized page **is** returned a gap is emitted (`inbox.go:1024`) — but it is indistinguishable from a peer-recoverable gap, and when no authorized page comes back **no gap fires at all** (`inbox.go:1011-1013`). There is no `lowWaterMark` / `backlogTruncated` concept anywhere in the subsystem.
+- A cursor pointing at an evicted ID yields `cursorFound=false`. The history-gap detector fires only when `cursor != "" && !cursorFound && len(repairMessages) > 0`: `inbox.go:1090-1098`. So when an authorized page **is** returned a gap is emitted (`inbox.go:1047`) — but it is indistinguishable from a peer-recoverable gap, and when no authorized page comes back **no gap fires at all** (`inbox.go:1034-1036`). There is no `lowWaterMark` / `backlogTruncated` concept anywhere in the subsystem.
 
 ### Range-hash is not byte-identical across languages
-- Relay hashes **only `{from, message, timestamp}`** per message, marshaled with `json.Marshal`, joined with `\n`: `go-relay-server/inbox.go:1116-1132`.
-- The wire message the client receives **includes `id`**: `groupInboxMessage` serializes `from/message/timestamp/id,omitempty` (`inbox.go:780-786`; `RecipientPeerIds` is `json:"-"`), and `go-mknoon/node/inbox.go:16-19` re-serializes `{id,from,message,timestamp}`.
-- Client hashes the **full message map** (recursive key-sort + `jsonEncode`), thereby including the `id` key the relay omits: `lib/features/groups/application/drain_group_offline_inbox_use_case.dart:1436-1452`.
-- Validation fails closed — requires `result.rangeHash == gap.expectedRangeHash && computedHash == gap.expectedRangeHash`: `drain_group_offline_inbox_use_case.dart:1317-1321`. Existing Dart tests build fixtures with only `{from,message[,timestamp]}` so they are self-consistent in Dart and never catch the cross-language `id` mismatch.
+- Relay hashes **only `{from, message, timestamp}`** per message, marshaled with `json.Marshal`, joined with `\n`: `go-relay-server/inbox.go:1139-1154`.
+- The wire message the client receives **includes `id`**: `groupInboxMessage` serializes `from/message/timestamp/id,omitempty` (`inbox.go:803-808`; `RecipientPeerIds` is `json:"-"`), and `go-mknoon/node/inbox.go:16-19` re-serializes `{id,from,message,timestamp}`.
+- Client hashes the **full message map** (recursive key-sort + `jsonEncode`), thereby including the `id` key the relay omits: `lib/features/groups/application/drain_group_offline_inbox_use_case.dart:1446-1450`.
+- Validation fails closed — requires `result.rangeHash == gap.expectedRangeHash && computedHash == gap.expectedRangeHash`: `drain_group_offline_inbox_use_case.dart:1324-1325`. Existing Dart tests build fixtures with only `{from,message[,timestamp]}` so they are self-consistent in Dart and never catch the cross-language `id` mismatch.
 
 ### Two divergent pagination implementations
-- Production stream (`group_retrieve_cursor`) calls `RetrieveWithCursorAuthorized` (`inbox.go:1480`), which does `backend.RetrieveSince(groupId, 0)` (`inbox.go:983`) + store-layer pagination/gap logic (`inbox.go:996-1024`).
-- The backend's own `RetrieveCursor` (Redis-transaction-aware, gap-emitting) at `backend_memory.go:407-458` and `backend_redis.go:686-746` is reached **only** via `RetrieveWithCursor` (`inbox.go:967-971`), used by `failover_test.go:231-252` and `redis_failover_integration_test.go:238` — never by `HandleInboxStream`.
+- Production stream (`group_retrieve_cursor`) calls `RetrieveWithCursorAuthorized` (`inbox.go:1503`), which does `backend.RetrieveSince(groupId, 0)` (`inbox.go:1006`) + store-layer pagination/gap logic (`inbox.go:1006-1047`).
+- The backend's own `RetrieveCursor` (Redis-transaction-aware, gap-emitting) at `backend_memory.go:407-458` and `backend_redis.go:686-746` is reached **only** via `RetrieveWithCursor` (`inbox.go:990-994`), used by `failover_test.go:231-252` and `redis_failover_integration_test.go:238` — never by `HandleInboxStream`.
 
 ### Redis read paths re-fetch the whole list per page
-- `RetrieveSince` does a plain `LRange(0, -1)` and filters in memory, never writing back the pruned list: `backend_redis.go:660-684`. The authorized cursor path calls it for **every page** (`inbox.go:983`), making catch-up O(pages × total). Prune runs only hourly.
+- `RetrieveSince` does a plain `LRange(0, -1)` and filters in memory, never writing back the pruned list: `backend_redis.go:660-684`. The authorized cursor path calls it for **every page** (`inbox.go:1006`), making catch-up O(pages × total). Prune runs only hourly.
 
 ### TTL anchor mismatch (low-severity edge)
-- Relay TTL is anchored on **store time** (`Timestamp = time.Now().UnixMilli()` at store, `backend_memory.go:376` / `backend_redis.go:634`; filter `timestamp <= now-ttl`, strict `<=`). Client retention is anchored on the **payload timestamp** (`drain_group_offline_inbox_use_case.dart:505-526`) against `groupBacklogRetentionCutoff` (`lib/features/groups/domain/models/group_backlog_retention_policy.dart:7-8`, 7-day `isBefore`). Same window, different anchors and comparators → boundary messages can be served-then-hidden or pruned-then-missing.
+- Relay TTL is anchored on **store time** (`Timestamp = time.Now().UnixMilli()` at store, `backend_memory.go:376` / `backend_redis.go:634`; filter `timestamp <= now-ttl`, strict `<=`). Client retention is anchored on the **payload timestamp** (`drain_group_offline_inbox_use_case.dart:520`, cutoff built at `:289`) against `groupBacklogRetentionCutoff` (`lib/features/groups/domain/models/group_backlog_retention_policy.dart:7-8`, computed from the 7-day `groupBacklogRetentionWindow` at lines 1/3-4, via `isBefore`). Same window, different anchors and comparators → boundary messages can be served-then-hidden or pruned-then-missing.
 
 ---
 
@@ -80,7 +80,7 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
   1. Exact `id` match (current behavior) → resume after it.
   2. If `id` not found **and** `ts > 0` → resume at the **first message with `Timestamp > ts`** (timestamp-based resume). This recovers continuation across an ID-space reset.
   3. If neither matches → only then fall back to head, and emit the appropriate gap/truncation signal (improvement 2).
-- Set `nextCursor = encodeGroupInboxCursor(last.Timestamp, last.ID)` at the emit sites (`inbox.go:1018`, and the backend `nextCursor` lines `backend_memory.go:445/451`, `backend_redis.go:740`).
+- Set `nextCursor = encodeGroupInboxCursor(last.Timestamp, last.ID)` at the emit sites (`inbox.go:1041`, and the backend `nextCursor` lines `backend_memory.go:443/451`, `backend_redis.go:740`).
 - **Seed the memory counter on load** so restarts in a long-lived process do not collide: in `newMemoryGroupInboxBackend` (and on first `Store` for a group), set `idCounter = max(existing IDs)`. (Memory data does not survive process exit, but this protects test harnesses and any future memory persistence; the real cross-restart safety comes from the timestamp resume above.)
 
 **Wire impact:** cursor string format changes but stays opaque; the legacy-numeric acceptance path means in-flight clients with old cursors keep working (they hit the timestamp/id resolution). No DB/migration impact (relay is in-memory or Redis-list).
@@ -90,11 +90,11 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
 **Goal:** a client whose cursor predates the oldest retained message is told "older messages may be unavailable" rather than silently restarting or mis-classifying a capacity gap as peer-recoverable.
 
 - Track a **per-group low-water mark** = oldest retained `{id, timestamp}`. Memory: derive from `msgs[0]` after prune/eviction. Redis: store alongside the list (e.g. `ginbox:lowwater:<group>` updated inside the `StoreWithRecipients` WATCH txn at `backend_redis.go:645-648`, or derive from `decoded[0]` on read).
-- Add a new field to `groupInboxHistoryGap` (`inbox.go:788-796`):
+- Add a new field to `groupInboxHistoryGap` (`inbox.go:811-818`):
   ```go
   BacklogTruncated bool `json:"backlogTruncated,omitempty"`
   ```
-- In `buildGroupInboxHistoryGaps` (`inbox.go:1067-1090`): when the presented cursor's resolved timestamp/id is **older than the low-water mark**, set `BacklogTruncated: true`. Also emit a truncation gap when `cursorFound=false` and there is no recoverable head, so the "no authorized page returned → no gap" hole (`inbox.go:1011-1013`) is closed.
+- In `buildGroupInboxHistoryGaps` (`inbox.go:1090-1098`): when the presented cursor's resolved timestamp/id is **older than the low-water mark**, set `BacklogTruncated: true`. Also emit a truncation gap when `cursorFound=false` and there is no recoverable head, so the "no authorized page returned → no gap" hole (`inbox.go:1034-1036`) is closed.
 - Emit an operator signal on eviction: increment a new `groupInboxEvictedCounter` and log at the drop sites (`backend_memory.go:366-370`, `backend_redis.go:645-647`) so groups outrunning the cap are detectable.
 - Make `maxMessagesPerGroup` (`inbox.go:30`) configurable via the relay config/env so busy deployments can raise it.
 - **Client:** in `drain_group_offline_inbox_use_case.dart`, when a gap carries `backlogTruncated`, mark the gap state distinctly (e.g. `truncated` rather than `failed`) and surface a one-time "some older messages may be unavailable" notice instead of looping repair attempts that can never succeed. New localization keys in `lib/l10n/app_en.arb` (+ `ar`/`de`).
@@ -108,7 +108,7 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
 - **Define one canonical spec** (document it in a comment block next to both implementations):
   - Field set: exactly `from`, `message`, `timestamp` — **no `id`, no recipients**.
   - Per-message JSON: keys in fixed order `from, message, timestamp`; `timestamp` as an integer (no float, no quotes); UTF-8; messages joined with `\n`; SHA-256, lowercase hex.
-- **Client fix (`drain_group_offline_inbox_use_case.dart:1436-1452`):** hash the reduced projection, not the full map:
+- **Client fix (`drain_group_offline_inbox_use_case.dart:1446-1450`):** hash the reduced projection, not the full map:
   ```dart
   String computeGroupHistoryRangeHash(List<Map<String, dynamic>> messages) {
     final canonical = messages.map((m) => jsonEncode({
@@ -120,7 +120,7 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
   }
   ```
   (Replaces the `_canonicalizeJson(fullMap)` path that pulls in `id`.) Ensure `timestamp` is an `int`, matching Go's `int64` marshal.
-- **Relay:** keep `computeGroupHistoryRangeHash` (`inbox.go:1116-1132`) but make the field order explicit and guaranteed (Go map-marshal already sorts keys, but pin it with an ordered struct/`json.RawMessage` to remove any escaping/number ambiguity).
+- **Relay:** keep `computeGroupHistoryRangeHash` (`inbox.go:1139-1154`) but make the field order explicit and guaranteed (Go map-marshal already sorts keys, but pin it with an ordered struct/`json.RawMessage` to remove any escaping/number ambiguity).
 - **Golden-vector test (the core deliverable):** a fixture of byte-exact inputs with one expected hex string, asserted by **both** a Go test (`go-relay-server/group_inbox_test.go`) and a Dart test (`drain_group_offline_inbox_use_case_test.dart`). Include edge cases: empty message, unicode, characters Go/Dart escape differently (`<`, `>`, `&`, `/`, control chars), large `timestamp` near int64 range, and a populated-`id` message (which must **not** change the hash). This is the regression guard that keeps the two languages from drifting again.
 
 **Wire impact:** none (hash output stabilizes; field set unchanged on the relay). The client change is the corrective one.
@@ -135,7 +135,7 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
       ([]groupInboxMessage, string, []groupInboxHistoryGap)
   ```
   Implement in both backends by folding `groupInboxMessageAuthorizedForPeer` into the existing `RetrieveCursor` scans (`backend_memory.go:407-458`, `backend_redis.go:686-746`).
-- `RetrieveWithCursorAuthorized` (`inbox.go:973-1025`) becomes a thin wrapper that calls `backend.RetrieveCursorAuthorized` — deleting the `RetrieveSince(0)`-then-paginate-in-store block (`inbox.go:983-1024`). This also kills the per-page full-list re-fetch.
+- `RetrieveWithCursorAuthorized` (`inbox.go:996-1047`) becomes a thin wrapper that calls `backend.RetrieveCursorAuthorized` — deleting the `RetrieveSince(0)`-then-paginate-in-store block (`inbox.go:1006-1047`). This also kills the per-page full-list re-fetch.
 - Both backends then share identical pagination/gap semantics validated by the same tests the production path uses.
 
 **Note:** this is the right home for the cursor-resume (improvement 1) and low-water-mark (improvement 2) logic — do it after 1–3 so there is a single place to land them.
@@ -147,7 +147,7 @@ The byte-for-byte range-hash fix (improvement 3) is a small, high-leverage chang
 
 ### 6. Single canonical retention anchor *(low / medium, optional / follow-up)*
 
-- Pick one anchor. Recommended: client retention filters on the **relay-provided store timestamp** (`msg['timestamp']`) consistently in `drain_group_offline_inbox_use_case.dart:505-526`, matching the relay's `<=` TTL semantics. Add a boundary test (a message within the relay window must never be classified expired client-side) or a small grace band.
+- Pick one anchor. Recommended: client retention filters on the **relay-provided store timestamp** (`msg['timestamp']`) consistently in `drain_group_offline_inbox_use_case.dart:520` (cutoff at `:289`), matching the relay's `<=` TTL semantics. Add a boundary test (a message within the relay window must never be classified expired client-side) or a small grace band.
 
 ---
 

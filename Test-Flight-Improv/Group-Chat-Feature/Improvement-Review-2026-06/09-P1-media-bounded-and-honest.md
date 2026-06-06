@@ -36,19 +36,19 @@ The net effect: media that is too large to send fast, downloads that spin foreve
 
 ### B. GIF is gated on raw pre-compression bytes; everything else post-compression
 
-- The GIF branch in `_preparePendingMedia` reads `File(path).lengthSync()` and compares to `kMaxGifFileSize` **before** any processing, then throws and shows `_showGifTooLargeMessage()` — `group_conversation_wired.dart:936-942`.
-- All other media is validated on `pending.budgetBytes`, which for non-`original` quality is the **post-processing** file length — `pending_composer_media.dart:52-81`; send-time check at `group_conversation_wired.dart:1289-1300`.
+- The GIF branch in `_preparePendingMedia` reads `File(path).lengthSync()` and compares to `kMaxGifFileSize` **before** any processing, then throws and shows `_showGifTooLargeMessage()` — `group_conversation_wired.dart:1058-1063`.
+- All other media is validated on `pending.budgetBytes`, which for non-`original` quality is the **post-processing** file length — `pending_composer_media.dart:52-81`; send-time check at `group_conversation_wired.dart:1456-1467`.
 
 > **Result:** a 30 MB GIF is rejected (raw bytes) while a multi-GB video is accepted. Same root cause as A, but visibly inconsistent across types and measuring different bytes.
 
 ### C. Downloads retry forever with no ceiling and no terminal state
 
-- Uploads have a ceiling: `kMaxUploadRetries = 3` (`retry_constants.dart:7`) and flip to terminal `upload_failed` at `group_conversation_wired.dart:1464-1466` and `retry_incomplete_group_uploads_use_case.dart`. The attachment carries `uploadRetryCount` (`media_attachment.dart:48`), persisted via migration 042 (`042_media_attachment_reliability_columns.dart:30`).
+- Uploads have a ceiling: `kMaxUploadRetries = 3` (`retry_constants.dart:7`) and flip to terminal `upload_failed` at `group_conversation_wired.dart:1632` and `retry_incomplete_group_uploads_use_case.dart`. The attachment carries `uploadRetryCount` (`media_attachment.dart:48`), persisted via migration 042 (`042_media_attachment_reliability_columns.dart:30`).
 - There is **no** `kMaxDownloadRetries` and **no** `download_retry_count` column anywhere in `lib`.
 - `isRetryableDownloadFailure` returns true for **both** `failed` and `integrity_failed` unconditionally — `group_media_integrity_policy.dart:73-76` — and drives the user-facing `_canRetryUnavailableMedia` affordance (`media_grid_cell.dart:88-90`; same pattern in `audio_player_widget.dart`).
-- On screen open, `_shouldRecoverVisibleAttachment` re-recovers `pending` / `downloading` / `failed` rows (`group_conversation_wired.dart:2440-2446`); on the failure path `downloadMedia` writes `kMediaDownloadStatusFailed` with no attempt counter (`download_media_use_case.dart:237-240`).
+- On screen open, `_shouldRecoverVisibleAttachment` re-recovers `pending` / `downloading` / `failed` rows (`group_conversation_wired.dart:2689-2694`); on the failure path `downloadMedia` writes `kMediaDownloadStatusFailed` with no attempt counter (`download_media_use_case.dart:239`).
 
-> **Verified nuance:** `integrity_failed` is **excluded** from `_shouldRecoverVisibleAttachment` and from `_autoDownloadMedia` (which only re-runs `status == 'pending'`, `group_message_listener.dart:1288`), so tampered blobs are *not* auto-re-quarantined on every open — they only carry a manual retry affordance. The genuine unbounded-auto-retry bug is **plain `failed`** rows, which re-attempt indefinitely.
+> **Verified nuance:** `integrity_failed` is **excluded** from `_shouldRecoverVisibleAttachment` and from `_autoDownloadMedia` (which only re-runs `status == 'pending'`, `group_message_listener.dart:1461`), so tampered blobs are *not* auto-re-quarantined on every open — they only carry a manual retry affordance. The genuine unbounded-auto-retry bug is **plain `failed`** rows, which re-attempt indefinitely.
 
 ### D. 7-day TTL + per-peer cap can expire group blobs before offline members catch up
 
@@ -111,8 +111,8 @@ Introduce explicit, product-tuned caps keyed by logical media type, validated co
 
 ### 2. Fold GIF into the table and validate on final bytes — *small*
 
-- Delete the pre-compression GIF branch at `group_conversation_wired.dart:936-942`. GIF is now covered by `groupMediaPerTypeLimitBytes` (it maps to `kMaxGifFileSize`).
-- Ensure the single send-time check at `group_conversation_wired.dart:1289-1300` runs against `pending.budgetBytes` (post-processing) for *all* types including GIF, and surfaces the type-aware reason through the existing **media_too_large** UX *before* upload starts. Reuse `media_gif_too_large` (already localized, `app_en.arb:382`) when the reason is the GIF cap; reuse `media_too_large_after_compress` / `media_too_large_prompt` otherwise. No new pre-compression special case.
+- Delete the pre-compression GIF branch at `group_conversation_wired.dart:1058-1063`. GIF is now covered by `groupMediaPerTypeLimitBytes` (it maps to `kMaxGifFileSize`).
+- Ensure the single send-time check at `group_conversation_wired.dart:1456-1467` runs against `pending.budgetBytes` (post-processing) for *all* types including GIF, and surfaces the type-aware reason through the existing **media_too_large** UX *before* upload starts. Reuse `media_gif_too_large` (already localized, `app_en.arb:382`) when the reason is the GIF cap; reuse `media_too_large_after_compress` / `media_too_large_prompt` otherwise. No new pre-compression special case.
 
 ### 3. Bounded download retries + honest terminal state — *medium*
 
@@ -128,14 +128,14 @@ Mirror the upload-retry pattern for downloads and split "transient failed" from 
   const String kMediaDownloadStatusDownloadFailed = 'download_failed';
   ```
 - **New DB column** `download_retry_count INTEGER NOT NULL DEFAULT 0` via a new migration (see DB impact below), with a matching nullable `downloadRetryCount` field on `MediaAttachment` (mirror `uploadRetryCount` at `media_attachment.dart:48, 128, 152, 232, 257`).
-- **In `download_media_use_case.dart`**, on each non-integrity failure path (`download_media_use_case.dart:237-240`, the invalid-file path 283-286, and the catch at 483-486), increment `downloadRetryCount` and flip to `download_failed` (terminal) once it reaches `kMaxDownloadRetries`; otherwise keep `failed` (retryable). On a successful download, reset the counter to 0.
+- **In `download_media_use_case.dart`**, on each non-integrity failure path (`download_media_use_case.dart:239`, the invalid-file path 285, and the catch at 485), increment `downloadRetryCount` and flip to `download_failed` (terminal) once it reaches `kMaxDownloadRetries`; otherwise keep `failed` (retryable). On a successful download, reset the counter to 0.
 - **In `group_media_integrity_policy.dart:73-76`**, make `isRetryableDownloadFailure` honest:
   - `failed` → retryable **only while** `downloadRetryCount < kMaxDownloadRetries`.
   - `download_failed` → **not** retryable (terminal).
   - `integrity_failed` (tamper) → **not** retryable unless the descriptor changes (content hash / encryption metadata differs from the quarantined row); this stops presenting tampered blobs as endlessly retryable.
   - Add `download_failed` to the `isUnavailableMedia` switch (`group_media_integrity_policy.dart:82-88`).
-- **In `group_conversation_wired.dart`**, exclude `download_failed` from `_shouldRecoverVisibleAttachment` (`2440-2446`) so the screen stops auto-retrying terminal rows.
-- **UI**: `media_grid_cell.dart:88-90` already keys the retry affordance off `isRetryableDownloadFailure`, so terminal rows automatically lose the retry button. Render a distinct terminal label (reuse `media_unavailable` / `media_unavailable_now`, `app_en.arb:383, 798`) in `_buildUnavailablePlaceholder` (`media_grid_cell.dart:97-103`) and the equivalent path in `audio_player_widget.dart`, clearly separate from the loading state. Add a localized "Couldn't verify this media" string for the `integrity_failed` terminal case (new l10n key across en/de/ar).
+- **In `group_conversation_wired.dart`**, exclude `download_failed` from `_shouldRecoverVisibleAttachment` (`2689-2694`) so the screen stops auto-retrying terminal rows.
+- **UI**: `media_grid_cell.dart:88-90` already keys the retry affordance off `isRetryableDownloadFailure`, so terminal rows automatically lose the retry button. Render a distinct terminal label (reuse `media_unavailable` / `media_unavailable_now`, `app_en.arb:383, 798`) in `_buildUnavailablePlaceholder` (`media_grid_cell.dart:142`) and the equivalent path in `audio_player_widget.dart`, clearly separate from the loading state. Add a localized "Couldn't verify this media" string for the `integrity_failed` terminal case (new l10n key across en/de/ar).
 - **Optional short-circuit**: the relay already returns `"not found"` / `"not authorized"` (`media.go:396, 404`), surfaced as `errorMessage` (`p2p_bridge_client.dart:840`, `download_media_use_case.dart:245`). When `errorMessage` matches these, flip straight to `download_failed` without burning the retry budget.
 
 ### 4. Member-aware group-media retention (+ optional P2P re-fetch fallback) — *large, follows*
@@ -157,7 +157,7 @@ This is the structural fix for divergence. Two complementary pieces:
 
 | Change | Type | Notes |
 |--------|------|-------|
-| `download_retry_count` column on `media_attachments` | **DB migration (new)** | New file `073_media_attachment_download_retry_column.dart`, mirroring `042` (`ALTER TABLE media_attachments ADD COLUMN download_retry_count INTEGER NOT NULL DEFAULT 0`). Bump `version: 72` → `73` and register in **both** `onCreate` (after `runMediaAttachmentReliabilityColumnsMigration`, `main.dart:330`) and `onUpgrade` with `if (oldVersion < 73)` (`main.dart:419-421`). Add `downloadRetryCount` to `MediaAttachment.fromMap/toMap/copyWith`. |
+| `download_retry_count` column on `media_attachments` | **DB migration (new)** | New file `077_media_attachment_download_retry_column.dart`, mirroring `042` (`ALTER TABLE media_attachments ADD COLUMN download_retry_count INTEGER NOT NULL DEFAULT 0`). Bump `version: 76` → `77` and register in **both** `onCreate` (after `runMediaAttachmentReliabilityColumnsMigration`, `main.dart:330`) and `onUpgrade` with `if (oldVersion < 77)` (`main.dart:419-421`). Add `downloadRetryCount` to `MediaAttachment.fromMap/toMap/copyWith`. |
 | `download_failed` status string + (item 4b) `expired` reason | App-internal | No wire change; status lives in the local DB only. |
 | `mediaMeta.Fetched` + member-aware retention | **Relay struct change** | `media.go` `mediaMeta` gains a field; it is persisted only in the in-memory index (already non-durable across restarts), so no migration, but verify the Redis/memory backends in `go-relay-server/backend_*.go` if blob metadata is persisted there. |
 | (Item 4c only) `update_allowed_peers` action OR descriptor-carried blob key | **Wire/protocol change** | Larger; deferred. Would touch `mediaRequest` (`media.go:250-258`), the per-recipient encrypted descriptor, and `upload_media_use_case.dart`. |
@@ -171,7 +171,7 @@ This is the structural fix for divergence. Two complementary pieces:
 - `lib/core/media/group_media_size_policy.dart` — per-type table, type-aware reason codes.
 - `lib/core/media/pending_composer_media.dart` — keep `kGeneralMediaAttachmentBudgetBytes` as the composer budget; stop aliasing it as the group cap.
 - `lib/core/constants/media_constants.dart` — GIF cap referenced by the table.
-- `lib/features/groups/presentation/screens/group_conversation_wired.dart` — remove pre-compression GIF branch (`936-942`); type-aware too-large UX at the send-time check (`1289-1300`).
+- `lib/features/groups/presentation/screens/group_conversation_wired.dart` — remove pre-compression GIF branch (`1058-1063`); type-aware too-large UX at the send-time check (`1456-1467`).
 
 **Item 3 (bounded download retries + terminal state):**
 - `lib/core/constants/retry_constants.dart` — `kMaxDownloadRetries`.
@@ -179,9 +179,9 @@ This is the structural fix for divergence. Two complementary pieces:
 - `lib/features/conversation/application/download_media_use_case.dart` — increment/reset retry count; terminal transition; optional relay-error short-circuit.
 - `lib/features/conversation/domain/models/media_attachment.dart` — `downloadRetryCount` field/serde/copyWith.
 - `lib/features/conversation/domain/repositories/media_attachment_repository.dart` (+ impl) — a way to persist `downloadRetryCount` (extend `saveAttachment`/`updateDownloadStatus` usage).
-- `lib/features/groups/presentation/screens/group_conversation_wired.dart` — exclude `download_failed` from `_shouldRecoverVisibleAttachment` (`2440-2446`).
+- `lib/features/groups/presentation/screens/group_conversation_wired.dart` — exclude `download_failed` from `_shouldRecoverVisibleAttachment` (`2689-2694`).
 - `lib/shared/widgets/media/media_grid_cell.dart`, `lib/shared/widgets/media/audio_player_widget.dart` — terminal label vs loading state.
-- `lib/core/database/migrations/073_media_attachment_download_retry_column.dart` (new) + `lib/main.dart` (version bump + registration).
+- `lib/core/database/migrations/077_media_attachment_download_retry_column.dart` (new) + `lib/main.dart` (version bump + registration).
 - `lib/l10n/app_*.arb` + generated `app_localizations*.dart`.
 
 **Item 4 (member-aware retention / ACL):**
@@ -198,7 +198,7 @@ This is the structural fix for divergence. Two complementary pieces:
 - **GIF parity:** assert a GIF is validated on `pending.budgetBytes` (post-compression) and shares the same `validateSize` path as other media (no separate pre-compression branch).
 - **Retry/terminal logic:** `group_media_integrity_policy_test` — `isRetryableDownloadFailure` returns true for `failed` only below `kMaxDownloadRetries`, false at/over the ceiling, false for `download_failed`, false for `integrity_failed` unless descriptor changes; `isUnavailableMedia` includes `download_failed`.
 - **Download use case:** `download_media_use_case_test` — counter increments on each failure, flips to `download_failed` at the ceiling, resets on success, and short-circuits to terminal on relay `"not found"` / `"not authorized"`.
-- **Migration:** `073_..._test` — idempotent ALTER, default 0, no-op when column exists (mirror the 042 test).
+- **Migration:** `077_..._test` — idempotent ALTER, default 0, no-op when column exists (mirror the 042 test).
 
 ### Unit (Go, relay)
 - `media_test` / `group_inbox_test` style: member-aware retention — a group blob with un-fetched allowed peers survives a TTL-cleanup pass and a per-peer prune; is eligible for prune only after all allowed peers fetched or after the absolute ceiling; `Fetched` populates on successful download.
@@ -229,7 +229,7 @@ This is the structural fix for divergence. Two complementary pieces:
 
 **Rollout order (low risk → high):**
 1. Items 1 + 2 (size table + GIF fold) — pure client, single-constant, no migration. Ship first.
-2. Item 3 (bounded download retries + terminal state) — adds migration 073 (version 72→73) and UI labels. Ship behind the same release.
+2. Item 3 (bounded download retries + terminal state) — adds migration 077 (version 76→77) and UI labels. Ship behind the same release.
 3. Item 4a/4b (member-aware retention + "expired" terminal) — relay-side, backward compatible. Ship after relay deploy/soak.
 4. Item 4c (ACL backfill / P2P re-fetch) — only if a backfill/replay product feature is greenlit.
 
@@ -241,7 +241,7 @@ This is the structural fix for divergence. Two complementary pieces:
 |------|-------|--------|
 | 1. Per-type size table | Client constants + reason codes | **Small** (~0.5 day) |
 | 2. GIF fold into table | Remove special case, route through table | **Small** (~0.5 day) |
-| 3. Bounded download retries + terminal state | Constant + status + migration 073 + use-case + policy + UI + l10n + tests | **Medium** (~2–3 days) |
+| 3. Bounded download retries + terminal state | Constant + status + migration 077 + use-case + policy + UI + l10n + tests | **Medium** (~2–3 days) |
 | 4a/4b. Member-aware retention + "expired" terminal | Relay struct + cleanup/prune logic + Go tests + client terminal wiring | **Large** (~3–5 days) |
 | 4c. ACL backfill / P2P re-fetch (optional) | Wire/protocol change + descriptor key delivery or `update_allowed_peers` | **Large / deferred** (gate behind product decision) |
 

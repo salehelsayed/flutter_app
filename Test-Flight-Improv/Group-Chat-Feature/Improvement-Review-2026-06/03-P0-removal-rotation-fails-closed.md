@@ -26,15 +26,15 @@ These are correctness/security failures, not cosmetic ones: an admin cannot reli
 ### Removal path (admin removes someone else)
 
 `_onRemoveMember` in `group_info_wired.dart`:
-- `group_info_wired.dart:851-861` — local removal is applied first (`removeGroupMember` updates DB + Go config), `localRemovalAccepted = true`.
-- `group_info_wired.dart:936-1011` — `member_removed` is published on the topic, stored as offline replay, and sent direct to targets.
-- `group_info_wired.dart:1014-1033` — `rotateAndDistributeGroupKey(...)`; if it returns `null`, `throw StateError(group_info_rotate_key_failed)`.
-- `group_info_wired.dart:1039-1061` — the catch calls `_rollbackFailedMemberRemoval` which, at `group_info_wired.dart:782-805`, re-saves the removed member, restores the group row, deletes the removal timeline message, and **re-publishes a Go config that includes the removed member** (`callGroupUpdateConfig` with `restoredMembers`).
+- `group_info_wired.dart:852-862` — local removal is applied first (`removeGroupMember` updates DB + Go config), `localRemovalAccepted = true`.
+- `group_info_wired.dart:937-1011` — `member_removed` is published on the topic, stored as offline replay, and sent direct to targets.
+- `group_info_wired.dart:1015-1034` — `rotateAndDistributeGroupKey(...)`; if it returns `null`, `throw StateError(group_info_rotate_key_failed)`.
+- `group_info_wired.dart:1040-1061` — the catch calls `_rollbackFailedMemberRemoval` which, at `group_info_wired.dart:774-820`, re-saves the removed member, restores the group row, deletes the removal timeline message, and **re-publishes a Go config that includes the removed member** (`callGroupUpdateConfig` with `restoredMembers`).
 
 Inside the rotation use case (`rotate_and_distribute_group_key_use_case.dart`):
 - `:150-168` computes `_undeliverableActiveMembers` and **returns `null` for the entire rotation** if that list is non-empty.
 - `:736-744` `_undeliverableActiveMembers` = remaining members whose `_deliverableDevicesForRotation` is empty.
-- `:746-758` `_deliverableDevicesForRotation` filters devices on `_hasUsableMlKemPublicKey`.
+- `:746-755` `_deliverableDevicesForRotation` filters devices on `_hasUsableMlKemPublicKey`.
 - `:757-758` `_hasUsableMlKemPublicKey` = "ML-KEM public key string is non-empty" — i.e. **key presence, not reachability**.
 - Crucially, the undeliverable gate at `:150-168` runs *before* `distributionTargets` and the inbox fallback (`:170-181`, `:711-717`, `:760-828`). So an *offline-but-keyed* member is handled gracefully (direct send → inbox fallback), but a *missing-ML-KEM* member aborts the whole operation, including the security-critical re-key.
 
@@ -45,10 +45,10 @@ Inside the rotation use case (`rotate_and_distribute_group_key_use_case.dart`):
 - `:154-182` — stores the offline replay envelope for remaining members.
 - `:184-201` — *then* calls `rotateAndDistributeGroupKey`; if it returns `null`, `throw StateError(voluntaryLeaveRotationFailedMessage)` at `:198-200`.
 
-The caller `_onLeave` (`group_info_wired.dart:336-377`):
-- `:343` runs `_broadcastSelfRemovalIfNeeded()` (which includes the rotation).
-- `:345-352` proceeds to `leaveGroup` + local cleanup **only on success**.
-- `:363-368` the catch only rolls back when `_isNativeLeaveFailure(e)` is true, and `_isNativeLeaveFailure` (`:692-693`) requires `BridgeCommandException` with command `'group:leave'`. A rotation `StateError` does **not** qualify, so: removal is already broadcast and inbox-stored, the leave timeline message is not deleted, and `leaveGroup` cleanup never runs. Split-brain confirmed.
+The caller `_onLeave` (`group_info_wired.dart:337-378`):
+- `:344` runs `_broadcastSelfRemovalIfNeeded()` (which includes the rotation).
+- `:346-352` proceeds to `leaveGroup` + local cleanup **only on success**.
+- `:366-367` the catch only rolls back when `_isNativeLeaveFailure(e)` is true, and `_isNativeLeaveFailure` (`:693-694`) requires `BridgeCommandException` with command `'group:leave'`. A rotation `StateError` does **not** qualify, so: removal is already broadcast and inbox-stored, the leave timeline message is not deleted, and `leaveGroup` cleanup never runs. Split-brain confirmed.
 
 ## Root cause(s)
 
@@ -73,10 +73,10 @@ Then:
 - Distribute to all distributable device targets best-effort (the existing loop at `:282-315` and `_distributeRotatedKeyToDeviceWithRetry`).
 - For each deferred-repair member, **enqueue a sender-side pending key distribution** keyed by `(groupId, peerId, newEpoch)` so it is retried when that member's ML-KEM key becomes available, rather than blocking the rotation.
 
-Reuse the existing repair infrastructure rather than inventing a new one. Today `group_pending_key_repairs` (`migration 063`, `GroupPendingKeyRepairRunner` in `group_pending_key_repair_service.dart:380-548`) is *receiver-driven* (a member who can't decrypt requests a repair). Add a **sender-driven deferred-distribution** record for the symmetric case (the rotator knows it couldn't deliver). Minimal options:
+Reuse the existing repair infrastructure rather than inventing a new one. Today `group_pending_key_repairs` (`migration 063`, `GroupPendingKeyRepairRunner` in `group_pending_key_repair_service.dart:383-548`) is *receiver-driven* (a member who can't decrypt requests a repair). Add a **sender-driven deferred-distribution** record for the symmetric case (the rotator knows it couldn't deliver). Minimal options:
 
-- **Preferred (reuse table):** add rows to `group_pending_key_repairs` with a new `status = 'pending_distribution'` and `payload_type = 'group_key_update'`, storing the target `peerId`/`transport_peer_id` and `key_epoch = newEpoch`. The runner's retry path (`retryPendingRepairsForKey`, `:408`) gains a branch that, for `pending_distribution` rows, re-attempts `_distributeRotatedKeyToDevice` once the member has a usable ML-KEM key. No migration needed (the columns already exist; `status` is free-form `TEXT`).
-- **Alternative (new helper):** a dedicated `group_pending_key_distributions` table if mixing sender/receiver semantics in one table is undesirable. This requires a new migration (next free number) + DB helpers + repository, so it is more code; prefer the reuse option unless the status overload proves confusing.
+- **Preferred (reuse table):** add rows to `group_pending_key_repairs` with a new `status = 'pending_distribution'` and `payload_type = 'group_key_update'`, storing the target `peerId`/`transport_peer_id` and `key_epoch = newEpoch`. The runner's retry path (`retryPendingRepairsForKey`, `:411`) gains a branch that, for `pending_distribution` rows, re-attempts `_distributeRotatedKeyToDevice` once the member has a usable ML-KEM key. No migration needed (the columns already exist; `status` is free-form `TEXT`).
+- **Alternative (new helper):** a dedicated `group_pending_key_distributions` table if mixing sender/receiver semantics in one table is undesirable. This requires a new migration (next free number `075`) + DB helpers + repository, so it is more code; prefer the reuse option unless the status overload proves confusing.
 
 Change the return contract so callers can distinguish "rotation done, fully distributed" from "rotation done, some members deferred":
 
@@ -98,10 +98,10 @@ Return `key == null` **only** when the new epoch could not be promoted locally (
 
 In `group_info_wired.dart` `_onRemoveMember`:
 
-- Replace the `rotatedKey == null` throw at `:1029-1033` with a check on the new outcome:
+- Replace the `rotatedKey == null` throw at `:1030-1034` with a check on the new outcome:
   - `outcome.rotated == false` → genuine failure (epoch not promoted, removed member not excluded). This *is* a fatal case; but see the rollback fix below.
   - `outcome.rotated == true && !outcome.fullyDistributed` → success with deferred members. Do **not** throw. Surface a non-fatal SnackBar (new l10n string, e.g. `group_info_remove_member_partial_distribution`) and continue.
-- **Make rollback safe.** `_rollbackFailedMemberRemoval` (`:773-819`) must **never re-add a member whose `member_removed` was already published**. Since the publish at `:936-959` happens before rotation, by the time rotation could fail the removal is already on the wire. Guard rollback so it only fires for failures *before* the broadcast (e.g. local DB write / Go config update failed and nothing was published). After the broadcast, removal is committed; on a later failure, prefer **retry of rotation/distribution**, not restoration of the member. Track a `removalBroadcast` flag analogous to `localRemovalAccepted` and gate `_rollbackFailedMemberRemoval` on `!removalBroadcast`.
+- **Make rollback safe.** `_rollbackFailedMemberRemoval` (`:774-820`) must **never re-add a member whose `member_removed` was already published**. Since the publish at `:937-960` happens before rotation, by the time rotation could fail the removal is already on the wire. Guard rollback so it only fires for failures *before* the broadcast (e.g. local DB write / Go config update failed and nothing was published). After the broadcast, removal is committed; on a later failure, prefer **retry of rotation/distribution**, not restoration of the member. Track a `removalBroadcast` flag analogous to `localRemovalAccepted` and gate `_rollbackFailedMemberRemoval` on `!removalBroadcast`.
 
 ### 3. Fix voluntary-leave ordering and failure handling
 
@@ -109,26 +109,26 @@ Two complementary changes in `broadcast_voluntary_leave_use_case.dart`:
 
 - **Reorder so the irreversible broadcast is last where feasible.** Attempt `rotateAndDistributeGroupKey` *before* publishing `member_removed` and storing the offline replay envelope (`:139-182`). If rotation cannot even promote a new epoch (`outcome.rotated == false`), abort **before** anything is broadcast and before the leave timeline message is committed — the leaver is cleanly still-a-member, no split-brain. (The leave-specific subtlety: the leaver removing *themselves* doesn't need to exclude another member, so rotation here is purely forward-secrecy hygiene; if it can't promote, leaving without rotating is acceptable — see best-effort fallback.)
 - **Best-effort after broadcast.** If the design must keep broadcast-first (e.g. to ensure remaining members converge even if the leaver's rotation flakes), then **do not throw** on rotation failure at `:198-200`. Return `VoluntaryLeaveBroadcastResult(didBroadcast: true, rotatedKey: null, ...)` plus a `deferredRotation` flag and an emitted flow event, so `_onLeave` proceeds to `leaveGroup` cleanup. Remaining members can re-key on the next admin action.
-- In `_onLeave` (`group_info_wired.dart:336-377`): once `broadcastResult.didBroadcast == true`, **always complete `leaveGroup` + cleanup**, regardless of rotation outcome. Restrict `_rollbackFailedVoluntaryLeave` (`:363-368`) to the pre-broadcast failure window only (native `group:leave` failure already qualifies; a post-broadcast rotation `StateError` must now lead to *forward* cleanup, not rollback).
+- In `_onLeave` (`group_info_wired.dart:337-378`): once `broadcastResult.didBroadcast == true`, **always complete `leaveGroup` + cleanup**, regardless of rotation outcome. Restrict `_rollbackFailedVoluntaryLeave` (`:366-367`) to the pre-broadcast failure window only (native `group:leave` failure already qualifies; a post-broadcast rotation `StateError` must now lead to *forward* cleanup, not rollback).
 
 ### 4. Surface deferred state and drive it to convergence
 
 - Emit explicit flow events for the new states: `GROUP_ROTATE_KEY_DEFERRED_REPAIR_QUEUED` (per deferred peer) and `GROUP_ROTATE_KEY_PARTIAL_DISTRIBUTION` (summary), replacing the abort event `GROUP_ROTATE_KEY_UNDELIVERABLE_MEMBERS` at `:156-166`.
-- Wire the deferred-distribution rows into the existing repair runner so they retry on the same triggers that already drive `group_pending_key_repairs` (app resume, key-repair request, periodic). Reuse `GroupPendingKeyRepairRunner.retryPendingRepairsForKey` (`:408`) with the new status branch.
+- Wire the deferred-distribution rows into the existing repair runner so they retry on the same triggers that already drive `group_pending_key_repairs` (app resume, key-repair request, periodic). Reuse `GroupPendingKeyRepairRunner.retryPendingRepairsForKey` (`:411`) with the new status branch.
 
 ### Wire / DB / migration impact
 
 | Change | Impact |
 |---|---|
 | Sender-side deferred distribution via existing `group_pending_key_repairs` (status `pending_distribution`) | **No migration** — columns already exist; status is free-form TEXT. Runner gains a branch. Preferred. |
-| Alternative dedicated table | New migration (next free number after `072`) + DB helpers + repository + DI threading in `main.dart`. More code. |
+| Alternative dedicated table | New migration (next free number `075`) + DB helpers + repository + DI threading in `main.dart`. More code. |
 | Wire format | **None.** `group_key_update` v2 envelope unchanged; the deferred path re-sends the same envelope later. |
-| `rotateAndDistributeGroupKey` return type | `GroupKeyInfo?` → `RotateGroupKeyOutcome`. Update both call sites (`group_info_wired.dart:1014`, `broadcast_voluntary_leave_use_case.dart:186`) and tests. |
+| `rotateAndDistributeGroupKey` return type | `GroupKeyInfo?` → `RotateGroupKeyOutcome`. Update both call sites (`group_info_wired.dart:1015`, `broadcast_voluntary_leave_use_case.dart:186`) and tests. |
 
 ## Affected files & components
 
 - `lib/features/groups/application/rotate_and_distribute_group_key_use_case.dart` — remove abort gate (`:150-168`); partition members; promote-then-defer; new return type; enqueue deferred distributions.
-- `lib/features/groups/presentation/screens/group_info_wired.dart` — `_onRemoveMember` (`:821-1076`): no-throw on partial distribution, guard `_rollbackFailedMemberRemoval` (`:773-819`) so it never restores a removed member post-broadcast; `_onLeave` (`:336-377`) forward-cleanup on post-broadcast rotation failure.
+- `lib/features/groups/presentation/screens/group_info_wired.dart` — `_onRemoveMember` (`:822-1077`): no-throw on partial distribution, guard `_rollbackFailedMemberRemoval` (`:774-820`) so it never restores a removed member post-broadcast; `_onLeave` (`:337-378`) forward-cleanup on post-broadcast rotation failure.
 - `lib/features/groups/application/broadcast_voluntary_leave_use_case.dart` — reorder rotation before broadcast and/or make post-broadcast rotation failure non-fatal (`:139-201`).
 - `lib/features/groups/application/group_pending_key_repair_service.dart` — add `pending_distribution` branch to `GroupPendingKeyRepairRunner.retryPendingRepairsForKey` / `_retryOne`.
 - `lib/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart` + `lib/core/database/helpers/group_pending_key_repairs_db_helpers.dart` — enqueue/query sender-side rows.

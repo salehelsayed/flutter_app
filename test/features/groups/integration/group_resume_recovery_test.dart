@@ -12,6 +12,7 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -48,6 +49,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -708,9 +710,11 @@ class _Section10MirroringBridge extends FakeBridge {
     this.publishFailuresRemaining = 0,
     this.publishTimeoutsRemaining = 0,
     this.inboxStoreFailuresRemaining = 0,
+    List<Map<String, dynamic>>? publishResponses,
     this.inboxStoreResponse,
     Map<String, Completer<void>>? commandGates,
   }) : operationLog = operationLog ?? <String>[],
+       publishResponses = publishResponses ?? <Map<String, dynamic>>[],
        commandGates = commandGates ?? <String, Completer<void>>{};
 
   final FakeGroupPubSubNetwork network;
@@ -720,6 +724,7 @@ class _Section10MirroringBridge extends FakeBridge {
   int publishFailuresRemaining;
   int publishTimeoutsRemaining;
   int inboxStoreFailuresRemaining;
+  final List<Map<String, dynamic>> publishResponses;
   final Map<String, dynamic>? inboxStoreResponse;
   final Map<String, Completer<void>> commandGates;
 
@@ -801,6 +806,10 @@ class _Section10MirroringBridge extends FakeBridge {
     if (publishFailuresRemaining > 0) {
       publishFailuresRemaining--;
       throw Exception('Simulated publish failure');
+    }
+
+    if (publishResponses.isNotEmpty) {
+      return jsonEncode(publishResponses.removeAt(0));
     }
 
     final groupId = payload['groupId'] as String;
@@ -995,6 +1004,54 @@ Future<GroupMessage> _latestOutgoingMessage(
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   expect(matches, isNotEmpty, reason: 'Missing outgoing message for $groupId');
   return matches.first;
+}
+
+Future<int> _retryFailedGroupMessagesForUser(GroupTestUser sender) {
+  return retryFailedGroupMessages(
+    groupMsgRepo: sender.msgRepo,
+    groupRepo: sender.groupRepo,
+    identityRepo: _Section10IdentityRepository(_identityForUser(sender)),
+    bridge: sender.bridge,
+    mediaAttachmentRepo: sender.mediaAttachmentRepo,
+  );
+}
+
+PendingMessageRetrier _createGfr004GroupAutoRetrier({
+  required GroupTestUser sender,
+  required FakeP2PService p2pService,
+  required Future<int> Function() retryFailedGroupMessagesFn,
+}) {
+  return PendingMessageRetrier(
+    p2pService: p2pService,
+    messageRepo: InMemoryMessageRepository(),
+    identityRepo: _Section10IdentityRepository(_identityForUser(sender)),
+    contactRepo: InMemoryContactRepository(),
+    bridge: sender.bridge,
+    retryDebounce: Duration.zero,
+    recoverStuckSendingGroupMessagesFn: () async => 0,
+    retryIncompleteGroupUploadsFn: () async => 0,
+    retryFailedGroupMessagesFn: retryFailedGroupMessagesFn,
+    retryFailedMessagesOverride: () async => 0,
+    retryUnackedMessagesOverride: () async => 0,
+    retryFailedGroupInboxStoresFn: () async => 0,
+  );
+}
+
+Future<void> _expectGfr004SingleCopy({
+  required GroupTestUser user,
+  required String groupId,
+  required String messageId,
+  required String text,
+  required bool isIncoming,
+  required String reason,
+}) async {
+  final messages = await user.loadGroupMessages(groupId);
+  final matches = messages
+      .where((message) => message.id == messageId)
+      .toList(growable: false);
+  expect(matches, hasLength(1), reason: reason);
+  expect(matches.single.text, text, reason: reason);
+  expect(matches.single.isIncoming, isIncoming, reason: reason);
 }
 
 Future<void> _pumpSection10SenderWidget(
@@ -10637,6 +10694,452 @@ void main() {
         bob.dispose();
         charlie.dispose();
       });
+
+      test(
+        'GFR-004 failed retry plus auto recovery settles one group text once',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            publishFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gfr004-overlap-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-gfr004-overlap-bob-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'reader-gfr004-overlap-charlie-peer',
+            username: 'Charlie',
+            network: network,
+          );
+
+          const groupId = 'group-gfr004-overlap';
+          const text = 'GFR-004 recover overlap once';
+          await admin.createGroup(groupId: groupId, name: 'GFR-004 Overlap');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await admin.addMember(groupId: groupId, invitee: charlie);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+          await _saveKey(charlie, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+          charlie.start();
+
+          final (initialResult, initialMessage) = await admin
+              .sendGroupMessageViaBridge(groupId: groupId, text: text);
+          expect(initialResult, SendGroupMessageResult.error);
+          expect(initialMessage, isNotNull);
+          expect(initialMessage!.status, 'failed');
+
+          final publishGate = Completer<void>();
+          adminBridge.commandGates['group:publish'] = publishGate;
+
+          final manualRetry = _retryFailedGroupMessagesForUser(admin);
+          await pumpUntilAsync(() async {
+            return bridgePayloads(adminBridge, 'group:publish')
+                    .where(
+                      (payload) => payload['messageId'] == initialMessage.id,
+                    )
+                    .length ==
+                2;
+          }, maxPumps: 80);
+
+          var resumeRetryCount = -1;
+          final resumeRetryInvoked = Completer<void>();
+          final resumeFuture = handleAppResumed(
+            bridge: admin.bridge,
+            p2pService: FakeP2PService(recoveryMethod: 'relay_ready'),
+            groupRepo: admin.groupRepo,
+            groupMsgRepo: admin.msgRepo,
+            retryFailedGroupMessagesFn: () async {
+              if (!resumeRetryInvoked.isCompleted) {
+                resumeRetryInvoked.complete();
+              }
+              resumeRetryCount = await _retryFailedGroupMessagesForUser(admin);
+              return resumeRetryCount;
+            },
+          );
+
+          await resumeRetryInvoked.future.timeout(const Duration(seconds: 2));
+          publishGate.complete();
+          adminBridge.commandGates.remove('group:publish');
+
+          final manualRetryCount = await manualRetry;
+          await resumeFuture;
+
+          expect(manualRetryCount, 1);
+          expect(resumeRetryCount, 0);
+          expect(
+            bridgePayloads(
+              adminBridge,
+              'group:publish',
+            ).where((payload) => payload['messageId'] == initialMessage.id),
+            hasLength(2),
+            reason:
+                'Initial failure plus one successful retry should be the only publishes',
+          );
+
+          final senderRows = await admin.loadGroupMessages(groupId);
+          expect(
+            senderRows.where(
+              (message) => !message.isIncoming && message.text == text,
+            ),
+            hasLength(1),
+          );
+          await _expectGfr004SingleCopy(
+            user: admin,
+            groupId: groupId,
+            messageId: initialMessage.id,
+            text: text,
+            isIncoming: false,
+            reason: 'sender keeps the original recovered row',
+          );
+          await pumpUntilAsync(() async {
+            final bobRows = await bob.loadGroupMessages(groupId);
+            final charlieRows = await charlie.loadGroupMessages(groupId);
+            return bobRows
+                        .where((message) => message.id == initialMessage.id)
+                        .length ==
+                    1 &&
+                charlieRows
+                        .where((message) => message.id == initialMessage.id)
+                        .length ==
+                    1;
+          }, maxPumps: 80);
+          await _expectGfr004SingleCopy(
+            user: bob,
+            groupId: groupId,
+            messageId: initialMessage.id,
+            text: text,
+            isIncoming: true,
+            reason: 'Bob receives the recovered attempt once',
+          );
+          await _expectGfr004SingleCopy(
+            user: charlie,
+            groupId: groupId,
+            messageId: initialMessage.id,
+            text: text,
+            isIncoming: true,
+            reason: 'Charlie receives the recovered attempt once',
+          );
+
+          admin.dispose();
+          bob.dispose();
+          charlie.dispose();
+        },
+      );
+
+      test(
+        'GFR-004 send while offline auto delivers once after reconnect',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            publishResponses: <Map<String, dynamic>>[
+              {
+                'ok': false,
+                'errorCode': 'NO_USABLE_TRANSPORT',
+                'errorMessage': 'no usable transport',
+              },
+            ],
+            inboxStoreFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gfr004-auto-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-gfr004-auto-bob-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'reader-gfr004-auto-charlie-peer',
+            username: 'Charlie',
+            network: network,
+          );
+          final p2pService = FakeP2PService();
+          late final PendingMessageRetrier retrier;
+          addTearDown(() {
+            retrier.dispose();
+            p2pService.dispose();
+            admin.dispose();
+            bob.dispose();
+            charlie.dispose();
+          });
+
+          const groupId = 'group-gfr004-auto';
+          const text = 'GFR-004 auto reconnect once';
+          const messageId = 'gfr004-auto-once';
+          await admin.createGroup(groupId: groupId, name: 'GFR-004 Auto');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await admin.addMember(groupId: groupId, invitee: charlie);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+          await _saveKey(charlie, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+          charlie.start();
+
+          final (initialResult, initialMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: text,
+                messageId: messageId,
+              );
+          expect(initialResult, SendGroupMessageResult.error);
+          expect(initialMessage, isNotNull);
+          expect(initialMessage!.id, messageId);
+          expect(initialMessage.status, 'failed');
+          expect(
+            (await admin.loadGroupMessages(
+              groupId,
+            )).where((message) => !message.isIncoming && message.text == text),
+            hasLength(1),
+          );
+          expect(await bob.loadGroupMessages(groupId), isEmpty);
+          expect(await charlie.loadGroupMessages(groupId), isEmpty);
+
+          var autoRetryCalls = 0;
+          var autoRetriedRows = 0;
+          retrier = _createGfr004GroupAutoRetrier(
+            sender: admin,
+            p2pService: p2pService,
+            retryFailedGroupMessagesFn: () async {
+              autoRetryCalls++;
+              final retried = await _retryFailedGroupMessagesForUser(admin);
+              autoRetriedRows += retried;
+              return retried;
+            },
+          );
+          retrier.start();
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'admin-gfr004-auto-peer',
+              circuitAddresses: ['/p2p-circuit/gfr004-auto-ready'],
+              relayState: 'online',
+              sendCapabilityReady: true,
+              inboxCapabilityReady: true,
+            ),
+          );
+
+          await pumpUntilAsync(() async {
+            final bobRows = await bob.loadGroupMessages(groupId);
+            final charlieRows = await charlie.loadGroupMessages(groupId);
+            return bobRows.where((message) => message.id == messageId).length ==
+                    1 &&
+                charlieRows
+                        .where((message) => message.id == messageId)
+                        .length ==
+                    1;
+          }, maxPumps: 80);
+
+          expect(autoRetryCalls, 1);
+          expect(autoRetriedRows, 1);
+          expect(
+            bridgePayloads(
+              adminBridge,
+              'group:publish',
+            ).where((payload) => payload['messageId'] == messageId),
+            hasLength(2),
+            reason: 'offline attempt plus one auto retry publish',
+          );
+          await _expectGfr004SingleCopy(
+            user: admin,
+            groupId: groupId,
+            messageId: messageId,
+            text: text,
+            isIncoming: false,
+            reason: 'sender row recovers in place after reconnect',
+          );
+          await _expectGfr004SingleCopy(
+            user: bob,
+            groupId: groupId,
+            messageId: messageId,
+            text: text,
+            isIncoming: true,
+            reason: 'Bob receives the auto-recovered row once',
+          );
+          await _expectGfr004SingleCopy(
+            user: charlie,
+            groupId: groupId,
+            messageId: messageId,
+            text: text,
+            isIncoming: true,
+            reason: 'Charlie receives the auto-recovered row once',
+          );
+        },
+      );
+
+      test(
+        'GFR-004 multiple offline queued texts deliver once each in order',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            publishResponses: <Map<String, dynamic>>[
+              {
+                'ok': false,
+                'errorCode': 'NO_USABLE_TRANSPORT',
+                'errorMessage': 'no usable transport',
+              },
+              {
+                'ok': false,
+                'errorCode': 'NO_USABLE_TRANSPORT',
+                'errorMessage': 'no usable transport',
+              },
+            ],
+            inboxStoreFailuresRemaining: 2,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gfr004-order-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-gfr004-order-bob-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'reader-gfr004-order-charlie-peer',
+            username: 'Charlie',
+            network: network,
+          );
+          final p2pService = FakeP2PService();
+          late final PendingMessageRetrier retrier;
+          addTearDown(() {
+            retrier.dispose();
+            p2pService.dispose();
+            admin.dispose();
+            bob.dispose();
+            charlie.dispose();
+          });
+
+          const groupId = 'group-gfr004-order';
+          const firstId = 'gfr004-order-first';
+          const secondId = 'gfr004-order-second';
+          const firstText = 'GFR-004 queued first';
+          const secondText = 'GFR-004 queued second';
+          final baseTime = DateTime.utc(2026, 6, 6, 10);
+          await admin.createGroup(groupId: groupId, name: 'GFR-004 Order');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await admin.addMember(groupId: groupId, invitee: charlie);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+          await _saveKey(charlie, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+          charlie.start();
+
+          final (firstResult, firstMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: firstText,
+                messageId: firstId,
+                timestamp: baseTime,
+              );
+          final (secondResult, secondMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: secondText,
+                messageId: secondId,
+                timestamp: baseTime.add(const Duration(milliseconds: 1)),
+              );
+          expect(firstResult, SendGroupMessageResult.error);
+          expect(secondResult, SendGroupMessageResult.error);
+          expect(firstMessage!.status, 'failed');
+          expect(secondMessage!.status, 'failed');
+          expect(await bob.loadGroupMessages(groupId), isEmpty);
+          expect(await charlie.loadGroupMessages(groupId), isEmpty);
+
+          var autoRetryCalls = 0;
+          var autoRetriedRows = 0;
+          retrier = _createGfr004GroupAutoRetrier(
+            sender: admin,
+            p2pService: p2pService,
+            retryFailedGroupMessagesFn: () async {
+              autoRetryCalls++;
+              final retried = await _retryFailedGroupMessagesForUser(admin);
+              autoRetriedRows += retried;
+              return retried;
+            },
+          );
+          retrier.start();
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'admin-gfr004-order-peer',
+              circuitAddresses: ['/p2p-circuit/gfr004-order-ready'],
+              relayState: 'online',
+              sendCapabilityReady: true,
+              inboxCapabilityReady: true,
+            ),
+          );
+
+          await pumpUntilAsync(() async {
+            final bobRows = await bob.loadGroupMessages(groupId);
+            final charlieRows = await charlie.loadGroupMessages(groupId);
+            return bobRows.where((message) => message.id == firstId).length ==
+                    1 &&
+                bobRows.where((message) => message.id == secondId).length ==
+                    1 &&
+                charlieRows.where((message) => message.id == firstId).length ==
+                    1 &&
+                charlieRows.where((message) => message.id == secondId).length ==
+                    1;
+          }, maxPumps: 100);
+
+          expect(autoRetryCalls, 1);
+          expect(autoRetriedRows, 2);
+          expect(
+            bridgePayloads(adminBridge, 'group:publish')
+                .where(
+                  (payload) =>
+                      payload['messageId'] == firstId ||
+                      payload['messageId'] == secondId,
+                )
+                .map((payload) => payload['messageId']),
+            [firstId, secondId, firstId, secondId],
+            reason:
+                'two offline attempts should be retried once each in original order',
+          );
+
+          for (final user in <GroupTestUser>[admin, bob, charlie]) {
+            final messages = await user.loadGroupMessages(groupId);
+            final visibleIds = messages
+                .where(
+                  (message) => message.id == firstId || message.id == secondId,
+                )
+                .map((message) => message.id)
+                .toList(growable: false);
+            expect(
+              visibleIds,
+              [firstId, secondId],
+              reason: '${user.username} preserves queued delivery order',
+            );
+          }
+        },
+      );
 
       test(
         'ST-013 fake-network relay chaos surfaces gaps and recovers media replay',

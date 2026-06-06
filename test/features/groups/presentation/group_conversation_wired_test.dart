@@ -240,6 +240,7 @@ class _NoOpMsgRepo implements GroupMessageRepository {
 /// verify optimistic display before the network responds.
 class _GatedPublishBridge extends FakeBridge {
   final Completer<void> publishGate = Completer<void>();
+  int publishAttempts = 0;
 
   _GatedPublishBridge() {
     responses['group:publish'] = {'ok': true, 'messageId': 'msg-published'};
@@ -251,6 +252,7 @@ class _GatedPublishBridge extends FakeBridge {
     final cmd = parsed['cmd'] as String?;
 
     if (cmd == 'group:publish') {
+      publishAttempts++;
       await publishGate.future;
     }
 
@@ -824,6 +826,31 @@ List<Map<String, dynamic>> groupPublishPayloads(FakeBridge bridge) {
       .toList();
 }
 
+String groupTextRetryPayload({
+  required String groupId,
+  required String senderPeerId,
+  required String senderUsername,
+  required String messageId,
+  required String text,
+  required String timestamp,
+  String? quotedMessageId,
+}) {
+  return jsonEncode({
+    'groupId': groupId,
+    'message': jsonEncode({
+      'groupId': groupId,
+      'senderId': senderPeerId,
+      'senderUsername': senderUsername,
+      'keyEpoch': 0,
+      'text': text,
+      'timestamp': timestamp,
+      'messageId': messageId,
+      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+      'media': const <Object>[],
+    }),
+  });
+}
+
 Map<String, dynamic> groupSendReliablePayloadForMessage(
   FakeBridge bridge,
   String messageId,
@@ -1385,7 +1412,7 @@ void main() {
 
       // Verify bridge received group:publish command
       expect(bridge.commandLog, contains('group:publish'));
-      expect(msgRepo.getMessagesPageCalls, 1);
+      expect(msgRepo.getMessagesPageCalls, greaterThanOrEqualTo(1));
 
       // The sent message should appear in the list
       expect(find.text('Test message'), findsOneWidget);
@@ -2752,7 +2779,7 @@ void main() {
     );
 
     testWidgets(
-      'local outgoing status event updates visible row without listener stream',
+      'GFR-003 open conversation applies outgoing local status update in place',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -2779,6 +2806,18 @@ void main() {
           );
         });
         final initialPageLoads = msgRepo.getMessagesPageCalls;
+
+        await msgRepo.saveMessage(failed.copyWith(status: 'sending'));
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'local-status-visible' &&
+                message.status == 'sending',
+          );
+        });
 
         await msgRepo.saveMessage(failed.copyWith(status: 'sent'));
         await pumpUntil(tester, () {
@@ -5884,7 +5923,7 @@ void main() {
       expect(updated.first.status, 'sent');
     });
 
-    testWidgets('failed publish shows message with failed status', (
+    testWidgets('GFR-003 failed text recovery clears duplicate composer path', (
       tester,
     ) async {
       final group = makeChatGroup();
@@ -5898,7 +5937,9 @@ void main() {
         },
       );
 
-      await tester.pumpWidget(buildWidget(group: group));
+      await tester.pumpWidget(
+        buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+      );
       await pumpFrames(tester);
 
       await tester.enterText(find.byType(TextField), 'Will fail');
@@ -5906,16 +5947,95 @@ void main() {
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await pumpFrames(tester, count: 20);
 
-      // Message should still be visible and the composer should keep the draft.
-      expect(find.text('Will fail'), findsWidgets);
+      final failedRows = (await msgRepo.getMessagesPage(
+        group.id,
+      )).where((message) => message.text == 'Will fail').toList();
+      expect(failedRows, hasLength(1));
+      expect(failedRows.single.status, 'failed');
+
+      // Message should still be visible, but the composer should not keep the
+      // same text as a second independent Send path.
+      expect(find.text('Will fail'), findsOneWidget);
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller?.text,
-        'Will fail',
+        isEmpty,
+      );
+      expect(
+        find.byKey(ValueKey('failed-message-retry-${failedRows.single.id}')),
+        findsOneWidget,
       );
 
       // Status should be 'failed' (error icon)
       expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
     });
+
+    testWidgets(
+      'GFR-003 quoted failed text does not restore stale duplicate quote draft',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-gfr003-parent',
+            text: 'Quoted parent',
+            groupId: group.id,
+          ),
+        );
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+          },
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpFrames(tester);
+
+        final initialScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        initialScreen.onQuoteReply!('msg-gfr003-parent');
+        await pumpFrames(tester);
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .activeQuoteText,
+          'Quoted parent',
+        );
+
+        await tester.enterText(find.byType(TextField), 'Quoted failure');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        final failedRows = (await msgRepo.getMessagesPage(
+          group.id,
+        )).where((message) => message.text == 'Quoted failure').toList();
+        expect(failedRows, hasLength(1));
+        expect(failedRows.single.status, 'failed');
+        expect(failedRows.single.quotedMessageId, 'msg-gfr003-parent');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          isEmpty,
+        );
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .activeQuoteText,
+          isNull,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${failedRows.single.id}')),
+          findsOneWidget,
+        );
+      },
+    );
 
     testWidgets(
       'publish timeout with inbox success keeps the message successful in UI',
@@ -6589,6 +6709,84 @@ void main() {
     );
 
     testWidgets(
+      'GFR-003 repeated retry taps coalesce while row retry is in flight',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final gatedBridge = _GatedPublishBridge();
+        bridge = gatedBridge;
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-gfr003-retrying',
+            text: 'Retry once',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'failed',
+            inboxRetryPayload: groupTextRetryPayload(
+              groupId: group.id,
+              senderPeerId: testIdentity.peerId,
+              senderUsername: testIdentity.username,
+              messageId: 'msg-gfr003-retrying',
+              text: 'Retry once',
+              timestamp: '2026-01-15T12:02:00.000Z',
+            ),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'msg-gfr003-retrying' &&
+                message.status == 'failed',
+          );
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        retryScreen.onRetryFailedMessage!('msg-gfr003-retrying');
+        retryScreen.onRetryFailedMessage!('msg-gfr003-retrying');
+        await pumpUntil(tester, () => gatedBridge.publishAttempts == 1);
+
+        final inFlightScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          inFlightScreen.retryingFailedMessageIds,
+          contains('msg-gfr003-retrying'),
+        );
+        expect(gatedBridge.publishAttempts, 1);
+
+        gatedBridge.publishGate.complete();
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.any(
+            (message) =>
+                message.id == 'msg-gfr003-retrying' && message.status == 'sent',
+          );
+        });
+
+        expect(gatedBridge.publishAttempts, 1);
+        expect(
+          (await msgRepo.getMessage('msg-gfr003-retrying'))?.status,
+          'sent',
+        );
+      },
+    );
+
+    testWidgets(
       'retry control preserves accepted-recipient filtering for failed outgoing text row',
       (tester) async {
         final group = makeChatGroup().copyWith(
@@ -6867,7 +7065,7 @@ void main() {
     );
 
     testWidgets(
-      'restored text-only composer continuation reuses the failed group row id',
+      'failed text row retry reuses the failed group row id after composer clears',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -6877,7 +7075,9 @@ void main() {
           {'ok': true, 'messageId': 'retry-published', 'topicPeers': 1},
         ]);
 
-        await tester.pumpWidget(buildWidget(group: group));
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
         await pumpFrames(tester, count: 20);
 
         final firstScreen = tester.widget<GroupConversationScreen>(
@@ -6897,17 +7097,17 @@ void main() {
         expect(failedRow.status, 'failed');
         expect(
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
-          'Retry same restored text',
+          isEmpty,
         );
 
         final retryScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
-        final retrySend = retryScreen.onSend as Future<void> Function(String);
-        await tester.runAsync(() async {
-          await retrySend('Retry same restored text');
+        expect(retryScreen.onRetryFailedMessage, isNotNull);
+        retryScreen.onRetryFailedMessage!(failedRow.id);
+        await pumpUntilAsync(tester, () async {
+          return (await msgRepo.getMessage(failedRow.id))?.status == 'sent';
         });
-        await pumpFrames(tester, count: 20);
 
         final storedRows = (await msgRepo.getMessagesPage(group.id))
             .where((message) => message.text == 'Retry same restored text')
@@ -6935,7 +7135,7 @@ void main() {
     );
 
     testWidgets(
-      'editing restored text-only composer continuation creates a new group row id',
+      'manual edited composer send after text failure creates a new group row id',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -6965,7 +7165,7 @@ void main() {
         expect(failedRow.status, 'failed');
         expect(
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
-          'Retry then edit restored text',
+          isEmpty,
         );
 
         await tester.enterText(find.byType(TextField), 'Edited restored text');

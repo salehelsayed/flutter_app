@@ -775,6 +775,24 @@ Future<List<Map<String, dynamic>>> dbLoadFailedOutgoingGroupMessages(
   return db.rawQuery(sql.toString());
 }
 
+/// Loads outgoing group messages eligible for text send retry.
+///
+/// Includes failed rows and in-doubt pending rows. Returns raw row maps ordered
+/// by timestamp ASC.
+Future<List<Map<String, dynamic>>> dbLoadRetryableOutgoingGroupMessages(
+  DatabaseExecutor db, {
+  int? limit,
+}) async {
+  final sql = StringBuffer(
+    "SELECT * FROM group_messages WHERE status IN ('failed', 'pending') AND is_incoming = 0 ORDER BY timestamp ASC, id ASC",
+  );
+  if (limit != null) {
+    sql.write(' LIMIT ?');
+    return db.rawQuery(sql.toString(), [limit]);
+  }
+  return db.rawQuery(sql.toString());
+}
+
 /// Loads outgoing group messages where inbox store failed (inbox_stored = 0)
 /// and an inbox retry payload is available.
 ///

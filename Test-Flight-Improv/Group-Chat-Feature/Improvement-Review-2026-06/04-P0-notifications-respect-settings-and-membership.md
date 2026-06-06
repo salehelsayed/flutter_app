@@ -6,7 +6,7 @@
 
 **Priority: P0** &nbsp;|&nbsp; Theme: Notifications &nbsp;|&nbsp; Surfaces: iOS NSE, Android background isolate, Dart live/foreground, relay fanout
 
-> **One-liner:** Enforce mute and removed-member suppression on *all* push paths, decrypt Android group previews, make NSE-vs-live dedupe authoritative, and stop dead taps. Mute has literally zero presence in the NSE/background paths today.
+> **One-liner:** Enforce mute and removed-member suppression on *all* push paths, decrypt Android group previews, make NSE-vs-live dedupe authoritative, and stop dead taps. The Dart background/foreground producers now suppress non-members (they open the encrypted DB), but mute has literally zero presence in the NSE/background paths today, and the iOS NSE still gates on neither mute nor membership.
 
 ---
 
@@ -32,39 +32,40 @@ These are the precise symptoms the notification journey matrix flags as P0 (`Tes
 
 Mute lives in `group.isMuted` (SQLCipher, migration 050) and is consulted **only on the live GossipSub path**:
 
-- `lib/features/groups/application/group_message_listener.dart:748-751` reads `group?.isMuted` and gates `maybeShowNotification`.
+- `lib/features/groups/application/group_message_listener.dart:845-848` reads `group?.isMuted` and gates `maybeShowNotification`.
 - `lib/features/groups/application/set_group_muted_use_case.dart:28-29` persists `isMuted` **only** to the SQLCipher DB via `groupRepo.updateGroup` — nothing is mirrored anywhere the NSE or background isolate can read.
 
 The other two producers ignore mute entirely:
 
-- **iOS NSE** — `ios/NotificationService/NotificationService.swift:14-39` always calls `contentHandler(bestAttemptContent)`. `NotificationPreviewResolver.swift` has no mute lookup, and `KeychainPushKeyReader` (`:332-363`) can structurally read *only* the app-group Keychain (it cannot open the encrypted DB).
-- **Android / Dart background + foreground fallback** — `lib/features/push/application/background_message_handler.dart:96-133` shows unconditionally; `showForegroundPushFallbackNotificationIfNeeded` (`lib/features/push/application/background_push_notification_fallback.dart:48-68`) shows with no `isMuted` check.
+- **iOS NSE** — `ios/NotificationService/NotificationService.swift:14-39` always calls `contentHandler(bestAttemptContent)`. `NotificationPreviewResolver.swift` has no mute lookup, and `KeychainPushKeyReader` (`:356`) can structurally read *only* the app-group Keychain (it cannot open the encrypted DB).
+- **Android / Dart background + foreground fallback** — both now enforce a **membership/eligibility** gate (see §2), but neither checks **mute**. `lib/features/push/application/background_message_handler.dart:131-144` suppresses non-members before `.show` (`:166`) yet never reads `isMuted`; `showForegroundPushFallbackNotificationIfNeeded` (`lib/features/push/application/background_push_notification_fallback.dart:146-174`) likewise applies the eligibility resolver but shows with no `isMuted` check.
 
-### 2. No membership check on any push producer
+### 2. Membership is gated on the Dart push producers, but not on the iOS NSE
 
-Grep for `getMember`/`isMember` across `lib/features/push` finds membership consulted only in `resolveGroupNotificationRouteTarget` (`resolve_group_notification_route_target_use_case.dart:42`) — **tap-time routing only**, not notification production.
+**Implemented in commit 8ba68cd7 (2026-06-05) — the Dart background + foreground producers now enforce a membership/eligibility gate.** `background_message_handler.dart:131-144` calls `_backgroundPushNotificationDisplayEligibilityResolver(message)` before `.show` and returns (suppressing, emitting `PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED`) when ineligible. The default resolver `resolveBackgroundPushNotificationDisplayEligibilityFromLocalState` (`background_message_handler.dart:196-271`) opens `identity.db` read-only with `db_encryption_key` from `FlutterSecureKeyStore`, loads the local `peer_id` (`dbLoadIdentityRow`) and the group member row (`dbLoadGroupMember`, `:237`), and suppresses on `local_member_missing` / `group_missing` / `pending_invite`. The foreground fallback does the same via `resolveForegroundPushFallbackDisplayEligibility` (`background_push_notification_fallback.dart:56-130`), wired at `main.dart:3261` (`groupMessageDisplayEligibilityResolver`).
 
-- iOS `resolveGroup()` (`NotificationPreviewResolver.swift:218-293`) only checks for a *group key*; no membership.
-- Android/Dart background handler shows unconditionally.
-- The relay decides recipients (`go-relay-server/inbox.go:910-938 fanOutPush`), so a stale recipient list or a retained epoch key surfaces a notification to a removed member.
+The remaining membership gap is the **iOS NSE only** (out-of-process, cannot open the encrypted DB):
 
-> **Correction vs. the original finding:** the *live* path is **not** membership-blind. `handle_incoming_group_message_use_case.dart:191-205` calls `groupRepo.getMember` for the local recipient and returns `null` (drops the message, no persist, no notification) when the local recipient is no longer a member for non-system messages, plus removed-interval-replay rejection at `:207-249`. The genuine gap is **only** the push/NSE/Android-background producers, plus reliance on the relay dropping removed peers and on epoch-key rotation. The matrix rows SM-004 / GMN-102 are honest about this: their "covered" evidence is the *live-listener* unit test, not the push/NSE paths.
+- iOS `resolveGroup()` (`NotificationPreviewResolver.swift:225`) only checks for a *group key* (`:259` `missing_group_key`); no membership.
+- The relay decides recipients (`go-relay-server/inbox.go:933 fanOutPush`, called `:904`), so a stale recipient list or a retained epoch key can still surface a notification to a removed member at the NSE.
+
+> **Correction vs. the original finding:** the *live* path is **not** membership-blind. `handle_incoming_group_message_use_case.dart:192` calls `groupRepo.getMember` for the local recipient and returns `null` (drops the message, no persist, no notification) when the local recipient is no longer a member for non-system messages, plus removed-interval-replay rejection further down. The genuine gap is now **only** the iOS NSE producer, plus reliance on the relay dropping removed peers and on epoch-key rotation. The matrix rows SM-004 / GMN-102 are honest about the *live-listener* unit test as their "covered" evidence; the Dart background/foreground push paths now also gate membership (see above), but the NSE path remains uncovered.
 
 ### 3. Android group previews are dead code in production
 
-- `background_message_handler.dart:21-22` defaults `_backgroundPushNotificationResolver` to `resolveBackgroundPushNotification`, invoked at `:105` with `decryptGroup`/`decryptOneToOne` **left null**.
-- `push_decrypt_preview.dart:111-122` returns the generic fallback immediately when `decryptGroup == null` (emitting `missing_group_decrypt_input`).
-- `debugSetBackgroundPushNotificationResolver` (defined `push_decrypt_preview.dart:25`) is **never called in production** — grep confirms it appears only as a definition. The background isolate only does `Firebase.initializeApp()` (`:55-65`); no Go bridge / SecureKeyStore init.
+- `background_message_handler.dart:21-22` defaults `_backgroundPushNotificationResolver` to `resolveBackgroundPushNotification`, invoked at `:132` with `decryptGroup`/`decryptOneToOne` **left null**.
+- `push_decrypt_preview.dart:110-122` returns the generic fallback immediately when `decryptGroup == null` (emitting `missing_group_decrypt_input`, `:119`).
+- `debugSetBackgroundPushNotificationResolver` (defined `push_decrypt_preview.dart:25`) is **never called in production** — grep confirms it appears only as a definition. The background isolate now initializes enough to open `identity.db` read-only for the membership check (`background_message_handler.dart:196-271`), but still constructs **no Go bridge** for decrypt and injects no decrypt closures.
 - No Android `FirebaseMessagingService`/`onMessageReceived` override exists (grep across `android/` found only `MainActivity.kt` and `GoBridge.kt`).
-- Meanwhile the relay *does* ship ciphertext: `inbox.go:438-455 addGroupEncryptedPushData` populates `keyEpoch`/`ciphertext`/`nonce`.
+- Meanwhile the relay *does* ship ciphertext: `inbox.go:447 addGroupEncryptedPushData` (invoked `:381`) populates `keyEpoch`/`ciphertext`/`nonce`.
 
-Result: every Android group push renders generic via `_usesProtectedMessagePreview` (`background_push_notification_fallback.dart:139-143`), while the iOS NSE decrypts. Confirmed.
+Result: every Android group push renders generic via `_usesProtectedMessagePreview` (`background_push_notification_fallback.dart:258`), while the iOS NSE decrypts. Confirmed.
 
 ### 4. NSE-vs-live dedupe depends on the Dart isolate firing
 
-The cross-process announcement marker is written **only** inside `firebaseMessagingBackgroundHandler`: `markVisibleRemoteAnnouncement` at `background_message_handler.dart:98` and `:133`, gated on `message.notification != null` (`:97`). The live path consumes it at `group_message_listener.dart:765-770`.
+The cross-process announcement marker is written **only** inside `firebaseMessagingBackgroundHandler`: `markVisibleRemoteAnnouncement` at `background_message_handler.dart:109` and `:176`, gated on `message.notification != null` (`:125`). The live path consumes it at `group_message_listener.dart:862-867`.
 
-But the **visible iOS alert is produced by the NSE — a separate process** whose only dedupe store is `AppGroupPushDedupeStore` writing files under the app-group container `NotificationServiceDedupe` (`NotificationPreviewResolver.swift:365-401`). The NSE **never writes** the systemTemp gate file the Dart live path reads (`recent_remote_notification_gate.dart:33-35`). So suppression of the NSE-shown banner depends entirely on iOS scheduling the Dart isolate for that alert push — which iOS does not guarantee.
+But the **visible iOS alert is produced by the NSE — a separate process** whose only dedupe store is `AppGroupPushDedupeStore` writing files under the app-group container `NotificationServiceDedupe` (`NotificationPreviewResolver.swift:389`, `NotificationServiceDedupe` at `:399`). The NSE **never writes** the systemTemp gate file the Dart live path reads (`recent_remote_notification_gate.dart:33-35`). So suppression of the NSE-shown banner depends entirely on iOS scheduling the Dart isolate for that alert push — which iOS does not guarantee.
 
 ### 5. Dedupe gates live in OS-evictable systemTemp
 
@@ -76,21 +77,21 @@ But the **visible iOS alert is produced by the NSE — a separate process** whos
 
 ### 7. Live notification body uses raw, unsanitized wire fields
 
-`group_message_listener.dart:761-763` builds `messageText: '$senderUsername: ${notificationBodyForMessage(text, persistedAttachments)}'` from the unmodified `data['senderUsername']` (`:606`) and `data['text']` (`:608`). The persisted/timeline message instead uses `sanitizeMessageText(text)` and `resolveGroupSenderDisplayName(...)` (`handle_incoming_group_message_use_case.dart:54,599`, `group_sender_display_name.dart:4-25`). `sanitizeUsername` strips zero-width/bidi control chars and truncates to 30 chars; `sanitizeMessageText` strips control chars. So the **banner can show bidi/invisible/overlong content the timeline never renders**, and a different display name than the resolved member-bound name.
+`group_message_listener.dart:857-859` builds `messageText: '$senderUsername: ${notificationBodyForMessage(text, persistedAttachments)}'` from the unmodified `data['senderUsername']` (`:672`) and `data['text']` (`:674`). The persisted/timeline message instead uses `sanitizeMessageText(text)` (`handle_incoming_group_message_use_case.dart:56`) and `resolveGroupSenderDisplayName(...)` (`:441`, with `sanitizeUsername` at `:435`; `group_sender_display_name.dart:4-25`). `sanitizeUsername` strips zero-width/bidi control chars and truncates to 30 chars; `sanitizeMessageText` strips control chars. So the **banner can show bidi/invisible/overlong content the timeline never renders**, and a different display name than the resolved member-bound name.
 
 > Severity note: the timeline name stays bound to a validated member, so this is a *transient banner divergence / control-char surface*, not a true conversation-identity spoof.
 
 ### 8. Foreground drain failure → generic, mute-blind fallback
 
-`handle_foreground_remote_message_use_case.dart:68-78` returns `notificationNeeded` only for group drain errors; `main.dart:3185` then calls `showForegroundPushFallbackNotificationIfNeeded`, which forces the generic title/body via `_usesProtectedMessagePreview` and performs **no decrypt and no mute check**. The degraded path is both contentless and mute-blind, and a later dead tap is possible.
+`handle_foreground_remote_message_use_case.dart:68-78` returns `notificationNeeded` only for group drain errors; `main.dart:3257` then calls `showForegroundPushFallbackNotificationIfNeeded`. As of commit 8ba68cd7 this fallback **does** apply the membership/eligibility gate (`resolveForegroundPushFallbackDisplayEligibility`, wired via `groupMessageDisplayEligibilityResolver` at `main.dart:3261`), so it no longer notifies non-members. But it still forces the generic title/body via `_usesProtectedMessagePreview` and performs **no decrypt and no mute check**. The degraded path is therefore still contentless and mute-blind, and a later dead tap is possible.
 
 ---
 
 ## Root cause(s)
 
-1. **Mute and membership live only in the encrypted DB**, which the out-of-process NSE and the not-fully-initialized Dart background isolate cannot read. There is no app-group-readable projection of "is this group muted?" or "am I still a member?".
+1. **Mute lives only in the encrypted DB** with no app-group-readable projection of "is this group muted?", so no producer outside the live listener honors mute. The *membership* half of this is now narrower: the Dart background/foreground producers **do** open `identity.db` read-only to answer "am I still a member?" and suppress non-members (commit 8ba68cd7); only the out-of-process **iOS NSE** still cannot read the encrypted DB and has no app-group membership projection to consult.
 2. **Three independent notification producers** (live listener, iOS NSE, Dart background/foreground fallback) each implement their own gating, and only the live one was ever taught about mute/membership.
-3. **Android has no decrypt wiring at all** — the decrypt typedefs and `_resolveGroupPreview` exist and are unit-tested, but nothing constructs a bridge + key reader in the background isolate and injects the closures.
+3. **Android has no decrypt wiring at all** — the decrypt typedefs and `_resolveGroupPreview` exist and are unit-tested, but nothing constructs a **Go bridge** + key reader in the background isolate and injects the decrypt closures. (The isolate now does initialize enough to open `identity.db` read-only for the *membership* check, so this gap is specifically about decrypt, not DB access in general.)
 4. **Cross-process dedupe is one-directional**: only the Dart side writes the gate; the NSE (the actual producer on iOS) writes a *different* store, so "NSE showed it" is not authoritative for in-app suppression.
 5. **Dedupe state is stored in volatile, error-swallowing temp files.**
 
@@ -105,7 +106,7 @@ The fixes split cleanly into **quick wins** (ship immediately, Dart-only, no nat
 ### Quick wins (P0, ship first)
 
 #### QW-1 — Use sanitized/persisted fields in the live notification body
-In `group_message_listener.dart:761-763`, build the banner from the persisted result rather than raw wire fields:
+In `group_message_listener.dart:857-859`, build the banner from the persisted result rather than raw wire fields:
 
 ```dart
 senderUsername: groupName, // unchanged: this is the group name (title)
@@ -135,28 +136,28 @@ Mirror mute into a store the NSE and background isolate can read, reusing the **
 
 1. Add a key name helper, e.g. `sharedGroupMutedKeyName(groupId) => 'group_muted:$groupId'`, alongside `sharedGroupPushKeyName` (`group_repository_impl.dart:11-12`).
 2. In `set_group_muted_use_case.dart`, after `groupRepo.updateGroup(updated)`, write/delete the app-group flag (write `"1"` on mute, delete on unmute). Inject `pushSharedKeyStore` or expose a repo method so the use case can mirror; the repo already holds `pushSharedKeyStore`.
-3. **iOS NSE:** in `NotificationPreviewResolver.resolveGroup()` (after `groupId` is parsed, `:224`), call `keyReader.readString(key: "group_muted:\(groupId)")`. If present, return a *suppressing* result. (See SI-5 for how the NSE suppresses.)
-4. **Android/Dart background:** in `background_message_handler.dart` before `_backgroundNotificationsPlugin.show` (`:123`), read the same flag from a SecureKeyStore pointed at the app-group and skip if muted. Same check in `showForegroundPushFallbackNotificationIfNeeded`.
+3. **iOS NSE:** in `NotificationPreviewResolver.resolveGroup()` (after `groupId` is parsed, `:225`), call `keyReader.readString(key: "group_muted:\(groupId)")`. If present, return a *suppressing* result. (See SI-5 for how the NSE suppresses.)
+4. **Android/Dart background:** in `background_message_handler.dart` before `_backgroundNotificationsPlugin.show` (`:166`), read the same flag from a SecureKeyStore pointed at the app-group and skip if muted (the membership/eligibility gate at `:131-144` is the natural place to fold in a mute check). Same check in `showForegroundPushFallbackNotificationIfNeeded`.
 
 > **Backfill:** on first launch after this ships, run a one-time reconciliation that iterates active groups and writes the `group_muted:*` flags from DB `isMuted` (mirrors the existing `_mirrorGroupKeyForPush` reconciliation pattern), so already-muted groups are honored without a re-toggle. **No DB migration; new app-group Keychain entries only.**
 
-#### SI-2 — App-group "removed/not-a-member" projection (membership on push paths)
-Treat removal like mute for the notification surface:
+#### SI-2 — App-group "removed/not-a-member" projection (membership on the iOS NSE)
+The Dart background and foreground producers already enforce local membership by opening `identity.db` (commit 8ba68cd7 — see §2), so the remaining membership work is the **iOS NSE** (which cannot read the encrypted DB) plus relay fanout correctness. Treat removal like mute for that surface:
 
 1. **Delete the epoch group key from the app-group Keychain on removal/leave** so the NSE can no longer decrypt — `_deleteGroupKeyMirror` (`group_repository_impl.dart:492-514`) already exists; ensure it is invoked on the remove/leave paths. With the key gone, the NSE falls back to generic (and, per SI-5, can suppress).
-2. **Persist a membership sentinel** (e.g. `group_membership:<groupId>` = `"member"` / absent) updated whenever local membership changes, that the NSE and Dart background handler consult to **suppress entirely** (not just degrade to generic). This closes the retained-epoch-key window.
-3. **Relay:** ensure `fanOutPush` (`go-relay-server/inbox.go:910-938`) drops removed peers from the recipient list promptly — this is the authoritative gate. Verify the recipient list passed into `AddGroupMessage`/`fanOutPush` is recomputed from current membership at send/fanout time, not a stale snapshot.
+2. **Persist a membership sentinel** (e.g. `group_membership:<groupId>` = `"member"` / absent) updated whenever local membership changes, that the **NSE** consults to **suppress entirely** (not just degrade to generic). This closes the retained-epoch-key window. The Dart background/foreground handler already suppresses via its DB-backed eligibility resolver, so it does not need this projection.
+3. **Relay:** ensure `fanOutPush` (`go-relay-server/inbox.go:933`, called `:904`) drops removed peers from the recipient list promptly — this is the authoritative gate. Verify the recipient list passed into `AddGroupMessage`/`fanOutPush` is recomputed from current membership at send/fanout time, not a stale snapshot.
 
-> **Reframe vs. original finding:** the live path already enforces local membership; this work is specifically about the **push/NSE/Android-background producers** plus relay fanout correctness and key-rotation timeliness. **No DB migration; new app-group entries + relay logic.**
+> **Reframe vs. original finding:** the live path **and** the Dart background/foreground push producers already enforce local membership; the remaining work is specifically the **iOS NSE** producer plus relay fanout correctness and key-rotation timeliness. **No DB migration; new app-group entries + relay logic.**
 
 #### SI-3 — Wire a real Android background decryptor
 The decrypt closures and `_resolveGroupPreview` already exist and are unit-tested (`push_decrypt_preview.dart`). Make them live in production:
 
-1. In `firebaseMessagingBackgroundHandler` (`background_message_handler.dart`), after `Firebase.initializeApp()`, construct a **minimal headless `GoBridge`** (the same Go decrypt the iOS `BridgePushDecryptor` uses) plus a Keychain/secure-store reader pointed at the app-group, and inject `decryptGroup: callGroupDecrypt` and `decryptOneToOne: callDecryptMessage` into `resolveBackgroundPushNotification` (instead of leaving them null at `:105`).
+1. In `firebaseMessagingBackgroundHandler` (`background_message_handler.dart`), after `Firebase.initializeApp()`, construct a **minimal headless `GoBridge`** (the same Go decrypt the iOS `BridgePushDecryptor` uses) plus a Keychain/secure-store reader pointed at the app-group, and inject `decryptGroup: callGroupDecrypt` and `decryptOneToOne: callDecryptMessage` into `resolveBackgroundPushNotification` (instead of leaving them null at `:132`).
 2. The group key is read by epoch from `group_key:<groupId>:<keyEpoch>` (already mirrored by `_mirrorGroupKeyForPush`), exactly as the NSE does.
 3. **Alternative / complementary:** implement an Android `FirebaseMessagingService` (`android/app/src/main/kotlin/com/mknoon/app/`) that decrypts before display, mirroring the iOS NSE architecture. The Dart-isolate route is lower-effort and reuses tested code; the native service is the stronger long-term parity match.
 
-This delivers `senderUsername: text` previews on Android (with media-type fallback already in `pushPreviewBody`). **No wire/DB change** (ciphertext already shipped per `inbox.go:438-455`).
+This delivers `senderUsername: text` previews on Android (with media-type fallback already in `pushPreviewBody`). **No wire/DB change** (ciphertext already shipped per `inbox.go:447`).
 
 #### SI-4 — Move dedupe gates out of systemTemp
 In both gates' constructors, default `filePath` to `getApplicationSupportDirectory()` rather than `Directory.systemTemp`. On iOS, prefer the **shared app-group container** so the NSE and Dart can agree (required for SI-5). Combine with QW-3's decode-error telemetry. **No wire/DB change.**
@@ -165,18 +166,18 @@ In both gates' constructors, default `filePath` to `getApplicationSupportDirecto
 Have the NSE record the visible announcement into a store the Dart live path reads:
 
 1. In `NotificationService.didReceive` (after `contentHandler(bestAttemptContent)` when the result is a real, non-suppressed alert), write a recent-remote marker into the shared app-group container keyed by `payload + messageId` (the same key shape `markAnnouncement` uses: `message:<payload>|<messageId>`). The NSE already computes a dedupe identity in `AppGroupPushDedupeStore`.
-2. Make `RecentRemoteNotificationGate` (now living in the app-group container per SI-4) read that location on iOS, so `consumeIfRecentAnnouncement` (`group_message_listener.dart:765-770`) returns `true` regardless of whether the Dart background isolate ran.
+2. Make `RecentRemoteNotificationGate` (now living in the app-group container per SI-4) read that location on iOS, so `consumeIfRecentAnnouncement` (`group_message_listener.dart:862-867`) returns `true` regardless of whether the Dart background isolate ran.
 
 This removes the dependency on iOS scheduling the Dart isolate for every alert push — the exact one-per-message guarantee in DM-101/GMN-101/DM-102.
 
 #### SI-6 — Foreground drain-failure fallback: decrypt + respect mute
-On foreground group drain failure (`handle_foreground_remote_message_use_case.dart:68-78` → `main.dart:3185`):
+On foreground group drain failure (`handle_foreground_remote_message_use_case.dart:68-78` → `main.dart:3257`):
 
 1. Retry the targeted drain once; if it still fails, **decrypt the preview in-process** (the app is foregrounded, bridge + keys available) so the fallback shows `sender: text` instead of generic.
 2. Apply the SI-1 mute check before showing.
 3. Tie the shown notification's `messageId` into the dedupe gate so a later successful drain doesn't double-notify.
 
-> Optional server-side hardening (SI-1 Option B): sync mute state to the relay and gate `SendGroupNotification`/`SendNotification` (`inbox.go:124`, `:930`) so muted groups never push a *visible alert* at all (data-only). Higher effort and a new sync channel; the app-group projection above is the recommended primary fix because it works even when the relay is unaware.
+> Optional server-side hardening (SI-1 Option B): sync mute state to the relay and gate `SendGroupNotification`/`SendNotification` (`inbox.go:124`, `:137`) so muted groups never push a *visible alert* at all (data-only). Higher effort and a new sync channel; the app-group projection above is the recommended primary fix because it works even when the relay is unaware.
 
 ### New wire / DB / migration impact summary
 
@@ -226,7 +227,7 @@ No SQLCipher schema migration is required for any item.
 - **QW-1:** extend `test/features/groups/application/group_message_listener_test.dart` to assert the banner uses `result.senderUsername`/`result.text` and that bidi/control-char/overlong wire input is *not* present in the banner.
 - **QW-2:** widget/route test asserting the group-missing branch navigates + shows a SnackBar (no silent return). Augments `test/features/push/application/chat_and_group_push_open_flow_test.dart`.
 - **QW-3 / SI-4:** extend `test/core/notifications/recent_remote_notification_gate_test.dart` and `recent_background_notification_gate_test.dart` to assert decode-error telemetry and the new storage location.
-- **SI-1/SI-2 (push paths):** new tests under `test/features/push/application/` asserting the background handler and the resolver suppress when the muted/removed app-group flag is set — covering the gap the matrix admits (SM-004/GMN-102 only cover the *live* listener today).
+- **SI-1/SI-2 (Dart push paths):** the Dart background/foreground **membership** suppression already exists (`resolveBackgroundPushNotificationDisplayEligibilityFromLocalState` / `resolveForegroundPushFallbackDisplayEligibility`) — add/keep regression tests under `test/features/push/application/` that pin its `local_member_missing` / `group_missing` / `pending_invite` suppression. New coverage is then only for **mute** suppression on those handlers (SI-1) once the app-group muted flag is consulted.
 - **SI-3:** `test/features/push/application/push_decrypt_preview_test.dart` already exercises `_resolveGroupPreview` with injected closures; add a background-handler test that the closures are wired (non-null) in production config.
 - **SI-1/SI-2 (iOS):** extend `ios/RunnerTests/NotificationPreviewResolverTests.swift` (already covers same-id/re-minted dedupe per GMN-001A) with mute-flag and missing-membership suppression cases.
 - **SI-5:** test that an NSE-written marker is consumed by `consumeIfRecentAnnouncement`, proving suppression without the Dart isolate running.

@@ -82,6 +82,7 @@ void main() {
     ValueChanged<String>? onDeleteFailedMedia,
     void Function(String messageId, String attachmentId)?
     onRetryUnavailableMedia,
+    Set<String> retryingFailedMessageIds = const {},
     void Function(String messageId, int index)? onMediaTap,
     Map<String, List<MediaAttachment>> mediaMap = const {},
     Map<String, List<MessageReaction>> reactions = const {},
@@ -122,6 +123,7 @@ void main() {
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
           onRetryUnavailableMedia: onRetryUnavailableMedia,
+          retryingFailedMessageIds: retryingFailedMessageIds,
           onMediaTap: onMediaTap,
           mediaMap: mediaMap,
           reactions: reactions,
@@ -1443,9 +1445,7 @@ void main() {
     },
   );
 
-  testWidgets('failed outgoing media rows show retry and delete controls', (
-    tester,
-  ) async {
+  testWidgets('GFR-003 failed media controls are preserved', (tester) async {
     String? retriedId;
     String? deletedId;
     await tester.pumpWidget(
@@ -1494,7 +1494,9 @@ void main() {
     expect(deletedId, 'failed-media');
   });
 
-  testWidgets('failed outgoing text-only rows show retry', (tester) async {
+  testWidgets('GFR-003 failed outgoing text-only rows show retry', (
+    tester,
+  ) async {
     String? retriedId;
     await tester.pumpWidget(
       buildTestWidget(
@@ -1643,6 +1645,74 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'GFR-003 retry action reflects in-flight and recovery-gate state',
+    (tester) async {
+      var retryCalls = 0;
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            GroupMessage(
+              id: 'retrying-text',
+              groupId: 'group-1',
+              senderPeerId: 'peer-1',
+              senderUsername: 'You',
+              text: 'Retry is already running',
+              status: 'failed',
+              timestamp: DateTime.now().toUtc(),
+              createdAt: DateTime.now().toUtc(),
+              isIncoming: false,
+            ),
+          ],
+          initialLoadDone: true,
+          retryingFailedMessageIds: const {'retrying-text'},
+          onRetryFailedMessage: (_) => retryCalls++,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final retryingKey = find.byKey(
+        const ValueKey('failed-message-retry-retrying-text'),
+      );
+      expect(retryingKey, findsOneWidget);
+      expect(tester.widget<OutlinedButton>(retryingKey).onPressed, isNull);
+      await tester.tap(retryingKey);
+      await tester.pump();
+      expect(retryCalls, 0);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            GroupMessage(
+              id: 'recovering-text',
+              groupId: 'group-1',
+              senderPeerId: 'peer-1',
+              senderUsername: 'You',
+              text: 'Recovery is active',
+              status: 'failed',
+              timestamp: DateTime.now().toUtc(),
+              createdAt: DateTime.now().toUtc(),
+              isIncoming: false,
+            ),
+          ],
+          initialLoadDone: true,
+          isRecovering: true,
+          onRetryFailedMessage: (_) => retryCalls++,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final recoveringKey = find.byKey(
+        const ValueKey('failed-message-retry-recovering-text'),
+      );
+      expect(recoveringKey, findsOneWidget);
+      expect(tester.widget<OutlinedButton>(recoveringKey).onPressed, isNull);
+      await tester.tap(recoveringKey);
+      await tester.pump();
+      expect(retryCalls, 0);
+    },
+  );
 
   testWidgets(
     'incoming, text-only, and read-only announcement rows do not show failed-media controls',

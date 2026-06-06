@@ -16,7 +16,8 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 /// when the P2P node reconnects.
 ///
 /// Subscribes to [P2PService.stateStream] and detects transitions
-/// to online state (isStarted && circuitAddresses.isNotEmpty).
+/// to online state (isStarted && circuitAddresses.isNotEmpty), or explicit
+/// send/readiness recovery state when available.
 /// Debounces by 5 seconds to avoid retrying during rapid state changes.
 class PendingMessageRetrier {
   static const Duration defaultRetryDebounce = Duration(seconds: 5);
@@ -57,6 +58,7 @@ class PendingMessageRetrier {
   Timer? _periodicTimer;
   Timer? _groupContinuityTimer;
   bool _wasOnline = false;
+  bool _wasGroupRecoveryReady = false;
   bool _needsGroupRecovery = false;
   bool _isRetrying = false;
   bool _isGroupContinuitySweeping = false;
@@ -96,10 +98,12 @@ class PendingMessageRetrier {
     emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_START', details: {});
 
     _wasOnline = _isOnline(p2pService.currentState);
+    _wasGroupRecoveryReady = _isGroupRecoveryReady(p2pService.currentState);
     _needsGroupRecovery = p2pService.currentState.needsGroupRecovery ?? false;
 
     _stateSubscription = p2pService.stateStream.listen((state) {
       final nowOnline = _isOnline(state);
+      final nowGroupRecoveryReady = _isGroupRecoveryReady(state);
       final nowNeedsGroupRecovery = state.needsGroupRecovery ?? false;
 
       if (nowOnline && !_wasOnline) {
@@ -113,22 +117,48 @@ class PendingMessageRetrier {
         unawaited(_runGroupContinuitySweepIfNeeded());
       } else if (!nowOnline && _wasOnline) {
         // Went offline — stop background sweeps.
-        _stopRecurringOnlineTimers();
+        if (!nowGroupRecoveryReady) {
+          _stopRecurringOnlineTimers();
+        }
+      }
+
+      if (nowGroupRecoveryReady && !_wasGroupRecoveryReady) {
+        _startOnlineTimers();
+      } else if (!nowGroupRecoveryReady && _wasGroupRecoveryReady) {
+        if (!nowOnline) {
+          _stopRecurringOnlineTimers();
+        }
       }
 
       _wasOnline = nowOnline;
+      _wasGroupRecoveryReady = nowGroupRecoveryReady;
       _needsGroupRecovery = nowNeedsGroupRecovery;
     });
 
     // If already online when start() is called, schedule an initial sweep.
     // Handles cold-start where the Go node reports already-running.
-    if (_wasOnline) {
+    if (_wasOnline || _wasGroupRecoveryReady) {
       _startOnlineTimers();
     }
   }
 
   bool _isOnline(dynamic state) {
     return state.isStarted && (state.circuitAddresses as List).isNotEmpty;
+  }
+
+  bool _hasExplicitGroupRecoveryReadiness(dynamic state) {
+    return state.relayState != null ||
+        state.sendCapabilityReady == true ||
+        state.inboxCapabilityReady == true;
+  }
+
+  bool _isGroupRecoveryReady(dynamic state) {
+    if (!state.isStarted) return false;
+    if (!_hasExplicitGroupRecoveryReadiness(state)) {
+      return _isOnline(state);
+    }
+    final relayReady = state.relayState == null ? true : state.relayReady;
+    return relayReady && state.usabilityReady;
   }
 
   bool _isGroupRecoveryEnabled() {
@@ -235,6 +265,7 @@ class PendingMessageRetrier {
   Future<void> _runGroupContinuitySweepIfNeeded() async {
     if (_isGroupContinuitySweeping || _isRetrying) return;
     if (!_isGroupRecoveryEnabled()) return;
+    if (!_isGroupRecoveryReady(p2pService.currentState)) return;
     if (rejoinGroupTopicsFn == null &&
         rejoinGroupTopicsWithRecoveryAckEligibilityFn == null &&
         drainGroupOfflineInboxFn == null) {
@@ -301,6 +332,7 @@ class PendingMessageRetrier {
 
     try {
       final groupRecoveryEnabled = _isGroupRecoveryEnabled();
+      final groupRecoveryReady = _isGroupRecoveryReady(p2pService.currentState);
 
       // ORDERING CONTRACT:
       //   1. group rejoin topics
@@ -316,7 +348,7 @@ class PendingMessageRetrier {
       //  11. intro retry pending deliveries
       //  12. group retry failed inbox stores
 
-      if (groupRecoveryEnabled) {
+      if (groupRecoveryEnabled && groupRecoveryReady) {
         var shouldAcknowledgeRecovery = false;
         if (rejoinGroupTopicsFn != null ||
             rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
@@ -466,7 +498,9 @@ class PendingMessageRetrier {
         }
       }
 
-      if (groupRecoveryEnabled && retryFailedGroupInboxStoresFn != null) {
+      if (groupRecoveryEnabled &&
+          groupRecoveryReady &&
+          retryFailedGroupInboxStoresFn != null) {
         try {
           await retryFailedGroupInboxStoresFn!();
         } catch (e) {

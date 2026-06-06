@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -60,6 +61,13 @@ bool _isTextOnlyRetryPayload(GroupMessage msg) {
 
 String _shortId(String id) => id.length > 8 ? id.substring(0, 8) : id;
 
+final Map<String, Future<int>> _singleMessageRetryInFlight = {};
+
+bool _isRetryableOutgoingMessage(GroupMessage message) {
+  if (message.isIncoming) return false;
+  return message.status == 'failed' || message.status == 'pending';
+}
+
 /// Retries failed outgoing group messages.
 ///
 /// Loads identity, queries failed rows, then re-sends each eligible row via
@@ -89,7 +97,7 @@ Future<int> retryFailedGroupMessages({
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepo,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
-    loadFailedMessages: groupMsgRepo.getFailedOutgoingMessages,
+    loadFailedMessages: groupMsgRepo.getRetryableOutgoingMessages,
   );
 }
 
@@ -103,7 +111,16 @@ Future<int> retryFailedGroupMessage({
   required MediaAttachmentRepository mediaAttachmentRepo,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) {
-  return _retryFailedGroupMessagesInternal(
+  final normalizedMessageId = messageId.trim();
+  if (normalizedMessageId.isEmpty) {
+    return Future<int>.value(0);
+  }
+  final inFlight = _singleMessageRetryInFlight[normalizedMessageId];
+  if (inFlight != null) {
+    return inFlight;
+  }
+
+  final retryFuture = _retryFailedGroupMessagesInternal(
     groupMsgRepo: groupMsgRepo,
     groupRepo: groupRepo,
     identityRepo: identityRepo,
@@ -111,13 +128,20 @@ Future<int> retryFailedGroupMessage({
     mediaAttachmentRepo: mediaAttachmentRepo,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     loadFailedMessages: () async {
-      final message = await groupMsgRepo.getMessage(messageId);
-      if (message == null || message.isIncoming || message.status != 'failed') {
+      final message = await groupMsgRepo.getMessage(normalizedMessageId);
+      if (message == null || !_isRetryableOutgoingMessage(message)) {
         return const <GroupMessage>[];
       }
       return <GroupMessage>[message];
     },
   );
+  _singleMessageRetryInFlight[normalizedMessageId] = retryFuture;
+  return retryFuture.whenComplete(() {
+    final current = _singleMessageRetryInFlight[normalizedMessageId];
+    if (identical(current, retryFuture)) {
+      _singleMessageRetryInFlight.remove(normalizedMessageId);
+    }
+  });
 }
 
 Future<int> _retryFailedGroupMessagesInternal({

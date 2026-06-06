@@ -37,6 +37,7 @@ class LetterCard extends StatelessWidget {
   final VoidCallback? onRetryFailedMedia;
   final VoidCallback? onDeleteFailedMedia;
   final void Function(String attachmentId)? onRetryUnavailableMedia;
+  final bool isRetryFailedMessageEnabled;
   final String? failedMessageActionKeySuffix;
   final String? failedMediaActionKeySuffix;
   final bool requireVerifiedContentHash;
@@ -64,6 +65,7 @@ class LetterCard extends StatelessWidget {
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
     this.onRetryUnavailableMedia,
+    this.isRetryFailedMessageEnabled = true,
     this.failedMessageActionKeySuffix,
     this.failedMediaActionKeySuffix,
     this.requireVerifiedContentHash = false,
@@ -311,6 +313,7 @@ class LetterCard extends StatelessWidget {
                                     l10n.failed_message_retry_semantics,
                                 color: const Color(0xFF4ECDC4),
                                 onTap: onRetryFailedMessage!,
+                                enabled: isRetryFailedMessageEnabled,
                               ),
                             if (onRetryFailedMedia != null)
                               _buildFailedMessageAction(
@@ -410,13 +413,15 @@ class LetterCard extends StatelessWidget {
     required String semanticLabel,
     required Color color,
     required VoidCallback onTap,
+    bool enabled = true,
   }) {
     return Semantics(
       label: semanticLabel,
       button: true,
+      enabled: enabled,
       child: OutlinedButton.icon(
         key: key,
-        onPressed: onTap,
+        onPressed: enabled ? onTap : null,
         style: OutlinedButton.styleFrom(
           foregroundColor: color,
           side: BorderSide(color: color.withAlpha(140)),

@@ -134,6 +134,14 @@ abstract class GroupMessageRepository {
   /// Used by the retry service to find messages that need re-sending.
   Future<List<GroupMessage>> getFailedOutgoingMessages();
 
+  /// Retrieves outgoing messages eligible for send retry.
+  ///
+  /// The default keeps older repository doubles compatible. Implementations
+  /// with durable `pending` in-doubt rows should override this to include
+  /// pending rows that still have retry evidence.
+  Future<List<GroupMessage>> getRetryableOutgoingMessages() =>
+      getFailedOutgoingMessages();
+
   /// Transitions all outgoing messages with status='sending' that are older
   /// than [olderThan] to status='failed', so the retry service picks them up.
   ///

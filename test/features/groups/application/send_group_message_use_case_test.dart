@@ -6089,6 +6089,128 @@ void main() {
     );
 
     test(
+      'GFR-001 same-attempt send reuses a matching pending outgoing row',
+      () async {
+        final originalTimestamp = DateTime.utc(2026, 6, 6, 8);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'gfr001-pending-send-reuse',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: 'GFR-001 pending retry text',
+            timestamp: originalTimestamp,
+            logicalDeliveryId: 'gfr001-logical-send-reuse',
+            keyGeneration: 1,
+            status: 'pending',
+            isIncoming: false,
+            createdAt: originalTimestamp,
+            wireEnvelope: jsonEncode({
+              'groupId': 'group-1',
+              'text': 'GFR-001 pending retry text',
+              'senderPeerId': 'peer-1',
+              'senderUsername': 'Alice',
+              'messageId': 'gfr001-pending-send-reuse',
+              'logicalDeliveryId': 'gfr001-logical-send-reuse',
+            }),
+            inboxStored: false,
+            inboxRetryPayload: jsonEncode({
+              'groupId': 'group-1',
+              'message': jsonEncode({
+                'groupId': 'group-1',
+                'senderId': 'peer-1',
+                'senderUsername': 'Alice',
+                'keyEpoch': 1,
+                'text': 'GFR-001 pending retry text',
+                'timestamp': originalTimestamp.toIso8601String(),
+                'messageId': 'gfr001-pending-send-reuse',
+                'logicalDeliveryId': 'gfr001-logical-send-reuse',
+              }),
+              'recipientPeerIds': const <String>[],
+            }),
+          ),
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'GFR-001 pending retry text',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'gfr001-pending-send-reuse',
+          logicalDeliveryId: 'gfr001-logical-send-reuse',
+          timestamp: originalTimestamp,
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, 'gfr001-pending-send-reuse');
+        expect(message.logicalDeliveryId, 'gfr001-logical-send-reuse');
+        expect(message.timestamp, originalTimestamp);
+        final page = await msgRepo.getMessagesPage('group-1');
+        expect(page.map((row) => row.id), ['gfr001-pending-send-reuse']);
+        expect(page.single.status, 'sent');
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'GFR-001 settled same-text sends with new ids remain distinct',
+      () async {
+        final firstTimestamp = DateTime.utc(2026, 6, 6, 8, 5);
+        final secondTimestamp = firstTimestamp.add(const Duration(minutes: 1));
+
+        final (firstResult, firstMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'GFR-001 intentional repeat',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'gfr001-repeat-original',
+          timestamp: firstTimestamp,
+        );
+        final (secondResult, secondMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'GFR-001 intentional repeat',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'gfr001-repeat-second',
+          timestamp: secondTimestamp,
+        );
+
+        expect(firstResult, SendGroupMessageResult.success);
+        expect(secondResult, SendGroupMessageResult.success);
+        expect(firstMessage!.id, 'gfr001-repeat-original');
+        expect(secondMessage!.id, 'gfr001-repeat-second');
+        final page = await msgRepo.getMessagesPage('group-1');
+        expect(page.map((row) => row.id).toSet(), {
+          'gfr001-repeat-original',
+          'gfr001-repeat-second',
+        });
+        expect(page.map((row) => row.logicalDeliveryId).toSet(), {
+          'gfr001-repeat-original',
+          'gfr001-repeat-second',
+        });
+      },
+    );
+
+    test(
       'NW-011 send pre-persist survives lifecycle cancellation window',
       () async {
         await groupRepo.saveMember(
@@ -9031,6 +9153,93 @@ void main() {
         expect(
           failedInboxStores.map((row) => row.id),
           isNot(contains('msg-de008-publish-timeout-no-custody')),
+        );
+      },
+    );
+
+    test(
+      'GFR-002 no usable transport persists one retryable row for same attempt',
+      () async {
+        final sentAt = DateTime.utc(2026, 6, 6, 8, 4);
+        const messageId = 'gfr002-no-transport-once';
+        const logicalDeliveryId = 'gfr002-logical-no-transport';
+        final noTransportBridge = _InboxStoreOkFalseBridge();
+        noTransportBridge.responses['group:publish'] = {
+          'ok': false,
+          'errorCode': 'NO_USABLE_TRANSPORT',
+          'errorMessage': 'no usable transport',
+        };
+
+        final (failedResult, failedMessage) = await sendGroupMessage(
+          bridge: noTransportBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'GFR-002 queued once',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          logicalDeliveryId: logicalDeliveryId,
+          timestamp: sentAt,
+        );
+
+        expect(failedResult, SendGroupMessageResult.error);
+        expect(failedMessage, isNotNull);
+        expect(failedMessage!.id, messageId);
+        expect(failedMessage.logicalDeliveryId, logicalDeliveryId);
+        expect(failedMessage.status, 'failed');
+
+        final failedRows = await msgRepo.getMessagesPage('group-1');
+        expect(failedRows.map((row) => row.id), [messageId]);
+        final failedSaved = await msgRepo.getMessage(messageId);
+        expect(failedSaved, isNotNull);
+        expect(failedSaved!.status, 'failed');
+        expect(failedSaved.logicalDeliveryId, logicalDeliveryId);
+        expect(failedSaved.wireEnvelope, isNotNull);
+        expect(failedSaved.inboxRetryPayload, isNotNull);
+        expect(
+          (await msgRepo.getFailedOutgoingMessages()).map((row) => row.id),
+          [messageId],
+        );
+
+        noTransportBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': messageId,
+          'topicPeers': 1,
+        };
+        noTransportBridge.responses['group:inboxStore'] = {'ok': true};
+
+        final (retryResult, retriedMessage) = await sendGroupMessage(
+          bridge: noTransportBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'GFR-002 queued once',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          logicalDeliveryId: logicalDeliveryId,
+          timestamp: sentAt,
+          messageIdFactory: () => 'gfr002-duplicate-should-not-be-used',
+        );
+
+        expect(retryResult, SendGroupMessageResult.success);
+        expect(retriedMessage, isNotNull);
+        expect(retriedMessage!.id, messageId);
+        expect(retriedMessage.logicalDeliveryId, logicalDeliveryId);
+        expect(retriedMessage.timestamp, sentAt);
+
+        final finalRows = await msgRepo.getMessagesPage('group-1');
+        expect(finalRows.map((row) => row.id), [messageId]);
+        expect(finalRows.single.status, 'sent');
+        expect(finalRows.single.logicalDeliveryId, logicalDeliveryId);
+        expect(
+          noTransportBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          hasLength(2),
         );
       },
     );
