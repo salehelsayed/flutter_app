@@ -1,0 +1,93 @@
+<!--
+Spec-review artifact for 01-move-account-to-new-device-pr.md
+Method: multi-agent workflow (graphify-seeded) — 10 review dimensions, per-gap adversarial verification
+        against the live codebase, completeness critic, synthesis. 41 agents, 2026-06-06.
+Result: 38/39 current-state claims verified accurate; 4 inaccurate/outdated claims; 7 confirmed gaps (G1-G7).
+-->
+
+# Spec Review: `01-move-account-to-new-device-pr.md`
+
+## 1. Verdict
+
+**Needs improvement before implementation.** This is an unusually rigorous spec: every factual Current-State claim I checked against the codebase is accurate (38 of 39 claim-checks verified true), the cutover-interruption state machine is provably exhaustive and never yields two active devices, and the manifest-driven / both-keychain / consistent-snapshot invariants are sound. The bulk of the reviewed "gaps" turned out to be either already-covered or factually wrong (false positives). **But** a small number of confirmed, build-blocking gaps remain — chiefly secret-residue on erase, an unbuildable disk-space precondition, an unconstrained SQLCipher cipher-parameter portability story, server-side relay/push deregistration, and an under-specified identity-less session-auth binding. None cause data loss *by following the spec*; they are real holes an implementer could fall through. Fix the items in §4 and §5, and this is ready.
+
+## 2. What the spec gets right
+
+- **Secure-storage enumeration is exact.** All 10 fixed keys at line 33 match real `SecureKeyStore` literals; `identity_store_ready` is correctly omitted (it's a `StartupTiming.mark()` label, `main.dart:632`, not a key).
+- **Both-keychain reality is captured correctly**, including the subtle raw-vs-URI-encoded naming split: NSE mirror `group_key:<rawGroupId>:<gen>` (`group_repository_impl.dart:11-12`) vs primary `group_key_material:${Uri.encodeComponent(...)}` (`secret_storage_references.dart:16`).
+- **DB facts are current and correct**: version 74, WAL genuinely not configured (default rollback journal), `sqlcipher_export` already in use, two distinct storage roots (`getDatabasesPath()` vs `getApplicationDocumentsDirectory()`), and the "full schema, not a named subset" rule (50 durable tables across migrations 001-074).
+- **Restore ≠ move** is correctly grounded: `restore_identity_use_case.dart:65` mints a fresh random ML-KEM keypair, so restore cannot reproduce the source device's exact ML-KEM secret.
+- **`secrets_migrated` sentinel ordering hazard** is real and correctly flagged (`migrate_secrets_to_secure_storage.dart`): a sentinel set against a NULL-column imported row permanently bricks identity load.
+- **QR fail-open contact path** is accurately described — `parse_qr_payload_use_case.dart:93-111` continues past a malformed timestamp into contact-add side effects — and the spec correctly demands a separate typed/single-use/expiring/authenticated session.
+- **Cutover gating model is correct**: relay/push/inbox are all one-per-peerId last-writer-wins (`push_token_store.go:13`, `backend_memory.go:14`), no persisted account-state flag exists today, and line 153's "*not only startup routing*" clause correctly forces runtime entry-point gating.
+- **The four interruption branches (137-142) are mutually exclusive and exhaustive**, preserving "never two active devices" in every branch.
+
+## 3. Factual inaccuracies / outdated claims
+
+| Spec line | Claim | Correction | Evidence |
+|---|---|---|---|
+| 107 | Pending rotation drafts "verified by resolved key bytes in **both** the primary and shared keychain stores" | **Inaccurate.** Draft key bytes are written ONLY to the primary store (`savePendingKeyRotation → _toStorageRow`); only committed keys (`saveKey → _mirrorGroupKeyForPush`) reach the shared store. Requiring drafts in "both" is unsatisfiable. | `group_repository_impl.dart:303-311, 416-432` (drafts, no mirror) vs `:260-266` (commit mirrors). Same wording at lines 224, 269. |
+| 115 | Encrypted media + post-media keys verified "atomically by resolved media key" | **Outdated for post media.** Post-media keys are stored RAW in the DB column `encryption_key_base64`, not secure storage / not `secure:`-referenced. The "resolved media key" concept applies only to chat media. | `post_media_attachment_model.dart:119`; `post_media_db_helpers.dart:6-35` vs chat-media `media_attachment_repository_impl.dart:234-236`. |
+| 122 | ML-KEM secret "must match expected public key material **when that relationship is checkable**" | **Understated.** The relationship IS checkable today via a self `message.encrypt`→`message.decrypt` round-trip; the hedge invites an implementer to skip the check as "not checkable." | `bridge.dart:552, 614`; `identity_repository_impl.dart:98` retains `ml_kem_public_key` in the row. |
+| 81-82 | Nine canonical migration states form the testable state-machine contract | **Outdated.** Each state name appears exactly once (the definition); no test case references any by name, so the contract is asserted nowhere. | grep count = 1 per state; only generic reference at line 345. |
+
+## 4. Confirmed gaps (must-fix before build)
+
+Only `confirmed_real` verdicts plus the completeness-critic surfaces that are build-blocking. Deduplicated.
+
+### P0 / data-loss-adjacent
+
+**G1 — Erase/reset of a pre-existing active account is not bound to the both-access-group registry; shared-group secret mirror is left delete-unprotected.**
+*Why it matters:* No erase/clear-all-secure flow exists today (`grep eraseAccount/clearAllSecure` → none). Line 98 requires an explicit erase when an active account already exists on the new phone, but every "both groups" invariant is framed around **export**, never **deletion**. A naive erase that deletes the identity row + DB-referenced `secure:` values + primary fixed keys will miss `identity_ml_kem_secret_key` and every `group_key:<raw>:<gen>` in `group.com.mknoon.app.share` — those names are never DB-referenced and live under a different `kSecAttrAccessGroup`. Result: fully decryptable 1:1 and group secrets resident in the shared keychain after "erase." *(Confirmed; reviewer P1, but a secret-leak class — treat as top priority.)*
+*Add (Section 5):* "Account erase/reset and failed-import cleanup must delete every key in the same complete registry used for export, across BOTH iOS keychain access groups (the primary app keychain and `group.com.mknoon.app.share`). Cleanup must explicitly remove the App-Group mirror values `identity_ml_kem_secret_key` and every `group_key:<rawGroupId>:<generation>` from the shared access group, not only primary-store keys and DB-derived `secure:` references. A test must fail if any app-owned secret survives erase/reset or failed-import cleanup in either access group."
+*Evidence:* `main.dart:313-314`; `identity_repository_impl.dart:169-171`; `group_repository_impl.dart:463-475`.
+
+**G2 — SQLCipher cipher-parameter portability is never pinned; a version-skew import can produce a silently un-openable DB.** *(Completeness critic #1 — most important.)*
+*Why it matters:* `encrypted_db_opener.dart:78-84` opens with only `openDatabase(fullPath, password: key)` — no `cipher_compatibility`, `cipher_page_size`, `kdf_iter`, or `cipher_default_*` (only a read-only `PRAGMA cipher_version` at :88). KDF iters, page size, HMAC, and header layout are implicit defaults of whatever SQLCipher the exporter's pod bundled. If the new phone ships a different SQLCipher major (e.g. 3 vs 4: 64000 vs 256000 KDF iters, 1024 vs 4096 page size), the exported file fails to open with the correct key and looks like wrong-key/corruption — not a schema mismatch the spec's lines 116-119 cover.
+*Add (Section 5):* "The migration manifest must capture the exporter's `cipher_version` and concrete cipher parameter set (`kdf_iter`, `cipher_page_size`, HMAC/KDF algorithm, plaintext-header layout). On import the new phone must pin those PRAGMAs (or run `cipher_migrate`) before opening the database. A release-blocking test must assert an open succeeds when exporter and importer SQLCipher defaults differ."
+*Evidence:* `encrypted_db_opener.dart:78-88`.
+
+### P1
+
+**G3 — Persisted migrated-out/active flag has no defined storage location and its survival across the DB-import swap is unspecified.** *(Confirmed real, dimension severity P2; combined with the import-swap trap it is build-determining → P1.)*
+*Why it matters:* Line 136 mandates the flag but never says where it lives. If stored as a DB row/column, the new phone **imports the old phone's DB**, carrying source migration-state rows the spec never says to reset — the new phone could boot looking blocked/migrated_out, or gating silently no-ops. Relay/push are peerId-keyed with no server-side device authority, so enforcement is client-side only.
+*Add (Section 5):* "The active/migrating/migrated-out cutover flag is DEVICE-LOCAL state, stored outside the migrated database bundle (a dedicated secure-storage key classified intentionally-device-local per line 104) and explicitly NOT exported in the manifest. On import commit the new phone writes its own ACTIVE flag; the imported database must never carry a source-device active/migrated-out value. The old phone writes MIGRATED_OUT durably at cutover. A release-blocking test must prove an old phone that boots MIGRATED_OUT never calls `startNode`, `drainOfflineInbox`, `registerPushToken`, or rendezvous register."
+*Evidence:* `startup_decision.dart:34-59`; `push_token_store.go:13,25`; `backend_memory.go:14,103`.
+
+**G4 — No server-side relay/rendezvous/push deregistration at cutover; old peerId stays discoverable for the full TTL and can self-re-register.** *(Completeness critic #3 — violates "never two active devices" at the server layer.)*
+*Why it matters:* The cutover-state dimension covered the Go *runtime* loop, but the **server-side lease** is uncovered. Rendezvous registrations carry `expiresAt = now + ttlSeconds` (`backend_memory.go:23-31`) and persist until expiry. `RendezvousUnregister`/`UnregisterToken` exist server-side, but the Dart shutdown path is only `node:stop` → `stopNode` (`go_bridge_client.dart:92`) — it never calls unregister or `inbox:unregister_token`. So after cutover the old peerId stays discoverable and its push token stays registered for the TTL window, and the watchdog/`personalReregisterMs` (`bridge.go:641`) can actively re-register it.
+*Add (Section 5):* "Cutover must issue an explicit server-side `RendezvousUnregister` and `inbox:unregister_token` for the migrated-out peerId — stopping the local node is not sufficient because server-side registrations are TTL-leased. A release-blocking test must prove the old node's watchdog / personal-rendezvous loop cannot re-register a migrated-out account, and that no server-side rendezvous slot or push token remains for the migrated-out peerId after cutover."
+*Evidence:* `backend_memory.go:23-31,35`; `push_token_store.go:32`; `go_bridge_client.dart:92`; `bridge.go:641`.
+
+**G5 — No disk-space pre-check primitive exists; the "storage insufficient → fail clearly" acceptance (lines 124, 216) is unbuildable today.** *(Completeness critic #2.)*
+*Why it matters:* `grep freeDiskSpace|availableCapacity|statvfs` → zero app-code hits. The spec asserts a `storage insufficient` state and test but there is no free-space wrapper, platform channel, or Go helper. Import stages a **second full copy** before cutover (staging DB + decrypted DB + media), so a naive `freeSpace > bundleSize` passes then fails mid-write; iOS `volumeAvailableCapacityForImportantUsage` over-reports purgeable space.
+*Add (Section 5):* "A new-device free-space probe must be built that uses `volumeAvailableCapacityForImportantUsage` and reserves headroom for the staging copy PLUS the decrypted database PLUS media, since import stages a full second copy before cutover. Migration must fail clearly before claiming success if writable space is insufficient; a test must cover the insufficient-space path."
+
+**G6 — Identity-less migration session auth has no concrete, testable channel-binding property.** *(Confirmed partial, severity P1.)*
+*Why it matters:* Line 95 names the hardest problem (an identity-less new phone authenticating the session) but defines no asserted rule, so the release-blocking property at line 287 and the unit at line 376 ("authenticated migration session validity") are not test-writable. The existing model is old-signs/scanner-verifies (`build_qr_payload_use_case.dart:73`), which inverts for migration where the new phone displays the QR; no ephemeral-key or channel-binding primitive exists.
+*Add (Section 5):* "The new phone must generate a fresh ephemeral session keypair before showing the migration QR and embed its ephemeral public key (plus a random single-use session id and expiry). The old phone must bind export authorization to that exact scanned ephemeral key — the exported bundle key must be encrypted/authenticated to the ephemeral public key from the scanned QR and to no other key. Both phones must derive and display a confirmation code from the established authenticated channel (not from QR contents). The session id must be recorded consumed on first successful pairing. Unit test: export authorization fails unless the bundle key resolves to the ephemeral public key carried in the consumed, unexpired, single-use session."
+*Evidence:* `build_qr_payload_use_case.dart:73`; `parse_qr_payload_use_case.dart:125-130`.
+
+**G7 — iOS background/suspension lifecycle for an in-flight transfer is unspecified; the resumable-transport requirement is unimplementable without it.** *(Completeness critic #4.)*
+*Why it matters:* `UIBackgroundModes` is only `fetch` + `remote-notification` — no `processing`/`BGTaskScheduler`, no background `URLSession`. The wake-lock keeps only the screen awake (`upload_wake_lock.dart`) and does not prevent OS suspension on manual lock or a call. The spec's lifecycle handling is "stay awake while foregrounded" + "next launch shows retry" but never says what happens to the in-flight socket and staging temp files when iOS suspends the app mid-bundle — the resumable transport must survive a *suspension*, not just a restart.
+*Add (Section 5):* "Define OS-suspension behavior for the migration session: on manual lock / call interruption the plaintext socket tears down, and the resumable transport must resume from verified progress with staging temp files intact across an app suspension (not only an app restart). Either request a background-transfer entitlement or require both devices foregrounded with an acceptance test that backgrounds the *device* (not just the app) mid-transfer."
+*Evidence:* `ios/Runner/Info.plist` (`UIBackgroundModes`); `upload_wake_lock.dart:12`.
+
+## 5. Possibly-missed surfaces worth adding
+
+- **Profile-picture auto-download from the P2P listener** (`profile_update_listener.dart:114-148`): a network-triggering side effect independent of QR-add, absent from line 153's gating list. On the migrated-out old phone it's a contactable side channel; on the new phone every imported avatar-hash-differs row can trigger a re-fetch storm. **Add** to the active-account-gated entry-point list, and decide whether imported avatar state suppresses re-download (migrated `media/` avatars already exist — re-fetch is wasteful *and* a confirmable signal the moved account is now live).
+- **Cross-device clock skew on the QR expiry gate** (`parse_qr_payload_use_case.dart:95` evaluates `DateTime.now().toUtc()` on the scanner vs `build_qr_payload_use_case.dart:57` stamping `ts` on the generator): the spec mandates an "expiring" single-use session that authorizes *account export*, so skew tolerance is a security parameter. **Add:** measure session expiry against a single authority (a nonce-bound challenge round-trip over the established channel, not the embedded `ts`); test a new phone with a clock offset.
+
+## 6. Lower-priority / polish
+
+- **Rotation-draft "both stores" wording (lines 107/224/269)** — fix to: committed generations verified in both primary and shared stores; **drafts live only in the primary store** and must NOT be required in the shared push store. Spec-internal contradiction / test-authoring trap, not data loss (primary-store draft bytes are already mandated as a manifest item by lines 100-102).
+- **Post-media key location** — one-line clarification that chat-media keys are secure-store-resident (exported from keychain) while post-media keys are DB-column-resident (carried by the DB snapshot); don't expect post-media keys in the secure-storage manifest. Lines 31/100/115.
+- **Downloaded media verification** — clarify that fully-downloaded rows are verified by exported-file checksum/size (the on-disk file is *decrypted* plaintext; `content_hash` is over the *ciphertext*), while `pending`/`failed` rows are verified by key+nonce+content_hash for future re-download. Avoids a false-fail reading of lines 115/228.
+- **Rollback-journal sidecars** — name `identity.db-journal`/`-shm`/`-wal` as transient, non-durable, excluded-before-snapshot (line 109/110). Belt-and-suspenders; functionally already covered by 108/109/112.
+- **Migration-005 CHECK constraints** — add an explicit sentence that the imported identity row MUST keep `private_key`/`mnemonic12`/`ml_kem_secret_key` NULL (secrets only in secure storage). Doc-hardening; a faithful snapshot import already satisfies it.
+- **Spec-quality traceability** — (a) line 92's local-auth export gate has no test case; add one (or note it's conditional/no `local_auth` package exists today). (b) Reference the nine canonical state names (81-82) by name in the Unit acceptance evidence and the relevant edge cases, including `migration_failed_cleanup_required` / `migration_failed_active_restored`.
+- **LAN transport floor / per-segment AEAD framing** — state explicitly that the existing transport is plaintext `ws://`/`http://` on `anyIPv4` (encryption is application-layer; socket peer bound to the session) and that the bundle uses per-segment AEAD with unique nonces (not whole-file GCM, which forces whole-file residency). Functionally gated by lines 42/95/194/284 but worth naming.
+
+## 7. Bottom line
+
+**Yes, revise — but lightly.** This spec is in the top tier of thoroughness; the verified-true claim rate is ~97% and most flagged "gaps" were false positives the spec already covered. The highest-leverage single change is **G1**: bind the explicit erase/reset and failed-import cleanup to the same both-access-group key registry the spec already uses for export — that closes the one genuine secret-leak class. Land G1–G7 (a handful of paragraphs, mostly in Section 5) plus the §3 wording corrections, and the spec is sufficient for implementation.
