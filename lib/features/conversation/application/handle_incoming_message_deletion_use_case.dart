@@ -3,6 +3,8 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
+    show shouldMintDeliveryReceipt;
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_deletion_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -29,7 +31,34 @@ handleIncomingMessageDeletion({
   MediaFileManager? mediaFileManager,
   Bridge? bridge,
   String? ownMlKemSecretKey,
+  // 115 P2 (D-3): deletion-apply receipts — without them an 'inboxed'
+  // delete-for-everyone tombstone stays pending forever on the sender.
+  // Same origin contract as the chat hook (relay-drain arrivals only);
+  // duplicate re-application re-invokes (lost-receipt repair loop).
+  Future<void> Function(String messageId)? sendDeliveryReceipt,
+  String? stagedEntryId,
 }) async {
+  Future<void> maybeSendDeliveryReceipt(String messageId) async {
+    if (sendDeliveryReceipt == null) return;
+    if (!shouldMintDeliveryReceipt(
+      stagedEntryId: stagedEntryId,
+      transport: message.transport,
+    )) {
+      return;
+    }
+    try {
+      await sendDeliveryReceipt(messageId);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_HOOK_ERROR',
+        details: {
+          'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_DELETE_RECEIVE_START',
@@ -154,6 +183,7 @@ handleIncomingMessageDeletion({
             : payload.messageId,
       },
     );
+    await maybeSendDeliveryReceipt(payload.messageId);
     return (HandleMessageDeletionResult.success, tombstone);
   }
 
@@ -171,6 +201,9 @@ handleIncomingMessageDeletion({
   }
 
   if (targetMessage.isDeleted) {
+    // Duplicate re-application: the deletion is already durably applied —
+    // re-mint the receipt (the sender may have missed the first one).
+    await maybeSendDeliveryReceipt(payload.messageId);
     return (HandleMessageDeletionResult.success, targetMessage);
   }
 
@@ -200,6 +233,7 @@ handleIncomingMessageDeletion({
           : payload.messageId,
     },
   );
+  await maybeSendDeliveryReceipt(payload.messageId);
   return (HandleMessageDeletionResult.success, tombstone);
 }
 

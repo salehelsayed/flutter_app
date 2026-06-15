@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/local_discovery/local_media_sender.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 void main() {
   group('LocalMediaSender', () {
@@ -45,6 +46,8 @@ void main() {
       int putStatusCode = HttpStatus.ok,
       bool sendMediaUploaded = true,
       bool sendMediaFailed = false,
+      bool sendMediaUploadedBeforeResponse = false,
+      bool closeWsBeforeMediaUploaded = false,
       Duration? putDelay,
       bool rejectOffer = false,
       Duration? offerDelay,
@@ -75,6 +78,21 @@ void main() {
               final body = chunks.expand((c) => c).toList();
               onPutBody?.call(body);
 
+              if (putStatusCode == HttpStatus.ok &&
+                  sendMediaUploadedBeforeResponse &&
+                  senderWs != null &&
+                  lastNonce != null) {
+                final mediaId = path.substring('/media/'.length);
+                senderWs!.add(
+                  jsonEncode({
+                    'type': 'media_uploaded',
+                    'id': mediaId,
+                    'nonce': lastNonce,
+                    'sha256Verified': true,
+                  }),
+                );
+              }
+
               if (putDelay != null) {
                 await Future.delayed(putDelay);
               }
@@ -83,9 +101,17 @@ void main() {
                 ..statusCode = putStatusCode
                 ..close();
 
+              if (putStatusCode == HttpStatus.ok &&
+                  closeWsBeforeMediaUploaded &&
+                  senderWs != null) {
+                await senderWs!.close();
+                return;
+              }
+
               // Send media_uploaded via WS if success.
               if (putStatusCode == HttpStatus.ok &&
                   sendMediaUploaded &&
+                  !sendMediaUploadedBeforeResponse &&
                   senderWs != null &&
                   lastNonce != null) {
                 final mediaId = path.substring('/media/'.length);
@@ -169,9 +195,98 @@ void main() {
     Future<(WebSocket, Stream<dynamic>)> _connectWs(int port) async {
       final ws = await WebSocket.connect('ws://localhost:$port');
       final broadcast = StreamController<dynamic>.broadcast();
-      ws.listen(broadcast.add, onError: broadcast.addError);
+      ws.listen(
+        broadcast.add,
+        onError: broadcast.addError,
+        onDone: broadcast.close,
+      );
       return (ws, broadcast.stream);
     }
+
+    // --- 112 Phase 4: enc-flagged LAN offers ---
+    test(
+      'enc media_offer carries enc flag + scheme, advertises ciphertext '
+      'sha256, and omits waveform and filename',
+      () async {
+        // The caller hands over the encrypted artifact; sha256 must cover
+        // those (cipher)bytes and the PUT must stream them verbatim.
+        final (artifact, ciphertextHash, _) = await _createTestFile(2048);
+        final artifactBytes = await artifact.readAsBytes();
+
+        Map<String, dynamic>? receivedOffer;
+        List<int>? putBody;
+        final (server, _) = await _startMockReceiver(
+          onOffer: (ws, offer) => receivedOffer = offer,
+          onPutBody: (body) => putBody = body,
+        );
+        addTearDown(() => server.close(force: true));
+
+        final (ws, ackStream) = await _connectWs(server.port);
+        addTearDown(() => ws.close());
+
+        final ok = await sender.sendMedia(
+          host: 'localhost',
+          port: server.port,
+          ws: ws,
+          ackStream: ackStream,
+          filePath: artifact.path,
+          mediaId: 'enc-media-1',
+          mime: 'application/octet-stream',
+          fromPeerId: 'sender',
+          toPeerId: 'receiver',
+          durationMs: 4200,
+          waveform: const [0.1, 0.2, 0.3],
+          filename: 'secret-voice-note.m4a',
+          enc: true,
+          encScheme: 'blob_aes_256_gcm_v1',
+        );
+
+        expect(ok, isTrue);
+        expect(receivedOffer, isNotNull);
+        expect(receivedOffer!['enc'], isTrue);
+        expect(receivedOffer!['encScheme'], 'blob_aes_256_gcm_v1');
+        expect(receivedOffer!['mime'], 'application/octet-stream');
+        expect(receivedOffer!['sha256'], ciphertextHash);
+        // Metadata minimization: voice waveform and original filename must
+        // never ride the cleartext offer — they travel in the envelope.
+        expect(receivedOffer!.containsKey('waveform'), isFalse);
+        expect(receivedOffer!.containsKey('filename'), isFalse);
+        expect(putBody, equals(artifactBytes));
+      },
+    );
+
+    test('plaintext offer still carries waveform and filename', () async {
+      // Legacy pin: unflagged offers keep today's metadata.
+      final (file, _, _) = await _createTestFile(512);
+
+      Map<String, dynamic>? receivedOffer;
+      final (server, _) = await _startMockReceiver(
+        onOffer: (ws, offer) => receivedOffer = offer,
+      );
+      addTearDown(() => server.close(force: true));
+
+      final (ws, ackStream) = await _connectWs(server.port);
+      addTearDown(() => ws.close());
+
+      await sender.sendMedia(
+        host: 'localhost',
+        port: server.port,
+        ws: ws,
+        ackStream: ackStream,
+        filePath: file.path,
+        mediaId: 'plain-media-1',
+        mime: 'audio/mp4',
+        fromPeerId: 'sender',
+        toPeerId: 'receiver',
+        waveform: const [0.5, 0.6],
+        filename: 'note.m4a',
+      );
+
+      expect(receivedOffer, isNotNull);
+      expect(receivedOffer!.containsKey('enc'), isFalse);
+      expect(receivedOffer!['waveform'], [0.5, 0.6]);
+      expect(receivedOffer!['filename'], 'note.m4a');
+    });
 
     test('computes SHA-256 of file before sending offer', () async {
       final (file, expectedHash, size) = await _createTestFile(1024);
@@ -253,39 +368,42 @@ void main() {
       },
     );
 
-    test('sends GIF media_offer with image/gif mime and filename metadata', () async {
-      final file = File('${tempDir.path}/funny.gif')
-        ..writeAsBytesSync(List<int>.filled(256, 0x47));
+    test(
+      'sends GIF media_offer with image/gif mime and filename metadata',
+      () async {
+        final file = File('${tempDir.path}/funny.gif')
+          ..writeAsBytesSync(List<int>.filled(256, 0x47));
 
-      Map<String, dynamic>? receivedOffer;
-      final (server, port) = await _startMockReceiver(
-        onOffer: (ws, offer) {
-          receivedOffer = offer;
-        },
-      );
+        Map<String, dynamic>? receivedOffer;
+        final (server, port) = await _startMockReceiver(
+          onOffer: (ws, offer) {
+            receivedOffer = offer;
+          },
+        );
 
-      final (ws, ackStream) = await _connectWs(port);
+        final (ws, ackStream) = await _connectWs(port);
 
-      await sender.sendMedia(
-        host: 'localhost',
-        port: port,
-        ws: ws,
-        ackStream: ackStream,
-        filePath: file.path,
-        mediaId: 'media-gif-1',
-        mime: 'image/gif',
-        fromPeerId: 'sender',
-        toPeerId: 'receiver',
-        filename: 'funny.gif',
-      );
+        await sender.sendMedia(
+          host: 'localhost',
+          port: port,
+          ws: ws,
+          ackStream: ackStream,
+          filePath: file.path,
+          mediaId: 'media-gif-1',
+          mime: 'image/gif',
+          fromPeerId: 'sender',
+          toPeerId: 'receiver',
+          filename: 'funny.gif',
+        );
 
-      expect(receivedOffer, isNotNull);
-      expect(receivedOffer!['mime'], 'image/gif');
-      expect(receivedOffer!['filename'], 'funny.gif');
+        expect(receivedOffer, isNotNull);
+        expect(receivedOffer!['mime'], 'image/gif');
+        expect(receivedOffer!['filename'], 'funny.gif');
 
-      await ws.close();
-      await server.close(force: true);
-    });
+        await ws.close();
+        await server.close(force: true);
+      },
+    );
 
     test(
       'uploads file via HTTP PUT with Bearer token and correct Content-Length',
@@ -354,6 +472,104 @@ void main() {
         await ws.close();
         await server.close(force: true);
       },
+    );
+
+    test(
+      'does not miss media_uploaded that arrives before HTTP response drain completes',
+      () async {
+        sender = const LocalMediaSender(
+          uploadedTimeout: Duration(milliseconds: 100),
+        );
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final (file, _, _) = await _createTestFile(256);
+
+        final (server, port) = await _startMockReceiver(
+          sendMediaUploadedBeforeResponse: true,
+          putDelay: const Duration(milliseconds: 50),
+        );
+
+        final (ws, ackStream) = await _connectWs(port);
+
+        final result = await sender.sendMedia(
+          host: 'localhost',
+          port: port,
+          ws: ws,
+          ackStream: ackStream,
+          filePath: file.path,
+          mediaId: 'media-early-confirm',
+          mime: 'image/jpeg',
+          fromPeerId: 'sender',
+          toPeerId: 'receiver',
+        );
+
+        expect(result, isTrue);
+        final eventNames = events
+            .map((event) => event['event'] as String)
+            .toList(growable: false);
+        expect(eventNames, contains('LOCAL_MEDIA_UPLOAD_ACK_WAIT_ARMED'));
+        expect(eventNames, contains('LOCAL_MEDIA_UPLOAD_HTTP_START'));
+        expect(eventNames, contains('LOCAL_MEDIA_UPLOAD_ACK_RECEIVED'));
+        expect(
+          eventNames.indexOf('LOCAL_MEDIA_UPLOAD_ACK_WAIT_ARMED'),
+          lessThan(eventNames.indexOf('LOCAL_MEDIA_UPLOAD_HTTP_START')),
+        );
+
+        await ws.close();
+        await server.close(force: true);
+      },
+      timeout: const Timeout(Duration(seconds: 5)),
+    );
+
+    test(
+      'reports ack stream done when WS closes before media_uploaded',
+      () async {
+        sender = const LocalMediaSender(uploadedTimeout: Duration(seconds: 5));
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final (file, _, _) = await _createTestFile(256);
+
+        final (server, port) = await _startMockReceiver(
+          sendMediaUploaded: false,
+          closeWsBeforeMediaUploaded: true,
+        );
+
+        final (ws, ackStream) = await _connectWs(port);
+
+        final result = await sender.sendMedia(
+          host: 'localhost',
+          port: port,
+          ws: ws,
+          ackStream: ackStream,
+          filePath: file.path,
+          mediaId: 'media-ws-closed',
+          mime: 'image/jpeg',
+          fromPeerId: 'sender',
+          toPeerId: 'receiver',
+        );
+
+        expect(result, isFalse);
+        final eventNames = events
+            .map((event) => event['event'] as String)
+            .toList(growable: false);
+        expect(eventNames, contains('LOCAL_MEDIA_UPLOAD_HTTP_RESPONSE'));
+        expect(eventNames, contains('LOCAL_MEDIA_UPLOAD_ACK_STREAM_DONE'));
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'LOCAL_MEDIA_SEND_TIMING',
+        );
+        expect(timing['details']['outcome'], 'ack_stream_done');
+
+        if (ws.readyState == WebSocket.open) {
+          await ws.close();
+        }
+        await server.close(force: true);
+      },
+      timeout: const Timeout(Duration(seconds: 5)),
     );
 
     test(

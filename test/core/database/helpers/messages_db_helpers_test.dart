@@ -13,8 +13,10 @@ import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
 import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
+import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 void main() {
   late Database db;
@@ -39,6 +41,7 @@ void main() {
     await runWireEnvelopeMigration(db);
     await runMessagesEditedAtMigration(db);
     await runMessagesDeletedStateMigration(db);
+    await runMessageRelayCustodyMigration(db);
   });
 
   tearDown(() async {
@@ -1031,5 +1034,130 @@ void main() {
       expect(results[0]['transport'], 'wifi');
       expect(results[1]['transport'], 'relay');
     });
+  });
+
+  // 115 Phase 1.5 — relay custody columns (migration 077) back the 'inboxed'
+  // status foundation and the Phase 3 custody sweep.
+  group('relay custody columns', () {
+    test(
+      'insert/load roundtrips relay_expires_at and custody_checked_at and ConversationMessage maps them',
+      () async {
+        final row = makeMessageRow(id: 'msg-custody-001');
+        row['relay_expires_at'] = 1765619200000;
+        row['custody_checked_at'] = '2026-06-13T12:00:00.000Z';
+        await dbInsertMessage(db, row);
+
+        final loaded = await dbLoadMessage(db, 'msg-custody-001');
+        expect(loaded!['relay_expires_at'], 1765619200000);
+        expect(loaded['custody_checked_at'], '2026-06-13T12:00:00.000Z');
+
+        final model = ConversationMessage.fromMap(
+          Map<String, dynamic>.from(loaded),
+        );
+        expect(model.relayExpiresAt, 1765619200000);
+        expect(model.custodyCheckedAt, '2026-06-13T12:00:00.000Z');
+
+        final mapped = model.toMap();
+        expect(mapped['relay_expires_at'], 1765619200000);
+        expect(mapped['custody_checked_at'], '2026-06-13T12:00:00.000Z');
+
+        // copyWith sentinel handling: untouched fields survive, explicit
+        // copyWithNulled-style clears are owned by the sweep (Phase 3).
+        final copied = model.copyWith(status: 'delivered');
+        expect(copied.relayExpiresAt, 1765619200000);
+        expect(copied.custodyCheckedAt, '2026-06-13T12:00:00.000Z');
+      },
+    );
+
+    // 115 Phase 3.2 — the custody sweep's selection query.
+    test(
+      "dbLoadInboxCustodyOutgoingMessages returns outgoing 'inboxed' rows with non-null wire_envelope and stale custody_checked_at, timestamp ASC",
+      () async {
+        Map<String, Object?> custodyRow({
+          required String id,
+          required String timestamp,
+          String status = 'inboxed',
+          int isIncoming = 0,
+          String? wireEnvelope = '{"type":"chat_message","version":"2"}',
+          String? custodyCheckedAt,
+        }) {
+          final row = makeMessageRow(
+            id: id,
+            timestamp: timestamp,
+            status: status,
+            isIncoming: isIncoming,
+            wireEnvelope: wireEnvelope,
+          );
+          row['custody_checked_at'] = custodyCheckedAt;
+          return row;
+        }
+
+        final staleCheck = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 12))
+            .toIso8601String();
+        final freshCheck = DateTime.now().toUtc().toIso8601String();
+
+        // Eligible: stale check, never checked (both inboxed + envelope).
+        await dbInsertMessage(
+          db,
+          custodyRow(
+            id: 'msg-custody-b',
+            timestamp: '2026-06-02T00:00:00.000Z',
+            custodyCheckedAt: staleCheck,
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          custodyRow(
+            id: 'msg-custody-a',
+            timestamp: '2026-06-01T00:00:00.000Z',
+          ),
+        );
+        // Ineligible: recently checked, incoming, wrong status, no envelope.
+        await dbInsertMessage(
+          db,
+          custodyRow(
+            id: 'msg-fresh',
+            timestamp: '2026-06-03T00:00:00.000Z',
+            custodyCheckedAt: freshCheck,
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          custodyRow(
+            id: 'msg-incoming',
+            timestamp: '2026-06-03T00:00:00.000Z',
+            isIncoming: 1,
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          custodyRow(
+            id: 'msg-delivered',
+            timestamp: '2026-06-03T00:00:00.000Z',
+            status: 'delivered',
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          custodyRow(
+            id: 'msg-no-envelope',
+            timestamp: '2026-06-03T00:00:00.000Z',
+            wireEnvelope: null,
+          ),
+        );
+
+        final rows = await dbLoadInboxCustodyOutgoingMessages(
+          db,
+          recheckOlderThan: const Duration(hours: 6),
+        );
+
+        expect(rows.map((r) => r['id']).toList(), [
+          'msg-custody-a',
+          'msg-custody-b',
+        ]);
+      },
+    );
   });
 }

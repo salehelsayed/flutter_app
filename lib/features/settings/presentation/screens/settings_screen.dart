@@ -10,6 +10,7 @@ import 'package:flutter_app/features/settings/presentation/widgets/settings_peer
 import 'package:flutter_app/features/settings/presentation/widgets/posts_nearby_settings_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_move_account_card.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
@@ -43,6 +44,7 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<ImageQualityPreference>? onVideoQualityChanged;
   final bool isNearbySharingEnabled;
   final ValueChanged<bool>? onNearbySharingChanged;
+  final VoidCallback? onMoveAccountToNewPhone;
   final Widget? debugSection;
   final void Function(String) onSwitchView;
   final String activeTab;
@@ -74,6 +76,7 @@ class SettingsScreen extends StatelessWidget {
     this.onVideoQualityChanged,
     this.isNearbySharingEnabled = false,
     this.onNearbySharingChanged,
+    this.onMoveAccountToNewPhone,
     this.debugSection,
     required this.onSwitchView,
     required this.activeTab,
@@ -216,6 +219,12 @@ class SettingsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 24),
                         ],
+                        if (onMoveAccountToNewPhone != null) ...[
+                          SettingsMoveAccountCard(
+                            onPressed: onMoveAccountToNewPhone,
+                          ),
+                          const SizedBox(height: 24),
+                        ],
                         if (mnemonic != null && words.length == 12) ...[
                           SettingsRecoveryPhraseCard(
                             words: words,
@@ -227,7 +236,7 @@ class SettingsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 24),
                         ],
-                        if (debugSection != null) debugSection!,
+                        ?debugSection,
                       ],
                     ),
                   ),

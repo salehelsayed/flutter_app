@@ -58,6 +58,30 @@ void main() {
       expect(bridge.checkHealthCallCount, equals(1));
     });
 
+    test('account migration gate skips resume network side effects', () async {
+      var pushRetryCount = 0;
+
+      final result = await handleAppResumed(
+        bridge: bridge,
+        p2pService: p2pService,
+        retryPushRegistrationFn: () async {
+          pushRetryCount++;
+        },
+        accountMigrationNetworkGate: ({peerId, required operation}) async {
+          expect(peerId, isNull);
+          expect(operation, 'app_resume');
+          return false;
+        },
+      );
+
+      expect(result, isFalse);
+      expect(bridge.checkHealthCallCount, 0);
+      expect(bridge.reinitializeCallCount, 0);
+      expect(p2pService.performImmediateHealthCheckCallCount, 0);
+      expect(p2pService.drainOfflineInboxCallCount, 0);
+      expect(pushRetryCount, 0);
+    });
+
     test('does not reinitialize when bridge is healthy', () async {
       bridge.checkHealthResult = true;
 

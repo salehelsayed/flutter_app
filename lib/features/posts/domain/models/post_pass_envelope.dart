@@ -40,16 +40,27 @@ class PostMediaCryptoEntry {
   final String nonce;
   final String blobId;
 
+  /// Encryption scheme discriminator (doc 113 G6). Nullable both directions:
+  /// shipped pass senders never write it; receivers tolerate its absence.
+  final String? scheme;
+
+  /// SHA-256 hex of the ENCRYPTED blob (MIG-012: never of decrypted bytes).
+  final String? contentHash;
+
   const PostMediaCryptoEntry({
     required this.keyBase64,
     required this.nonce,
     required this.blobId,
+    this.scheme,
+    this.contentHash,
   });
 
   Map<String, Object?> toJson() => {
     'key_base64': keyBase64,
     'nonce': nonce,
     'blob_id': blobId,
+    if (scheme != null) 'scheme': scheme,
+    if (contentHash != null) 'content_hash': contentHash,
   };
 
   static PostMediaCryptoEntry? fromJson(Map<String, dynamic> json) {
@@ -63,6 +74,8 @@ class PostMediaCryptoEntry {
       keyBase64: keyBase64,
       nonce: nonce,
       blobId: blobId,
+      scheme: json['scheme'] as String?,
+      contentHash: json['content_hash'] as String?,
     );
   }
 }

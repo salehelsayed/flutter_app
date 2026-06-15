@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -55,6 +57,17 @@ void main() {
   });
 
   testWidgets('renders a video duration badge for video posts', (tester) async {
+    // The video overlay only renders for displayable done media (download
+    // done + local file present), so the fixture needs a real file.
+    final tempDir = Directory.systemTemp.createTempSync('post-card-media-');
+    addTearDown(() {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+    final videoFile = File('${tempDir.path}/blob-video-1.mp4')
+      ..writeAsBytesSync(<int>[0, 1, 2, 3]);
+
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
@@ -65,7 +78,7 @@ void main() {
             child: PostCard(
               post: _post(
                 mediaKind: 'video',
-                media: const [
+                media: [
                   PostMediaAttachmentModel(
                     mediaId: 'media-video-1',
                     postId: 'post-1',
@@ -74,7 +87,8 @@ void main() {
                     mime: 'video/mp4',
                     sizeBytes: 100,
                     durationMs: 125000,
-                    downloadStatus: 'pending',
+                    localPath: videoFile.path,
+                    downloadStatus: 'done',
                     createdAt: '2026-03-15T10:20:00.000Z',
                   ),
                 ],

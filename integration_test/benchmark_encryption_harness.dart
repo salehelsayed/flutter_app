@@ -1,30 +1,27 @@
 /// Simulator Benchmark: Encryption Overhead (Test G)
 ///
 /// Measures ML-KEM keygen, encrypt/decrypt latency with real Go crypto.
-/// Run: flutter test integration_test/benchmark_encryption_harness.dart -d <DEVICE_ID>
-@Tags(['device'])
+/// Run via the shared benchmark dispatcher.
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 
 import 'benchmark_helpers.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runEncryptionBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('G-Sim-1: ML-KEM keygen (10 iterations)', (tester) async {
+  // G-Sim-1: ML-KEM keygen (10 iterations)
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: ML-KEM KEYGEN (G-Sim-1)');
     print('${'═' * 60}\n');
@@ -55,9 +52,10 @@ void main() {
     );
 
     bridge.dispose();
-  });
+  }
 
-  testWidgets('G-Sim-2: Encrypt/decrypt with payload sizes', (tester) async {
+  // G-Sim-2: Encrypt/decrypt with payload sizes
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: ENCRYPT/DECRYPT (G-Sim-2)');
     print('${'═' * 60}\n');
@@ -118,9 +116,10 @@ void main() {
     }
 
     bridge.dispose();
-  });
+  }
 
-  testWidgets('G-Sim-3: Group message encrypt+sign + decrypt', (tester) async {
+  // G-Sim-3: Group message encrypt+sign + decrypt
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: GROUP CRYPTO (G-Sim-3)');
     print('${'═' * 60}\n');
@@ -170,5 +169,5 @@ void main() {
     print('[NOTE] Full group publish timing requires two-node orchestrator');
 
     await node.dispose();
-  });
+  }
 }

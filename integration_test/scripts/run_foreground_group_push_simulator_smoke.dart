@@ -14,10 +14,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-const _aliceHarness =
-    'integration_test/foreground_group_push_simulator_alice_harness.dart';
-const _bobHarness =
-    'integration_test/foreground_group_push_simulator_bob_harness.dart';
+import '../_support/signal_files.dart';
+
+const _harness =
+    'integration_test/foreground_group_push_simulator_harness.dart';
 
 bool _isIosDeviceId(String? id) {
   if (id == null) return false;
@@ -40,42 +40,7 @@ void _log(String tag, String message) {
 
 late Directory _sharedDir;
 late String _runId;
-
-String _sig(String name) => '${_sharedDir.path}/fgpush_${_runId}_$name';
-
-void _writeSignal(String name) {
-  File(_sig(name)).writeAsStringSync('ok');
-}
-
-Future<void> _waitForSignal(
-  String name, {
-  Duration timeout = const Duration(minutes: 6),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(_sig(name));
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Orchestrator: timed out waiting for $name');
-}
-
-Future<Map<String, dynamic>> _readJsonSignal(
-  String name, {
-  Duration timeout = const Duration(minutes: 6),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(_sig(name));
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) {
-      try {
-        return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-      } catch (_) {}
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Orchestrator: timed out waiting for json: $name');
-}
+late SignalDir _signals;
 
 void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
   stream.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
@@ -168,6 +133,12 @@ Future<void> main(List<String> args) async {
   final bobDevice = devices[1];
   _runId = DateTime.now().millisecondsSinceEpoch.toString();
   _sharedDir = await Directory.systemTemp.createTemp('fgpush_smoke_');
+  _signals = SignalDir.forDirectory(
+    _sharedDir,
+    prefix: 'fgpush_',
+    runId: '${_runId}_',
+    role: 'Orchestrator',
+  );
 
   final aliceLog = File(
     '${_sharedDir.path}/alice.log',
@@ -185,7 +156,7 @@ Future<void> main(List<String> args) async {
 
   try {
     alice = await _launchHarness(
-      harness: _aliceHarness,
+      harness: _harness,
       role: 'alice',
       deviceId: aliceDevice,
       dbName: 'fgpush_${_runId}_alice.db',
@@ -194,10 +165,13 @@ Future<void> main(List<String> args) async {
     _pipeOutput(alice.stderr, 'ALICE-ERR', aliceLog);
 
     _log('ORCH', 'Waiting for Alice to be ready...');
-    await _waitForSignal('alice_ready', timeout: const Duration(minutes: 10));
+    await _signals.waitForSignal(
+      'alice_ready',
+      timeout: const Duration(minutes: 10),
+    );
 
     bob = await _launchHarness(
-      harness: _bobHarness,
+      harness: _harness,
       role: 'bob',
       deviceId: bobDevice,
       dbName: 'fgpush_${_runId}_bob.db',
@@ -206,23 +180,29 @@ Future<void> main(List<String> args) async {
     _pipeOutput(bob.stderr, 'BOB-ERR', bobLog);
 
     _log('ORCH', 'Waiting for Bob to join...');
-    await _waitForSignal(
+    await _signals.waitForSignal(
       'bob_group_joined',
       timeout: const Duration(minutes: 12),
     );
 
     _log('ORCH', '─── S1: foreground group gap recovery ───');
-    _writeSignal('s1_go');
-    final s1Verdict = await _readJsonSignal('s1_bob_verdict');
-    _writeSignal('s1_verified');
+    _signals.writeSignal('s1_go');
+    final s1Verdict = await _signals.waitForJson(
+      's1_bob_verdict',
+      timeout: const Duration(minutes: 6),
+    );
+    _signals.writeSignal('s1_verified');
     final s1Pass = s1Verdict['programmaticPass'] == true;
     _log('ORCH', 'S1: ${s1Pass ? 'PASS' : 'FAIL'} — ${jsonEncode(s1Verdict)}');
     if (!s1Pass) failures.add('S1');
 
     _log('ORCH', '─── S2: live-first replay dedupe ───');
-    _writeSignal('s2_go');
-    final s2Verdict = await _readJsonSignal('s2_bob_verdict');
-    _writeSignal('s2_verified');
+    _signals.writeSignal('s2_go');
+    final s2Verdict = await _signals.waitForJson(
+      's2_bob_verdict',
+      timeout: const Duration(minutes: 6),
+    );
+    _signals.writeSignal('s2_verified');
     final s2Pass = s2Verdict['programmaticPass'] == true;
     _log('ORCH', 'S2: ${s2Pass ? 'PASS' : 'FAIL'} — ${jsonEncode(s2Verdict)}');
     if (!s2Pass) failures.add('S2');
@@ -231,16 +211,25 @@ Future<void> main(List<String> args) async {
       'ORCH',
       '─── S3: non-current member foreground fallback suppression ───',
     );
-    _writeSignal('s3_go');
-    final s3Verdict = await _readJsonSignal('s3_bob_verdict');
-    _writeSignal('s3_verified');
+    _signals.writeSignal('s3_go');
+    final s3Verdict = await _signals.waitForJson(
+      's3_bob_verdict',
+      timeout: const Duration(minutes: 6),
+    );
+    _signals.writeSignal('s3_verified');
     final s3Pass = s3Verdict['programmaticPass'] == true;
     _log('ORCH', 'S3: ${s3Pass ? 'PASS' : 'FAIL'} — ${jsonEncode(s3Verdict)}');
     if (!s3Pass) failures.add('S3');
 
-    _writeSignal('all_done');
-    await _waitForSignal('alice_done', timeout: const Duration(minutes: 5));
-    await _waitForSignal('bob_done', timeout: const Duration(minutes: 5));
+    _signals.writeSignal('all_done');
+    await _signals.waitForSignal(
+      'alice_done',
+      timeout: const Duration(minutes: 5),
+    );
+    await _signals.waitForSignal(
+      'bob_done',
+      timeout: const Duration(minutes: 5),
+    );
 
     final aliceExit = await alice.exitCode;
     final bobExit = await bob.exitCode;

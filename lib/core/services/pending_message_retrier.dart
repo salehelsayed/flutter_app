@@ -47,6 +47,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
+  final Future<int> Function()? verifyInboxCustodyFn;
   final Duration retryDebounce;
   final Duration periodicRetryInterval;
   final Duration groupContinuitySweepInterval;
@@ -83,6 +84,7 @@ class PendingMessageRetrier {
     this.retryFailedGroupInboxStoresFn,
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
+    this.verifyInboxCustodyFn,
     this.retryDebounce = defaultRetryDebounce,
     this.periodicRetryInterval = defaultPeriodicRetryInterval,
     this.groupContinuitySweepInterval = defaultGroupContinuitySweepInterval,
@@ -340,13 +342,15 @@ class PendingMessageRetrier {
       //   3. group acknowledge recovery when rejoin and drain both succeeded
       //   4. group recover stuck
       //   5. group retry incomplete uploads
-      //   6. group retry failed messages
-      //   7. 1:1 recover stuck
-      //   8. 1:1 retry incomplete uploads
-      //   9. 1:1 retry failed messages
-      //  10. 1:1 retry unacked messages
-      //  11. intro retry pending deliveries
-      //  12. group retry failed inbox stores
+      //   6. group retry failed inbox stores (publish-free custody confirm)
+      //   7. group retry failed messages (re-publish)
+      //   8. 1:1 recover stuck
+      //   9. 1:1 retry incomplete uploads
+      //  10. 1:1 retry failed messages
+      //  11. 1:1 retry unacked messages
+      //  12. intro retry pending deliveries
+      // Confirm (6) runs before re-publish (7): both touch 'pending' rows, and
+      // confirm-first prevents re-publishing a pending row custody resolved.
 
       if (groupRecoveryEnabled && groupRecoveryReady) {
         var shouldAcknowledgeRecovery = false;
@@ -398,6 +402,24 @@ class PendingMessageRetrier {
             emitFlowEvent(
               layer: 'FL',
               event: 'PENDING_RETRIER_GROUP_INCOMPLETE_UPLOAD_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
+
+        // Publish-free custody confirm BEFORE the re-publish retrier: promote a
+        // reconcilable pending row to sent without re-sending. Both this and the
+        // re-publish step touch 'pending' rows; confirm-first prevents the
+        // re-publish below from re-transmitting — and risking a duplicate
+        // delivery of — a pending row that relay custody already resolved
+        // (GAP 3a).
+        if (retryFailedGroupInboxStoresFn != null) {
+          try {
+            await retryFailedGroupInboxStoresFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_INBOX_RETRY_ERROR',
               details: {'error': e.toString()},
             );
           }
@@ -479,6 +501,25 @@ class PendingMessageRetrier {
         );
       }
 
+      if (verifyInboxCustodyFn != null) {
+        try {
+          final custodyCount = await verifyInboxCustodyFn!();
+          if (custodyCount > 0) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_INBOX_CUSTODY_VERIFIED',
+              details: {'count': custodyCount},
+            );
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_INBOX_CUSTODY_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
+      }
+
       if (retryPendingIntroductionDeliveriesFn != null) {
         try {
           final count = await retryPendingIntroductionDeliveriesFn!();
@@ -498,19 +539,6 @@ class PendingMessageRetrier {
         }
       }
 
-      if (groupRecoveryEnabled &&
-          groupRecoveryReady &&
-          retryFailedGroupInboxStoresFn != null) {
-        try {
-          await retryFailedGroupInboxStoresFn!();
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'PENDING_RETRIER_GROUP_INBOX_RETRY_ERROR',
-            details: {'error': e.toString()},
-          );
-        }
-      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

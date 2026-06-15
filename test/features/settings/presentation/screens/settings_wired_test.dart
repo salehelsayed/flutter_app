@@ -9,6 +9,8 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -173,8 +175,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -195,6 +196,8 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
   @override
   String? get lastRecoveryMethod => null;
@@ -234,7 +237,6 @@ class _CountingP2PService extends _FakeP2PService {
     return super.stopNode();
   }
 
-  @override
   Future<void> reinitialize() async {
     reinitializeCalls++;
   }
@@ -281,6 +283,8 @@ void main() {
     InMemoryIntroductionRepository? introductionRepository,
     InMemoryPostsPrivacySettingsRepository? postsPrivacySettingsRepository,
     AppShellController? appShellController,
+    WidgetBuilder? moveAccountRouteBuilder,
+    AccountMigrationTransferRunFn? accountMigrationRunTransfer,
   }) async {
     final shellController = appShellController ?? AppShellController();
     if (appShellController == null) {
@@ -300,6 +304,8 @@ void main() {
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
           appShellController: shellController,
           introductionRepository: introductionRepository,
+          moveAccountRouteBuilder: moveAccountRouteBuilder,
+          accountMigrationRunTransfer: accountMigrationRunTransfer,
           postsPrivacySettingsRepository:
               postsPrivacySettingsRepository ??
               InMemoryPostsPrivacySettingsRepository(),
@@ -502,6 +508,85 @@ void main() {
     expect(find.text('Photo Quality'), findsOneWidget);
     expect(find.text('Video Quality'), findsOneWidget);
   });
+
+  testWidgets('move account action opens old-phone migration route', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      moveAccountRouteBuilder: (_) =>
+          const Scaffold(body: Center(child: Text('Old-phone migration flow'))),
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('settings-move-account-action')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('settings-move-account-action')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Old-phone migration flow'), findsOneWidget);
+  });
+
+  testWidgets(
+    'move account route receives injected migration transfer runner',
+    (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      Future<AccountMigrationTransferResult> runner({
+        required AccountMigrationTransferRequest request,
+        required AccountMigrationTransferProgressCallback onProgress,
+        required bool Function() isCancelled,
+        AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
+      }) async {
+        return const AccountMigrationTransferResult.success();
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        accountMigrationRunTransfer: runner,
+      );
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('settings-move-account-action')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('settings-move-account-action')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final journey = tester.widget<AccountMigrationJourneyWired>(
+        find.byType(AccountMigrationJourneyWired),
+      );
+      expect(journey.runTransfer, same(runner));
+      expect(
+        events,
+        contains(
+          isA<Map<String, dynamic>>()
+              .having(
+                (event) => event['event'],
+                'event',
+                'SETTINGS_FL_MOVE_ACCOUNT_NAVIGATE',
+              )
+              .having(
+                (event) => event['details'],
+                'details',
+                containsPair('hasTransferRunner', true),
+              ),
+        ),
+      );
+    },
+  );
 
   testWidgets('loads video quality preference on init from SecureKeyStore', (
     tester,

@@ -17,7 +17,7 @@ import (
 
 const (
 	MediaProtocol        = "/mknoon/media/1.0.0"
-	maxMediaPerPeer      = 50
+	maxMediaPerPeer      = maxMessagesPerPeer
 	mediaTTL             = 7 * 24 * time.Hour
 	mediaCleanupInterval = 10 * time.Minute
 	mediaDataDir         = "/data/media"
@@ -30,9 +30,13 @@ var (
 
 // --- Media metadata ---
 
+// 112 G7b: the sidecar deliberately carries NO sender identity — the
+// sender→recipient social graph must not persist at rest for the blob's
+// TTL. Download/delete authorization keys on To/AllowedPeers only; the
+// live upload log still prints the authenticated peer. Legacy sidecars
+// containing `from` still decode (unknown fields are ignored).
 type mediaMeta struct {
 	ID           string   `json:"id"`
-	From         string   `json:"from"`
 	To           string   `json:"to"`
 	Mime         string   `json:"mime"`
 	Size         int64    `json:"size"`
@@ -55,11 +59,13 @@ func NewMediaStore(dataDir string) *MediaStore {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Printf("[MEDIA] Warning: could not create data dir %s: %v", dataDir, err)
 	}
-	return &MediaStore{
+	ms := &MediaStore{
 		index:   make(map[string]*mediaMeta),
 		byPeer:  make(map[string][]string),
 		dataDir: dataDir,
 	}
+	ms.loadMetadata()
+	return ms
 }
 
 func (ms *MediaStore) StartCleanup(ctx context.Context) {
@@ -128,10 +134,19 @@ func (ms *MediaStore) Stats() (blobCount int, diskMB int64) {
 	return
 }
 
-func (ms *MediaStore) store(meta *mediaMeta) {
+func (ms *MediaStore) store(meta *mediaMeta) (int, error) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
+	if err := ms.writeMetaAtomic(meta); err != nil {
+		return 0, err
+	}
+	if existing := ms.index[meta.ID]; existing != nil {
+		ms.removeIndexEntryLocked(existing)
+		if existing.To != meta.To {
+			ms.removeFilesLocked(existing)
+		}
+	}
 	ms.index[meta.ID] = meta
 	ms.byPeer[meta.To] = append(ms.byPeer[meta.To], meta.ID)
 
@@ -139,6 +154,7 @@ func (ms *MediaStore) store(meta *mediaMeta) {
 	if removed > 0 {
 		log.Printf("[MEDIA] Pruned %d blob(s) for peer %s", removed, meta.To[:min(20, len(meta.To))])
 	}
+	return removed, nil
 }
 
 func (ms *MediaStore) prunePeerLocked(peerID string) int {
@@ -205,10 +221,17 @@ func (ms *MediaStore) removeLocked(id string) {
 		return
 	}
 
-	// Remove from byPeer
+	ms.removeIndexEntryLocked(meta)
+	ms.removeFilesLocked(meta)
+
+	// Remove from index
+	delete(ms.index, id)
+}
+
+func (ms *MediaStore) removeIndexEntryLocked(meta *mediaMeta) {
 	ids := ms.byPeer[meta.To]
 	for i, bid := range ids {
-		if bid == id {
+		if bid == meta.ID {
 			ms.byPeer[meta.To] = append(ids[:i], ids[i+1:]...)
 			break
 		}
@@ -216,15 +239,15 @@ func (ms *MediaStore) removeLocked(id string) {
 	if len(ms.byPeer[meta.To]) == 0 {
 		delete(ms.byPeer, meta.To)
 	}
+	delete(ms.index, meta.ID)
+}
 
-	// Remove disk file
-	path := ms.blobPath(meta.To, id)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		log.Printf("[MEDIA] Failed to remove file %s: %v", path, err)
+func (ms *MediaStore) removeFilesLocked(meta *mediaMeta) {
+	for _, path := range []string{ms.blobPath(meta.To, meta.ID), ms.metaPath(meta.To, meta.ID)} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("[MEDIA] Failed to remove file %s: %v", path, err)
+		}
 	}
-
-	// Remove from index
-	delete(ms.index, id)
 }
 
 func (ms *MediaStore) listForPeer(peerId string) []*mediaMeta {
@@ -243,6 +266,90 @@ func (ms *MediaStore) listForPeer(peerId string) []*mediaMeta {
 
 func (ms *MediaStore) blobPath(to, id string) string {
 	return filepath.Join(ms.dataDir, to, id+".enc")
+}
+
+func (ms *MediaStore) metaPath(to, id string) string {
+	return ms.blobPath(to, id) + ".json"
+}
+
+func (ms *MediaStore) stagingBlobPath(to, id string) string {
+	return fmt.Sprintf("%s.%d.tmp", ms.blobPath(to, id), time.Now().UnixNano())
+}
+
+func (ms *MediaStore) writeMetaAtomic(meta *mediaMeta) error {
+	path := ms.metaPath(meta.To, meta.ID)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create metadata dir: %w", err)
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
+	tmpPath := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("create metadata temp: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write metadata temp: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("sync metadata temp: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close metadata temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("commit metadata: %w", err)
+	}
+	return nil
+}
+
+func (ms *MediaStore) loadMetadata() {
+	if err := filepath.Walk(ms.dataDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() || filepath.Ext(path) != ".json" {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			log.Printf("[MEDIA] Ignoring unreadable metadata sidecar %s: %v", path, readErr)
+			return nil
+		}
+		var meta mediaMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			log.Printf("[MEDIA] Ignoring corrupt metadata sidecar %s: %v", path, err)
+			return nil
+		}
+		if meta.ID == "" || meta.To == "" {
+			log.Printf("[MEDIA] Ignoring incomplete metadata sidecar %s", path)
+			return nil
+		}
+		if _, err := os.Stat(ms.blobPath(meta.To, meta.ID)); err != nil {
+			log.Printf("[MEDIA] Ignoring metadata sidecar %s without blob: %v", path, err)
+			return nil
+		}
+		ms.index[meta.ID] = &meta
+		ms.byPeer[meta.To] = append(ms.byPeer[meta.To], meta.ID)
+		return nil
+	}); err != nil {
+		log.Printf("[MEDIA] Warning: could not load metadata sidecars from %s: %v", ms.dataDir, err)
+	}
+	for peerID, ids := range ms.byPeer {
+		sort.Slice(ids, func(i, j int) bool {
+			mi, mj := ms.index[ids[i]], ms.index[ids[j]]
+			if mi == nil || mj == nil {
+				return false
+			}
+			return mi.CreatedAt < mj.CreatedAt
+		})
+		ms.byPeer[peerID] = ids
+	}
 }
 
 // --- Request/response types ---
@@ -344,36 +451,51 @@ func handleMediaUpload(s network.Stream, media *MediaStore, remotePeer string, r
 	// Signal client we're ready for data
 	writeMediaResponse(s, mediaResponse{Status: "READY"})
 
-	// Create file and stream data
 	path := media.blobPath(req.To, req.ID)
-	f, err := os.Create(path)
+	tmpPath := media.stagingBlobPath(req.To, req.ID)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Printf("[MEDIA] Failed to create file %s: %v", path, err)
+		log.Printf("[MEDIA] Failed to create file %s: %v", tmpPath, err)
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "server storage error"})
 		return
 	}
 
 	written, err := io.CopyN(f, s, req.Size)
-	f.Close()
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
 
 	if err != nil || written != req.Size {
-		// Clean up partial file
-		os.Remove(path)
+		os.Remove(tmpPath)
 		log.Printf("[MEDIA] Upload incomplete for %s: wrote %d/%d, err=%v", req.ID, written, req.Size, err)
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "upload incomplete"})
 		return
 	}
 
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		log.Printf("[MEDIA] Failed to commit upload %s: %v", req.ID, err)
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "server storage error"})
+		return
+	}
+
 	meta := &mediaMeta{
 		ID:           req.ID,
-		From:         remotePeer,
 		To:           req.To,
 		Mime:         req.Mime,
 		Size:         req.Size,
 		CreatedAt:    time.Now().UnixMilli(),
 		AllowedPeers: req.AllowedPeers,
 	}
-	media.store(meta)
+	if _, err := media.store(meta); err != nil {
+		log.Printf("[MEDIA] Failed to persist metadata for %s: %v", req.ID, err)
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "server storage error"})
+		return
+	}
 	mediaUploadedCounter.Inc()
 	mediaUploadedBytesCounter.Add(float64(written))
 	if biz != nil {
@@ -437,13 +559,10 @@ func handleMediaDownload(s network.Stream, media *MediaStore, remotePeer string,
 	mediaDownloadedBytesCounter.Add(float64(written))
 	log.Printf("[MEDIA] Downloaded blob %s (%d bytes) to %s", req.ID, written, remotePeer[:min(20, len(remotePeer))])
 
-	// Auto-delete after download — but NOT for group blobs (other members still need it)
-	if !isGroupMode {
-		mediaDeletedCounter.WithLabelValues("auto_download").Inc()
-		mediaDeletedBytesCounter.WithLabelValues("auto_download").Add(float64(meta.Size))
-		media.remove(req.ID)
-		log.Printf("[MEDIA] Auto-deleted blob %s after download", req.ID)
-	}
+	// Deletion is acknowledgement-based: a completed download stream is not
+	// proof of receipt, so the receiver issues an explicit delete after its
+	// durable commit (INV-1). Receivers that never ack are bounded by the
+	// TTL sweep and per-peer caps.
 }
 
 func handleMediaDelete(s network.Stream, media *MediaStore, remotePeer string, req *mediaRequest) {

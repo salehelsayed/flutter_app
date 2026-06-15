@@ -17,6 +17,8 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -182,6 +184,8 @@ class FeedWired extends StatefulWidget {
   final DeleteMessageForMeFn deleteMessageForMeFn;
   final DeleteMessageForEveryoneFn deleteMessageForEveryoneFn;
   final TransportMetrics? transportMetrics;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
 
   const FeedWired({
     super.key,
@@ -221,6 +225,8 @@ class FeedWired extends StatefulWidget {
     this.deleteMessageForMeFn = deleteMessageForMe,
     this.deleteMessageForEveryoneFn = deleteMessageForEveryone,
     this.transportMetrics,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
   });
 
   @override
@@ -1519,6 +1525,7 @@ class _FeedWiredState extends State<FeedWired>
         return;
       }
 
+      final editSaveFailedText = AppLocalizations.of(context)!.edit_save_failed;
       final contact = await widget.contactRepository.getContact(contactPeerId);
       if (contact == null || !mounted) {
         if (mounted) {
@@ -1571,7 +1578,7 @@ class _FeedWiredState extends State<FeedWired>
         if (result != SendChatMessageResult.success && message == null) {
           scaffoldMessenger.showSnackBar(
             SnackBar(
-              content: Text(AppLocalizations.of(context)!.edit_save_failed),
+              content: Text(editSaveFailedText),
               behavior: SnackBarBehavior.floating,
             ),
           );
@@ -2595,6 +2602,8 @@ class _FeedWiredState extends State<FeedWired>
               introductionRepository: widget.introductionRepository,
               nearbyLocationService: widget.nearbyLocationService,
               transportMetrics: widget.transportMetrics,
+              accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+              accountMigrationSizeGate: widget.accountMigrationSizeGate,
             ),
           ),
         )
@@ -2879,6 +2888,8 @@ class _FeedWiredState extends State<FeedWired>
       onEmbeddedExitActionChanged: _registerOrbitEmbeddedExitAction,
       onRowActionOpenChanged: _onOrbitRowActionOpenChanged,
       transportMetrics: widget.transportMetrics,
+      accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+      accountMigrationSizeGate: widget.accountMigrationSizeGate,
     );
   }
 

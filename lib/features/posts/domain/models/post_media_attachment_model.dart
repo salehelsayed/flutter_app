@@ -20,6 +20,8 @@ class PostMediaAttachmentModel {
   final String? thumbnailBlobId;
   final String? encryptionKeyBase64;
   final String? encryptionNonce;
+  final String? encryptionScheme;
+  final String? contentHash;
   final bool isEncrypted;
 
   const PostMediaAttachmentModel({
@@ -40,6 +42,8 @@ class PostMediaAttachmentModel {
     this.thumbnailBlobId,
     this.encryptionKeyBase64,
     this.encryptionNonce,
+    this.encryptionScheme,
+    this.contentHash,
     this.isEncrypted = false,
   });
 
@@ -62,6 +66,8 @@ class PostMediaAttachmentModel {
       thumbnailBlobId: map['thumbnail_blob_id'] as String?,
       encryptionKeyBase64: map['encryption_key_base64'] as String?,
       encryptionNonce: map['encryption_nonce'] as String?,
+      encryptionScheme: map['encryption_scheme'] as String?,
+      contentHash: map['content_hash'] as String?,
       isEncrypted: (map['is_encrypted'] as int?) == 1,
     );
   }
@@ -75,6 +81,8 @@ class PostMediaAttachmentModel {
     String? createdAt,
     String? encryptionKeyBase64,
     String? encryptionNonce,
+    String? encryptionScheme,
+    String? contentHash,
     bool isEncrypted = false,
   }) {
     return PostMediaAttachmentModel(
@@ -95,6 +103,8 @@ class PostMediaAttachmentModel {
       thumbnailBlobId: json['thumbnail_blob_id'] as String?,
       encryptionKeyBase64: encryptionKeyBase64,
       encryptionNonce: encryptionNonce,
+      encryptionScheme: encryptionScheme,
+      contentHash: contentHash,
       isEncrypted: isEncrypted,
     );
   }
@@ -118,6 +128,8 @@ class PostMediaAttachmentModel {
       'thumbnail_blob_id': thumbnailBlobId,
       'encryption_key_base64': encryptionKeyBase64,
       'encryption_nonce': encryptionNonce,
+      'encryption_scheme': encryptionScheme,
+      'content_hash': contentHash,
       'is_encrypted': isEncrypted ? 1 : 0,
     };
   }
@@ -173,6 +185,8 @@ class PostMediaAttachmentModel {
     String? thumbnailBlobId,
     String? encryptionKeyBase64,
     String? encryptionNonce,
+    String? encryptionScheme,
+    String? contentHash,
     bool? isEncrypted,
   }) {
     return PostMediaAttachmentModel(
@@ -193,6 +207,8 @@ class PostMediaAttachmentModel {
       thumbnailBlobId: thumbnailBlobId ?? this.thumbnailBlobId,
       encryptionKeyBase64: encryptionKeyBase64 ?? this.encryptionKeyBase64,
       encryptionNonce: encryptionNonce ?? this.encryptionNonce,
+      encryptionScheme: encryptionScheme ?? this.encryptionScheme,
+      contentHash: contentHash ?? this.contentHash,
       isEncrypted: isEncrypted ?? this.isEncrypted,
     );
   }

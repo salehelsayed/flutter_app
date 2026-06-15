@@ -41,6 +41,8 @@ class GoBridgeClient extends Bridge {
     'media:stream_open_timing',
     'media:upload_progress',
     'media:upload_complete',
+    'media:download_complete',
+    'media:download_failed',
     'profile:upload_progress',
     'message:direct_ack_timing',
     'timeout:fired',
@@ -87,12 +89,18 @@ class GoBridgeClient extends Bridge {
     'payload.verify': _CmdSpec('verifyPayload', true),
     'contactrequest.encrypt': _CmdSpec('encryptContactRequest', true),
     'contactrequest.decrypt': _CmdSpec('decryptContactRequest', true),
+    // Account-move transfer session crypto (protocol v2)
+    'migration.session.encap': _CmdSpec('migrationSessionEncap', true),
+    'migration.session.decap': _CmdSpec('migrationSessionDecap', true),
+    'migration.chunk.encrypt': _CmdSpec('migrationChunkEncrypt', true),
+    'migration.chunk.decrypt': _CmdSpec('migrationChunkDecrypt', true),
     // Node
     'node:start': _CmdSpec('startNode', true),
     'node:stop': _CmdSpec('stopNode', false),
     'node:status': _CmdSpec('nodeStatus', false),
     // Rendezvous
     'rendezvous:register': _CmdSpec('rendezvousRegister', true),
+    'rendezvous:unregister': _CmdSpec('rendezvousUnregister', true),
     'rendezvous:discover': _CmdSpec('rendezvousDiscover', true),
     // Relay
     'relay:reconnect': _CmdSpec('relayReconnect', false),
@@ -109,6 +117,7 @@ class GoBridgeClient extends Bridge {
     'inbox:retrieve_pending': _CmdSpec('inboxRetrievePending', true),
     'inbox:ack': _CmdSpec('inboxAck', true),
     'inbox:register_token': _CmdSpec('inboxRegisterToken', true),
+    'inbox:unregister_token': _CmdSpec('inboxUnregisterToken', true),
     // Media
     'media:upload': _CmdSpec('mediaUpload', true),
     'media:download': _CmdSpec('mediaDownload', true),
@@ -650,6 +659,10 @@ class GoBridgeClient extends Bridge {
           emitMediaUploadProgressEvent(eventData);
           break;
 
+        case 'media:download_progress':
+          emitMediaDownloadProgressEvent(eventData);
+          break;
+
         case 'node:startup_timing':
         case 'relay:warm_timing':
         case 'relay:reservation_timing':
@@ -658,6 +671,8 @@ class GoBridgeClient extends Bridge {
         case 'inbox:retrieve_timing':
         case 'media:stream_open_timing':
         case 'media:upload_complete':
+        case 'media:download_complete':
+        case 'media:download_failed':
         case 'profile:upload_progress':
         case 'message:direct_ack_timing':
         case 'timeout:fired':

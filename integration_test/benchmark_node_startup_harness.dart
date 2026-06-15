@@ -1,27 +1,25 @@
 /// Simulator Benchmark: Node Startup Timing (Test B)
 ///
 /// Measures the full startup sequence from node:start to Online.
-/// Run: flutter test integration_test/benchmark_node_startup_harness.dart -d <DEVICE_ID>
-@Tags(['device'])
+/// Library form: invoked by the shared benchmark dispatcher via
+/// runNodeStartupBenchmark(tester). No standalone entrypoint.
 library;
 
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'benchmark_helpers.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runNodeStartupBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('B-Sim-1: Cold start — measure each phase', (tester) async {
+  // B-Sim-1: Cold start — measure each phase
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: NODE STARTUP (B-Sim-1)');
     print('${'═' * 60}\n');
@@ -108,9 +106,10 @@ void main() {
     }
 
     await node.dispose();
-  });
+  }
 
-  testWidgets('B-Sim-2: Repeated cold starts (5 runs)', (tester) async {
+  // B-Sim-2: Repeated cold starts (5 runs)
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: REPEATED COLD STARTS (B-Sim-2)');
     print('${'═' * 60}\n');
@@ -145,9 +144,10 @@ void main() {
         n: timings.length,
       );
     }
-  });
+  }
 
-  testWidgets('B-Sim-3: Hot restart', (tester) async {
+  // B-Sim-3: Hot restart
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: HOT RESTART (B-Sim-3)');
     print('${'═' * 60}\n');
@@ -169,5 +169,5 @@ void main() {
     }
 
     await node.dispose();
-  });
+  }
 }

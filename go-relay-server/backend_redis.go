@@ -271,6 +271,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
 	msgID := extractMessageId(entry.Message)
 	var result InboxStoreResult
+	pruned := 0
 
 	err = withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
 		rawEntries, err := tx.LRange(context.Background(), key, 0, -1).Result()
@@ -280,7 +281,8 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 			return err
 		}
 
-		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
+		validRaw, validMessages, prunedInTx := normalizeInboxEntries(rawEntries, cutoff)
+		pruned = prunedInTx
 
 		if msgID != "" {
 			for _, message := range validMessages {
@@ -296,11 +298,18 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 			}
 		}
 
+		if len(validRaw) >= b.maxPerPeer {
+			if len(validRaw) != len(rawEntries) {
+				if err := redisReplaceList(tx, key, validRaw); err != nil {
+					return err
+				}
+			}
+			result = InboxStoreResultRejectedFull
+			return nil
+		}
+
 		values := append([]string(nil), validRaw...)
 		values = append(values, string(payload))
-		if len(values) > b.maxPerPeer {
-			values = values[len(values)-b.maxPerPeer:]
-		}
 
 		if err := redisReplaceList(tx, key, values); err != nil {
 			return err
@@ -311,6 +320,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 	if err != nil {
 		return "", fmt.Errorf("store redis inbox message: %w", err)
 	}
+	recordInboxExpiredPruned(pruned)
 	return result, nil
 }
 
@@ -325,6 +335,7 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 	var (
 		result  []inboxMessage
 		hasMore bool
+		pruned  int
 	)
 
 	err := withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
@@ -338,7 +349,8 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 			return err
 		}
 
-		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
+		validRaw, validMessages, prunedInTx := normalizeInboxEntries(rawEntries, cutoff)
+		pruned = prunedInTx
 		if len(validRaw) == 0 {
 			result = nil
 			hasMore = false
@@ -355,6 +367,7 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 		log.Printf("[REDIS][INBOX] retrieve failed: %v", err)
 		return nil, false
 	}
+	recordInboxExpiredPruned(pruned)
 
 	return result, hasMore
 }
@@ -370,6 +383,7 @@ func (b *redisInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMe
 	var (
 		result  []inboxMessage
 		hasMore bool
+		pruned  int
 	)
 
 	err := withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
@@ -383,7 +397,8 @@ func (b *redisInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMe
 			return err
 		}
 
-		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
+		validRaw, validMessages, prunedInTx := normalizeInboxEntries(rawEntries, cutoff)
+		pruned = prunedInTx
 		if len(validRaw) == 0 {
 			result = nil
 			hasMore = false
@@ -399,6 +414,7 @@ func (b *redisInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMe
 		log.Printf("[REDIS][INBOX] retrieve pending failed: %v", err)
 		return nil, false
 	}
+	recordInboxExpiredPruned(pruned)
 
 	return result, hasMore
 }
@@ -422,6 +438,7 @@ func (b *redisInboxBackend) Ack(peerId string, entryIDs []string) (int, error) {
 	key := b.key(peerId)
 	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
 	removed := 0
+	pruned := 0
 
 	err := withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
 		rawEntries, err := tx.LRange(context.Background(), key, 0, -1).Result()
@@ -433,7 +450,8 @@ func (b *redisInboxBackend) Ack(peerId string, entryIDs []string) (int, error) {
 			return err
 		}
 
-		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
+		validRaw, validMessages, prunedInTx := normalizeInboxEntries(rawEntries, cutoff)
+		pruned = prunedInTx
 		if len(validRaw) == 0 {
 			removed = 0
 			return redisReplaceList(tx, key, nil)
@@ -454,6 +472,7 @@ func (b *redisInboxBackend) Ack(peerId string, entryIDs []string) (int, error) {
 		log.Printf("[REDIS][INBOX] ack failed: %v", err)
 		return 0, err
 	}
+	recordInboxExpiredPruned(pruned)
 
 	return removed, nil
 }
@@ -521,9 +540,13 @@ func filterInboxEntries(rawEntries []string, cutoff int64) ([]string, []inboxMes
 	return validRaw, validMessages
 }
 
-func normalizeInboxEntries(rawEntries []string, cutoff int64) ([]string, []inboxMessage) {
+func normalizeInboxEntries(
+	rawEntries []string,
+	cutoff int64,
+) ([]string, []inboxMessage, int) {
 	validRaw := make([]string, 0, len(rawEntries))
 	validMessages := make([]inboxMessage, 0, len(rawEntries))
+	pruned := 0
 
 	for _, raw := range rawEntries {
 		var message inboxMessage
@@ -532,6 +555,7 @@ func normalizeInboxEntries(rawEntries []string, cutoff int64) ([]string, []inbox
 			continue
 		}
 		if message.Timestamp <= cutoff {
+			pruned++
 			continue
 		}
 
@@ -546,7 +570,7 @@ func normalizeInboxEntries(rawEntries []string, cutoff int64) ([]string, []inbox
 		validMessages = append(validMessages, message)
 	}
 
-	return validRaw, validMessages
+	return validRaw, validMessages, pruned
 }
 
 func (b *redisGroupInboxBackend) key(groupId string) string {

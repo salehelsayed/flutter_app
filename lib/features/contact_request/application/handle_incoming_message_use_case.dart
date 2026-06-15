@@ -315,24 +315,53 @@ handleIncomingMessage({
     }
   }
 
-  // 8. Check if already a contact (and update ML-KEM key if missing)
+  // 8. Check if already a contact (and accept ML-KEM key updates)
   final isContact = await contactRepo.contactExists(peerId);
   if (isContact) {
     final mlkemFromPayload = payload['mlkem'] as String?;
     final existingContact = await contactRepo.getContact(peerId);
+    final payloadTs = payload['ts'] as String?;
 
     if (existingContact != null &&
-        existingContact.mlKemPublicKey == null &&
-        mlkemFromPayload != null) {
-      await contactRepo.addContact(
-        existingContact.copyWith(mlKemPublicKey: mlkemFromPayload),
-      );
+        mlkemFromPayload != null &&
+        existingContact.mlKemPublicKey != mlkemFromPayload) {
+      // First key, or a rotation announced after a restore (P0-B). Both
+      // arrive inside the Ed25519-signed payload, already verified above.
+      // Anti-rollback: a CHANGED key is only accepted when the signed ts is
+      // strictly newer than the last accepted key update (falling back to
+      // scannedAt when the key was never updated).
+      final hadKey = existingContact.mlKemPublicKey != null;
+      final lastKeyUpdateTs =
+          existingContact.mlKemKeyUpdatedTs ?? existingContact.scannedAt;
+      final tsIsNewer =
+          payloadTs != null && payloadTs.compareTo(lastKeyUpdateTs) > 0;
+      if (!hadKey || tsIsNewer) {
+        await contactRepo.addContact(
+          existingContact.copyWith(
+            mlKemPublicKey: mlkemFromPayload,
+            mlKemKeyUpdatedTs:
+                payloadTs ?? DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: hadKey
+              ? 'CONTACT_KEY_ROTATED'
+              : 'CONTACT_REQUEST_KEY_UPDATED',
+          details: {'peerId': peerIdPrefix},
+        );
+        return (HandleMessageResult.contactKeyUpdated, null, peerId);
+      }
+
       emitFlowEvent(
         layer: 'FL',
-        event: 'CONTACT_REQUEST_KEY_UPDATED',
-        details: {'peerId': peerIdPrefix},
+        event: 'CONTACT_REQUEST_KEY_ROLLBACK_IGNORED',
+        details: {
+          'peerId': peerIdPrefix,
+          'payloadTs': payloadTs ?? '<missing>',
+          'lastKeyUpdateTs': lastKeyUpdateTs,
+        },
       );
-      return (HandleMessageResult.contactKeyUpdated, null, peerId);
     }
 
     emitFlowEvent(

@@ -66,6 +66,14 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeEncryptContactRequest(args ?? "") }, result: result)
         case "decryptContactRequest":
             runOnBackground({ BridgeDecryptContactRequest(args ?? "") }, result: result)
+        case "migrationSessionEncap":
+            runOnBackground({ BridgeMigrationSessionEncap(args ?? "") }, result: result)
+        case "migrationSessionDecap":
+            runOnBackground({ BridgeMigrationSessionDecap(args ?? "") }, result: result)
+        case "migrationChunkEncrypt":
+            runOnBackground({ BridgeMigrationChunkEncrypt(args ?? "") }, result: result)
+        case "migrationChunkDecrypt":
+            runOnBackground({ BridgeMigrationChunkDecrypt(args ?? "") }, result: result)
 
         // Node lifecycle
         case "startNode":
@@ -78,6 +86,8 @@ class GoBridge: NSObject {
         // Rendezvous
         case "rendezvousRegister":
             runOnBackground({ BridgeRendezvousRegister(args ?? "") }, result: result)
+        case "rendezvousUnregister":
+            runOnBackground({ BridgeRendezvousUnregister(args ?? "") }, result: result)
         case "rendezvousDiscover":
             runOnBackground({ BridgeRendezvousDiscover(args ?? "") }, result: result)
 
@@ -108,6 +118,8 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeInboxAck(args ?? "") }, result: result)
         case "inboxRegisterToken":
             runOnBackground({ BridgeInboxRegisterToken(args ?? "") }, result: result)
+        case "inboxUnregisterToken":
+            runOnBackground({ BridgeInboxUnregisterToken(args ?? "") }, result: result)
 
         // Media
         case "mediaUpload":

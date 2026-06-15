@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -253,6 +256,87 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMigrationSessionChunkRoundTrip(t *testing.T) {
+	keygenMap := parseJSON(t, MlKemKeygen())
+	assertOk(t, keygenMap)
+	publicKey := keygenMap["publicKey"].(string)
+	secretKey := keygenMap["secretKey"].(string)
+
+	encapInput, _ := json.Marshal(map[string]string{
+		"recipientPublicKey": publicKey,
+		"sessionId":          "session-1",
+		"bundleId":           "bundle-1",
+		"direction":          "old_to_new",
+	})
+	encapMap := parseJSON(t, MigrationSessionEncap(string(encapInput)))
+	assertOk(t, encapMap)
+
+	decapInput, _ := json.Marshal(map[string]string{
+		"secretKey":     secretKey,
+		"kemCiphertext": encapMap["kemCiphertext"].(string),
+		"sessionId":     "session-1",
+		"bundleId":      "bundle-1",
+		"direction":     "old_to_new",
+	})
+	decapMap := parseJSON(t, MigrationSessionDecap(string(decapInput)))
+	assertOk(t, decapMap)
+	if encapMap["sessionKey"] != decapMap["sessionKey"] {
+		t.Fatalf("session keys differ after decapsulation")
+	}
+
+	aad := `{"bundle_id":"bundle-1","chunk_index":0,"entry_id":"database","is_final":true,"offset":0,"protocol_version":2,"session_id":"session-1"}`
+	chunkInput, _ := json.Marshal(map[string]string{
+		"sessionKey":      encapMap["sessionKey"].(string),
+		"plaintextBase64": base64.StdEncoding.EncodeToString([]byte("chunk bytes")),
+		"aad":             aad,
+		"nonce":           base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}),
+	})
+	chunkMap := parseJSON(t, MigrationChunkEncrypt(string(chunkInput)))
+	assertOk(t, chunkMap)
+
+	decryptInput, _ := json.Marshal(map[string]string{
+		"sessionKey": encapMap["sessionKey"].(string),
+		"ciphertext": chunkMap["ciphertext"].(string),
+		"aad":        aad,
+		"nonce":      chunkMap["nonce"].(string),
+	})
+	decryptMap := parseJSON(t, MigrationChunkDecrypt(string(decryptInput)))
+	assertOk(t, decryptMap)
+	if decryptMap["plaintextBase64"] != base64.StdEncoding.EncodeToString([]byte("chunk bytes")) {
+		t.Fatalf("chunk decrypt plaintext mismatch")
+	}
+}
+
+func TestMigrationChunkDecryptRejectsWrongAAD(t *testing.T) {
+	keygenMap := parseJSON(t, MlKemKeygen())
+	assertOk(t, keygenMap)
+	publicKey := keygenMap["publicKey"].(string)
+	encapInput, _ := json.Marshal(map[string]string{
+		"recipientPublicKey": publicKey,
+		"sessionId":          "session-1",
+		"bundleId":           "bundle-1",
+		"direction":          "old_to_new",
+	})
+	encapMap := parseJSON(t, MigrationSessionEncap(string(encapInput)))
+	assertOk(t, encapMap)
+	chunkInput, _ := json.Marshal(map[string]string{
+		"sessionKey":      encapMap["sessionKey"].(string),
+		"plaintextBase64": base64.StdEncoding.EncodeToString([]byte("chunk bytes")),
+		"aad":             `{"chunk_index":0}`,
+		"nonce":           base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}),
+	})
+	chunkMap := parseJSON(t, MigrationChunkEncrypt(string(chunkInput)))
+	assertOk(t, chunkMap)
+	decryptInput, _ := json.Marshal(map[string]string{
+		"sessionKey": encapMap["sessionKey"].(string),
+		"ciphertext": chunkMap["ciphertext"].(string),
+		"aad":        `{"chunk_index":1}`,
+		"nonce":      chunkMap["nonce"].(string),
+	})
+	decryptMap := parseJSON(t, MigrationChunkDecrypt(string(decryptInput)))
+	assertNotOk(t, decryptMap, "INTERNAL_ERROR")
+}
+
 // --- DecryptMessage with wrong key ---
 
 func TestDecryptMessage_WrongKey(t *testing.T) {
@@ -284,15 +368,17 @@ func TestDecryptMessage_WrongKey(t *testing.T) {
 	decResult := DecryptMessage(string(decInput))
 	decMap := parseJSON(t, decResult)
 
-	// Decryption with the wrong key should fail (AES-GCM auth tag mismatch).
-	ok, _ := decMap["ok"].(bool)
-	if ok {
-		plaintext, _ := decMap["plaintext"].(string)
-		if plaintext == "secret for key pair 1" {
-			t.Error("decryption with wrong key should not produce the original plaintext")
-		}
+	// Decryption with the wrong key must fail (AES-GCM auth tag mismatch)
+	// with the distinct cryptographic code — INTERNAL_ERROR is reserved for
+	// panics. The Dart receive path classifies any Go-returned code as a
+	// cryptographic (quarantine) failure, so this is observability, not
+	// behavior.
+	if ok, _ := decMap["ok"].(bool); ok {
+		t.Fatal("decryption with wrong key must fail")
 	}
-	// If ok=false, that is the expected outcome.
+	if code, _ := decMap["errorCode"].(string); code != "DECRYPT_FAILED" {
+		t.Errorf("errorCode = %q, want DECRYPT_FAILED", code)
+	}
 }
 
 // --- Invalid JSON input ---
@@ -611,6 +697,12 @@ func TestInboxRegisterToken_NodeNotInitialized(t *testing.T) {
 	assertNotOk(t, m, "NOT_INITIALIZED")
 }
 
+func TestInboxUnregisterToken_NodeNotInitialized(t *testing.T) {
+	result := InboxUnregisterToken(`{}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
 // --- Inbox: JSON validation (requires initialized node) ---
 //
 // These tests temporarily set the singleton node so the bridge functions
@@ -732,9 +824,47 @@ func TestInboxStore_MissingToPeerId(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestInboxStore_ResultCarriesStoreStatusAndErrorCode(t *testing.T) {
+	success := parseJSON(t, inboxStoreBridgeResponse(node.InboxStoreOutcome{
+		StoreStatus: "stored",
+		ExpiresAtMs: 12345,
+		Occupancy:   2,
+		Capacity:    100,
+	}, nil))
+	assertOk(t, success)
+	if success["storeStatus"] != "stored" {
+		t.Fatalf("storeStatus = %v, want stored", success["storeStatus"])
+	}
+	if success["expiresAtMs"] != float64(12345) ||
+		success["occupancy"] != float64(2) ||
+		success["capacity"] != float64(100) {
+		t.Fatalf("success metadata = %#v", success)
+	}
+
+	full := parseJSON(t, inboxStoreBridgeResponse(node.InboxStoreOutcome{
+		StoreStatus: "rejected_full",
+		Occupancy:   100,
+		Capacity:    100,
+	}, fmt.Errorf("%w: INBOX_FULL", node.ErrInboxFull)))
+	assertNotOk(t, full, "INBOX_FULL")
+	if full["storeStatus"] != "rejected_full" {
+		t.Fatalf("full storeStatus = %v, want rejected_full", full["storeStatus"])
+	}
+	if full["occupancy"] != float64(100) || full["capacity"] != float64(100) {
+		t.Fatalf("full metadata = %#v", full)
+	}
+}
+
 func TestInboxRegisterToken_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := InboxRegisterToken("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxUnregisterToken_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxUnregisterToken("not valid json")
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
@@ -777,6 +907,13 @@ func TestInboxRegisterToken_MissingToken(t *testing.T) {
 func TestInboxRegisterToken_MissingPlatform(t *testing.T) {
 	withSingletonNode(t)
 	result := InboxRegisterToken(`{"token": "fake-token"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestRendezvousUnregister_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := RendezvousUnregister("not valid json")
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
@@ -2753,6 +2890,83 @@ func TestGroupSendReliable_PreservesExplicitRecipientPeerIds(t *testing.T) {
 	}
 }
 
+func TestGroupSendReliable_ReportsConnectedTopicPeerCount(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  identity.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+
+	keyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+	groupId := "gsr-connected-peers-bridge"
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": groupId,
+		"groupConfig": map[string]interface{}{
+			"name":      "GSR Connected Peers",
+			"groupType": "chat",
+			"members": []map[string]interface{}{
+				{
+					"peerId":         identity.PeerId,
+					"username":       "Alice",
+					"role":           "admin",
+					"publicKey":      identity.PublicKey,
+					"mlKemPublicKey": "alice-mlkem",
+				},
+				{
+					"peerId":         "peer-bob",
+					"username":       "Bob",
+					"role":           "writer",
+					"publicKey":      "bob-public-key",
+					"mlKemPublicKey": "bob-mlkem",
+				},
+			},
+			"createdBy": identity.PeerId,
+			"createdAt": "2026-06-13T08:00:00Z",
+		},
+		"groupKey": groupKey,
+		"keyEpoch": 1,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(joinInput))))
+
+	sendInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "connected peer recount",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "Alice",
+		"messageId":        "gsr-connected-peers-message",
+	})
+	sendMap := parseJSON(t, GroupSendReliable(string(sendInput)))
+	assertOk(t, sendMap)
+
+	// GAP 2: the reliable result must carry a post-publish connected-topic-peer
+	// count the Dart matrix can trust as a truthful delivery signal. It is always
+	// present as an integer under ok==true (no real peer is connected in this
+	// single-node test, so it is 0 here) and never exceeds the pre-publish
+	// topicPeerCount snapshot in this static case.
+	rawConnected, ok := sendMap["connectedTopicPeerCount"]
+	if !ok {
+		t.Fatalf("reliable result missing connectedTopicPeerCount: %#v", sendMap)
+	}
+	connected, ok := rawConnected.(float64)
+	if !ok {
+		t.Fatalf("connectedTopicPeerCount = %#v, want a number", rawConnected)
+	}
+	if connected < 0 {
+		t.Fatalf("connectedTopicPeerCount = %v, want >= 0", connected)
+	}
+	if topicPeers, ok := sendMap["topicPeerCount"].(float64); ok && connected > topicPeers {
+		t.Fatalf("connectedTopicPeerCount (%v) > topicPeerCount (%v) in a static single-node send", connected, topicPeers)
+	}
+}
+
 func TestGroupSendReliable_PreservesExplicitEmptyRecipientPeerIds(t *testing.T) {
 	withFreshSingletonNode(t)
 
@@ -4444,6 +4658,28 @@ func TestInboxAck_ParsesEntryIdsAndTimeout(t *testing.T) {
 	}
 }
 
+func TestInboxUnregisterToken_PassesServerAddresses(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	addr := generateFakeRelayAddrBridge(t, 19995)
+	unregisterInput, _ := json.Marshal(map[string]interface{}{
+		"serverAddresses": []string{addr},
+	})
+	result := InboxUnregisterToken(string(unregisterInput))
+	m := parseJSON(t, result)
+
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("serverAddresses should be parsed without INVALID_INPUT error")
+	}
+	assertNotOk(t, m, "INBOX_ERROR")
+}
+
 // TestInboxRetrieve_ExposesContinuationMetadataWhenBacklogRemains verifies
 // that InboxRetrieveWithParams includes hasMore in the response while the
 // old InboxRetrieve() does NOT include it.
@@ -4581,6 +4817,33 @@ func TestRendezvousRegister_PassesServerAddresses(t *testing.T) {
 		t.Fatal("multiple serverAddresses should be parsed without INVALID_INPUT error")
 	}
 	// Expect RENDEZVOUS_ERROR since the servers are unreachable.
+	assertNotOk(t, m, "RENDEZVOUS_ERROR")
+}
+
+// TestRendezvousUnregister_PassesServerAddresses verifies that the bridge
+// parses unregister serverAddresses without relying on node:stop.
+func TestRendezvousUnregister_PassesServerAddresses(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	addr1 := generateFakeRelayAddrBridge(t, 19993)
+	addr2 := generateFakeRelayAddrBridge(t, 19994)
+
+	unregisterInput, _ := json.Marshal(map[string]interface{}{
+		"namespace":       "mknoon:chat:test",
+		"serverAddresses": []string{addr1, addr2},
+	})
+	result := RendezvousUnregister(string(unregisterInput))
+	m := parseJSON(t, result)
+
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("multiple serverAddresses should be parsed without INVALID_INPUT error")
+	}
 	assertNotOk(t, m, "RENDEZVOUS_ERROR")
 }
 
@@ -4841,5 +5104,111 @@ func TestBridgeGroupHistoryRepairRange_ReturnsRelayReplayEnvelopes(t *testing.T)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for relay repair request")
+	}
+}
+
+// --- 112 Phase 1.6: blob crypto bridge coverage pins ---
+// Green-on-arrival by design: the handlers predate this test. They pin the
+// exact contract the 1:1 media encryption path (and the Phase 5 testpeer
+// harness) reuse — including the ciphertext = plaintext + 16-byte GCM tag
+// size relationship the receiver adoption gate depends on.
+
+func TestBlobKeygenEncryptDecryptRoundTrip(t *testing.T) {
+	keygen := parseJSON(t, BlobKeygen(""))
+	if keygen["ok"] != true {
+		t.Fatalf("BlobKeygen failed: %v", keygen)
+	}
+	key, _ := keygen["keyBase64"].(string)
+	if key == "" {
+		t.Fatalf("BlobKeygen returned empty keyBase64")
+	}
+
+	dir := t.TempDir()
+	plaintext := []byte("one-to-one media encryption round trip payload")
+	srcPath := filepath.Join(dir, "blob.bin")
+	if err := os.WriteFile(srcPath, plaintext, 0o600); err != nil {
+		t.Fatalf("write plaintext: %v", err)
+	}
+
+	encParams, _ := json.Marshal(map[string]string{
+		"filePath":  srcPath,
+		"keyBase64": key,
+	})
+	enc := parseJSON(t, BlobEncrypt(string(encParams)))
+	if enc["ok"] != true {
+		t.Fatalf("BlobEncrypt failed: %v", enc)
+	}
+	encryptedPath, _ := enc["encryptedPath"].(string)
+	nonce, _ := enc["nonce"].(string)
+	if encryptedPath == "" || nonce == "" {
+		t.Fatalf("BlobEncrypt returned empty encryptedPath/nonce: %v", enc)
+	}
+
+	ciphertext, err := os.ReadFile(encryptedPath)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+	if bytes.Equal(ciphertext, plaintext) {
+		t.Fatalf("ciphertext equals plaintext — blob was not encrypted")
+	}
+	if len(ciphertext) != len(plaintext)+16 {
+		t.Fatalf(
+			"ciphertext length %d, want plaintext+16 = %d (the Dart receiver adoption gate pins size+16)",
+			len(ciphertext), len(plaintext)+16,
+		)
+	}
+
+	decParams, _ := json.Marshal(map[string]string{
+		"filePath":  encryptedPath,
+		"keyBase64": key,
+		"nonce":     nonce,
+	})
+	dec := parseJSON(t, BlobDecrypt(string(decParams)))
+	if dec["ok"] != true {
+		t.Fatalf("BlobDecrypt failed: %v", dec)
+	}
+	decryptedPath, _ := dec["decryptedPath"].(string)
+	roundTripped, err := os.ReadFile(decryptedPath)
+	if err != nil {
+		t.Fatalf("read decrypted: %v", err)
+	}
+	if !bytes.Equal(roundTripped, plaintext) {
+		t.Fatalf("decrypted bytes differ from plaintext")
+	}
+}
+
+func TestBlobDecryptWrongKeyFails(t *testing.T) {
+	keyA, _ := parseJSON(t, BlobKeygen(""))["keyBase64"].(string)
+	keyB, _ := parseJSON(t, BlobKeygen(""))["keyBase64"].(string)
+	if keyA == "" || keyB == "" || keyA == keyB {
+		t.Fatalf("keygen produced unusable keys: %q vs %q", keyA, keyB)
+	}
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "blob.bin")
+	if err := os.WriteFile(srcPath, []byte("cross-object key reuse guard"), 0o600); err != nil {
+		t.Fatalf("write plaintext: %v", err)
+	}
+
+	encParams, _ := json.Marshal(map[string]string{
+		"filePath":  srcPath,
+		"keyBase64": keyA,
+	})
+	enc := parseJSON(t, BlobEncrypt(string(encParams)))
+	if enc["ok"] != true {
+		t.Fatalf("BlobEncrypt failed: %v", enc)
+	}
+
+	decParams, _ := json.Marshal(map[string]string{
+		"filePath":  enc["encryptedPath"].(string),
+		"keyBase64": keyB,
+		"nonce":     enc["nonce"].(string),
+	})
+	dec := parseJSON(t, BlobDecrypt(string(decParams)))
+	if dec["ok"] == true {
+		t.Fatalf("BlobDecrypt succeeded with the wrong key — AES-GCM auth must reject")
+	}
+	if code, _ := dec["errorCode"].(string); code != "DECRYPT_ERROR" {
+		t.Fatalf("expected DECRYPT_ERROR, got %v", dec)
 	}
 }

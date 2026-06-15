@@ -3,54 +3,22 @@
 /// Measures how often the fast path carries traffic.
 /// Requires CLI test peer via orchestrator for two-node sends.
 /// Run: dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios J
-@Tags(['device'])
-library;
-
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 
 import '../test/shared/fakes/in_memory_message_repository.dart';
 
+import '_support/cli_peer_fixture.dart';
 import 'benchmark_helpers.dart';
 
-const _configuredCliPeerFixture = String.fromEnvironment(
-  'CLI_PEER_FIXTURE',
-  defaultValue: '',
-);
-
-Map<String, dynamic>? _loadFixture() {
-  final path = _configuredCliPeerFixture.isNotEmpty
-      ? _configuredCliPeerFixture
-      : '${Directory.systemTemp.path}/cli_peer_fixture.json';
-  final file = File(path);
-  if (!file.existsSync()) return null;
-  try {
-    return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  } catch (_) {
-    return null;
-  }
-}
-
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  }
-
-  testWidgets('J-Sim-1: Scripted conversation workload', (tester) async {
+Future<void> runConnectionReuseBenchmark(WidgetTester tester) async {
     print('\n${'═' * 60}');
     print('  BENCHMARK: CONNECTION REUSE (J-Sim-1)');
     print('${'═' * 60}\n');
 
-    final fixture = _loadFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture');
       return;
@@ -139,5 +107,4 @@ void main() {
     }
 
     await node.dispose();
-  });
 }

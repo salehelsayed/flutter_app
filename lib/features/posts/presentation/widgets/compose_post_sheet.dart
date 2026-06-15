@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
+import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -167,7 +169,14 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     _textController.removeListener(_updateInputDirection);
     _cancelRecorderSubscriptions();
     if (_recordingState.isActive) {
-      unawaited(widget.audioRecorderService?.cancel());
+      final recorder = widget.audioRecorderService;
+      // Only cancel a session this sheet still owns — the recording state
+      // can be stale after another surface displaced the shared recorder.
+      if (recorder != null &&
+          recorder.onAutoStopped == _onRecorderAutoStopped) {
+        recorder.onAutoStopped = null;
+        unawaited(recorder.cancel());
+      }
     }
     _textController.dispose();
     super.dispose();
@@ -265,6 +274,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     _cancelRecorderSubscriptions();
     _amplitudeBuffer.reset();
     _waveformSamples = <double>[];
+    recorder.onAutoStopped = _onRecorderAutoStopped;
     _durationSubscription = recorder.durationStream.listen((duration) {
       if (!mounted) {
         return;
@@ -300,6 +310,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       return;
     }
 
+    recorder.onAutoStopped = null;
     setState(() => _recordingState = VoiceRecordingState.stopping);
     final waveform = downsampleWaveform(_waveformSamples, 50);
     final recording = await recorder.stop();
@@ -336,6 +347,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       setState(() => _recordingState = VoiceRecordingState.stopping);
       return;
     }
+    recorder.onAutoStopped = null;
     setState(() => _recordingState = VoiceRecordingState.stopping);
     _cancelRecorderSubscriptions();
     await recorder.cancel();
@@ -365,6 +377,22 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     _recordingAmplitudes = const <double>[];
     _waveformSamples = <double>[];
     _amplitudeBuffer.reset();
+  }
+
+  void _onRecorderAutoStopped(AudioRecording? recording) {
+    // The recorder stopped itself at the max recording duration without any
+    // user gesture; reset the recording UI. The result is discarded — no
+    // draft is attached.
+    widget.audioRecorderService?.onAutoStopped = null;
+    _cancelRecorderSubscriptions();
+    if (mounted) {
+      setState(_resetRecordingState);
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_COMPOSE_FL_RECORD_AUTO_STOPPED',
+      details: {'tooShort': recording == null},
+    );
   }
 
   void _clearDrafts() {

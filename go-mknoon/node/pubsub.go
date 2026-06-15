@@ -50,14 +50,15 @@ type groupSenderDeviceBinding struct {
 }
 
 type GroupReliableSendResult struct {
-	MessageId              string
-	TopicPeerCount         int
-	ExpectedRecipientCount int
-	RecipientPeerIds       []string
-	InboxStored            bool
-	PublishSucceeded       bool
-	DeliveryMode           string
-	Envelope               string
+	MessageId               string
+	TopicPeerCount          int
+	ConnectedTopicPeerCount int
+	ExpectedRecipientCount  int
+	RecipientPeerIds        []string
+	InboxStored             bool
+	PublishSucceeded        bool
+	DeliveryMode            string
+	Envelope                string
 }
 
 // initPubSub creates a new GossipSub instance attached to the node's libp2p host.
@@ -425,6 +426,13 @@ func (n *Node) SendGroupMessageReliable(groupId, privateKeyB64, senderPeerId, se
 	wg.Wait()
 
 	result.TopicPeerCount = topicPeerCount
+	// Post-publish connected-topic-peer recount. TopicPeerCount above is sampled
+	// BEFORE topic.Publish (ensureGroupTopicPeersBeforePublish), so a peer that
+	// subscribes during the settle window is delivered to by floodPublish yet
+	// goes uncounted, making the delivery gate read the send as in-doubt though
+	// it landed. Re-read the live topic peer set after the publish enqueues so
+	// the count reflects who was actually reachable (GAP 2 — temporal, not mesh).
+	result.ConnectedTopicPeerCount = len(n.liveGroupTopicPeerSet(groupId))
 	result.InboxStored = attemptedInbox && inboxErr == nil
 	result.PublishSucceeded = publishErr == nil
 	result.DeliveryMode = reliableGroupDeliveryMode(result.InboxStored, result.PublishSucceeded)
@@ -433,6 +441,7 @@ func (n *Node) SendGroupMessageReliable(groupId, privateKeyB64, senderPeerId, se
 			"groupId":                    groupId,
 			"messageId":                  built.messageId,
 			"topicPeers":                 result.TopicPeerCount,
+			"connectedTopicPeers":        result.ConnectedTopicPeerCount,
 			"expectedRecipientCount":     result.ExpectedRecipientCount,
 			"inboxStored":                result.InboxStored,
 			"deliveryMode":               result.DeliveryMode,

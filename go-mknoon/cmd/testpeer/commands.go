@@ -109,6 +109,15 @@ func handleCommand(cmd string, params map[string]interface{}) map[string]interfa
 	case "disconnect":
 		return cmdDisconnect(params)
 
+	case "blob_keygen":
+		return cmdBlobKeygen()
+
+	case "blob_encrypt":
+		return cmdBlobEncrypt(params)
+
+	case "blob_decrypt":
+		return cmdBlobDecrypt(params)
+
 	case "media_upload":
 		return cmdMediaUpload(params)
 
@@ -588,13 +597,37 @@ func cmdInboxStoreV1(params map[string]interface{}) map[string]interface{} {
 		return errResult(fmt.Sprintf("build v1: %v", err))
 	}
 
-	if err := state.node.InboxStore(peerId, envelope, 0); err != nil {
-		return errResult(fmt.Sprintf("inbox store: %v", err))
+	outcome, err := state.node.InboxStoreDetailed(peerId, envelope, 0)
+	if err != nil {
+		return inboxStoreErrorResult(err, outcome)
 	}
 
-	return okResult(map[string]interface{}{
-		"messageId": msgID,
-	})
+	result := inboxStoreOutcomeResult(outcome)
+	result["messageId"] = msgID
+	return okResult(result)
+}
+
+func inboxStoreOutcomeResult(outcome node.InboxStoreOutcome) map[string]interface{} {
+	return map[string]interface{}{
+		"storeStatus": outcome.StoreStatus,
+		"errorCode":   outcome.ErrorCode,
+		"expiresAtMs": outcome.ExpiresAtMs,
+		"occupancy":   outcome.Occupancy,
+		"capacity":    outcome.Capacity,
+	}
+}
+
+func inboxStoreErrorResult(err error, outcome node.InboxStoreOutcome) map[string]interface{} {
+	result := inboxStoreOutcomeResult(outcome)
+	result["ok"] = false
+	if outcome.ErrorCode != "" {
+		result["error"] = outcome.ErrorCode
+		result["errorCode"] = outcome.ErrorCode
+	} else {
+		result["error"] = err.Error()
+	}
+	result["errorMessage"] = err.Error()
+	return result
 }
 
 func cmdInboxStoreV2(params map[string]interface{}) map[string]interface{} {
@@ -631,13 +664,14 @@ func cmdInboxStoreV2(params map[string]interface{}) map[string]interface{} {
 		return errResult(fmt.Sprintf("build v2: %v", err))
 	}
 
-	if err := state.node.InboxStore(peerId, envelope, 0); err != nil {
-		return errResult(fmt.Sprintf("inbox store: %v", err))
+	outcome, err := state.node.InboxStoreDetailed(peerId, envelope, 0)
+	if err != nil {
+		return inboxStoreErrorResult(err, outcome)
 	}
 
-	return okResult(map[string]interface{}{
-		"messageId": msgID,
-	})
+	result := inboxStoreOutcomeResult(outcome)
+	result["messageId"] = msgID
+	return okResult(result)
 }
 
 func cmdInboxStoreRaw(params map[string]interface{}) map[string]interface{} {
@@ -651,11 +685,12 @@ func cmdInboxStoreRaw(params map[string]interface{}) map[string]interface{} {
 		return errResult("missing peerId or envelope")
 	}
 
-	if err := state.node.InboxStore(peerId, envelope, 0); err != nil {
-		return errResult(fmt.Sprintf("inbox store raw: %v", err))
+	outcome, err := state.node.InboxStoreDetailed(peerId, envelope, 0)
+	if err != nil {
+		return inboxStoreErrorResult(err, outcome)
 	}
 
-	return okResult(nil)
+	return okResult(inboxStoreOutcomeResult(outcome))
 }
 
 func cmdInboxRetrieve() map[string]interface{} {
@@ -871,6 +906,50 @@ func cmdDisconnect(params map[string]interface{}) map[string]interface{} {
 	return okResult(nil)
 }
 
+// --- 112 Phase 5.2: blob crypto for the two-device proof harness ---
+// Lets the standalone CLI produce/verify ciphertext through the real
+// media_upload/media_download path: upload an encrypted artifact, download
+// it on the peer device, and prove the relay-served bytes do NOT equal the
+// plaintext fixture until blob_decrypt is applied.
+
+func cmdBlobKeygen() map[string]interface{} {
+	key, err := mcrypto.GenerateSymmetricKey()
+	if err != nil {
+		return errResult(fmt.Sprintf("blob keygen: %v", err))
+	}
+	return okResult(map[string]interface{}{"keyBase64": key})
+}
+
+func cmdBlobEncrypt(params map[string]interface{}) map[string]interface{} {
+	filePath, _ := params["filePath"].(string)
+	keyBase64, _ := params["keyBase64"].(string)
+	if filePath == "" || keyBase64 == "" {
+		return errResult("missing filePath or keyBase64")
+	}
+	encryptedPath, nonce, err := mcrypto.EncryptFile(filePath, keyBase64)
+	if err != nil {
+		return errResult(fmt.Sprintf("blob encrypt: %v", err))
+	}
+	return okResult(map[string]interface{}{
+		"encryptedPath": encryptedPath,
+		"nonce":         nonce,
+	})
+}
+
+func cmdBlobDecrypt(params map[string]interface{}) map[string]interface{} {
+	filePath, _ := params["filePath"].(string)
+	keyBase64, _ := params["keyBase64"].(string)
+	nonce, _ := params["nonce"].(string)
+	if filePath == "" || keyBase64 == "" || nonce == "" {
+		return errResult("missing filePath, keyBase64, or nonce")
+	}
+	decryptedPath, err := mcrypto.DecryptFile(filePath, keyBase64, nonce)
+	if err != nil {
+		return errResult(fmt.Sprintf("blob decrypt: %v", err))
+	}
+	return okResult(map[string]interface{}{"decryptedPath": decryptedPath})
+}
+
 func cmdMediaUpload(params map[string]interface{}) map[string]interface{} {
 	if state.node == nil {
 		return errResult("node not started")
@@ -899,13 +978,19 @@ func cmdMediaDownload(params map[string]interface{}) map[string]interface{} {
 	if id == "" || outputPath == "" {
 		return errResult("missing id or outputPath")
 	}
-	mime, size, err := state.node.MediaDownload(id, outputPath)
+	download, err := state.node.MediaDownload(id, outputPath)
 	if err != nil {
 		return errResult(fmt.Sprintf("media download: %v", err))
 	}
 	return okResult(map[string]interface{}{
-		"mime": mime,
-		"size": size,
+		"mime":                download.Mime,
+		"size":                download.Size,
+		"sourceRole":          download.SourceRole,
+		"sourcePeerId":        download.SourcePeerId,
+		"sourcePeerShort":     download.SourcePeerShort,
+		"streamTransport":     download.StreamTransport,
+		"servedByPhone":       download.ServedByPhone,
+		"routedViaRelayStore": download.RoutedViaRelayStore,
 	})
 }
 

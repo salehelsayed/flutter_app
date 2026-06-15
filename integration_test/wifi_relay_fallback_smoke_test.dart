@@ -23,36 +23,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
-import 'package:flutter_app/core/database/encrypted_db_opener.dart';
-import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
-import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
-import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
-import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
-import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
-import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
-import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
-import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
-import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
-import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
-import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
-import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
-import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
-import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
-import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
-import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
-import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
-import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
-import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
-import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
-import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
-import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
-import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
-import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
-import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
-import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -64,22 +36,10 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
-
-// ---------------------------------------------------------------------------
-// Test-only SecureKeyStore (in-memory)
-// ---------------------------------------------------------------------------
-
-class _FakeSecureKeyStore implements SecureKeyStore {
-  final Map<String, String> _store = {};
-  @override
-  Future<String?> read(String key) async => _store[key];
-  @override
-  Future<void> write(String key, String value) async => _store[key] = value;
-  @override
-  Future<void> delete(String key) async => _store.remove(key);
-  @override
-  Future<bool> containsKey(String key) async => _store.containsKey(key);
-}
+import '_support/cli_peer_fixture.dart';
+import '_support/fake_secure_key_store.dart';
+import '_support/signal_files.dart';
+import '_support/test_db_seeder.dart';
 
 // ---------------------------------------------------------------------------
 // Temp directory + signal file paths (shared with orchestrator)
@@ -93,10 +53,6 @@ const _configuredWriteDir = String.fromEnvironment(
   'E2E_WRITE_DIR',
   defaultValue: '',
 );
-const _configuredCliPeerFixture = String.fromEnvironment(
-  'CLI_PEER_FIXTURE',
-  defaultValue: '',
-);
 
 String _tempDirPath() => _configuredTempDir.isNotEmpty
     ? _configuredTempDir
@@ -106,47 +62,29 @@ String _writeDirPath() => _configuredWriteDir.isNotEmpty
     ? _configuredWriteDir
     : Directory.systemTemp.path;
 
-String _cliPeerFixturePath() => _configuredCliPeerFixture.isNotEmpty
-    ? _configuredCliPeerFixture
-    : '${Directory.systemTemp.path}/cli_peer_fixture.json';
+/// Flat signal dir for reading orchestrator->Flutter signals.
+/// Byte-identical to the old `_readSignalPath(name) = '${_tempDirPath()}/$name'`.
+final SignalDir _readSignals = SignalDir.flat(_tempDirPath(), role: 'SMOKE');
 
-/// Path for reading orchestrator->Flutter signals.
-String _readSignalPath(String name) => '${_tempDirPath()}/$name';
-
-/// Path for writing Flutter->orchestrator signals.
-String _writeSignalPath(String name) => '${_writeDirPath()}/$name';
-
-// ---------------------------------------------------------------------------
-// CLI peer fixture loader
-// ---------------------------------------------------------------------------
-
-Map<String, dynamic>? _loadCliPeerFixture() {
-  final fixturePath = _cliPeerFixturePath();
-
-  final file = File(fixturePath);
-  if (!file.existsSync()) return null;
-  try {
-    return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  } catch (e) {
-    print('[SMOKE] Failed to parse CLI peer fixture: $e');
-    return null;
-  }
-}
+/// Flat signal dir for writing Flutter->orchestrator signals.
+/// Byte-identical to the old `_writeSignalPath(name) = '${_writeDirPath()}/$name'`.
+final SignalDir _writeSignals = SignalDir.flat(_writeDirPath(), role: 'SMOKE');
 
 void _writeFlutterPeerFixture({
   required String peerId,
   required String publicKey,
   String? mlKemPublicKey,
 }) {
-  final fixturePath = _writeSignalPath('flutter_peer_fixture.json');
-  Directory(_writeDirPath()).createSync(recursive: true);
   final data = {
     'peerId': peerId,
     'publicKey': publicKey,
     if (mlKemPublicKey != null) 'mlKemPublicKey': mlKemPublicKey,
   };
-  File(fixturePath).writeAsStringSync(jsonEncode(data));
-  print('[SMOKE] Flutter peer fixture written to $fixturePath');
+  _writeSignals.writeJson('flutter_peer_fixture.json', data, createDir: true);
+  print(
+    '[SMOKE] Flutter peer fixture written to '
+    '${_writeSignals.path('flutter_peer_fixture.json')}',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -155,32 +93,13 @@ void _writeFlutterPeerFixture({
 
 var _testCounter = 0;
 
-Future<void> _deleteTestDatabase(String dbName) async {
-  try {
-    final dbPath = await sqlcipher.getDatabasesPath();
-    final fullPath = '$dbPath/$dbName';
-    for (final path in [
-      fullPath,
-      '$fullPath-wal',
-      '$fullPath-shm',
-      '$fullPath.encrypted',
-    ]) {
-      final file = File(path);
-      if (file.existsSync()) {
-        file.deleteSync();
-      }
-    }
-    await sqlcipher.deleteDatabase(fullPath);
-  } catch (_) {}
-}
-
 Future<_SmokeTestStack> _setupStack() async {
   _testCounter++;
   print('\n========================================');
   print('SMOKE TEST -- SETUP #$_testCounter');
   print('========================================\n');
 
-  final cliPeer = _loadCliPeerFixture();
+  final cliPeer = loadCliPeerFixture();
   String? cliPeerId;
   String? cliPublicKey;
   String? cliMlKemPublicKey;
@@ -194,71 +113,15 @@ Future<_SmokeTestStack> _setupStack() async {
     print('[SMOKE] No CLI peer fixture -- running self-contained tests only');
   }
 
-  final secureKeyStore = _FakeSecureKeyStore();
+  final secureKeyStore = FakeSecureKeyStore();
   final dbName = 'smoke_test_$_testCounter.db';
-  await _deleteTestDatabase(dbName);
 
-  final db = await openEncryptedDatabase(
+  final db = await openE2EDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 44,
-    onCreate: (db, version) async {
-      await runIdentityTableMigration(db);
-      await runMessagesTableMigration(db);
-      await runMlKemKeysMigration(db);
-      await runSecretNullChecksMigration(db);
-      await runReadAtColumnMigration(db);
-      await runArchiveColumnsMigration(db);
-      await runBlockColumnsMigration(db);
-      await runQuotedMessageIdMigration(db);
-      await runMediaAttachmentsMigration(db);
-      await runAvatarVersionMigration(db);
-      await runTransportColumnMigration(db);
-      await runWaveformColumnMigration(db);
-      await runWireEnvelopeMigration(db);
-      await runMessageStatusCleanupMigration(db);
-      await runMessageReactionsMigration(db);
-      await runGroupsTablesMigration(db);
-      await runGroupMessagesTablesMigration(db);
-      await runIntroductionsTableMigration(db);
-      await runIntroBannerColumnsMigration(db);
-      await runContactIntroducedByMigration(db);
-      await runIntroductionKeysMigration(db);
-      await runIntroductionRecipientKeysMigration(db);
-      await runContactIntroducedByPeerIdMigration(db);
-      await runIntroductionAlreadyConnectedMigration(db);
-      await runMessagesEditedAtMigration(db);
-      await runMessagesDeletedStateMigration(db);
-    },
-    onUpgrade: (db, oldVersion, newVersion) async {
-      if (oldVersion < 2) await runMessagesTableMigration(db);
-      if (oldVersion < 3) await runMlKemKeysMigration(db);
-      if (oldVersion < 5) await runSecretNullChecksMigration(db);
-      if (oldVersion < 6) await runReadAtColumnMigration(db);
-      if (oldVersion < 7) await runArchiveColumnsMigration(db);
-      if (oldVersion < 8) await runBlockColumnsMigration(db);
-      if (oldVersion < 9) await runQuotedMessageIdMigration(db);
-      if (oldVersion < 10) await runMediaAttachmentsMigration(db);
-      if (oldVersion < 11) await runAvatarVersionMigration(db);
-      if (oldVersion < 12) await runTransportColumnMigration(db);
-      if (oldVersion < 13) await runWaveformColumnMigration(db);
-      if (oldVersion < 14) await runWireEnvelopeMigration(db);
-      if (oldVersion < 15) await runMessageStatusCleanupMigration(db);
-      if (oldVersion < 16) await runMessageReactionsMigration(db);
-      if (oldVersion < 17) await runGroupsTablesMigration(db);
-      if (oldVersion < 18) await runGroupMessagesTablesMigration(db);
-      if (oldVersion < 19) await runIntroductionsTableMigration(db);
-      if (oldVersion < 20) await runIntroBannerColumnsMigration(db);
-      if (oldVersion < 21) await runContactIntroducedByMigration(db);
-      if (oldVersion < 22) await runIntroductionKeysMigration(db);
-      if (oldVersion < 23) await runIntroductionRecipientKeysMigration(db);
-      if (oldVersion < 24) await runContactIntroducedByPeerIdMigration(db);
-      if (oldVersion < 25) await runIntroductionAlreadyConnectedMigration(db);
-      if (oldVersion < 43) await runMessagesEditedAtMigration(db);
-      if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
-    },
+    version: 77,
   );
-  print('[SMOKE] Database initialized (version 44)');
+  print('[SMOKE] Database initialized (version 77)');
 
   final contactRepo = ContactRepositoryImpl(
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -479,9 +342,9 @@ class _SmokeTestStack {
     p2pService.dispose();
     bridge.dispose();
     await db.close();
-    await _deleteTestDatabase(dbName);
+    await deleteTestDatabase(dbName);
     try {
-      File(_writeSignalPath('flutter_peer_fixture.json')).deleteSync();
+      _writeSignals.delete('flutter_peer_fixture.json');
     } catch (_) {}
     print('[SMOKE] Cleanup complete');
   }
@@ -614,13 +477,12 @@ void main() {
               ? outgoing.last.transport
               : 'none';
           final detail = 'status=$status transport=$transport';
-          // Accept delivered via any successful live or fallback path.
+          // Accept live delivery, or relay custody while waiting for receipt.
           final pass =
               m2 != null &&
-              status == 'delivered' &&
-              (transport == 'direct' ||
-                  transport == 'relay' ||
-                  transport == 'inbox');
+              ((status == 'delivered' &&
+                      (transport == 'direct' || transport == 'relay')) ||
+                  (status == 'inboxed' && transport == 'inbox'));
           results.add(_ScenarioResult('S2', pass, detail));
           print('[SMOKE] S2 ${pass ? 'PASS' : 'FAIL'}: $detail');
         } catch (e) {
@@ -640,7 +502,7 @@ void main() {
         var cliStopped = false;
         for (var i = 0; i < 60; i++) {
           await Future.delayed(const Duration(seconds: 1));
-          if (File(_readSignalPath('e2e_smoke_cli_stopped')).existsSync()) {
+          if (_readSignals.exists('e2e_smoke_cli_stopped')) {
             cliStopped = true;
             print('[SMOKE] S3: CLI stopped signal found after ${i + 1}s');
             break;
@@ -671,9 +533,7 @@ void main() {
             );
 
             // Signal orchestrator that we sent the S3 message.
-            File(
-              _writeSignalPath('e2e_smoke_s3_sent'),
-            ).writeAsStringSync('sent');
+            _writeSignals.writeSignal('e2e_smoke_s3_sent', content: 'sent');
             print('[SMOKE] S3: message sent, signal written');
 
             // Validate: message persisted with expected status/transport.
@@ -689,7 +549,7 @@ void main() {
                 : 'none';
             final s3Pass =
                 s3Msg != null &&
-                s3Status == 'delivered' &&
+                s3Status == 'inboxed' &&
                 s3Transport == 'inbox';
             results.add(
               _ScenarioResult(
@@ -705,9 +565,7 @@ void main() {
           } catch (e) {
             // Still write signal so orchestrator does not hang.
             try {
-              File(
-                _writeSignalPath('e2e_smoke_s3_sent'),
-              ).writeAsStringSync('sent');
+              _writeSignals.writeSignal('e2e_smoke_s3_sent', content: 'sent');
             } catch (_) {}
             results.add(_ScenarioResult('S3', false, 'error: $e'));
             print('[SMOKE] S3 FAIL: $e');

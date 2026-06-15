@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'send_chat_message_use_case_test.dart'
     show FakeP2PService, FakeMessageRepository;
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 
 class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   final List<MediaAttachment> saved = [];
@@ -403,6 +404,76 @@ void main() {
           expect(attachment.mediaType, 'audio');
           expect(attachment.mime, 'audio/mp4');
           expect(attachment.durationMs, 5500);
+        },
+      );
+    });
+
+    // --- 112 Phase 2.3: voice inherits the 1:1 blob-encryption flip ---
+    group('blob encryption', () {
+      test(
+        'voice upload produces encrypted attachment metadata and passes the '
+        'send gate',
+        () async {
+          final recording = createRecording();
+
+          final (result, message) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+          );
+
+          expect(result, SendVoiceMessageResult.success);
+          expect(message, isNotNull);
+          expect(
+            bridge.commandLog,
+            containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
+          );
+          final attachment = mediaAttachmentRepo.saved.first;
+          expect(attachment.encryptionKeyBase64, isNotNull);
+          expect(attachment.encryptionNonce, isNotNull);
+          expect(
+            attachment.encryptionScheme,
+            kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          );
+          expect(attachment.contentHash, isNotNull);
+        },
+      );
+
+      test(
+        'voice temp recording deleted after durable copy and successful '
+        'upload',
+        () async {
+          final recording = createRecording(
+            filePath:
+                '${tempDir.path}/voice_temp_cleanup_'
+                '${DateTime.now().microsecondsSinceEpoch}.m4a',
+          );
+          final recordingFile = File(recording.filePath);
+          expect(recordingFile.existsSync(), isTrue);
+
+          final (result, _) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+          );
+
+          expect(result, SendVoiceMessageResult.success);
+          // The recorder temp (`voice_<ts>.m4a`) is plaintext residue once
+          // the durable copy is the render source — it must be unlinked.
+          expect(recordingFile.existsSync(), isFalse);
         },
       );
     });

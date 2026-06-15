@@ -6,9 +6,11 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/helpers/repost_avatar_snapshot_preparer.dart';
@@ -583,6 +585,10 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
         keyBase64: keyBase64,
       );
       tempFiles.add(encryptedPath);
+      // G6/MIG-012: hash of the ENCRYPTED artifact, never decrypted bytes.
+      final contentHash = await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+        encryptedPath,
+      );
 
       final newBlobId = 'blob_${_uuid.v4()}';
 
@@ -590,7 +596,8 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
         bridge,
         id: newBlobId,
         toPeerId: passerPeerId,
-        mime: attachment.mime,
+        // G7a: the relay sidecar must not learn the real content type.
+        mime: kOpaqueMediaTransportMime,
         filePath: encryptedPath,
         allowedPeers: repostAcl,
       );
@@ -611,6 +618,8 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
           blobId: newBlobId,
           encryptionKeyBase64: keyBase64,
           encryptionNonce: nonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          contentHash: contentHash,
           isEncrypted: true,
         ),
       );
@@ -619,6 +628,8 @@ Future<RepostMediaPrepResult?> _prepareRepostMedia({
         keyBase64: keyBase64,
         nonce: nonce,
         blobId: newBlobId,
+        scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        contentHash: contentHash,
       );
     }
   } catch (e) {

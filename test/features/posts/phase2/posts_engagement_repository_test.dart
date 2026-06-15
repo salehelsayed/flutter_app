@@ -15,6 +15,7 @@ import 'package:flutter_app/core/database/migrations/034_posts_media_upload_reco
 import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
 import 'package:flutter_app/core/database/migrations/038_posts_repost_media_crypto.dart';
 import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/076_post_media_attachment_crypto_columns.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_comment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -42,6 +43,7 @@ void main() {
     await runPostsRepostEngagementStateMigration(db);
     await runPostsRepostMediaCryptoMigration(db);
     await runPostsPassAvatarSnapshotsMigration(db);
+    await runPostMediaAttachmentCryptoColumnsMigration(db);
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),

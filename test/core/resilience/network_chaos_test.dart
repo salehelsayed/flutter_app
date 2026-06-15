@@ -139,7 +139,7 @@ void main() {
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
       expect(msg!.transport, 'inbox');
-      expect(msg.status, 'delivered');
+      expect(msg.status, 'inboxed'); // 115 P1: custody, not delivery
 
       // The message was stored in inbox
       expect(pair.network.inboxCount(_bobPeerId), 1);

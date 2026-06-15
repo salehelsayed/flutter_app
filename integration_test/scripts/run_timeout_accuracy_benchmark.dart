@@ -4,55 +4,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../_support/signal_files.dart';
+
 const _defaultDevice = '38FECA55-03C1-4907-BD9D-8E64BF8E3469';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
-const _harnessPath = 'integration_test/benchmark_timeout_accuracy_harness.dart';
+const _harnessPath = 'integration_test/benchmark_harness.dart';
+const _benchmarkKey = 'TIMEOUT_ACCURACY';
 const _messageCount = 2;
 
 void _log(String tag, String msg) {
   final ts = DateTime.now().toIso8601String().substring(11, 23);
   stderr.writeln('[$ts] [$tag] $msg');
-}
-
-String _sharedPath(Directory dir, String runId, String name) =>
-    '${dir.path}/h_${runId}_$name';
-
-void _writeSignal(Directory dir, String runId, String name) {
-  File(_sharedPath(dir, runId, name)).writeAsStringSync('ok');
-}
-
-Future<Map<String, dynamic>> _waitForJson(
-  Directory dir,
-  String runId,
-  String name, {
-  Duration timeout = const Duration(minutes: 3),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(_sharedPath(dir, runId, name));
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-  }
-  throw TimeoutException('Timed out waiting for json: ${file.path}');
-}
-
-Future<void> _waitForSignal(
-  Directory dir,
-  String runId,
-  String name, {
-  Duration timeout = const Duration(minutes: 3),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(_sharedPath(dir, runId, name));
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) {
-      return;
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-  }
-  throw TimeoutException('Timed out waiting for signal: ${file.path}');
 }
 
 void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
@@ -174,6 +136,13 @@ Future<void> main(List<String> args) async {
   final sharedDir = await Directory.systemTemp.createTemp(
     'benchmark_timeout_accuracy_',
   );
+  final signals = SignalDir(
+    dir: sharedDir.path,
+    prefix: 'h_',
+    runId: '${runId}_',
+    role: 'Orchestrator',
+    pollInterval: const Duration(milliseconds: 200),
+  );
   final logFile = File(
     '${sharedDir.path}/benchmark_timeout_accuracy.log',
   ).openWrite(mode: FileMode.writeOnlyAppend);
@@ -200,6 +169,7 @@ Future<void> main(List<String> args) async {
       'test',
       '-d',
       deviceId,
+      '--dart-define=BENCHMARK=$_benchmarkKey',
       '--dart-define=BENCHMARK_SHARED_DIR=${sharedDir.path}',
       '--dart-define=BENCHMARK_RUN_ID=$runId',
       _harnessPath,
@@ -209,17 +179,19 @@ Future<void> main(List<String> args) async {
     _pipeOutput(harness.stdout, 'HARNESS', logFile);
     _pipeOutput(harness.stderr, 'HARNESS-ERR', logFile);
 
-    final receiverFixture = await _waitForJson(
-      sharedDir,
-      runId,
+    final receiverFixture = await signals.waitForJson(
       'receiver_fixture.json',
+      timeout: const Duration(minutes: 3),
     );
     final peerId = receiverFixture['peerId'] as String;
     final addresses = (receiverFixture['addresses'] as List<dynamic>)
         .cast<String>();
 
-    _writeSignal(sharedDir, runId, 'send_go');
-    await _waitForSignal(sharedDir, runId, 'capture_ready');
+    signals.writeSignal('send_go');
+    await signals.waitForSignal(
+      'capture_ready',
+      timeout: const Duration(minutes: 3),
+    );
 
     for (var i = 0; i < _messageCount; i++) {
       await peer.command('dial', {'peerId': peerId, 'addresses': addresses});
@@ -234,7 +206,7 @@ Future<void> main(List<String> args) async {
       );
     }
 
-    _writeSignal(sharedDir, runId, 'cli_send_done');
+    signals.writeSignal('cli_send_done');
 
     final exitCode = await harness.exitCode;
     if (exitCode != 0) {

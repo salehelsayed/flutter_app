@@ -360,6 +360,8 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     operationLog.add('p2p:sendLocalMedia');
     sendLocalMediaCallCount++;
@@ -456,6 +458,26 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
 }
 
 /// Pumps a ConversationWired widget with the given overrides.
+// 112 Phase 4: the real prepareEncryptedMediaArtifact does file I/O that
+// cannot complete inside the testWidgets fake-async zone (deadlocks at the
+// 10-min timeout). All widget tests here get this SYNC-I/O stub so the LAN
+// encrypt-once leg stays deterministic.
+Future<EncryptedMediaArtifact> _syncPrepareEncryptedArtifactStub({
+  required Bridge bridge,
+  required String localFilePath,
+}) async {
+  final encryptedPath = '$localFilePath.enc';
+  File(localFilePath).copySync(encryptedPath);
+  return EncryptedMediaArtifact(
+    encryptedPath: encryptedPath,
+    keyBase64: 'stub-blob-key',
+    nonce: 'stub-blob-nonce',
+    scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+    contentHash: 'stub-content-hash',
+    plaintextSize: File(localFilePath).lengthSync(),
+  );
+}
+
 Future<void> _pumpConversationWired(
   WidgetTester tester, {
   required Bridge bridge,
@@ -488,6 +510,7 @@ Future<void> _pumpConversationWired(
         sendChatMessageFn: sendFn ?? _instantSuccessSendFn,
         sendVoiceMessageFn: sendVoiceFn ?? sendVoiceMessage,
         uploadMediaFn: uploadMediaFn ?? uploadMedia,
+        prepareEncryptedMediaArtifactFn: _syncPrepareEncryptedArtifactStub,
         mediaAttachmentRepo: _FakeMediaAttachmentRepository(),
         initialAttachments: initialAttachments,
         audioRecorderService: audioRecorderService,
@@ -583,6 +606,8 @@ void main() {
                 List<double>? waveform,
                 List<String>? allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 uploadCalled = true;
                 operationLog.add('uploadMediaFn');
@@ -685,6 +710,8 @@ void main() {
               List<double>? waveform,
               List<String>? allowedPeers,
               String? blobId,
+              bool deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async {
               operationLog.add('uploadMediaFn');
               throw Exception('simulated network interruption during upload');
@@ -788,39 +815,30 @@ void main() {
           bridge: bridge,
           p2pService: p2pService,
           audioRecorderService: recorder,
-          sendFn:
+          // Voice sends are delegated to sendVoiceMessageFn (the relay
+          // upload + envelope use case), not sendChatMessageFn.
+          sendVoiceFn:
               ({
                 required P2PService p2pService,
                 required MessageRepository messageRepo,
                 required String targetPeerId,
-                required String text,
                 required String senderPeerId,
                 required String senderUsername,
+                required AudioRecording recording,
+                required Bridge bridge,
+                String? recipientMlKemPublicKey,
+                MediaAttachmentRepository? mediaAttachmentRepo,
+                MediaFileManager? mediaFileManager,
+                String? text,
+                String? quotedMessageId,
+                List<double>? waveform,
                 String? messageId,
                 String? timestamp,
-                Bridge? bridge,
-                String? recipientMlKemPublicKey,
-                String? quotedMessageId,
-                List<MediaAttachment>? mediaAttachments,
-                MediaAttachmentRepository? mediaAttachmentRepo,
-                TransportMetrics? transportMetrics,
+                String? blobId,
+                preparedArtifact,
               }) async {
-                operationLog.add('sendChatMessageFn');
-                return _instantSuccessSendFn(
-                  p2pService: p2pService,
-                  messageRepo: messageRepo,
-                  targetPeerId: targetPeerId,
-                  text: text,
-                  senderPeerId: senderPeerId,
-                  senderUsername: senderUsername,
-                  messageId: messageId,
-                  timestamp: timestamp,
-                  bridge: bridge,
-                  recipientMlKemPublicKey: recipientMlKemPublicKey,
-                  quotedMessageId: quotedMessageId,
-                  mediaAttachments: mediaAttachments,
-                  mediaAttachmentRepo: mediaAttachmentRepo,
-                );
+                operationLog.add('sendVoiceMessageFn');
+                return (SendVoiceMessageResult.success, null);
               },
         );
 
@@ -828,8 +846,8 @@ void main() {
 
         expect(p2pService.sendLocalMediaCallCount, 1);
         _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:sendLocalMedia');
-        _expectOrdered(operationLog, 'p2p:sendLocalMedia', 'sendChatMessageFn');
-        _expectOrdered(operationLog, 'sendChatMessageFn', 'bridge:bg:end');
+        _expectOrdered(operationLog, 'p2p:sendLocalMedia', 'sendVoiceMessageFn');
+        _expectOrdered(operationLog, 'sendVoiceMessageFn', 'bridge:bg:end');
       },
     );
 
@@ -869,6 +887,7 @@ void main() {
               String? messageId,
               String? timestamp,
               String? blobId,
+              preparedArtifact,
             }) async {
               operationLog.add('sendVoiceMessageFn');
               return (SendVoiceMessageResult.uploadFailed, null);
@@ -918,6 +937,7 @@ void main() {
                 String? messageId,
                 String? timestamp,
                 String? blobId,
+                preparedArtifact,
               }) async {
                 operationLog.add('sendVoiceMessageFn');
                 final ts =

@@ -1,6 +1,9 @@
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
-import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// Result enumeration for restore identity operation
 enum RestoreIdentityResult {
@@ -31,6 +34,11 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
   required Future<Map<String, dynamic>> Function() callMlKemKeygen,
   required IdentityRepository repo,
   void Function(String stage)? onProgress,
+  // When both are provided, a successful restore records the one-shot
+  // ML-KEM re-announce marker so existing contacts learn the NEW key
+  // (P0-B). Optional so callers without the deps keep compiling.
+  SecureKeyStore? secureKeyStore,
+  ContactRepository? contactRepo,
 }) async {
   // Emit start event
   emitFlowEvent(
@@ -184,6 +192,21 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
       event: 'ID_M1_DB_SAVE_SUCCESS',
       details: {'source': 'restore'},
     );
+    if (secureKeyStore != null && contactRepo != null) {
+      try {
+        await recordMlKemReannouncePending(
+          secureKeyStore: secureKeyStore,
+          contactRepo: contactRepo,
+        );
+      } catch (e) {
+        // Marker write is best-effort: the restore itself succeeded.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'KEY_REANNOUNCE_MARK_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+    }
     return RestoreIdentityResult.success;
   } catch (e) {
     emitFlowEvent(

@@ -152,6 +152,8 @@ class _AckDropP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -264,7 +266,9 @@ void main() {
     });
 
     test(
-      'message persists as delivered via inbox handoff when ACK is lost after live delivery',
+      // 115 P1 contract flip: inbox handoff is custody → 'inboxed' with the
+      // envelope retained (receipts own the 'delivered' flip).
+      'message persists as inboxed via inbox handoff when ACK is lost after live delivery',
       () async {
         aliceP2P.dropAcks = true;
 
@@ -281,9 +285,9 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(msg, isNotNull);
-        expect(msg!.status, 'delivered');
+        expect(msg!.status, 'inboxed');
         expect(msg.transport, 'inbox');
-        expect(msg.wireEnvelope, isNull);
+        expect(msg.wireEnvelope, isNotNull);
         expect(network.inboxCount(bob.peerId), 1);
 
         // Exactly 1 message — no duplicates
@@ -321,7 +325,8 @@ void main() {
     test('no duplicate when retrier re-sends after recovery', () async {
       aliceP2P.dropAcks = true;
 
-      // First send: ACK dropped → durable inbox handoff marks it delivered.
+      // First send: ACK dropped → durable inbox handoff takes custody
+      // ('inboxed' per 115 P1).
       final (_, msg1) = await sendChatMessage(
         p2pService: aliceP2P,
         messageRepo: aliceRepo,
@@ -334,7 +339,7 @@ void main() {
         bridge: encryptBridge,
         recipientMlKemPublicKey: bobMlKemKey,
       );
-      expect(msg1!.status, 'delivered');
+      expect(msg1!.status, 'inboxed');
 
       // Simulate retrier marking it failed, then attempting re-send
       await aliceRepo.updateMessageStatus('fixed-uuid-1', 'failed');
@@ -367,7 +372,7 @@ void main() {
     });
 
     test(
-      'ACK drop on fast path durably hands off to inbox and marks delivered',
+      'ACK drop on fast path durably hands off to inbox and marks inboxed',
       () async {
         // Use the connected variant so fast path fires
         final innerAlice = FakeP2PService(
@@ -394,9 +399,9 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(msg!.status, 'delivered');
+        expect(msg!.status, 'inboxed'); // 115 P1: custody, not delivery
         expect(msg.transport, 'inbox');
-        expect(msg.wireEnvelope, isNull);
+        expect(msg.wireEnvelope, isNotNull);
         expect(network.inboxCount(bob.peerId), 1);
 
         connectedP2P.dispose();
@@ -423,9 +428,9 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(msg, isNotNull);
-        expect(msg!.status, 'delivered');
+        expect(msg!.status, 'inboxed'); // 115 P1: custody, not delivery
         expect(msg.transport, 'inbox');
-        expect(msg.wireEnvelope, isNull);
+        expect(msg.wireEnvelope, isNotNull);
         expect(probeP2P.probeRelayCallCount, 1);
         expect(network.inboxCount(bob.peerId), 1);
 
@@ -447,10 +452,10 @@ void main() {
         recipientMlKemPublicKey: bobMlKemKey,
       );
 
-      // All 3 retries fail → inbox fallback → delivered (product rule)
+      // All 3 retries fail → inbox fallback → custody ('inboxed', 115 P1)
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
-      expect(msg!.status, 'delivered');
+      expect(msg!.status, 'inboxed');
       expect(msg.transport, 'inbox');
 
       // Verify inbox has the message for bob to drain

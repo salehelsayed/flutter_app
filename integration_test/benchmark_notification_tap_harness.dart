@@ -3,7 +3,6 @@
 /// Measures the routed notification-open path on one simulator. The transport
 /// layer is not involved here; the metric is the app-shell prepare/drain/route
 /// flow plus the first readable conversation frame.
-@Tags(['device'])
 library;
 
 import 'dart:async';
@@ -25,7 +24,6 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-import 'package:integration_test/integration_test.dart';
 
 import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
@@ -252,10 +250,8 @@ Future<void> _pumpUntilVisible(
   expect(find.text(text), findsOneWidget);
 }
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  testWidgets('N1: Notification tap cold (app killed)', (tester) async {
+Future<void> runNotificationTapBenchmark(WidgetTester tester) async {
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: NOTIFICATION TAP — COLD OPEN (N1)');
     print('${'═' * 60}\n');
@@ -291,9 +287,9 @@ void main() {
       '[BENCHMARK] sim_notification_tap_cold_route_kind = '
       '${details['routeKind']}',
     );
-  });
+  }
 
-  testWidgets('N2: Notification tap warm (app backgrounded)', (tester) async {
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: NOTIFICATION TAP — WARM OPEN (N2)');
     print('${'═' * 60}\n');
@@ -329,5 +325,5 @@ void main() {
       '[BENCHMARK] sim_notification_tap_warm_route_kind = '
       '${details['routeKind']}',
     );
-  });
+  }
 }

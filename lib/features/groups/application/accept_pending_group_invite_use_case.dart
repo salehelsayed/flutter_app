@@ -289,6 +289,7 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     groupRepo: groupRepo,
     bridge: bridge,
     downloadGroupAvatarFn: downloadGroupAvatarFn,
+    ownPeerId: senderPeerId,
   );
 
   switch (result) {

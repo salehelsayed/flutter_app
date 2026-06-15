@@ -1,12 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 // ---------------------------------------------------------------------------
 // Mock Bridge (same pattern as bridge_helpers_test.dart)
@@ -62,11 +61,41 @@ class _HangingBridge extends Bridge {
   Future<String> send(String message) => Completer<String>().future; // never completes
 }
 
+/// Bridge that completes after a fixed delay — simulates a slow transfer.
+class _SlowBridge extends Bridge {
+  final Duration delay;
+  final Map<String, dynamic> response;
+
+  _SlowBridge({required this.delay, required this.response});
+
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<bool> checkHealth() async => true;
+
+  @override
+  Future<void> reinitialize() async {}
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> send(String message) async {
+    await Future<void>.delayed(delay);
+    return jsonEncode(response);
+  }
+}
+
 void main() {
   late _MockBridge bridge;
 
   setUp(() {
     flowEventLoggingEnabled = false;
+    debugSetFlowEventSink(null);
     bridge = _MockBridge();
   });
 
@@ -331,6 +360,25 @@ void main() {
     });
   });
 
+  group('callP2PRendezvousUnregister', () {
+    test('sends rendezvous:unregister with namespace and relays', () async {
+      bridge.nextResponse = {'ok': true, 'unregistered': true};
+
+      final result = await callP2PRendezvousUnregister(
+        bridge,
+        namespace: 'mknoon:chat:old-peer',
+        serverAddresses: ['/ip4/1.2.3.4/tcp/4001'],
+      );
+
+      expect(result['ok'], isTrue);
+      expect(bridge.lastParsedRequest!['cmd'], equals('rendezvous:unregister'));
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['namespace'], equals('mknoon:chat:old-peer'));
+      expect(payload['serverAddresses'], equals(['/ip4/1.2.3.4/tcp/4001']));
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // callP2PRendezvousDiscover
   // ---------------------------------------------------------------------------
@@ -442,7 +490,13 @@ void main() {
   // ---------------------------------------------------------------------------
   group('callP2PInboxStore', () {
     test('sends inbox:store with toPeerId and message', () async {
-      bridge.nextResponse = {'ok': true, 'stored': true};
+      bridge.nextResponse = {
+        'ok': true,
+        'storeStatus': 'stored',
+        'expiresAtMs': 12345,
+        'occupancy': 2,
+        'capacity': 100,
+      };
 
       final result = await callP2PInboxStore(
         bridge,
@@ -451,6 +505,10 @@ void main() {
       );
 
       expect(result['ok'], isTrue);
+      expect(result['storeStatus'], equals('stored'));
+      expect(result['expiresAtMs'], equals(12345));
+      expect(result['occupancy'], equals(2));
+      expect(result['capacity'], equals(100));
       expect(bridge.lastParsedRequest!['cmd'], equals('inbox:store'));
       final payload =
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
@@ -478,6 +536,27 @@ void main() {
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['token'], equals('fcm_token_abc123'));
       expect(payload['platform'], equals('ios'));
+    });
+  });
+
+  group('callP2PInboxUnregisterToken', () {
+    test('sends inbox:unregister_token without stale token material', () async {
+      bridge.nextResponse = {'ok': true, 'unregistered': true};
+
+      final result = await callP2PInboxUnregisterToken(
+        bridge,
+        serverAddresses: ['/ip4/1.2.3.4/tcp/4001'],
+      );
+
+      expect(result['ok'], isTrue);
+      expect(
+        bridge.lastParsedRequest!['cmd'],
+        equals('inbox:unregister_token'),
+      );
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['serverAddresses'], equals(['/ip4/1.2.3.4/tcp/4001']));
+      expect(payload, isNot(contains('token')));
     });
   });
 
@@ -607,6 +686,130 @@ void main() {
       expect(payload['id'], equals('uuid-456'));
       expect(payload['outputPath'], equals('/tmp/downloaded.png'));
     });
+
+    test(
+      'logs response source telemetry when native bridge returns it',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink((payload) {
+          flowEvents.add(Map<String, dynamic>.from(payload));
+        });
+        bridge.nextResponse = {
+          'ok': true,
+          'id': 'uuid-telemetry',
+          'mime': 'image/png',
+          'size': 1024,
+          'sourceRole': 'relay_media_store',
+          'sourcePeerId':
+              '12D3KooWMediaRelayTelemetryPeerIdentifierForRedaction',
+          'sourcePeerShort': 'relay123',
+          'streamTransport': 'direct',
+          'servedByPhone': false,
+          'routedViaRelayStore': true,
+        };
+
+        final result = await callP2PMediaDownload(
+          bridge,
+          id: 'uuid-telemetry',
+          outputPath: '/tmp/downloaded.png',
+        );
+
+        expect(result['sourceRole'], 'relay_media_store');
+        final responseEvent = flowEvents.singleWhere(
+          (payload) => payload['event'] == 'P2P_MEDIA_DOWNLOAD_RESPONSE',
+        );
+        final details = responseEvent['details'] as Map<String, dynamic>;
+        expect(details['sourceRole'], 'relay_media_store');
+        expect(details['sourcePeerId'], '[redacted]');
+        expect(details['sourcePeerShort'], 'relay123');
+        expect(details['streamTransport'], 'direct');
+        expect(details['servedByPhone'], isFalse);
+        expect(details['routedViaRelayStore'], isTrue);
+      },
+    );
+
+    test(
+      'callP2PMediaDownload honors injected stall budget when no progress arrives',
+      () async {
+        final hanging = _HangingBridge();
+
+        await expectLater(
+          callP2PMediaDownload(
+            hanging,
+            id: 'uuid-stalled',
+            outputPath: '/tmp/stalled.png',
+            stallTimeout: const Duration(milliseconds: 120),
+            maxTimeout: const Duration(seconds: 5),
+          ),
+          throwsA(isA<TimeoutException>()),
+        );
+      },
+    );
+
+    test(
+      'callP2PMediaDownload survives past the stall budget while progress events arrive',
+      () async {
+        final slow = _SlowBridge(
+          delay: const Duration(milliseconds: 500),
+          response: {'ok': true, 'id': 'uuid-slow', 'size': 10},
+        );
+
+        // Feed matching progress events faster than the stall budget for the
+        // whole transfer duration.
+        final ticker = Timer.periodic(const Duration(milliseconds: 50), (_) {
+          emitMediaDownloadProgressEvent({
+            'id': 'uuid-slow',
+            'receivedBytes': 1,
+            'totalBytes': 10,
+            'fromPeerId': 'relay-1',
+          });
+        });
+
+        try {
+          final result = await callP2PMediaDownload(
+            slow,
+            id: 'uuid-slow',
+            outputPath: '/tmp/slow.png',
+            stallTimeout: const Duration(milliseconds: 150),
+            maxTimeout: const Duration(seconds: 5),
+          );
+          expect(result['ok'], isTrue);
+        } finally {
+          ticker.cancel();
+        }
+      },
+    );
+
+    test(
+      'callP2PMediaDownload absolute ceiling fires even with steady progress',
+      () async {
+        final hanging = _HangingBridge();
+
+        final ticker = Timer.periodic(const Duration(milliseconds: 30), (_) {
+          emitMediaDownloadProgressEvent({
+            'id': 'uuid-ceiling',
+            'receivedBytes': 1,
+            'totalBytes': 10,
+            'fromPeerId': 'relay-1',
+          });
+        });
+
+        try {
+          await expectLater(
+            callP2PMediaDownload(
+              hanging,
+              id: 'uuid-ceiling',
+              outputPath: '/tmp/ceiling.png',
+              stallTimeout: const Duration(seconds: 5),
+              maxTimeout: const Duration(milliseconds: 200),
+            ),
+            throwsA(isA<TimeoutException>()),
+          );
+        } finally {
+          ticker.cancel();
+        }
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -790,14 +993,39 @@ void main() {
       expect(result['stored'], isTrue);
     });
 
-    test('bridge hang triggers TimeoutException after 15s', () async {
-      final hanging = _HangingBridge();
+    test('bridge hang triggers TimeoutException after 15s', () {
+      fakeAsync((async) {
+        final hanging = _HangingBridge();
+        Object? error;
+        var completed = false;
 
-      expect(
-        () => callP2PInboxStore(hanging, toPeerId: 'abc', message: 'hello'),
-        throwsA(isA<TimeoutException>()),
-      );
-    }, timeout: const Timeout(Duration(seconds: 20)));
+        callP2PInboxStore(
+          hanging,
+          toPeerId: 'abc',
+          message: 'hello',
+        ).then<void>(
+          (_) {
+            completed = true;
+          },
+          onError: (Object e) {
+            error = e;
+            completed = true;
+          },
+        );
+
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 14999));
+        async.flushMicrotasks();
+
+        expect(completed, isFalse);
+
+        async.elapse(const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+
+        expect(completed, isTrue);
+        expect(error, isA<TimeoutException>());
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -812,14 +1040,18 @@ void main() {
       expect(result['ok'], isTrue);
     });
 
-    test('bridge hang triggers TimeoutException after 5s', () async {
-      final hanging = _HangingBridge();
+    test(
+      'bridge hang triggers TimeoutException after 5s',
+      () async {
+        final hanging = _HangingBridge();
 
-      expect(
-        () => callP2PRelayProbe(hanging, peerId: 'abc'),
-        throwsA(isA<TimeoutException>()),
-      );
-    }, timeout: const Timeout(Duration(seconds: 10)));
+        expect(
+          () => callP2PRelayProbe(hanging, peerId: 'abc'),
+          throwsA(isA<TimeoutException>()),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 10)),
+    );
   });
 
   // ---------------------------------------------------------------------------

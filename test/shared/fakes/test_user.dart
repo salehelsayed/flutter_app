@@ -8,6 +8,9 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart'
     as delete_message_uc;
+import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
+import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
+    as send_delivery_receipt_uc;
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -44,6 +47,7 @@ class TestUser {
   final ReactionListener? reactionListener;
   final FakeReactionRepository? reactionRepo;
   final MessageDeletionListener? messageDeletionListener;
+  final DeliveryReceiptListener? deliveryReceiptListener;
   AppLifecycleState lifecycleState = AppLifecycleState.resumed;
 
   TestUser._({
@@ -59,6 +63,7 @@ class TestUser {
     this.reactionListener,
     this.reactionRepo,
     this.messageDeletionListener,
+    this.deliveryReceiptListener,
   });
 
   factory TestUser.create({
@@ -72,6 +77,7 @@ class TestUser {
     Future<String?> Function()? getOwnMlKemSecretKey,
     bool withReactions = false,
     bool withMessageDeletion = false,
+    bool withDeliveryReceipts = false,
     bool autoStartListener = false,
   }) {
     final effectiveBridge = bridge ?? PassthroughCryptoBridge();
@@ -84,9 +90,23 @@ class TestUser {
     ReactionListener? reactionListener;
     FakeReactionRepository? reactionRepo;
     MessageDeletionListener? messageDeletionListener;
+    DeliveryReceiptListener? deliveryReceiptListener;
     final Stream<ChatMessage> chatStream;
 
-    if (withReactions || withMessageDeletion) {
+    // 115 P2: receipt sender bound to this user's transport (production
+    // wiring mirror — live send first, inbox fallback inside the use case).
+    Future<void> receiptSender({
+      required String contactPeerId,
+      required List<String> messageIds,
+    }) {
+      return send_delivery_receipt_uc.sendDeliveryReceipt(
+        p2pService: p2p,
+        targetPeerId: contactPeerId,
+        messageIds: messageIds,
+      );
+    }
+
+    if (withReactions || withMessageDeletion || withDeliveryReceipts) {
       router = IncomingMessageRouter(p2pService: p2p);
       chatStream = router.chatMessageStream;
       if (withReactions) {
@@ -111,6 +131,13 @@ class TestUser {
           bridge: effectiveBridge,
           getOwnMlKemSecretKey:
               getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
+          sendDeliveryReceipt: withDeliveryReceipts ? receiptSender : null,
+        );
+      }
+      if (withDeliveryReceipts) {
+        deliveryReceiptListener = DeliveryReceiptListener(
+          receiptStream: router.deliveryReceiptStream,
+          messageRepo: msgRepo,
         );
       }
     } else {
@@ -125,6 +152,7 @@ class TestUser {
       bridge: effectiveBridge,
       getOwnMlKemSecretKey:
           getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
+      sendDeliveryReceipt: withDeliveryReceipts ? receiptSender : null,
     );
 
     final user = TestUser._(
@@ -140,6 +168,7 @@ class TestUser {
       reactionListener: reactionListener,
       reactionRepo: reactionRepo,
       messageDeletionListener: messageDeletionListener,
+      deliveryReceiptListener: deliveryReceiptListener,
     );
     if (autoStartListener) {
       user.start();
@@ -182,6 +211,7 @@ class TestUser {
       senderUsername: username,
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
+      storeInInboxDetailed: p2pService.storeInInboxDetailed,
     );
   }
 
@@ -201,6 +231,7 @@ class TestUser {
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
       quotedMessageId: quotedMessageId,
+      storeInInboxDetailed: p2pService.storeInInboxDetailed,
     );
   }
 
@@ -221,6 +252,7 @@ class TestUser {
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
       mediaAttachments: attachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      storeInInboxDetailed: p2pService.storeInInboxDetailed,
     );
   }
 
@@ -295,6 +327,7 @@ class TestUser {
     chatListener.start();
     reactionListener?.start();
     messageDeletionListener?.start();
+    deliveryReceiptListener?.start();
   }
 
   void startListener() => chatListener.start();
@@ -352,6 +385,7 @@ class TestUser {
   Future<int> drainOfflineInbox() => p2pService.drainOfflineInboxCount();
 
   void dispose() {
+    deliveryReceiptListener?.dispose();
     messageDeletionListener?.dispose();
     reactionListener?.dispose();
     chatListener.dispose();

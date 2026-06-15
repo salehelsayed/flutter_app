@@ -11,6 +11,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -623,7 +624,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (shouldSyncGroupFromWidget) {
       _group = widget.group;
     }
-    if (oldCanWrite && !_canWrite && _activeQuoteMessageId != null) {
+    if (oldCanWrite && !_canWrite) {
+      _forceCancelActiveRecording();
       _activeQuoteMessageId = null;
     }
   }
@@ -634,11 +636,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (state == AppLifecycleState.resumed) {
       unawaited(_loadMessages());
       unawaited(_refreshVisibleGroup());
+      // B5: recompute composer write-access on resume so a membership/key
+      // change that landed while backgrounded (e.g. a re-add delivering the
+      // current group key via the key-update path, which carries no sys row on
+      // this device's message stream) makes the composer reappear without
+      // requiring the user to leave and re-enter the conversation.
+      unawaited(_loadSecurityStatus());
       unawaited(_markVisibleReadIfAllowed());
     }
   }
 
   void _resetForGroupChange(GroupConversationWired oldWidget) {
+    _forceCancelActiveRecording();
     widget.groupConversationTracker?.clearIfActive(
       'group:${oldWidget.group.id}',
     );
@@ -1202,6 +1211,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             : 0,
       );
       if (!mounted) return;
+      final hadWriteAccess = _canWrite;
       setState(() {
         if (identity != null) {
           _ownPeerId = identity.peerId;
@@ -1216,6 +1226,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _isCurrentUserActiveMember = isCurrentUserActiveMember;
         _hasCurrentSendKey = latestKey != null;
       });
+      if (hadWriteAccess && !_canWrite) {
+        _forceCancelActiveRecording();
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1348,8 +1361,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             if (message.groupId == widget.group.id) {
               unawaited(_applyMessageUpdate(message));
               if (message.id.startsWith('sys-group_metadata_updated:') ||
-                  message.id.startsWith('sys-group_dissolved:')) {
+                  message.id.startsWith('sys-group_dissolved:') ||
+                  message.id.startsWith('sys-member_role_updated:')) {
+                // Group-row changes (name/avatar, dissolve, self's role for the
+                // announcement gate) reload the visible group row.
                 unawaited(_refreshVisibleGroup());
+              }
+              if (message.id.startsWith('sys-members_added:') ||
+                  message.id.startsWith('sys-member_added:') ||
+                  message.id.startsWith('sys-member_removed:') ||
+                  message.id.startsWith('sys-member_joined:') ||
+                  message.id.startsWith('sys-member_role_updated:')) {
+                // B5: a live membership/role change must recompute composer
+                // write-access WITHOUT requiring the user to leave and re-enter.
+                // _refreshVisibleGroup only reloads the group row;
+                // _loadSecurityStatus re-derives _isCurrentUserActiveMember and
+                // _hasCurrentSendKey and setStates them — making the composer
+                // reappear on a live re-add (B3) and disappear on a live
+                // removal (B2).
+                unawaited(_loadSecurityStatus());
               }
             }
           },
@@ -1428,6 +1458,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         behavior: SnackBarBehavior.floating,
       ),
     );
+    // B5: B3 now RETAINS a removed member's group read-only instead of
+    // hard-deleting it. If the group row still exists, keep the viewer on the
+    // conversation in-place as read-only (refresh row + messages + security
+    // gates) rather than ejecting them. Only pop when the group was truly
+    // hard-deleted (e.g. a legacy quiet-group cleanup path).
+    final retainedGroup = await widget.groupRepo.getGroup(widget.group.id);
+    if (!mounted) return;
+    if (retainedGroup != null) {
+      await _refreshVisibleGroup();
+      await _loadMessages();
+      await _loadSecurityStatus();
+      return;
+    }
+    if (!mounted) return;
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
@@ -2679,6 +2723,44 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
       final exists = await File(absolutePath).exists();
       if (!exists && attachment.downloadStatus == kMediaDownloadStatusDone) {
+        final repaired = await _repairMissingDoneAttachmentFromLatestLocalPath(
+          attachment: attachment,
+          originalResolvedPath: absolutePath,
+        );
+        if (repaired != null) {
+          resolved.add(repaired);
+          continue;
+        }
+        final diagnostics = await _groupMediaDonePathDiagnostics(
+          attachment: attachment,
+          resolvedPath: absolutePath,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MEDIA_DURABILITY_DONE_PATH_MISSING',
+          details: {
+            'attachmentId': attachment.id,
+            'messageId': attachment.messageId,
+            'groupId': widget.group.id,
+            'mime': attachment.mime,
+            'mediaType': attachment.mediaType,
+            'storedPath': attachment.localPath,
+            'resolvedPath': absolutePath,
+            'storedPathKind': _groupMediaPathKind(attachment.localPath),
+            'resolvedPathKind': _groupMediaPathKind(absolutePath),
+            'expectedBytes': attachment.size,
+            'hasContentHash': attachment.contentHash?.isNotEmpty == true,
+            'hasEncryptionMetadata': attachment.hasEncryptionMetadata,
+            'diagnostics': diagnostics,
+            'nextStatus': kMediaDownloadStatusPending,
+          },
+        );
+        try {
+          await widget.mediaAttachmentRepo?.updateDownloadStatus(
+            attachment.id,
+            kMediaDownloadStatusPending,
+          );
+        } catch (_) {}
         resolved.add(
           attachment.copyWith(
             localPath: absolutePath,
@@ -2690,6 +2772,180 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       resolved.add(attachment.copyWith(localPath: absolutePath));
     }
     return resolved;
+  }
+
+  Future<MediaAttachment?> _repairMissingDoneAttachmentFromLatestLocalPath({
+    required MediaAttachment attachment,
+    required String originalResolvedPath,
+  }) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaAttachmentRepo == null || mediaFileManager == null) {
+      return null;
+    }
+
+    final canonicalRelativePath = mediaFileManager.relativePathForAttachment(
+      contactPeerId: widget.group.id,
+      blobId: attachment.id,
+      mime: attachment.mime,
+    );
+    final candidates = <MediaAttachment>[];
+    try {
+      final latest = await mediaAttachmentRepo.getAttachmentsForMessage(
+        attachment.messageId,
+      );
+      candidates.addAll(
+        latest.where((candidate) => candidate.id == attachment.id),
+      );
+    } catch (_) {}
+    candidates.add(attachment.copyWith(localPath: canonicalRelativePath));
+
+    final seenResolvedPaths = <String>{};
+    for (final candidate in candidates) {
+      final storedPath = candidate.localPath;
+      if (storedPath == null || storedPath.isEmpty) {
+        continue;
+      }
+      late final String candidateResolvedPath;
+      try {
+        candidateResolvedPath = await mediaFileManager.resolveStoredPath(
+          storedPath,
+        );
+      } catch (_) {
+        continue;
+      }
+      if (!seenResolvedPaths.add(candidateResolvedPath)) {
+        continue;
+      }
+      final file = File(candidateResolvedPath);
+      if (!await file.exists()) {
+        continue;
+      }
+
+      final repairStoredPath =
+          _isOwnedGroupMediaPath(canonicalRelativePath, candidateResolvedPath)
+          ? canonicalRelativePath
+          : storedPath;
+      try {
+        await mediaAttachmentRepo.updateLocalPath(
+          attachment.id,
+          repairStoredPath,
+        );
+      } catch (_) {}
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEDIA_DURABILITY_DONE_PATH_REPAIRED',
+        details: {
+          'attachmentId': attachment.id,
+          'messageId': attachment.messageId,
+          'groupId': widget.group.id,
+          'mime': attachment.mime,
+          'mediaType': attachment.mediaType,
+          'originalStoredPath': attachment.localPath,
+          'originalResolvedPath': originalResolvedPath,
+          'repairStoredPath': repairStoredPath,
+          'repairResolvedPath': candidateResolvedPath,
+          'repairStoredPathKind': _groupMediaPathKind(repairStoredPath),
+          'repairResolvedPathKind': _groupMediaPathKind(candidateResolvedPath),
+          'candidateStatus': candidate.downloadStatus,
+          'fileBytes': await file.length(),
+        },
+      );
+      return candidate.copyWith(
+        localPath: candidateResolvedPath,
+        downloadStatus: kMediaDownloadStatusDone,
+      );
+    }
+
+    return null;
+  }
+
+  Future<Map<String, Object?>> _groupMediaDonePathDiagnostics({
+    required MediaAttachment attachment,
+    required String resolvedPath,
+  }) async {
+    final mediaFileManager = widget.mediaFileManager;
+    final diagnostics = <String, Object?>{
+      'primaryPath': await _groupMediaPathProbe(resolvedPath),
+    };
+    if (mediaFileManager == null) {
+      return diagnostics;
+    }
+
+    final canonicalRelativePath = mediaFileManager.relativePathForAttachment(
+      contactPeerId: widget.group.id,
+      blobId: attachment.id,
+      mime: attachment.mime,
+    );
+    final canonicalResolvedPath = await mediaFileManager.resolveStoredPath(
+      canonicalRelativePath,
+    );
+    diagnostics['canonicalPath'] = await _groupMediaPathProbe(
+      canonicalResolvedPath,
+      storedPath: canonicalRelativePath,
+    );
+    diagnostics['encryptedCompanionPath'] = await _groupMediaPathProbe(
+      '$canonicalResolvedPath.enc',
+      storedPath: '$canonicalRelativePath.enc',
+    );
+
+    try {
+      final latest = await widget.mediaAttachmentRepo?.getAttachmentsForMessage(
+        attachment.messageId,
+      );
+      final latestAttachment = latest
+          ?.where((candidate) => candidate.id == attachment.id)
+          .firstOrNull;
+      if (latestAttachment != null) {
+        diagnostics['latestRow'] = {
+          'downloadStatus': latestAttachment.downloadStatus,
+          'storedPath': latestAttachment.localPath,
+          'storedPathKind': _groupMediaPathKind(latestAttachment.localPath),
+          'hasLocalPath':
+              latestAttachment.localPath != null &&
+              latestAttachment.localPath!.isNotEmpty,
+          'hasContentHash': latestAttachment.contentHash?.isNotEmpty == true,
+          'hasEncryptionMetadata': latestAttachment.hasEncryptionMetadata,
+        };
+      }
+    } catch (e) {
+      diagnostics['latestRowError'] = e.toString();
+    }
+
+    return diagnostics;
+  }
+
+  Future<Map<String, Object?>> _groupMediaPathProbe(
+    String path, {
+    String? storedPath,
+  }) async {
+    final details = <String, Object?>{
+      if (storedPath != null) 'storedPath': storedPath,
+      if (storedPath != null) 'storedPathKind': _groupMediaPathKind(storedPath),
+      'resolvedPath': path,
+      'resolvedPathKind': _groupMediaPathKind(path),
+    };
+    try {
+      final file = File(path);
+      final exists = await file.exists();
+      details['fileExists'] = exists;
+      if (exists) {
+        details['fileBytes'] = await file.length();
+      }
+    } catch (e) {
+      details['statError'] = e.toString();
+    }
+    return details;
+  }
+
+  String _groupMediaPathKind(String? path) {
+    if (path == null || path.isEmpty) {
+      return 'empty';
+    }
+    if (path.startsWith('/') || RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path)) {
+      return 'absolute';
+    }
+    return 'relative';
   }
 
   bool _isOwnedGroupMediaPath(String storedPath, String absolutePath) {
@@ -3210,6 +3466,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
 
+    recorder.onAutoStopped = _onRecorderAutoStopped;
     _durationSub = recorder.durationStream.listen((d) {
       if (mounted) {
         _updateComposerState(recordingDuration: d);
@@ -3255,6 +3512,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_tryBeginSendFlow()) return;
 
     try {
+      recorder.onAutoStopped = null;
       _updateComposerState(recordingState: VoiceRecordingState.stopping);
       final quotedMessageId = _activeQuoteMessageId;
 
@@ -3723,6 +3981,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
 
+    recorder.onAutoStopped = null;
     _updateComposerState(recordingState: VoiceRecordingState.stopping);
     await _durationSub?.cancel();
     _durationSub = null;
@@ -3741,6 +4000,80 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         amplitudeValues: const [],
       );
     }
+  }
+
+  void _onRecorderAutoStopped(AudioRecording? recording) {
+    // The recorder stopped itself at the max recording duration without any
+    // user gesture; resync the composer. Auto-send is deliberately out of
+    // scope — the result is discarded like a too-short recording.
+    widget.audioRecorderService?.onAutoStopped = null;
+    _durationSub?.cancel();
+    _durationSub = null;
+    _amplitudeSub?.cancel();
+    _amplitudeSub = null;
+    _amplitudeBuffer.reset();
+    _waveformSamples = [];
+    if (mounted) {
+      _pendingRecorderAbort = false;
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_CONV_FL_RECORD_AUTO_STOPPED',
+      details: {'tooShort': recording == null},
+    );
+  }
+
+  /// Cancels an in-flight recording when the user loses write access or the
+  /// visible group changes. The record handlers no-op once [_canWrite] is
+  /// false (and the screen nulls them out), so without this an active
+  /// recorder would be stranded until auto-stop or dispose.
+  void _forceCancelActiveRecording() {
+    final recorder = widget.audioRecorderService;
+    if (recorder == null || !_composerViewState.recordingState.isActive) {
+      return;
+    }
+
+    if (_composerViewState.recordingState == VoiceRecordingState.arming) {
+      // start() has not finished yet — let its abort path clean up.
+      _pendingRecorderAbort = true;
+      _updateComposerState(recordingState: VoiceRecordingState.stopping);
+      return;
+    }
+
+    // Only touch the shared recorder if this surface still owns the live
+    // session: another surface's start() may have force-stopped it already,
+    // leaving our composer state stale — cancelling then would kill that
+    // surface's recording.
+    // Tear-offs of the same method are ==, never identical.
+    final ownsSession = recorder.onAutoStopped == _onRecorderAutoStopped;
+    if (ownsSession) {
+      recorder.onAutoStopped = null;
+    }
+    unawaited(_durationSub?.cancel());
+    _durationSub = null;
+    unawaited(_amplitudeSub?.cancel());
+    _amplitudeSub = null;
+    _amplitudeBuffer.reset();
+    _waveformSamples = [];
+    _pendingRecorderAbort = false;
+    if (ownsSession) {
+      unawaited(recorder.cancel());
+    }
+    _updateComposerState(
+      recordingState: VoiceRecordingState.idle,
+      recordingDuration: Duration.zero,
+      amplitudeValues: const [],
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_CONV_FL_RECORD_FORCE_CANCELLED',
+      details: {'ownedSession': ownsSession},
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -3898,6 +4231,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!mounted) {
       return false;
     }
+    final hadWriteAccess = _canWrite;
     if (identity != null ||
         _isCurrentUserActiveMember != isCurrentUserActiveMember ||
         _hasCurrentSendKey != hasCurrentSendKey) {
@@ -3911,6 +4245,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _isCurrentUserActiveMember = isCurrentUserActiveMember;
         _hasCurrentSendKey = hasCurrentSendKey;
       });
+    }
+    if (hadWriteAccess && !_canWrite) {
+      _forceCancelActiveRecording();
     }
     return _canWriteForSnapshot(
       group: _group,
@@ -3980,10 +4317,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
 
+    final hadWriteAccess = _canWrite;
     setState(() {
       _group = refreshedGroup;
       _historyGapRepair = historyGapRepair;
     });
+    if (hadWriteAccess && !_canWrite) {
+      _forceCancelActiveRecording();
+    }
   }
 
   Future<void> _refreshAfterInfoRoute() async {
@@ -4277,7 +4618,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _durationSub?.cancel();
     _amplitudeSub?.cancel();
     if (_isRecording) {
-      widget.audioRecorderService?.cancel();
+      final recorder = widget.audioRecorderService;
+      // Only cancel a session this surface still owns — our recording state
+      // can be stale after another surface displaced the shared recorder.
+      if (recorder != null &&
+          recorder.onAutoStopped == _onRecorderAutoStopped) {
+        recorder.onAutoStopped = null;
+        recorder.cancel();
+      }
     }
     _scrollController.dispose();
     _composerState.dispose();

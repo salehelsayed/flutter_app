@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart'
     show LocalChatMessage;
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
@@ -67,6 +70,35 @@ class _FakeBridge extends Bridge {
       'errorMessage': 'no handler for $cmd',
     });
   }
+}
+
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
 }
 
 void main() {
@@ -358,4 +390,69 @@ void main() {
 
     await sub.cancel();
   });
+
+  test(
+    'T6: handled LAN commits still record wifi transport telemetry',
+    () async {
+      final localP2P = FakeLocalP2PService();
+      final wifiMetrics = TransportMetrics();
+      final wifiService = P2PServiceImpl(
+        bridge: _FakeBridge()
+          ..whenCommand(
+            'inbox:ack',
+            (_) => jsonEncode({'ok': true, 'acked': 1}),
+          ),
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        localP2PService: localP2P,
+        transportMetrics: wifiMetrics,
+        replayRecoveredInboxChatMessage:
+            (message, {String? stagedEntryId}) async {
+              expect(stagedEntryId, 'lan:n-telemetry');
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'stored',
+                reasonDetail: null,
+              );
+            },
+      );
+      addTearDown(wifiService.dispose);
+
+      final events = await _captureFlowEvents(() async {
+        final decision = await Future<LanInboundDecision>.sync(
+          () => localP2P.inboundChatCommitHandler!(
+            LocalChatMessage(
+              content: jsonEncode({
+                'type': 'chat_message',
+                'version': '1',
+                'payload': {
+                  'id': 'msg-lan-telemetry',
+                  'text': 'telemetry',
+                  'senderPeerId': 'lan-peer',
+                  'senderUsername': 'Alice',
+                  'timestamp': '2026-01-01T00:00:00.000Z',
+                },
+              }),
+              from: 'lan-peer',
+              to: 'self-peer',
+              timestamp: DateTime.utc(2026, 1, 1),
+              isIncoming: true,
+            ),
+            nonce: 'n-telemetry',
+          ),
+        );
+        expect(decision.isCommitted, isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+
+      expect(wifiMetrics.transportMix()['wifi'], 1);
+      expect(
+        events.any(
+          (event) =>
+              event['event'] == 'MSG_RECEIVED_TRANSPORT' &&
+              (event['details'] as Map<String, dynamic>)['transport'] == 'wifi',
+        ),
+        isTrue,
+      );
+    },
+  );
 }

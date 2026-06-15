@@ -170,6 +170,8 @@ Future<(HandleIncomingPassedPostResult, PostModel?)> handleIncomingPassedPost({
       localPath: null,
       encryptionKeyBase64: cryptoEntry?.keyBase64,
       encryptionNonce: cryptoEntry?.nonce,
+      encryptionScheme: cryptoEntry?.scheme,
+      contentHash: cryptoEntry?.contentHash,
       isEncrypted: cryptoEntry != null ? true : null,
     );
     await postRepo.savePostMediaAttachment(pendingAttachment);

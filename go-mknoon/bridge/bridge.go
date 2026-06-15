@@ -203,7 +203,9 @@ func DecryptMessage(paramsJSON string) (result string) {
 	plaintext, err := mcrypto.DecryptMessage(params.SecretKey, params.Kem, params.Ciphertext, params.Nonce)
 	decryptMs := time.Since(decryptStart).Milliseconds()
 	if err != nil {
-		return errJSON("INTERNAL_ERROR", err.Error())
+		// Cryptographic failure (wrong key / corrupted ciphertext / auth tag
+		// mismatch). INTERNAL_ERROR stays reserved for panics.
+		return errJSON("DECRYPT_FAILED", err.Error())
 	}
 
 	return okJSON(map[string]interface{}{
@@ -211,6 +213,166 @@ func DecryptMessage(paramsJSON string) (result string) {
 		"plaintext":        plaintext,
 		"decryptMs":        decryptMs,
 		"payloadSizeBytes": len(plaintext),
+	})
+}
+
+// --- Crypto: Account-Move Transfer Session (protocol v2) ---
+
+// MigrationSessionEncap encapsulates to the receiver's ML-KEM-768 public key
+// and derives the chunked-AEAD transfer session key (HKDF-SHA256 bound to
+// sessionId, bundleId, and direction).
+// Input JSON: { "recipientPublicKey": "<base64>", "sessionId": "...", "bundleId": "...", "direction": "..." }
+// Returns JSON: { "ok": true, "sessionKey": "<base64>", "kemCiphertext": "<base64>" }
+func MigrationSessionEncap(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		RecipientPublicKey string `json:"recipientPublicKey"`
+		SessionId          string `json:"sessionId"`
+		BundleId           string `json:"bundleId"`
+		Direction          string `json:"direction"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.RecipientPublicKey == "" || params.SessionId == "" || params.BundleId == "" || params.Direction == "" {
+		return errJSON("INVALID_INPUT", "missing recipientPublicKey, sessionId, bundleId, or direction")
+	}
+
+	encapStart := time.Now()
+	session, err := mcrypto.MigrationSessionEncap(params.RecipientPublicKey, params.SessionId, params.BundleId, params.Direction)
+	encapMs := time.Since(encapStart).Milliseconds()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":            true,
+		"sessionKey":    session.SessionKey,
+		"kemCiphertext": session.KemCiphertext,
+		"encapMs":       encapMs,
+	})
+}
+
+// MigrationSessionDecap decapsulates the transfer KEM ciphertext with the
+// receiver's ML-KEM-768 secret key and derives the same session key as the
+// sender.
+// Input JSON: { "secretKey": "<base64>", "kemCiphertext": "<base64>", "sessionId": "...", "bundleId": "...", "direction": "..." }
+// Returns JSON: { "ok": true, "sessionKey": "<base64>" }
+func MigrationSessionDecap(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		SecretKey     string `json:"secretKey"`
+		KemCiphertext string `json:"kemCiphertext"`
+		SessionId     string `json:"sessionId"`
+		BundleId      string `json:"bundleId"`
+		Direction     string `json:"direction"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.SecretKey == "" || params.KemCiphertext == "" || params.SessionId == "" || params.BundleId == "" || params.Direction == "" {
+		return errJSON("INVALID_INPUT", "missing secretKey, kemCiphertext, sessionId, bundleId, or direction")
+	}
+
+	decapStart := time.Now()
+	sessionKey, err := mcrypto.MigrationSessionDecap(params.SecretKey, params.KemCiphertext, params.SessionId, params.BundleId, params.Direction)
+	decapMs := time.Since(decapStart).Milliseconds()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":         true,
+		"sessionKey": sessionKey,
+		"decapMs":    decapMs,
+	})
+}
+
+// MigrationChunkEncrypt seals one transfer chunk with the session key, the
+// caller-supplied 96-bit counter nonce, and the canonical associated-data
+// JSON as real GCM AAD.
+// Input JSON: { "sessionKey": "<base64>", "plaintextBase64": "<base64>", "aad": "...", "nonce": "<base64>" }
+// Returns JSON: { "ok": true, "ciphertext": "<base64>", "nonce": "<base64>" }
+func MigrationChunkEncrypt(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		SessionKey      string `json:"sessionKey"`
+		PlaintextBase64 string `json:"plaintextBase64"`
+		Aad             string `json:"aad"`
+		Nonce           string `json:"nonce"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.SessionKey == "" || params.Aad == "" || params.Nonce == "" {
+		return errJSON("INVALID_INPUT", "missing sessionKey, aad, or nonce")
+	}
+
+	encryptStart := time.Now()
+	ciphertext, err := mcrypto.MigrationChunkEncrypt(params.SessionKey, params.PlaintextBase64, params.Aad, params.Nonce)
+	encryptMs := time.Since(encryptStart).Milliseconds()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":         true,
+		"ciphertext": ciphertext,
+		"nonce":      params.Nonce,
+		"encryptMs":  encryptMs,
+	})
+}
+
+// MigrationChunkDecrypt opens one transfer chunk; tampered ciphertext, nonce,
+// or associated data fails GCM authentication.
+// Input JSON: { "sessionKey": "<base64>", "ciphertext": "<base64>", "aad": "...", "nonce": "<base64>" }
+// Returns JSON: { "ok": true, "plaintextBase64": "<base64>" }
+func MigrationChunkDecrypt(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	var params struct {
+		SessionKey string `json:"sessionKey"`
+		Ciphertext string `json:"ciphertext"`
+		Aad        string `json:"aad"`
+		Nonce      string `json:"nonce"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.SessionKey == "" || params.Ciphertext == "" || params.Aad == "" || params.Nonce == "" {
+		return errJSON("INVALID_INPUT", "missing sessionKey, ciphertext, aad, or nonce")
+	}
+
+	decryptStart := time.Now()
+	plaintextBase64, err := mcrypto.MigrationChunkDecrypt(params.SessionKey, params.Ciphertext, params.Aad, params.Nonce)
+	decryptMs := time.Since(decryptStart).Milliseconds()
+	if err != nil {
+		return errJSON("INTERNAL_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":              true,
+		"plaintextBase64": plaintextBase64,
+		"decryptMs":       decryptMs,
 	})
 }
 
@@ -520,6 +682,49 @@ func RendezvousRegister(paramsJSON string) (result string) {
 
 	return okJSON(map[string]interface{}{
 		"ok": true,
+	})
+}
+
+// RendezvousUnregister unregisters from a rendezvous namespace.
+// Input JSON: { "namespace": "...", "serverAddresses": [...] } (all optional)
+// Returns JSON: { "ok": true, "unregistered": true }
+func RendezvousUnregister(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		Namespace       string   `json:"namespace"`
+		ServerAddresses []string `json:"serverAddresses"`
+	}
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+	}
+
+	ns := params.Namespace
+	if ns == "" {
+		ns = n.Namespace()
+	}
+
+	if err := n.RendezvousUnregister(ns, params.ServerAddresses); err != nil {
+		return errJSON("RENDEZVOUS_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":           true,
+		"unregistered": true,
 	})
 }
 
@@ -928,12 +1133,32 @@ func InboxStore(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing toPeerId or message")
 	}
 
-	if err := n.InboxStore(params.ToPeerId, params.Message, params.TimeoutMs); err != nil {
+	outcome, err := n.InboxStoreDetailed(params.ToPeerId, params.Message, params.TimeoutMs)
+	return inboxStoreBridgeResponse(outcome, err)
+}
+
+func inboxStoreBridgeResponse(outcome node.InboxStoreOutcome, err error) string {
+	if err != nil {
+		if errors.Is(err, node.ErrInboxFull) {
+			return okJSON(map[string]interface{}{
+				"ok":           false,
+				"errorCode":    "INBOX_FULL",
+				"errorMessage": err.Error(),
+				"storeStatus":  outcome.StoreStatus,
+				"expiresAtMs":  outcome.ExpiresAtMs,
+				"occupancy":    outcome.Occupancy,
+				"capacity":     outcome.Capacity,
+			})
+		}
 		return errJSON("INBOX_ERROR", err.Error())
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok": true,
+		"ok":          true,
+		"storeStatus": outcome.StoreStatus,
+		"expiresAtMs": outcome.ExpiresAtMs,
+		"occupancy":   outcome.Occupancy,
+		"capacity":    outcome.Capacity,
 	})
 }
 
@@ -1154,6 +1379,43 @@ func InboxRegisterToken(paramsJSON string) (result string) {
 	})
 }
 
+// InboxUnregisterToken unregisters this peer's FCM push token.
+// Input JSON: { "serverAddresses": [...] } (optional)
+// Returns JSON: { "ok": true, "unregistered": true }
+func InboxUnregisterToken(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		ServerAddresses []string `json:"serverAddresses"`
+	}
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+	}
+
+	if err := n.InboxUnregisterToken(params.ServerAddresses); err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":           true,
+		"unregistered": true,
+	})
+}
+
 // --- Media ---
 
 // MediaUpload uploads a file to the relay's media store.
@@ -1227,16 +1489,22 @@ func MediaDownload(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing id or outputPath")
 	}
 
-	mime, size, err := n.MediaDownload(params.ID, params.OutputPath)
+	download, err := n.MediaDownload(params.ID, params.OutputPath)
 	if err != nil {
 		return errJSON("MEDIA_ERROR", err.Error())
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":   true,
-		"id":   params.ID,
-		"mime": mime,
-		"size": size,
+		"ok":                  true,
+		"id":                  params.ID,
+		"mime":                download.Mime,
+		"size":                download.Size,
+		"sourceRole":          download.SourceRole,
+		"sourcePeerId":        download.SourcePeerId,
+		"sourcePeerShort":     download.SourcePeerShort,
+		"streamTransport":     download.StreamTransport,
+		"servedByPhone":       download.ServedByPhone,
+		"routedViaRelayStore": download.RoutedViaRelayStore,
 	})
 }
 
@@ -1907,16 +2175,17 @@ func GroupSendReliable(paramsJSON string) (result string) {
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":                     true,
-		"messageId":              sendResult.MessageId,
-		"topicPeerCount":         sendResult.TopicPeerCount,
-		"topicPeers":             sendResult.TopicPeerCount,
-		"expectedRecipientCount": sendResult.ExpectedRecipientCount,
-		"recipientPeerIds":       sendResult.RecipientPeerIds,
-		"inboxStored":            sendResult.InboxStored,
-		"publishSucceeded":       sendResult.PublishSucceeded,
-		"deliveryMode":           sendResult.DeliveryMode,
-		"envelope":               sendResult.Envelope,
+		"ok":                      true,
+		"messageId":               sendResult.MessageId,
+		"topicPeerCount":          sendResult.TopicPeerCount,
+		"topicPeers":              sendResult.TopicPeerCount,
+		"connectedTopicPeerCount": sendResult.ConnectedTopicPeerCount,
+		"expectedRecipientCount":  sendResult.ExpectedRecipientCount,
+		"recipientPeerIds":        sendResult.RecipientPeerIds,
+		"inboxStored":             sendResult.InboxStored,
+		"publishSucceeded":        sendResult.PublishSucceeded,
+		"deliveryMode":            sendResult.DeliveryMode,
+		"envelope":                sendResult.Envelope,
 	})
 }
 

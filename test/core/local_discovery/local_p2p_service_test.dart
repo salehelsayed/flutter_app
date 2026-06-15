@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
@@ -76,6 +77,9 @@ void main() {
 
       // Start a second WS server to act as the remote peer.
       final remoteServer = LocalWsServer();
+      remoteServer.configureInboundChatCommitHandler(
+        (message, {required nonce}) => const LanInboundDecision.committed(),
+      );
       final remotePort = await remoteServer.start();
 
       fakeDiscovery.addPeer(
@@ -123,6 +127,39 @@ void main() {
       expect(sent, isTrue);
       expect(recordingWsServer.lastTimeoutMs, 321);
       expect(recordingWsServer.lastToPeerId, 'remotePeer');
+    });
+
+    test('sendMessageDetailed returns the WS ack classification', () async {
+      final recordingWsServer = _RecordingLocalWsServer()
+        ..ack = LanSendAck.legacyAck;
+      service = LocalP2PService(
+        discovery: fakeDiscovery,
+        wsServer: recordingWsServer,
+      );
+
+      fakeDiscovery.addPeer(
+        LocalPeer(
+          peerId: 'remotePeer',
+          host: 'localhost',
+          port: 4040,
+          discoveredAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final ack = await service.sendMessageDetailed(
+        'remotePeer',
+        '{"text":"hi"}',
+        'myPeerId',
+        timeoutMs: 456,
+      );
+
+      expect(ack, LanSendAck.legacyAck);
+      expect(recordingWsServer.lastTimeoutMs, 456);
+      expect(recordingWsServer.lastToPeerId, 'remotePeer');
+      expect(
+        await service.sendMessage('remotePeer', '{"text":"hi"}', 'myPeerId'),
+        isFalse,
+      );
     });
 
     test('sendMedia returns false when peer not discovered', () async {
@@ -223,72 +260,70 @@ void main() {
       await sub.cancel();
     });
 
-    test(
-      'I1 production-wiring: inbound media reaches mediaReadyStream and '
-      'persists under the local WS server (real stack)',
-      () async {
-        // Receiver side: configure a media server on the service's own WS
-        // server so PUT /media/<id> is served (production wiring half #1).
-        final recvTemp = await Directory.systemTemp.createTemp(
-          'local_p2p_recv_media_',
+    test('I1 production-wiring: inbound media reaches mediaReadyStream and '
+        'persists under the local WS server (real stack)', () async {
+      // Receiver side: configure a media server on the service's own WS
+      // server so PUT /media/<id> is served (production wiring half #1).
+      final recvTemp = await Directory.systemTemp.createTemp(
+        'local_p2p_recv_media_',
+      );
+      final recvMediaServer = LocalMediaServer(
+        tempDir: '${recvTemp.path}/local_media_tmp',
+        mediaDir: '${recvTemp.path}/local_media',
+      );
+      wsServer.configureMediaServer(recvMediaServer);
+
+      await service.start('myPeerId');
+
+      // Consume the service's mediaReadyStream and persist, exactly as the
+      // production incomingLocalMediaStream consumer does (wiring half #2).
+      final persistedPaths = <String>[];
+      final sub = service.mediaReadyStream?.listen((media) async {
+        final persisted = await recvMediaServer.persistMedia(
+          media.id,
+          media.from,
         );
-        final recvMediaServer = LocalMediaServer(
-          tempDir: '${recvTemp.path}/local_media_tmp',
-          mediaDir: '${recvTemp.path}/local_media',
-        );
-        wsServer.configureMediaServer(recvMediaServer);
+        if (persisted != null) persistedPaths.add(persisted);
+      });
+      expect(sub, isNotNull, reason: 'mediaReadyStream must be live');
 
-        await service.start('myPeerId');
+      // Sender side: a second WS server uploads a file to us.
+      final senderServer = LocalWsServer();
+      await senderServer.start();
+      final senderTemp = await Directory.systemTemp.createTemp(
+        'local_p2p_sender_media_',
+      );
+      final bytes = List<int>.generate(2048, (i) => (i * 3) % 256);
+      final file = File('${senderTemp.path}/image.jpg');
+      await file.writeAsBytes(bytes);
+      final expectedHash = sha256.convert(bytes).toString();
 
-        // Consume the service's mediaReadyStream and persist, exactly as the
-        // production incomingLocalMediaStream consumer does (wiring half #2).
-        final persistedPaths = <String>[];
-        final sub = service.mediaReadyStream?.listen((media) async {
-          final persisted = await recvMediaServer.persistMedia(
-            media.id,
-            media.from,
-          );
-          if (persisted != null) persistedPaths.add(persisted);
-        });
-        expect(sub, isNotNull, reason: 'mediaReadyStream must be live');
+      final sent = await senderServer.sendMedia(
+        host: 'localhost',
+        port: wsServer.port!,
+        toPeerId: 'myPeerId',
+        filePath: file.path,
+        mediaId: 'i1-stack-media-1',
+        mime: 'image/jpeg',
+        fromPeerId: 'senderPeer',
+      );
+      expect(sent, isTrue);
 
-        // Sender side: a second WS server uploads a file to us.
-        final senderServer = LocalWsServer();
-        await senderServer.start();
-        final senderTemp = await Directory.systemTemp.createTemp(
-          'local_p2p_sender_media_',
-        );
-        final bytes = List<int>.generate(2048, (i) => (i * 3) % 256);
-        final file = File('${senderTemp.path}/image.jpg');
-        await file.writeAsBytes(bytes);
-        final expectedHash = sha256.convert(bytes).toString();
+      await Future.delayed(const Duration(milliseconds: 300));
 
-        final sent = await senderServer.sendMedia(
-          host: 'localhost',
-          port: wsServer.port!,
-          toPeerId: 'myPeerId',
-          filePath: file.path,
-          mediaId: 'i1-stack-media-1',
-          mime: 'image/jpeg',
-          fromPeerId: 'senderPeer',
-        );
-        expect(sent, isTrue);
+      expect(persistedPaths, hasLength(1));
+      final persistedFile = File(persistedPaths.first);
+      expect(await persistedFile.exists(), isTrue);
+      final persistedHash = sha256
+          .convert(await persistedFile.readAsBytes())
+          .toString();
+      expect(persistedHash, expectedHash);
 
-        await Future.delayed(const Duration(milliseconds: 300));
-
-        expect(persistedPaths, hasLength(1));
-        final persistedFile = File(persistedPaths.first);
-        expect(await persistedFile.exists(), isTrue);
-        final persistedHash =
-            sha256.convert(await persistedFile.readAsBytes()).toString();
-        expect(persistedHash, expectedHash);
-
-        await sub?.cancel();
-        senderServer.dispose();
-        await senderTemp.delete(recursive: true);
-        await recvTemp.delete(recursive: true);
-      },
-    );
+      await sub?.cancel();
+      senderServer.dispose();
+      await senderTemp.delete(recursive: true);
+      await recvTemp.delete(recursive: true);
+    });
 
     test('localMessageStream emits messages received by WS server', () async {
       await service.start('myPeerId');
@@ -313,15 +348,47 @@ void main() {
 
       await ws.close();
     });
+
+    test(
+      'configureInboundChatCommitHandler delegates to LocalWsServer',
+      () async {
+        await service.start('myPeerId');
+
+        LocalChatMessage? handledMessage;
+        String? handledNonce;
+        service.configureInboundChatCommitHandler((message, {required nonce}) {
+          handledMessage = message;
+          handledNonce = nonce;
+          return const LanInboundDecision.accepted();
+        });
+
+        final port = wsServer.port!;
+        final ws = await WebSocket.connect('ws://localhost:$port');
+        ws.add(
+          '{"from":"remotePeer","to":"myPeerId","content":"{\\"type\\":\\"chat_message\\"}","nonce":"lan-n1"}',
+        );
+
+        await ws.first.timeout(const Duration(seconds: 2));
+
+        expect(handledMessage, isNotNull);
+        expect(handledMessage!.from, 'remotePeer');
+        expect(handledMessage!.to, 'myPeerId');
+        expect(handledMessage!.content, '{"type":"chat_message"}');
+        expect(handledNonce, 'lan-n1');
+
+        await ws.close();
+      },
+    );
   });
 }
 
 class _RecordingLocalWsServer extends LocalWsServer {
   int? lastTimeoutMs;
   String? lastToPeerId;
+  LanSendAck ack = LanSendAck.committed;
 
   @override
-  Future<bool> sendMessage(
+  Future<LanSendAck> sendMessageWithAck(
     String host,
     int port,
     String content,
@@ -331,6 +398,6 @@ class _RecordingLocalWsServer extends LocalWsServer {
   }) async {
     lastTimeoutMs = timeoutMs;
     lastToPeerId = toPeerId;
-    return true;
+    return ack;
   }
 }

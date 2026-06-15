@@ -59,6 +59,14 @@ class LocalMediaReady {
   final List<double>? waveform;
   final String? filename;
 
+  /// True when the transferred bytes are an encrypted blob artifact
+  /// (112: ciphertext on the LAN transport). The bytes must be staged for
+  /// deferred decrypt, never promoted to canonical media.
+  final bool enc;
+
+  /// Blob encryption scheme advertised by the sender for enc transfers.
+  final String? encScheme;
+
   const LocalMediaReady({
     required this.id,
     required this.from,
@@ -70,6 +78,8 @@ class LocalMediaReady {
     this.durationMs,
     this.waveform,
     this.filename,
+    this.enc = false,
+    this.encScheme,
   });
 }
 
@@ -87,6 +97,14 @@ class MediaOffer {
   final List<double>? waveform;
   final String? filename;
 
+  /// True when the offered bytes are an encrypted blob artifact (112): the
+  /// mime is opaque by design, [sha256] covers the CIPHERTEXT, and the
+  /// receiver must stage — never promote — the payload.
+  final bool enc;
+
+  /// Blob encryption scheme for enc offers.
+  final String? encScheme;
+
   const MediaOffer({
     required this.id,
     required this.from,
@@ -99,6 +117,8 @@ class MediaOffer {
     this.durationMs,
     this.waveform,
     this.filename,
+    this.enc = false,
+    this.encScheme,
   });
 
   factory MediaOffer.fromJson(Map<String, dynamic> json) => MediaOffer(
@@ -115,6 +135,8 @@ class MediaOffer {
             ?.map((e) => (e as num).toDouble())
             .toList(),
         filename: json['filename'] as String?,
+        enc: json['enc'] as bool? ?? false,
+        encScheme: json['encScheme'] as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -130,6 +152,8 @@ class MediaOffer {
         if (durationMs != null) 'durationMs': durationMs,
         if (waveform != null) 'waveform': waveform,
         if (filename != null) 'filename': filename,
+        if (enc) 'enc': enc,
+        if (encScheme != null) 'encScheme': encScheme,
       };
 }
 

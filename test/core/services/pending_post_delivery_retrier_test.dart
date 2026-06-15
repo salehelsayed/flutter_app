@@ -115,6 +115,62 @@ void main() {
     },
   );
 
+  test(
+    'account migration gate blocks delivery retry before beforeRetry and network work',
+    () async {
+      contacts.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
+      await posts.savePost(_post(id: 'post-blocked', deliveryStatus: 'failed'));
+      await posts.saveRecipientDelivery(
+        const PostRecipientDelivery(
+          postId: 'post-blocked',
+          recipientPeerId: 'peer-bob',
+          deliveryStatus: 'failed',
+          lastAttemptAt: '2026-03-15T10:00:01.000Z',
+          deliveryPath: 'failed',
+          createdAt: '2026-03-15T10:00:01.000Z',
+          updatedAt: '2026-03-15T10:00:01.000Z',
+        ),
+      );
+      p2pService.emitState(
+        const NodeState(
+          isStarted: true,
+          peerId: 'peer-self',
+          circuitAddresses: <String>['/p2p-circuit/addr1'],
+        ),
+      );
+      var beforeRetryCalls = 0;
+      var gateCalls = 0;
+      retrier = PendingPostDeliveryRetrier(
+        p2pService: p2pService,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        retryDebounce: Duration.zero,
+        periodicRetryInterval: const Duration(hours: 1),
+        beforeRetry: () async {
+          beforeRetryCalls++;
+          return 1;
+        },
+        accountMigrationNetworkGate:
+            ({String? peerId, required String operation}) async {
+              gateCalls++;
+              expect(peerId, 'peer-self');
+              expect(operation, 'pending_post_delivery_retry');
+              return false;
+            },
+      );
+
+      final retried = await retrier.retryNow();
+
+      expect(retried, 0);
+      expect(gateCalls, 1);
+      expect(beforeRetryCalls, 0);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+      expect((await posts.getPost('post-blocked'))!.deliveryStatus, 'failed');
+    },
+  );
+
   test('does not retry incoming posts', () async {
     contacts.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
     await posts.savePost(

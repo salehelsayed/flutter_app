@@ -19,12 +19,14 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -306,6 +308,8 @@ class FakeMessageRepository
   int getMessagesPageCalls = 0;
   int saveMessageCallCount = 0;
   int deleteMessageCallCount = 0;
+  Completer<void>? getMessagesPageGate;
+  List<ConversationMessage>? getMessagesPageSnapshot;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
 
@@ -387,7 +391,11 @@ class FakeMessageRepository
     String? beforeTimestamp,
   }) async {
     getMessagesPageCalls++;
-    var messages = store.values
+    final gate = getMessagesPageGate;
+    if (gate != null && !gate.isCompleted) {
+      await gate.future;
+    }
+    var messages = (getMessagesPageSnapshot ?? store.values)
         .where((m) => m.contactPeerId == contactPeerId)
         .toList();
     if (beforeTimestamp != null) {
@@ -436,13 +444,9 @@ class _FakeIncomingConversationListener extends ChatMessageListener {
   final _incomingController = StreamController<ConversationMessage>.broadcast();
 
   _FakeIncomingConversationListener({
-    required MessageRepository messageRepo,
-    required ContactRepository contactRepo,
-  }) : super(
-         chatMessageStream: const Stream<ChatMessage>.empty(),
-         messageRepo: messageRepo,
-         contactRepo: contactRepo,
-       );
+    required super.messageRepo,
+    required super.contactRepo,
+  }) : super(chatMessageStream: const Stream<ChatMessage>.empty());
 
   @override
   Stream<ConversationMessage> get incomingMessageStream =>
@@ -520,6 +524,9 @@ class FakeP2PService implements P2PService {
   int sendLocalMediaCallCount = 0;
   int sendMessageCallCount = 0;
   int storeInInboxCallCount = 0;
+  String? lastLocalMediaId;
+  String? lastLocalMediaPath;
+  String? lastLocalMediaMime;
 
   FakeP2PService({this.localPeer = false, this.localMediaResult = false});
 
@@ -608,8 +615,7 @@ class FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -632,8 +638,13 @@ class FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     sendLocalMediaCallCount++;
+    lastLocalMediaId = mediaId;
+    lastLocalMediaPath = filePath;
+    lastLocalMediaMime = mime;
     return localMediaResult;
   }
 
@@ -667,6 +678,8 @@ class TrackingLocalMediaP2PService extends FakeP2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     callOrder.add('sendLocalMedia');
     return super.sendLocalMedia(
@@ -730,6 +743,26 @@ void main() {
     );
   }
 
+  // 112 Phase 4: the real prepareEncryptedMediaArtifact does file I/O that
+  // cannot complete inside the testWidgets fake-async zone (deadlocks at
+  // the 10-min timeout). All widget tests get this SYNC-I/O stub so the
+  // LAN encrypt-once leg stays deterministic.
+  Future<EncryptedMediaArtifact> syncPrepareEncryptedArtifactStub({
+    required Bridge bridge,
+    required String localFilePath,
+  }) async {
+    final encryptedPath = '$localFilePath.enc';
+    File(localFilePath).copySync(encryptedPath);
+    return EncryptedMediaArtifact(
+      encryptedPath: encryptedPath,
+      keyBase64: 'stub-blob-key',
+      nonce: 'stub-blob-nonce',
+      scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      contentHash: 'stub-content-hash',
+      plaintextSize: File(localFilePath).lengthSync(),
+    );
+  }
+
   Future<void> pumpScreen(
     WidgetTester tester, {
     required FakeIdentityRepository identityRepo,
@@ -751,9 +784,11 @@ void main() {
     FakeAudioRecorderService? audioRecorderService,
     ImageProcessor? imageProcessor,
     MediaPicker? mediaPicker,
+    DownloadMediaFn? downloadMediaFn,
     String? initialText,
     List<File>? initialAttachments,
     List<PendingComposerMedia>? initialPendingMedia,
+    List<ConversationMessage>? initialMessages,
     ImageQualityPreference qualityPreference =
         ImageQualityPreference.compressed,
     ImageQualityPreference videoQualityPreference =
@@ -779,6 +814,7 @@ void main() {
               deleteForEveryoneFn ?? deleteMessageForEveryone,
           uploadMediaFn: uploadMediaFn ?? uploadMedia,
           sendVoiceMessageFn: sendVoiceMessageFn ?? sendVoiceMessage,
+          prepareEncryptedMediaArtifactFn: syncPrepareEncryptedArtifactStub,
           contactRepo: contactRepo,
           reactionRepo: reactionRepo,
           reactionListener: reactionListener,
@@ -787,9 +823,11 @@ void main() {
           audioRecorderService: audioRecorderService,
           imageProcessor: imageProcessor,
           mediaPicker: mediaPicker,
+          downloadMediaFn: downloadMediaFn ?? downloadMedia,
           qualityPreference: qualityPreference,
           videoQualityPreference: videoQualityPreference,
           initialText: initialText,
+          initialMessages: initialMessages,
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
@@ -1499,6 +1537,8 @@ void main() {
               durationMs,
               waveform,
               allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async {
               callOrder.add('uploadMedia');
               return MediaAttachment(
@@ -1530,6 +1570,7 @@ void main() {
           );
       expect(savedAttachment.messageId, isNotEmpty);
       expect(savedAttachment.localPath, attachment.path);
+      expect(savedAttachment.size, attachment.lengthSync());
     });
 
     testWidgets(
@@ -1583,6 +1624,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 callOrder.add('uploadMedia');
                 return MediaAttachment(
@@ -1612,6 +1655,11 @@ void main() {
 
         expect(mediaFileManager.copyCalls, 1);
         expect(callOrder, contains('save:upload_pending'));
+        final pendingAttachment = mediaAttachmentRepo.allSavedAttachments
+            .firstWhere(
+              (attachment) => attachment.downloadStatus == 'upload_pending',
+            );
+        expect(pendingAttachment.size, _tinyPngBytes.length);
         final durableDir = Directory('${tempDir.path}/pending_uploads');
         expect(durableDir.existsSync(), isTrue);
         final durableFiles = durableDir
@@ -1803,6 +1851,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 uploadedBlobId = blobId;
                 return MediaAttachment(
@@ -1872,6 +1922,8 @@ void main() {
           localMediaResult: true,
         );
         String? sentMessageId;
+        String? uploadedBlobId;
+        String? uploadedLocalPath;
 
         Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
           required P2PService p2pService,
@@ -1937,7 +1989,11 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
+                uploadedBlobId = blobId;
+                uploadedLocalPath = localFilePath;
                 callOrder.add('uploadMedia');
                 return MediaAttachment(
                   id: blobId ?? 'unexpected-upload',
@@ -1956,14 +2012,25 @@ void main() {
         await tester.enterText(find.byType(TextField), 'funny');
         await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await pumpUntil(tester, () => callOrder.contains('sendLocalMedia'));
+        await pumpUntil(
+          tester,
+          () => callOrder.contains('uploadMedia') && sentMessageId != null,
+        );
 
         expect(
           callOrder,
-          containsAllInOrder(['save:upload_pending', 'sendLocalMedia']),
+          containsAllInOrder([
+            'save:upload_pending',
+            'sendLocalMedia',
+            'uploadMedia',
+          ]),
         );
-        expect(callOrder.where((entry) => entry == 'uploadMedia'), isEmpty);
         expect(p2pService.sendLocalMediaCallCount, 1);
+        expect(uploadedBlobId, p2pService.lastLocalMediaId);
+        // 112 Phase 4 (encrypt once): the LAN leg streams the encrypted
+        // artifact built from the SAME source the relay upload consumes —
+        // never the raw bytes.
+        expect(p2pService.lastLocalMediaPath, '$uploadedLocalPath.enc');
 
         final optimisticAttachment = mediaAttachmentRepo.allSavedAttachments
             .firstWhere(
@@ -1977,6 +2044,8 @@ void main() {
             .getAttachmentsForMessage(sentMessageId!);
         expect(finalAttachments.single.mime, 'image/gif');
         expect(finalAttachments.single.isAnimated, isTrue);
+        expect(finalAttachments.single.id, uploadedBlobId);
+        expect(finalAttachments.single.downloadStatus, 'done');
 
         await tester.pump(const Duration(milliseconds: 500));
         await tester.pumpWidget(const SizedBox.shrink());
@@ -2173,6 +2242,257 @@ void main() {
         );
 
         expect(find.text('Live receive while open'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'inserts delayed incoming messages by timestamp instead of arrival order',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = _FakeIncomingConversationListener(
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        addTearDown(chatListener.dispose);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        chatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'newer-live-message',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'Second image',
+            timestamp: '2026-02-09T15:31:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:31:00.500Z',
+          ),
+        );
+        await pumpUntil(
+          tester,
+          () => find.text('Second image').evaluate().isNotEmpty,
+        );
+
+        chatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'older-delayed-message',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'First delayed image',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:32:00.000Z',
+          ),
+        );
+        await pumpUntil(
+          tester,
+          () => find.text('First delayed image').evaluate().isNotEmpty,
+        );
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(screen.messages.map((message) => message.text).toList(), [
+          'First delayed image',
+          'Second image',
+        ]);
+      },
+    );
+
+    testWidgets('direct unavailable retry downloads failed attachment', (
+      tester,
+    ) async {
+      const messageId = 'incoming-direct-retry';
+      const attachmentId = 'incoming-direct-retry-attachment';
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+      final mediaFileManager = FakeMediaFileManager();
+      final tempDir = Directory.systemTemp.createTempSync(
+        'conversation_direct_retry_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final chatListener = _FakeIncomingConversationListener(
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      addTearDown(chatListener.dispose);
+
+      final failedAttachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 42,
+        mediaType: 'image',
+        downloadStatus: 'failed',
+        createdAt: '2026-02-09T15:30:00.000Z',
+      );
+      final message = ConversationMessage(
+        id: messageId,
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeContact().peerId,
+        text: 'retry this image',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-09T15:30:00.000Z',
+        media: [failedAttachment],
+      );
+      await messageRepo.saveMessage(message);
+      await mediaAttachmentRepo.saveAttachment(failedAttachment);
+
+      var downloadCalls = 0;
+      MediaAttachment? requestedAttachment;
+      Future<MediaAttachment?> retryDownloadFn({
+        required Bridge bridge,
+        required MediaAttachmentRepository mediaAttachmentRepo,
+        required MediaFileManager mediaFileManager,
+        required MediaAttachment attachment,
+        required String contactPeerId,
+      }) async {
+        downloadCalls++;
+        requestedAttachment = attachment;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        final recoveredFile = File('${tempDir.path}/recovered-direct-retry.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final recovered = attachment.copyWith(
+          localPath: recoveredFile.path,
+          downloadStatus: 'done',
+        );
+        await mediaAttachmentRepo.saveAttachment(recovered);
+        return recovered;
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        initialMessages: [message],
+        downloadMediaFn: retryDownloadFn,
+      );
+
+      var screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      screen.onRetryUnavailableMedia!(messageId, attachmentId);
+      screen.onRetryUnavailableMedia!(messageId, attachmentId);
+      await tester.pump();
+
+      expect(downloadCalls, 1);
+      expect(requestedAttachment?.id, attachmentId);
+
+      await pumpUntil(tester, () {
+        screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        return screen.messages.single.media.single.downloadStatus == 'done';
+      });
+
+      final refreshed = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      expect(refreshed.messages.single.id, messageId);
+      expect(refreshed.messages.single.media.single.id, attachmentId);
+      expect(refreshed.messages.single.media.single.localPath, isNotNull);
+    });
+
+    testWidgets(
+      'loadInitialPage does not overwrite newer streamed media repair',
+      (tester) async {
+        const messageId = 'incoming-stale-load';
+        const attachmentId = 'incoming-stale-load-attachment';
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository()
+          ..getMessagesPageGate = Completer<void>();
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final chatListener = _FakeIncomingConversationListener(
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        addTearDown(chatListener.dispose);
+
+        final staleAttachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 42,
+          mediaType: 'image',
+          downloadStatus: 'failed',
+          createdAt: '2026-02-09T15:30:00.000Z',
+        );
+        final repairedAttachment = staleAttachment.copyWith(
+          localPath: '/tmp/repaired-stale-load.jpg',
+          downloadStatus: 'done',
+        );
+        final staleMessage = ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'stale load image',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:00.000Z',
+          media: [staleAttachment],
+        );
+        messageRepo.getMessagesPageSnapshot = [staleMessage];
+        mediaAttachmentRepo.seedAttachments(
+          messageId: messageId,
+          attachments: [staleAttachment],
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        chatListener.emitIncomingMessage(
+          staleMessage.copyWith(media: [repairedAttachment]),
+        );
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any(
+                (message) =>
+                    message.id == messageId &&
+                    message.media.single.downloadStatus == 'done',
+              ),
+        );
+
+        messageRepo.getMessagesPageGate!.complete();
+        await tester.pump(const Duration(milliseconds: 400));
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(screen.messages.single.id, messageId);
+        expect(screen.messages.single.media.single.id, attachmentId);
+        expect(screen.messages.single.media.single.downloadStatus, 'done');
+        expect(screen.messages.single.media.single.localPath, isNotNull);
       },
     );
   });
@@ -4276,37 +4596,39 @@ void main() {
 
       String? capturedQuotedMessageId;
 
-      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+      Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceFn({
         required P2PService p2pService,
         required MessageRepository messageRepo,
         required String targetPeerId,
-        required String text,
         required String senderPeerId,
         required String senderUsername,
+        required AudioRecording recording,
+        required Bridge bridge,
+        String? recipientMlKemPublicKey,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+        MediaFileManager? mediaFileManager,
+        String? text,
+        String? quotedMessageId,
+        List<double>? waveform,
         String? messageId,
         String? timestamp,
-        Bridge? bridge,
-        String? recipientMlKemPublicKey,
-        String? quotedMessageId,
-        List<MediaAttachment>? mediaAttachments,
-        MediaAttachmentRepository? mediaAttachmentRepo,
-        TransportMetrics? transportMetrics,
+        String? blobId,
+        preparedArtifact,
       }) async {
         capturedQuotedMessageId = quotedMessageId;
         final delivered = ConversationMessage(
           id: messageId!,
           contactPeerId: targetPeerId,
           senderPeerId: senderPeerId,
-          text: text,
+          text: text ?? '',
           timestamp: timestamp!,
           status: 'delivered',
           isIncoming: false,
           createdAt: timestamp,
           quotedMessageId: quotedMessageId,
-          media: mediaAttachments ?? const [],
         );
         await messageRepo.saveMessage(delivered);
-        return (SendChatMessageResult.success, delivered);
+        return (SendVoiceMessageResult.success, delivered);
       }
 
       await pumpScreen(
@@ -4314,9 +4636,11 @@ void main() {
         identityRepo: identityRepo,
         messageRepo: messageRepo,
         chatListener: chatListener,
-        sendFn: sendFn,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
         p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
         audioRecorderService: recorder,
+        sendVoiceMessageFn: sendVoiceFn,
       );
 
       final screen = tester.widget<ConversationScreen>(
@@ -4349,6 +4673,254 @@ void main() {
       expect(saved.quotedMessageId, 'incoming-voice-1');
     });
 
+    // 117 Session 3: the 5-minute auto-stop must NOT silently discard the
+    // captured recording. It holds the clip for review (send/discard) with a
+    // SnackBar — no silent loss, no surprise auto-send.
+    group('voice 5-minute auto-stop review', () {
+      late File voiceFile;
+      late FakeAudioRecorderService recorder;
+      late FakeMessageRepository messageRepo;
+      late int sendVoiceCalls;
+
+      Future<(SendVoiceMessageResult, ConversationMessage?)> reviewSendVoiceFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String senderPeerId,
+        required String senderUsername,
+        required AudioRecording recording,
+        required Bridge bridge,
+        String? recipientMlKemPublicKey,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+        MediaFileManager? mediaFileManager,
+        String? text,
+        String? quotedMessageId,
+        List<double>? waveform,
+        String? messageId,
+        String? timestamp,
+        String? blobId,
+        preparedArtifact,
+      }) async {
+        sendVoiceCalls += 1;
+        final delivered = ConversationMessage(
+          id: messageId!,
+          contactPeerId: targetPeerId,
+          senderPeerId: senderPeerId,
+          text: text ?? '',
+          timestamp: timestamp!,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: timestamp,
+        );
+        await messageRepo.saveMessage(delivered);
+        return (SendVoiceMessageResult.success, delivered);
+      }
+
+      Future<ConversationScreen> startThenAutoStop(WidgetTester tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
+          audioRecorderService: recorder,
+          sendVoiceMessageFn: reviewSendVoiceFn,
+        );
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump(const Duration(milliseconds: 100));
+        await recorder.triggerAutoStop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        return tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+      }
+
+      setUp(() {
+        sendVoiceCalls = 0;
+        messageRepo = FakeMessageRepository();
+        voiceFile = File(
+          '${Directory.systemTemp.path}/autostop_review_'
+          '${DateTime.now().microsecondsSinceEpoch}.m4a',
+        )..writeAsBytesSync(List<int>.filled(2048, 9));
+        recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 300000
+          ..fakeSizeBytes = 2048
+          ..fakeOutputPath = voiceFile.path;
+      });
+
+      tearDown(() {
+        if (voiceFile.existsSync()) voiceFile.deleteSync();
+      });
+
+      testWidgets('holds the recording for review and does not auto-send', (
+        tester,
+      ) async {
+        await startThenAutoStop(tester);
+
+        expect(
+          find.text('Recording reached the 5-minute limit.'),
+          findsOneWidget,
+        );
+        expect(sendVoiceCalls, 0);
+        expect(
+          messageRepo.store.values.where((m) => !m.isIncoming),
+          isEmpty,
+          reason: 'auto-stop must not silently auto-send the recording',
+        );
+        expect(
+          voiceFile.existsSync(),
+          isTrue,
+          reason: 'the captured recording must be preserved for review',
+        );
+        expect(find.byKey(const ValueKey('voice-review-send')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('voice-review-discard')),
+          findsOneWidget,
+        );
+      });
+
+      testWidgets('review send delivers the held recording', (tester) async {
+        final reviewScreen = await startThenAutoStop(tester);
+
+        await (reviewScreen.onReviewSend! as Future<void> Function())();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(sendVoiceCalls, 1);
+        expect(
+          messageRepo.store.values.where((m) => !m.isIncoming),
+          isNotEmpty,
+        );
+        expect(find.byKey(const ValueKey('voice-review-send')), findsNothing);
+
+        // Drain the sent message's letter-card entrance timer before teardown.
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+      });
+
+      testWidgets('review discard drops the recording without sending', (
+        tester,
+      ) async {
+        final reviewScreen = await startThenAutoStop(tester);
+
+        await (reviewScreen.onReviewDiscard! as Future<void> Function())();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(sendVoiceCalls, 0);
+        expect(messageRepo.store.values.where((m) => !m.isIncoming), isEmpty);
+        expect(
+          voiceFile.existsSync(),
+          isFalse,
+          reason: 'discard must delete the held recording file',
+        );
+        expect(find.byKey(const ValueKey('voice-review-send')), findsNothing);
+      });
+    });
+
+    // 117 Session 4 (finding #3c downstream): a sent voice message whose relay
+    // upload failed now carries a durable 'upload_pending' owned copy
+    // (sendVoiceMessage; see send_voice_message_durable_copy_test.dart).
+    // conversation_wired must NOT attempt a relay download for it and must not
+    // render "Media unavailable" — the durable file resolves locally and
+    // 'upload_pending' is never flipped/recovered.
+    testWidgets(
+      'sent voice with a durable upload_pending copy is not re-downloaded',
+      (tester) async {
+        const blobId = 'durable-voice-blob-1';
+        final peer = makeContact().peerId;
+        // Production stores the ABSOLUTE durable path (so the retry path's raw
+        // File(localPath).existsSync() resolves it).
+        final durableAbsolute =
+            '${Directory.systemTemp.path}/test_docs/media/$peer/$blobId.m4a';
+        File(durableAbsolute)
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(List<int>.filled(2048, 3));
+        addTearDown(() {
+          final f = File(durableAbsolute);
+          if (f.existsSync()) f.deleteSync();
+        });
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+
+        final durableAttachment = MediaAttachment(
+          id: blobId,
+          messageId: 'sent-voice-durable-1',
+          mime: 'audio/mp4',
+          size: 2048,
+          mediaType: 'audio',
+          durationMs: 4200,
+          localPath: durableAbsolute,
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-02-09T15:30:00.000Z',
+        );
+        final voiceMessage = ConversationMessage(
+          id: 'sent-voice-durable-1',
+          contactPeerId: peer,
+          senderPeerId: makeIdentity().peerId,
+          text: '',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+          media: [durableAttachment],
+        );
+        await messageRepo.saveMessage(voiceMessage);
+        await mediaAttachmentRepo.saveAttachment(durableAttachment);
+
+        var downloadCalls = 0;
+        Future<MediaAttachment?> countingDownloadFn({
+          required Bridge bridge,
+          required MediaAttachmentRepository mediaAttachmentRepo,
+          required MediaFileManager mediaFileManager,
+          required MediaAttachment attachment,
+          required String contactPeerId,
+        }) async {
+          downloadCalls += 1;
+          return null;
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          downloadMediaFn: countingDownloadFn,
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+
+        // The durable copy resolves locally: no relay re-fetch, not unavailable.
+        expect(
+          downloadCalls,
+          0,
+          reason: 'a present durable copy must not trigger a relay download',
+        );
+        expect(find.text('Media unavailable'), findsNothing);
+      },
+    );
+
     testWidgets(
       'voice send persists upload_pending attachment before local transfer',
       (tester) async {
@@ -4363,9 +4935,24 @@ void main() {
         final callOrder = <String>[];
         mediaAttachmentRepo.onSaveAttachment = (attachment) =>
             callOrder.add('save:${attachment.downloadStatus}');
+        // The recording file must exist: the Phase-4 LAN leg encrypts it
+        // (the injected stub copySync's it) before sendLocalMedia.
         final recorder = FakeAudioRecorderService()
           ..fakeDurationMs = 1200
-          ..fakeOutputPath = '/tmp/quoted_voice_pending.m4a';
+          ..fakeOutputPath = (File('/tmp/quoted_voice_pending.m4a')
+                ..writeAsBytesSync(List<int>.filled(64, 1)))
+              .path;
+        addTearDown(() {
+          for (final path in const [
+            '/tmp/quoted_voice_pending.m4a',
+            '/tmp/quoted_voice_pending.m4a.enc',
+          ]) {
+            final file = File(path);
+            if (file.existsSync()) {
+              file.deleteSync();
+            }
+          }
+        });
         final p2pService = TrackingLocalMediaP2PService(
           callOrder: callOrder,
           localPeer: true,
@@ -4379,6 +4966,9 @@ void main() {
           chatListener: chatListener,
           sendFn: _instantSuccessSendFn,
           p2pService: p2pService,
+          // 112 Phase 4: the voice LAN leg encrypts first and is skipped
+          // (fail closed) without a bridge.
+          bridge: FakeBridge(),
           audioRecorderService: recorder,
           mediaAttachmentRepo: mediaAttachmentRepo,
         );
@@ -4417,7 +5007,7 @@ void main() {
     );
 
     testWidgets(
-      'voice local send reuses optimistic attachment id and clears upload_pending placeholder',
+      'voice local transfer uses relay fallback with the optimistic attachment id',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
         final messageRepo = FakeMessageRepository();
@@ -4427,54 +5017,84 @@ void main() {
           contactRepo: FakeContactRepository(),
         );
         final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        // The recording file must exist: the Phase-4 LAN leg encrypts it
+        // (the injected stub copySync's it) before sendLocalMedia.
         final recorder = FakeAudioRecorderService()
           ..fakeDurationMs = 1200
-          ..fakeOutputPath = '/tmp/voice_local_stable.m4a';
+          ..fakeOutputPath = (File('/tmp/voice_local_stable.m4a')
+                ..writeAsBytesSync(List<int>.filled(64, 1)))
+              .path;
+        addTearDown(() {
+          for (final path in const [
+            '/tmp/voice_local_stable.m4a',
+            '/tmp/voice_local_stable.m4a.enc',
+          ]) {
+            final file = File(path);
+            if (file.existsSync()) {
+              file.deleteSync();
+            }
+          }
+        });
+        final callOrder = <String>[];
         final p2pService = TrackingLocalMediaP2PService(
-          callOrder: <String>[],
+          callOrder: callOrder,
           localPeer: true,
           localMediaResult: true,
         );
+        String? capturedBlobId;
 
-        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+        Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceFn({
           required P2PService p2pService,
           required MessageRepository messageRepo,
           required String targetPeerId,
-          required String text,
           required String senderPeerId,
           required String senderUsername,
+          required AudioRecording recording,
+          required Bridge bridge,
+          String? recipientMlKemPublicKey,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager,
+          String? text,
+          String? quotedMessageId,
+          List<double>? waveform,
           String? messageId,
           String? timestamp,
-          Bridge? bridge,
-          String? recipientMlKemPublicKey,
-          String? quotedMessageId,
-          List<MediaAttachment>? mediaAttachments,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-          TransportMetrics? transportMetrics,
+          String? blobId,
+          preparedArtifact,
         }) async {
-          if (mediaAttachments != null && mediaAttachmentRepo != null) {
-            for (final attachment in mediaAttachments) {
-              await mediaAttachmentRepo.saveAttachment(
-                attachment.copyWith(messageId: messageId!),
-              );
-            }
+          capturedBlobId = blobId;
+          callOrder.add('sendVoiceMessage');
+          if (mediaAttachmentRepo != null && messageId != null) {
+            await mediaAttachmentRepo.saveAttachment(
+              MediaAttachment(
+                id: blobId ?? 'voice-local-relay-upload-id',
+                messageId: messageId,
+                mime: recording.mime,
+                size: recording.sizeBytes,
+                mediaType: 'audio',
+                durationMs: recording.durationMs,
+                localPath: recording.filePath,
+                downloadStatus: 'done',
+                createdAt:
+                    timestamp ?? DateTime.now().toUtc().toIso8601String(),
+                waveform: waveform,
+              ),
+            );
           }
 
           final delivered = ConversationMessage(
             id: messageId!,
             contactPeerId: targetPeerId,
             senderPeerId: senderPeerId,
-            text: text,
+            text: text ?? '',
             timestamp: timestamp!,
             status: 'delivered',
             isIncoming: false,
             createdAt: timestamp,
+            quotedMessageId: quotedMessageId,
           );
           await messageRepo.saveMessage(delivered);
-          return (
-            SendChatMessageResult.success,
-            delivered.copyWith(media: mediaAttachments ?? const []),
-          );
+          return (SendVoiceMessageResult.success, delivered);
         }
 
         await pumpScreen(
@@ -4482,10 +5102,12 @@ void main() {
           identityRepo: identityRepo,
           messageRepo: messageRepo,
           chatListener: chatListener,
-          sendFn: sendFn,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
           p2pService: p2pService,
           audioRecorderService: recorder,
           mediaAttachmentRepo: mediaAttachmentRepo,
+          sendVoiceMessageFn: sendVoiceFn,
         );
 
         final screen = tester.widget<ConversationScreen>(
@@ -4502,6 +5124,13 @@ void main() {
             recordingScreen.onRecordStop! as Future<void> Function();
         await stopRecording();
         await tester.pump(const Duration(milliseconds: 300));
+        await pumpUntil(tester, () => capturedBlobId != null);
+
+        expect(
+          callOrder,
+          containsAllInOrder(['sendLocalMedia', 'sendVoiceMessage']),
+        );
+        expect(capturedBlobId, p2pService.lastLocalMediaId);
 
         final sentMessage = messageRepo.store.values.firstWhere(
           (message) => !message.isIncoming,
@@ -4510,6 +5139,7 @@ void main() {
           sentMessage.id,
         );
         expect(attachments.length, 1);
+        expect(attachments.single.id, capturedBlobId);
         expect(attachments.single.downloadStatus, 'done');
         final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
         expect(
@@ -4555,6 +5185,7 @@ void main() {
           String? messageId,
           String? timestamp,
           String? blobId,
+          preparedArtifact,
         }) async {
           capturedBlobId = blobId;
           if (mediaAttachmentRepo != null && messageId != null) {
@@ -4744,6 +5375,8 @@ void main() {
               durationMs,
               waveform,
               allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async => null,
         initialAttachments: [attachment],
       );
@@ -4815,6 +5448,8 @@ void main() {
               durationMs,
               waveform,
               allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async {
               activeBlobId = blobId;
               uploadStarted.complete();
@@ -4982,6 +5617,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 uploadStarted.complete();
                 await uploadGate.future;
@@ -5132,6 +5769,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 uploadStarted.complete();
                 await uploadGate.future;
@@ -5386,6 +6025,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async => MediaAttachment(
                 id: 'uploaded-1',
                 messageId: '',
@@ -5424,6 +6065,168 @@ void main() {
         );
       },
     );
+  });
+
+  group('ConversationWired recording lifecycle', () {
+    Future<FakeAudioRecorderService> pumpAndStartRecording(
+      WidgetTester tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final recorder = FakeAudioRecorderService();
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        audioRecorderService: recorder,
+      );
+
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      final startRecording = screen.onRecordStart! as Future<void> Function();
+      await startRecording();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(recorder.isRecording, isTrue);
+      return recorder;
+    }
+
+    testWidgets('disposing the conversation while recording cancels the '
+        'recorder', (tester) async {
+      final recorder = await pumpAndStartRecording(tester);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      expect(recorder.isRecording, isFalse);
+      expect(recorder.cancelCallCount, 1);
+    });
+
+    testWidgets('recorder auto-stop resets the composer recording state', (
+      tester,
+    ) async {
+      final recorder = await pumpAndStartRecording(tester);
+      expect(find.byType(RecordingOverlay), findsOneWidget);
+
+      await recorder.triggerAutoStop();
+      await tester.pump();
+
+      expect(find.byType(RecordingOverlay), findsNothing);
+      expect(recorder.isRecording, isFalse);
+      expect(recorder.onAutoStopped, isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('disposing with a displaced recording session leaves the '
+        'recorder untouched', (tester) async {
+      final recorder = await pumpAndStartRecording(tester);
+      // Another surface took over the shared recorder (its start()
+      // force-stopped this one's session and installed its own handler);
+      // this screen's recording state is stale.
+      recorder.onAutoStopped = (_) {};
+
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      expect(recorder.cancelCallCount, 0);
+      expect(recorder.isRecording, isTrue);
+      expect(recorder.onAutoStopped, isNotNull);
+    });
+  });
+
+  group('ConversationScreen WhatsApp date separators', () {
+    testWidgets(
+      'older-than-yesterday separator uses weekday + day + month format',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        // A message comfortably older than yesterday (same calendar year).
+        final old = DateTime.now().subtract(const Duration(days: 5));
+        final olderMessage = ConversationMessage(
+          id: 'older-msg',
+          contactPeerId: 'peer-bob',
+          senderPeerId: 'peer-bob',
+          text: 'An older letter',
+          timestamp: old.toUtc().toIso8601String(),
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: old.toUtc().toIso8601String(),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialMessages: [olderMessage],
+        );
+
+        expect(find.text('An older letter'), findsOneWidget);
+
+        final separators = tester
+            .widgetList<DateSeparator>(find.byType(DateSeparator))
+            .toList();
+        expect(separators, hasLength(1));
+        // WhatsApp style: e.g. "Wed 9. Jun" -- abbreviated weekday, day,
+        // period, abbreviated month. NOT the old "Jun 9" (MMMd) format.
+        expect(
+          separators.single.label,
+          matches(RegExp(r'^[A-Za-z]{3} \d{1,2}\. [A-Za-z]{3}$')),
+        );
+      },
+    );
+
+    testWidgets('today separator shows the localized Today label', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      final todayMessage = ConversationMessage(
+        id: 'today-msg',
+        contactPeerId: 'peer-bob',
+        senderPeerId: 'peer-bob',
+        text: 'A fresh letter',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        initialMessages: [todayMessage],
+      );
+
+      final separators = tester
+          .widgetList<DateSeparator>(find.byType(DateSeparator))
+          .toList();
+      expect(separators, hasLength(1));
+      expect(separators.single.label, 'Today');
+    });
   });
 }
 

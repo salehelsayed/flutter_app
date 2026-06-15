@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
@@ -272,6 +274,98 @@ void main() {
 
       // First fails (bridge throw → caught as error), second succeeds
       expect(result, 1);
+    });
+
+    test(
+      'sends keyExchangeRetry to contacts in re-announce marker even when '
+      'their key is non-null',
+      () async {
+        contactRepo.seed([
+          _makeContact('has-key-1234567890', mlKemPublicKey: 'their-key'),
+          _makeContact('other-key-1234567890', mlKemPublicKey: 'other-key'),
+        ]);
+        final secureKeyStore = FakeSecureKeyStore();
+        await writeMlKemReannounceMarker(secureKeyStore, [
+          'has-key-1234567890',
+        ]);
+
+        final result = await retryIncompleteKeyExchanges(
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          secureKeyStore: secureKeyStore,
+        );
+
+        // Only the marker contact is re-announced; the other keyed contact
+        // keeps the long-standing skip behavior.
+        expect(result, 1);
+      },
+    );
+
+    test(
+      'removes peer from marker only after successful send; partial failure '
+      'retains remainder',
+      () async {
+        contactRepo.seed([
+          _makeContact('marker-a-1234567890', mlKemPublicKey: 'key-a'),
+          _makeContact('marker-b-1234567890', mlKemPublicKey: 'key-b'),
+        ]);
+        final secureKeyStore = FakeSecureKeyStore();
+        await writeMlKemReannounceMarker(secureKeyStore, [
+          'marker-a-1234567890',
+          'marker-b-1234567890',
+        ]);
+
+        // First contact's sign call fails → its send fails; second succeeds.
+        final failingBridge = _FailOnNthBridge(failOnCall: 1);
+        failingBridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'test-sig',
+        };
+        failingBridge.responses['contactrequest.encrypt'] = {
+          'ok': true,
+          'ephemeralPublicKey': 'ephPub',
+          'ciphertext': 'ct',
+          'nonce': 'nonce',
+        };
+
+        final result = await retryIncompleteKeyExchanges(
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          bridge: failingBridge,
+          secureKeyStore: secureKeyStore,
+        );
+
+        expect(result, 1);
+        final remaining = await readMlKemReannounceMarker(secureKeyStore);
+        expect(remaining, ['marker-a-1234567890']);
+      },
+    );
+
+    test('marker drained empty clears the secure-storage entry', () async {
+      contactRepo.seed([
+        _makeContact('only-marker-1234567890', mlKemPublicKey: 'their-key'),
+      ]);
+      final secureKeyStore = FakeSecureKeyStore();
+      await writeMlKemReannounceMarker(secureKeyStore, [
+        'only-marker-1234567890',
+      ]);
+
+      final result = await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        secureKeyStore: secureKeyStore,
+      );
+
+      expect(result, 1);
+      expect(
+        await secureKeyStore.containsKey(kMlKemReannouncePendingKey),
+        isFalse,
+      );
     });
   });
 }

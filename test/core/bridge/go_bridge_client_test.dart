@@ -170,6 +170,7 @@ void main() {
       'contactrequest.decrypt': 'decryptContactRequest',
       'node:start': 'startNode',
       'rendezvous:register': 'rendezvousRegister',
+      'rendezvous:unregister': 'rendezvousUnregister',
       'rendezvous:discover': 'rendezvousDiscover',
       'relay:probe': 'relayProbe',
       'peer:dial': 'dialPeer',
@@ -181,6 +182,7 @@ void main() {
       'inbox:ack': 'inboxAck',
       'inbox:store': 'inboxStore',
       'inbox:register_token': 'inboxRegisterToken',
+      'inbox:unregister_token': 'inboxUnregisterToken',
       'media:upload': 'mediaUpload',
       'media:download': 'mediaDownload',
       'media:delete': 'mediaDelete',
@@ -1503,6 +1505,41 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       );
     });
 
+    test('media download completion push event exposes source telemetry', () {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink((payload) {
+        flowEvents.add(Map<String, dynamic>.from(payload));
+      });
+
+      client.debugHandleEventForTest(
+        jsonEncode({
+          'event': 'media:download_complete',
+          'data': {
+            'id': 'blob-ob-mdl-001',
+            'totalBytes': 4096,
+            'sourceRole': 'relay_media_store',
+            'sourcePeerId':
+                '12D3KooWMediaRelayTelemetryPeerIdentifierForRedaction',
+            'sourcePeerShort': 'relay123',
+            'streamTransport': 'direct',
+            'servedByPhone': false,
+            'routedViaRelayStore': true,
+          },
+        }),
+      );
+
+      final event = flowEvents.singleWhere(
+        (payload) => payload['event'] == 'media:download_complete',
+      );
+      final details = event['details'] as Map<String, dynamic>;
+      expect(details['sourceRole'], 'relay_media_store');
+      expect(details['sourcePeerId'], '[redacted]');
+      expect(details['sourcePeerShort'], 'relay123');
+      expect(details['streamTransport'], 'direct');
+      expect(details['servedByPhone'], isFalse);
+      expect(details['routedViaRelayStore'], isTrue);
+    });
+
     test('group publish debug push event keeps the raw flow event name', () {
       flowEventLoggingEnabled = true;
       final flowEvents = <Map<String, dynamic>>[];
@@ -2482,6 +2519,33 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
     );
 
     test(
+      'routes media:download_progress to mediaDownloadProgressStream',
+      () async {
+        final eventFuture = mediaDownloadProgressStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'media:download_progress',
+            'data': {
+              'id': 'blob-2',
+              'receivedBytes': 7,
+              'totalBytes': 14,
+              'fromPeerId': 'relay-1',
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        expect(received['id'], 'blob-2');
+        expect(received['receivedBytes'], 7);
+        expect(received['totalBytes'], 14);
+        expect(received['fromPeerId'], 'relay-1');
+      },
+    );
+
+    test(
       'PL-008 bridge routes group messages while media progress events arrive',
       () async {
         final progressEvents = <Map<String, dynamic>>[];
@@ -3159,7 +3223,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 51 commands are covered', () async {
+  test('all 53 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -3182,6 +3246,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'node:status',
       // Rendezvous
       'rendezvous:register',
+      'rendezvous:unregister',
       'rendezvous:discover',
       // Relay
       'relay:reconnect',
@@ -3198,6 +3263,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'inbox:retrieve_pending',
       'inbox:ack',
       'inbox:register_token',
+      'inbox:unregister_token',
       // Media
       'media:upload',
       'media:download',
@@ -3226,7 +3292,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'group.decrypt',
     ];
 
-    expect(allCmds, hasLength(51));
+    expect(allCmds, hasLength(53));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

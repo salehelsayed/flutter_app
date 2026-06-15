@@ -71,6 +71,7 @@ import 'package:flutter_app/core/database/migrations/071_pending_introduction_re
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
+import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -165,6 +166,7 @@ void main() {
     await runGroupPendingMembershipMessagesMigration(db);
     await runGroupMessageLastSendAttemptAtMigration(db);
     await runGroupMessageLogicalDeliveryIdMigration(db);
+    await runMessageRelayCustodyMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -279,6 +281,7 @@ void main() {
     await runGroupPendingMembershipMessagesMigration(db);
     await runGroupMessageLastSendAttemptAtMigration(db);
     await runGroupMessageLogicalDeliveryIdMigration(db);
+    await runMessageRelayCustodyMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -1157,6 +1160,7 @@ void main() {
       await runGroupMessageLastSendAttemptAtMigration(db);
       await runGroupMessageLogicalDeliveryIdMigration(db);
       await runGroupMessageLogicalDeliveryIdMigration(db);
+      await runMessageRelayCustodyMigration(db);
 
       // Seed data
       await db.insert('identity', {

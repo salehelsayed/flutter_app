@@ -4,11 +4,16 @@ abstract class NotificationService {
   Future<void> initialize();
 
   /// Show a notification for an incoming message.
+  ///
+  /// When [silent] is true (118 Phase 3/4: within the per-conversation tone
+  /// debounce window) the notification updates in place with no sound or
+  /// vibration, reusing the per-conversation notification id.
   Future<void> showMessageNotification({
     required String contactPeerId,
     required String senderUsername,
     required String messageText,
     String? payload,
+    bool silent = false,
   });
 
   /// Show a generic notification with a title, body, and optional payload.

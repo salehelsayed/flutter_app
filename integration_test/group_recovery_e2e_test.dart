@@ -176,6 +176,18 @@ Future<void> _pumpFrames(WidgetTester tester, {int count = 10}) async {
   }
 }
 
+Future<void> _pumpUntilAsync(
+  WidgetTester tester,
+  Future<bool> Function() predicate, {
+  int attempts = 30,
+}) async {
+  for (var i = 0; i < attempts; i++) {
+    if (await predicate()) return;
+    await _pumpFrames(tester, count: 2);
+  }
+  expect(await predicate(), isTrue);
+}
+
 Future<void> _addSignedInboxPage({
   required _CursorInboxBridge bridge,
   required GroupTestUser sender,
@@ -429,6 +441,7 @@ void main() {
               identityRepo: identityRepo,
               contactRepo: InMemoryContactRepository(),
               p2pService: FakeP2PService(),
+              mediaAttachmentRepo: alice.mediaAttachmentRepo,
             ),
           ),
         );
@@ -451,18 +464,21 @@ void main() {
         expect(failedRow.status, 'failed');
         expect(
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
-          text,
+          isEmpty,
         );
 
         final retryScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
-        final retrySend = retryScreen.onSend as Future<void> Function(String);
-        await tester.runAsync(() async {
-          await retrySend(text);
+        expect(retryScreen.onRetryFailedMessage, isNotNull);
+        retryScreen.onRetryFailedMessage!(failedRow.id);
+        await _pumpUntilAsync(tester, () async {
+          await _pumpNetwork();
+          final messages = (await alice.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == failedRow.id).toList();
+          return messages.length == 1 && messages.single.status == 'sent';
         });
-        await _pumpFrames(tester, count: 20);
-        await _pumpNetwork();
 
         final storedRows = (await alice.loadGroupMessages(
           groupId,

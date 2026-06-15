@@ -4,10 +4,12 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -143,6 +145,17 @@ attachPostMedia({
       durationMs: prepared.durationMs,
       waveform: prepared.waveform,
     );
+    // Temp hygiene (doc-112 parity): the processed plaintext temp is only
+    // an upload input — the draft SOURCE stays (recovery replay re-reads
+    // it). Voice passes through _prepareDraft unchanged, hence the guard.
+    if (prepared.localFilePath != drafts[index].localFilePath) {
+      try {
+        final processedTemp = File(prepared.localFilePath);
+        if (processedTemp.existsSync()) {
+          processedTemp.deleteSync();
+        }
+      } catch (_) {}
+    }
     if (uploaded == null) {
       return (
         AttachPostMediaResult.uploadFailed,
@@ -213,6 +226,17 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
   );
   await postRepo.savePost(updatedPost);
   await postRepo.replacePostMediaUploadRecoveryItems(created.post.id, const []);
+  // Best-effort draft-source cleanup, ONLY after the recovery items are
+  // cleared — until then recovery replay re-reads the source, and a missing
+  // source fails the post permanently.
+  for (final draft in drafts) {
+    try {
+      final source = File(draft.localFilePath);
+      if (source.existsSync()) {
+        source.deleteSync();
+      }
+    } catch (_) {}
+  }
   return (
     SendPostResult.success,
     created.copyWith(post: updatedPost, mediaDrafts: const <PostMediaDraft>[]),
@@ -241,14 +265,32 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
     details: {'postId': postId, 'blobId': blobId},
   );
 
+  String? encryptedPath;
   try {
     final file = File(localFilePath);
+
+    // Doc 113 G1/G2/G6/G7a: every author-attached blob is AES-256-GCM
+    // encrypted with a fresh random per-blob key before upload; the relay
+    // sees only ciphertext under the opaque transport mime, and contentHash
+    // is the SHA-256 of the ENCRYPTED artifact (MIG-012). Any crypto failure
+    // returns null → the existing uploadFailed path (fail closed).
+    final keyBase64 = await callBlobKeygen(bridge);
+    final encrypted = await callBlobEncrypt(
+      bridge,
+      filePath: localFilePath,
+      keyBase64: keyBase64,
+    );
+    encryptedPath = encrypted.encryptedPath;
+    final contentHash = await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+      encryptedPath,
+    );
+
     final result = await callP2PMediaUpload(
       bridge,
       id: blobId,
       toPeerId: ownerPeerId,
-      mime: mime,
-      filePath: localFilePath,
+      mime: kOpaqueMediaTransportMime,
+      filePath: encryptedPath,
       allowedPeers: allowedPeers,
     );
     if (result['ok'] != true) {
@@ -266,6 +308,8 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
 
     String? storedPath;
     if (mediaFileManager != null) {
+      // The durable local copy stays the PLAINTEXT source — it is the
+      // sender's render source (real-mime extension preserved).
       final absolutePath = await mediaFileManager.localPathForPostAttachment(
         postId: postId,
         blobId: blobId,
@@ -293,6 +337,11 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
       downloadStatus: storedPath == null ? 'pending' : 'done',
       createdAt: DateTime.now().toUtc().toIso8601String(),
       waveform: waveform,
+      encryptionKeyBase64: keyBase64,
+      encryptionNonce: encrypted.nonce,
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      contentHash: contentHash,
+      isEncrypted: true,
     );
   } catch (e) {
     emitFlowEvent(
@@ -301,6 +350,15 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
       details: {'postId': postId, 'error': e.toString()},
     );
     return null;
+  } finally {
+    if (encryptedPath != null) {
+      try {
+        final encryptedFile = File(encryptedPath);
+        if (encryptedFile.existsSync()) {
+          encryptedFile.deleteSync();
+        }
+      } catch (_) {}
+    }
   }
 }
 

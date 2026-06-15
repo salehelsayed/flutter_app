@@ -90,6 +90,33 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/signal_files.dart';
+
+// ---------------------------------------------------------------------------
+// Multi-relay closure gate
+// ---------------------------------------------------------------------------
+
+// Folded in from the deleted relay_chaos_soak_test wrapper. When
+// MKNOON_REQUIRE_MULTI_RELAY=true the run asserts that at least two
+// comma-separated MKNOON_RELAY_ADDRESSES entries are configured so the relay
+// churn path is actually exercised. The gate defaults OFF — when it is unset
+// the single-relay default behavior of this source test is unchanged.
+const _configuredRelayAddresses = String.fromEnvironment(
+  'MKNOON_RELAY_ADDRESSES',
+  defaultValue: '',
+);
+const _requireConfiguredMultiRelayAddresses = bool.fromEnvironment(
+  'MKNOON_REQUIRE_MULTI_RELAY',
+);
+
+bool _hasConfiguredMultiRelayAddresses() {
+  final addresses = _configuredRelayAddresses
+      .split(',')
+      .map((entry) => entry.trim())
+      .where((entry) => entry.isNotEmpty)
+      .toList(growable: false);
+  return addresses.length >= 2;
+}
 
 // ---------------------------------------------------------------------------
 // Signal helpers
@@ -107,24 +134,10 @@ String _signalDir() {
   return '${Directory.systemTemp.path}/e2e_soak_signals';
 }
 
-bool _signalExists(String name) {
-  return File('${_signalDir()}/$name').existsSync();
-}
-
-String? _readSignal(String name) {
-  final f = File('${_signalDir()}/$name');
-  if (!f.existsSync()) return null;
-  return f.readAsStringSync();
-}
-
-void _writeSignal(String name, String content) {
-  File('${_signalDir()}/$name').writeAsStringSync(content);
-}
-
-void _deleteSignal(String name) {
-  final f = File('${_signalDir()}/$name');
-  if (f.existsSync()) f.deleteSync();
-}
+/// Canonical flat signal coordinator for the soak harness side. Produces
+/// `<_signalDir()>/<name>`, byte-identical to the old inline `_signalExists`
+/// / `_readSignal` / `_writeSignal` helpers (no prefix, no runId).
+final SignalDir _signals = SignalDir.flat(_signalDir(), role: 'SoakHarness');
 
 // ---------------------------------------------------------------------------
 // Main test
@@ -133,9 +146,27 @@ void _deleteSignal(String name) {
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  // Multi-relay closure gate: when MKNOON_REQUIRE_MULTI_RELAY=true this run must
+  // have at least two MKNOON_RELAY_ADDRESSES entries configured (the relay churn
+  // path the deleted relay_chaos_soak_test wrapper used to assert). Fail closed
+  // before the soak loop runs if the requirement is not met. With the gate off
+  // (default) the soak test runs exactly as before.
+  if (_requireConfiguredMultiRelayAddresses &&
+      !_hasConfiguredMultiRelayAddresses()) {
+    testWidgets('multi-relay fixture is required for this closure run', (
+      _,
+    ) async {
+      fail(
+        'MKNOON_REQUIRE_MULTI_RELAY=true requires at least two comma-separated '
+        'MKNOON_RELAY_ADDRESSES entries via --dart-define.',
+      );
+    });
+    return;
+  }
+
   testWidgets('soak E2E — signal-driven loop', (tester) async {
     // 1. Read CLI peer fixture
-    final fixtureFile = File('${_signalDir()}/cli_peer_fixture.json');
+    final fixtureFile = File(_signals.path('cli_peer_fixture.json'));
     if (!fixtureFile.existsSync()) {
       print(
         '[SOAK] SKIP: CLI peer fixture not found at ${fixtureFile.path}. '
@@ -354,15 +385,15 @@ void main() {
     listener.start();
 
     // Write our fixture for the orchestrator
-    _writeSignal(
+    _signals.writeSignal(
       'flutter_peer_fixture.json',
-      jsonEncode({
+      content: jsonEncode({
         'peerId': myPeerId,
         'publicKey': identity['publicKey'],
         'mlKemPublicKey': myMlKemPK,
       }),
     );
-    _writeSignal('phase4_initial_ready', 'ready');
+    _signals.writeSignal('phase4_initial_ready', content: 'ready');
 
     Future<Map<String, dynamic>> buildStats({
       required int sentCount,
@@ -396,12 +427,12 @@ void main() {
     int healthCheckCount = 0;
     int loopCount = 0;
 
-    while (!_signalExists('soak_done')) {
+    while (!_signals.exists('soak_done')) {
       loopCount++;
 
-      if (_signalExists('phase4_resume_and_send')) {
-        final requestRaw = _readSignal('phase4_resume_and_send');
-        _deleteSignal('phase4_resume_and_send');
+      if (_signals.exists('phase4_resume_and_send')) {
+        final requestRaw = _signals.read('phase4_resume_and_send');
+        _signals.delete('phase4_resume_and_send');
 
         final request = requestRaw == null || requestRaw.isEmpty
             ? const <String, dynamic>{}
@@ -434,9 +465,9 @@ void main() {
             .toList();
         final persisted = matching.isNotEmpty ? matching.last : null;
 
-        _writeSignal(
+        _signals.writeSignal(
           'phase4_result',
-          jsonEncode({
+          content: jsonEncode({
             'text': phase4Text,
             'discoverMissBeforeResume': discoveredBeforeResume == null,
             'discoverMissAfterResume': discoveredAfterResume == null,
@@ -453,8 +484,8 @@ void main() {
       }
 
       // Check for send signal
-      if (_signalExists('soak_send_next')) {
-        _deleteSignal('soak_send_next');
+      if (_signals.exists('soak_send_next')) {
+        _signals.delete('soak_send_next');
         sentCount++;
         await sendChatMessage(
           p2pService: p2pService,
@@ -469,15 +500,15 @@ void main() {
       }
 
       // Check for drain signal
-      if (_signalExists('soak_drain_inbox')) {
-        _deleteSignal('soak_drain_inbox');
+      if (_signals.exists('soak_drain_inbox')) {
+        _signals.delete('soak_drain_inbox');
         drainCount++;
         await p2pService.drainOfflineInbox();
       }
 
       // Check for health check signal
-      if (_signalExists('soak_health_check')) {
-        _deleteSignal('soak_health_check');
+      if (_signals.exists('soak_health_check')) {
+        _signals.delete('soak_health_check');
         healthCheckCount++;
         await handleAppResumed(bridge: bridge, p2pService: p2pService);
       }
@@ -490,7 +521,7 @@ void main() {
           healthCheckCount: healthCheckCount,
           loopCount: loopCount,
         );
-        _writeSignal('soak_stats', jsonEncode(stats));
+        _signals.writeSignal('soak_stats', content: jsonEncode(stats));
       }
 
       await Future.delayed(const Duration(milliseconds: 500));
@@ -503,7 +534,7 @@ void main() {
       healthCheckCount: healthCheckCount,
       loopCount: loopCount,
     );
-    _writeSignal('soak_final_stats', jsonEncode(finalStats));
+    _signals.writeSignal('soak_final_stats', content: jsonEncode(finalStats));
 
     // Cleanup
     listener.dispose();

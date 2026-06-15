@@ -13,6 +13,8 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
@@ -35,6 +37,8 @@ BackgroundPushNotificationResolver _backgroundPushNotificationResolver =
 BackgroundPushNotificationDisplayEligibilityResolver
 _backgroundPushNotificationDisplayEligibilityResolver =
     resolveBackgroundPushNotificationDisplayEligibilityFromLocalState;
+AccountMigrationNetworkGate _backgroundAccountMigrationNetworkGate =
+    _defaultBackgroundAccountMigrationNetworkGate;
 
 @visibleForTesting
 void debugSetBackgroundPushNotificationResolver(
@@ -59,6 +63,19 @@ void debugSetBackgroundPushNotificationDisplayEligibilityResolver(
 void debugResetBackgroundPushNotificationDisplayEligibilityResolver() {
   _backgroundPushNotificationDisplayEligibilityResolver =
       resolveBackgroundPushNotificationDisplayEligibilityFromLocalState;
+}
+
+@visibleForTesting
+void debugSetBackgroundAccountMigrationNetworkGate(
+  AccountMigrationNetworkGate gate,
+) {
+  _backgroundAccountMigrationNetworkGate = gate;
+}
+
+@visibleForTesting
+void debugResetBackgroundAccountMigrationNetworkGate() {
+  _backgroundAccountMigrationNetworkGate =
+      _defaultBackgroundAccountMigrationNetworkGate;
 }
 
 Future<void> _initializeBackgroundNotifications() async {
@@ -195,12 +212,60 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<PushFallbackNotificationDisplayEligibility>
 resolveBackgroundPushNotificationDisplayEligibilityFromLocalState(
   RemoteMessage message,
-) {
+) async {
+  final accountNetworkAllowed =
+      await _allowsBackgroundAccountNotificationDisplay();
+  if (!accountNetworkAllowed.shouldDisplay) {
+    return accountNetworkAllowed;
+  }
+
   return resolveBackgroundPushFallbackDisplayEligibility(
     message,
     groupMessageDisplayEligibilityResolver:
         _resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb,
   );
+}
+
+Future<PushFallbackNotificationDisplayEligibility>
+_allowsBackgroundAccountNotificationDisplay() async {
+  try {
+    final allowed = await _backgroundAccountMigrationNetworkGate(
+      operation: 'push_background_notification_display',
+    );
+    if (allowed) {
+      return const PushFallbackNotificationDisplayEligibility.allow();
+    }
+    return const PushFallbackNotificationDisplayEligibility.suppressed(
+      'account_migration_network_blocked',
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_ACCOUNT_MIGRATION_GATE_ERROR',
+      details: {'error': e.toString()},
+    );
+    return const PushFallbackNotificationDisplayEligibility.suppressed(
+      'account_migration_network_gate_error',
+    );
+  }
+}
+
+Future<bool> _defaultBackgroundAccountMigrationNetworkGate({
+  String? peerId,
+  required String operation,
+}) {
+  final gate = AccountMigrationRuntimeNetworkGate(
+    authorityRepository: SecureKeyStoreAccountMigrationAuthorityRepository(
+      secureKeyStore: FlutterSecureKeyStore(),
+    ),
+  );
+  // Notification display has no relay side effects, so it follows the
+  // display policy (which stays allowed during a Move Account export pause)
+  // rather than the network-side-effect policy.
+  if (operation == 'push_background_notification_display') {
+    return gate.allowsAccountNotificationDisplay(peerId: peerId);
+  }
+  return gate.allowsAccountNetworkSideEffects(peerId: peerId, operation: operation);
 }
 
 Future<GroupMessageNotificationDisplayEligibility>

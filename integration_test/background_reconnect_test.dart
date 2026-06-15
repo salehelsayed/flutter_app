@@ -27,30 +27,9 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/node_readiness.dart';
 
 final _relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
-
-Future<bool> _waitFor(
-  bool Function() condition, {
-  Duration timeout = const Duration(seconds: 30),
-  Duration interval = const Duration(milliseconds: 500),
-  String label = '',
-}) async {
-  final stopwatch = Stopwatch()..start();
-  while (stopwatch.elapsed < timeout) {
-    if (condition()) {
-      stopwatch.stop();
-      print(
-        '[WAIT] "$label" satisfied after ${stopwatch.elapsedMilliseconds}ms',
-      );
-      return true;
-    }
-    await Future<void>.delayed(interval);
-  }
-  stopwatch.stop();
-  print('[WAIT] "$label" TIMED OUT after ${stopwatch.elapsedMilliseconds}ms');
-  return false;
-}
 
 bool _isSendable(NodeState state) {
   return state.badgeReadinessState == BadgeReadinessState.online ||
@@ -129,7 +108,7 @@ void main() {
           fail('P2P node failed to start');
         }
 
-        final reachedRelayReady = await _waitFor(
+        final reachedRelayReady = await waitFor(
           () => _isRelayReady(p2pService.currentState),
           timeout: const Duration(seconds: 30),
           label: 'Initial Online.',
@@ -159,7 +138,7 @@ void main() {
             jsonDecode(disconnectResponse) as Map<String, dynamic>;
         print('[PHASE 2] Disconnect result: ${disconnectResult['ok']}');
 
-        final relayDropped = await _waitFor(
+        final relayDropped = await waitFor(
           () => !_isRelayReady(p2pService.currentState),
           timeout: const Duration(seconds: 15),
           label: 'Relay-ready badge dropped',
@@ -211,7 +190,7 @@ void main() {
         print('[PHASE 3] retrieveInbox succeeded in ${inboxMs}ms');
         print('[PHASE 3] Retrieved ${inboxMessages.length} messages');
 
-        final reachedPlainOnline = await _waitFor(
+        final reachedPlainOnline = await waitFor(
           () => _isPlainOnline(p2pService.currentState),
           timeout: const Duration(seconds: 15),
           label: 'Plain Online before dotted reconnect',
@@ -240,7 +219,7 @@ void main() {
             jsonDecode(reconnectResponse) as Map<String, dynamic>;
         print('[PHASE 4] relay:reconnect result: ${reconnectResult['ok']}');
 
-        final reachedDottedOnline = await _waitFor(
+        final reachedDottedOnline = await waitFor(
           () => _isRelayReady(p2pService.currentState),
           timeout: const Duration(seconds: 30),
           label: 'Relay-ready Online. restored',

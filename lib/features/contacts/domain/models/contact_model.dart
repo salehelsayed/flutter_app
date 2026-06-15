@@ -29,6 +29,11 @@ class ContactModel {
   /// Base64-encoded ML-KEM-768 public key for post-quantum encryption.
   final String? mlKemPublicKey;
 
+  /// Signed-payload `ts` of the last accepted ML-KEM key update. Anti-
+  /// rollback: a key change is only accepted when its signed ts is strictly
+  /// newer than this (falling back to [scannedAt] when never updated).
+  final String? mlKemKeyUpdatedTs;
+
   /// Whether this contact is archived (hidden from active list).
   final bool isArchived;
 
@@ -63,6 +68,7 @@ class ContactModel {
     this.avatarPath,
     this.avatarVersion,
     this.mlKemPublicKey,
+    this.mlKemKeyUpdatedTs,
     this.isArchived = false,
     this.archivedAt,
     this.isBlocked = false,
@@ -100,6 +106,7 @@ class ContactModel {
       avatarPath: map['avatar_path'] as String?,
       avatarVersion: map['avatar_version'] as String?,
       mlKemPublicKey: map['ml_kem_public_key'] as String?,
+      mlKemKeyUpdatedTs: map['ml_kem_key_updated_ts'] as String?,
       isArchived: (map['is_archived'] as int? ?? 0) == 1,
       archivedAt: map['archived_at'] as String?,
       isBlocked: (map['is_blocked'] as int? ?? 0) == 1,
@@ -123,6 +130,7 @@ class ContactModel {
       'avatar_path': avatarPath,
       'avatar_version': avatarVersion,
       'ml_kem_public_key': mlKemPublicKey,
+      'ml_kem_key_updated_ts': mlKemKeyUpdatedTs,
       'is_archived': isArchived ? 1 : 0,
       'archived_at': archivedAt,
       'is_blocked': isBlocked ? 1 : 0,
@@ -145,6 +153,7 @@ class ContactModel {
     String? avatarPath,
     String? avatarVersion,
     String? mlKemPublicKey,
+    String? mlKemKeyUpdatedTs,
     bool? isArchived,
     String? archivedAt,
     bool clearArchivedAt = false,
@@ -167,6 +176,7 @@ class ContactModel {
       avatarPath: avatarPath ?? this.avatarPath,
       avatarVersion: avatarVersion ?? this.avatarVersion,
       mlKemPublicKey: mlKemPublicKey ?? this.mlKemPublicKey,
+      mlKemKeyUpdatedTs: mlKemKeyUpdatedTs ?? this.mlKemKeyUpdatedTs,
       isArchived: isArchived ?? this.isArchived,
       archivedAt: clearArchivedAt ? null : (archivedAt ?? this.archivedAt),
       isBlocked: isBlocked ?? this.isBlocked,

@@ -14,4 +14,10 @@ abstract class AudioRecorderService {
   Stream<Duration> get durationStream;
   Stream<double> get amplitudeStream;
   Future<void> dispose();
+
+  /// Invoked after the recorder stops itself at the max recording duration,
+  /// with the result of that internal stop. Auto-stop happens without any user
+  /// gesture, so the active UI surface sets this to resync its composer state
+  /// and clears it again on its own stop/cancel paths.
+  void Function(AudioRecording? recording)? onAutoStopped;
 }

@@ -4895,12 +4895,24 @@ void main() {
         groupMessageListener: listener,
       );
 
-      expect(await groupRepo.getGroup('group-1'), isNull);
+      // B3: the quiet group is now RETAINED read-only on self-removal (was
+      // hard-deleted). Self is no longer an active member, keys are gone, and a
+      // single visible `sys-member_removed:` timeline row replaces the previous
+      // purged `status:'cutoff'` placeholder — but still no chat (content) row.
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
       expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+      expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
       expect(await groupRepo.getLatestKey('group-1'), isNull);
       expect(bridge.commandLog, contains('group:leave'));
       expect(removedGroups, ['group-1']);
-      expect(msgRepo.count, 0);
+      final retainedMessages = await msgRepo.getMessagesPage('group-1');
+      expect(
+        retainedMessages.map((message) => message.text),
+        ['Admin removed Self'],
+        reason:
+            'Self-removal retains a visible removal timeline message, not a chat row',
+      );
+      expect(msgRepo.count, 1);
     },
   );
 
@@ -5001,16 +5013,36 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         groupMessageListener: listener,
+        // B3: with the group now RETAINED (not deleted) on self-removal, the
+        // drain's early-stop is keyed on `_didSystemReplayRemoveLocalSelf`
+        // (self no longer an active member) rather than the group vanishing,
+        // which requires the same `selfPeerId` every production call site
+        // (main.dart / handle_app_resumed / startup_router) already passes.
+        selfPeerId: 'peer-self',
       );
 
-      expect(await groupRepo.getGroup('group-1'), isNull);
+      // B3: the group is RETAINED read-only after self-removal (was deleted).
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+      expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
       expect(bridge.commandLog, contains('group:leave'));
       expect(removedGroups, ['group-1']);
+      final retainedMessages = await msgRepo.getMessagesPage('group-1');
       expect(
-        msgRepo.count,
-        0,
+        retainedMessages.where(
+          (message) =>
+              message.text == 'Queued after removal on same page' ||
+              message.text == 'Queued after removal on next page',
+        ),
+        isEmpty,
         reason:
             'Queued post-removal inbox traffic must not be persisted for the removed peer',
+      );
+      expect(
+        retainedMessages.map((message) => message.text),
+        ['Admin removed Self'],
+        reason:
+            'Only the visible self-removal timeline row is retained, no queued content',
       );
 
       final retrieveCount = bridge.commandLog
@@ -5020,7 +5052,7 @@ void main() {
         retrieveCount,
         1,
         reason:
-            'Drain should stop before later cursor pages once replayed self-removal deletes the group',
+            'Drain should stop before later cursor pages once replayed self-removal cuts off the group',
       );
     },
   );
@@ -5176,8 +5208,13 @@ void main() {
       );
 
       expect(result.isSuccessful, isTrue);
-      expect(await groupRepo.getGroup(groupId), isNull);
+      // B3: the group is RETAINED read-only after self-removal (was deleted).
+      // Charlie (self) is no longer an active member and keys are gone, but the
+      // remaining members from the authoritative snapshot persist.
+      expect(await groupRepo.getGroup(groupId), isNotNull);
       expect(await groupRepo.getMember(groupId, charliePeerId), isNull);
+      expect(await groupRepo.getMember(groupId, alicePeerId), isNotNull);
+      expect(await groupRepo.getMember(groupId, bobPeerId), isNotNull);
       expect(await groupRepo.getLatestKey(groupId), isNull);
       expect(bridge.commandLog, contains('group:leave'));
       expect(removedGroups, [groupId]);

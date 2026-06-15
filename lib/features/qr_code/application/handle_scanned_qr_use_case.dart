@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/scanned_qr_classifier.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
 /// Result of handling a scanned QR code.
@@ -18,6 +19,8 @@ enum HandleScannedQRResult {
   invalidSignature,
   expired,
   dbError,
+  migrationHandled,
+  unsupportedMigrationQr,
 }
 
 /// Handles a scanned QR code string end-to-end.
@@ -34,6 +37,7 @@ Future<HandleScannedQRResult> handleScannedQR({
   required IdentityRepository identityRepo,
   required P2PService p2pService,
   required String ownPeerId,
+  MigrationQrScannedHandler? onMigrationQrScanned,
   DownloadProfilePictureFn downloadProfilePictureFn = downloadProfilePicture,
 }) async {
   emitFlowEvent(
@@ -41,6 +45,25 @@ Future<HandleScannedQRResult> handleScannedQR({
     event: 'QR_HANDLE_SCANNED_START',
     details: {'length': qrData.length},
   );
+
+  if (isAccountMigrationPairingQr(qrData)) {
+    if (onMigrationQrScanned == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'QR_HANDLE_SCANNED_MIGRATION_UNSUPPORTED',
+        details: {},
+      );
+      return HandleScannedQRResult.unsupportedMigrationQr;
+    }
+
+    await onMigrationQrScanned(qrData);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_HANDLE_SCANNED_MIGRATION_DISPATCHED',
+      details: {},
+    );
+    return HandleScannedQRResult.migrationHandled;
+  }
 
   // 1. Parse and validate
   final (parseResult, contact) = await parseQRPayload(

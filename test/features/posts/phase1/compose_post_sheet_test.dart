@@ -158,6 +158,46 @@ void main() {
     },
   );
 
+  testWidgets(
+    'recorder auto-stop resets the recording UI without attaching a draft',
+    (tester) async {
+      final recorder = FakeAudioRecorderService()
+        ..fakeDurationMs = 6400
+        ..fakeOutputPath = '/tmp/post_voice.m4a';
+      addTearDown(() async {
+        await recorder.dispose();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ComposePostSheet(
+              eligibleContacts: const <ContactModel>[],
+              audioRecorderService: recorder,
+              onSubmit: (result) async {},
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Voice'));
+      await tester.pump();
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(recorder.isRecording, isTrue);
+
+      await recorder.triggerAutoStop();
+      await tester.pump();
+
+      expect(find.text('Cancel'), findsNothing);
+      expect(find.text('Voice attached'), findsNothing);
+      expect(recorder.isRecording, isFalse);
+      expect(recorder.onAutoStopped, isNull);
+    },
+  );
+
   test(
     'fake recorder cancels a delayed voice start when stop is requested',
     () async {

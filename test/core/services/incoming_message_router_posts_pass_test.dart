@@ -80,6 +80,8 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override

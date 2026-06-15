@@ -31,7 +31,9 @@ Files:
 
 When to run:
 
-- Run when shared 1:1 send, retry, upload, listener, inbox, or feed-originated 1:1 entry points change.
+- Run when shared 1:1 send, retry, upload/download, listener, inbox,
+  delivery receipts, decrypt/key-recovery, contact-key rotation, or
+  feed-originated 1:1 entry points change.
 
 Command:
 
@@ -50,6 +52,35 @@ Files:
 - `test/features/conversation/integration/send_then_lock_delivery_test.dart`
 - `test/features/conversation/integration/stuck_sending_recovery_test.dart`
 - `test/features/conversation/integration/quote_reply_thread_test.dart`
+- `test/core/database/migrations/077_message_relay_custody_test.dart`
+- `test/core/inbox/inbox_round_trip_test.dart`
+- `test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart`
+- `test/core/services/incoming_message_router_test.dart`
+- `test/core/services/pending_message_retrier_upload_ordering_test.dart`
+- `test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart`
+- `test/features/conversation/application/chat_message_listener_test.dart`
+- `test/features/conversation/application/send_chat_message_use_case_test.dart`
+- `test/features/conversation/application/retry_unacked_messages_use_case_test.dart`
+- `test/features/conversation/application/recovered_inbox_chat_disposition_test.dart`
+- `test/features/conversation/application/delivered_status_minting_sites_test.dart`
+- `test/features/conversation/application/delete_message_use_case_test.dart`
+- `test/features/conversation/application/handle_incoming_message_deletion_use_case_test.dart`
+- `test/features/conversation/application/handle_delivery_receipt_use_case_test.dart`
+- `test/features/conversation/application/send_delivery_receipt_use_case_test.dart`
+- `test/features/conversation/application/verify_inbox_custody_use_case_test.dart`
+- `test/core/database/helpers/inbox_staging_db_helpers_test.dart`
+- `test/core/services/p2p_service_impl_test.dart`
+- `test/features/conversation/application/download_media_use_case_test.dart`
+- `test/features/conversation/application/upload_media_use_case_test.dart`
+- `test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart`
+- `test/core/bridge/go_bridge_client_test.dart`
+- `test/core/bridge/p2p_bridge_client_test.dart`
+- `test/features/conversation/application/media_download_slow_transfer_simulator_test.dart`
+- `test/features/contact_request/application/handle_incoming_message_use_case_test.dart`
+- `test/features/contact_request/application/retry_incomplete_key_exchanges_use_case_test.dart`
+- `test/features/conversation/application/post_restore_stale_key_recovery_test.dart`
+- `test/features/contact_request/application/contact_request_listener_test.dart`
+- `test/features/identity/domain/repositories/identity_repository_impl_test.dart`
 
 ## Feed / Surface Gate
 
@@ -150,10 +181,10 @@ flutter test -d <device-id> \
 
 ## Known Failures And Notes
 
-- Current completeness-check note: latest attempted on 2026-05-28 via `./scripts/run_test_gates.sh completeness-check` and failed with `747/750` test files classified because `test/l10n/l10n_integrity_test.dart`, `test/shared/fakes/fake_group_pubsub_network_test.dart`, and `test/shared/fakes/seeded_group_reproduction_log_test.dart` were unmatched. The worker reported those as pre-existing and unrelated to the promoted-admin regression task.
+- Current completeness-check note: latest attempted on 2026-06-13 via `./scripts/run_test_gates.sh completeness-check` and passed with `841/841` test files classified after the Doc 115 P5 1:1 gate expansion.
 - Baseline Gate is red because `integration_test/loading_states_smoke_test.dart` fails to build: `StartupRouter` now requires `postRepository`.
 - `integration_test/posts_phase1_fake_test.dart` still ran successfully in the Baseline integration invocation, but the Baseline Gate remains red because the loading-states build failed first.
-- 1:1 Reliability Gate passed.
+- 1:1 Reliability Gate passed on 2026-06-13 with the expanded 38-file host plan (`788` tests).
 - Feed / Surface Gate passed.
 - Group Messaging Gate passed.
 - Posts / Privacy Gate is red on macOS because `integration_test/posts_phase2_fake_test.dart` through `integration_test/posts_phase5_fake_test.dart` fail to attach with `Error waiting for a debug connection` / `Unable to start the app on the device`. `test/features/posts/phase3/post_presence_listener_test.dart` passed, and `integration_test/posts_phase1_fake_test.dart` ran successfully.

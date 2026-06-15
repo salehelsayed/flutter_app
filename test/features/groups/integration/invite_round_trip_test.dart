@@ -1368,6 +1368,17 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        // Genuine already-joined duplicate: the receiver is an active member.
+        // (A B3 retained-removed shell — self absent — would re-join instead.)
+        await receiverGroupRepo.saveMember(
+          GroupMember(
+            groupId: _groupId,
+            peerId: _receiverPeerId,
+            username: 'Receiver',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
 
         final incomingMessage = ChatMessage(
           from: _adminPeerId,
@@ -1393,9 +1404,10 @@ void main() {
         final group = await receiverGroupRepo.getGroup(_groupId);
         expect(group!.name, equals('Already Joined Group'));
 
-        // No extra members or keys saved
+        // No extra members or keys saved by the rejected duplicate: only the
+        // pre-existing self-membership remains; no config members were added.
         final members = await receiverGroupRepo.getMembers(_groupId);
-        expect(members, isEmpty);
+        expect(members.map((member) => member.peerId), [_receiverPeerId]);
 
         final key = await receiverGroupRepo.getLatestKey(_groupId);
         expect(key, isNull);

@@ -225,8 +225,7 @@ class _WifiFirstVoiceP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -254,6 +253,8 @@ class _WifiFirstVoiceP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     sendLocalMediaCallCount++;
     return _sendLocalMediaResult;
@@ -357,8 +358,7 @@ class _WidgetVoiceP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -381,6 +381,8 @@ class _WidgetVoiceP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     sendLocalMediaCallCount++;
     return false;
@@ -636,6 +638,11 @@ void main() {
         localPath: textPath,
         downloadStatus: 'done',
         createdAt: createdAt,
+        contentHash:
+            'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        encryptionKeyBase64: 'test-blob-key-base64',
+        encryptionNonce: 'test-blob-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       );
     }
 
@@ -655,6 +662,11 @@ void main() {
         localPath: localPath,
         downloadStatus: 'done',
         createdAt: createdAt,
+        contentHash:
+            'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        encryptionKeyBase64: 'test-blob-key-base64',
+        encryptionNonce: 'test-blob-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       );
     }
 
@@ -676,17 +688,24 @@ void main() {
         network: network,
         mediaAttachmentRepo: aliceMediaAttachmentRepo,
         bridge: aliceBridge,
+        withDeliveryReceipts: true,
       );
       bob = TestUser.create(
         peerId: 'peer-bob',
         username: 'Bob',
         network: network,
         mediaAttachmentRepo: bobMediaAttachmentRepo,
+        withMessageDeletion: true,
+        withDeliveryReceipts: true,
         autoStartListener: false,
       );
 
       bobHarness = BobTestHarness(bob: bob);
       bobHarness.start();
+      alice.router?.start();
+      alice.deliveryReceiptListener?.start();
+      bob.router?.start();
+      bob.messageDeletionListener?.start();
 
       alice.addContact(bob);
       bob.addContact(alice);
@@ -1008,6 +1027,7 @@ void main() {
                 messageId,
                 timestamp,
                 blobId,
+                preparedArtifact,
               }) async => (SendVoiceMessageResult.uploadFailed, null),
         );
         bobHarness.clearNotifications();
@@ -1024,9 +1044,10 @@ void main() {
         );
 
         final stopRecording = screen.onRecordStop! as Future<void> Function();
-        final stopFuture = stopRecording();
-        await tester.pump(const Duration(milliseconds: 300));
-        await stopFuture;
+        // 112 Phase 4: the voice flow now encrypts the recording before the
+        // LAN leg (prepareEncryptedMediaArtifact does real file I/O), so the
+        // stop flow must run under runAsync in testWidgets.
+        await tester.runAsync(() => stopRecording());
         await tester.pump();
 
         expect(widgetP2p.isLocalPeer(bob.peerId), isTrue);
@@ -1069,7 +1090,9 @@ void main() {
         final recoveredMessage = await alice.messageRepo.getMessage(
           stuckMessage.id,
         );
-        expect(recoveredMessage?.status, anyOf('delivered', 'sent'));
+        // 114 S3: this path uses a bool-only/non-durable local sender, so a
+        // successful inbox custody backstop now truthfully persists 'inboxed'.
+        expect(recoveredMessage?.status, anyOf('delivered', 'sent', 'inboxed'));
         final recoveredAttachment =
             (await aliceMediaAttachmentRepo.getAttachmentsForMessage(
               stuckMessage.id,
@@ -1239,7 +1262,8 @@ void main() {
           bob.peerId,
         );
         expect(aliceMessages, hasLength(1));
-        expect(aliceMessages.single.status, anyOf('delivered', 'sent'));
+        // 115 P1: inbox custody persists 'inboxed' (was 'delivered').
+        expect(aliceMessages.single.status, anyOf('inboxed', 'sent'));
         expect(network.storeInInboxCallCount, greaterThanOrEqualTo(1));
 
         bob.setOnline(true);
@@ -1296,7 +1320,9 @@ void main() {
         );
 
         final recoveredMessage = await alice.messageRepo.getMessage(messageId);
-        expect(recoveredMessage?.status, 'delivered');
+        // 115 P1: the legacy-envelope row recovers through the full-send
+        // fallback whose inbox tail now persists custody ('inboxed').
+        expect(recoveredMessage?.status, 'inboxed');
         expect(recoveredMessage?.transport, 'inbox');
 
         bobHarness.clearNotifications();
@@ -1499,14 +1525,32 @@ void main() {
 
         final stored = await alice.messageRepo.getMessage(sentMessage.id);
         expect(stored, isNotNull);
-        expect(stored!.status, 'delivered');
+        expect(stored!.status, 'inboxed');
         expect(stored.transport, 'inbox');
         expect(stored.isDeleted, isTrue);
-        expect(stored.isHidden, isTrue);
-        expect(stored.hiddenAt, stored.deletedAt);
+        expect(stored.isHidden, isFalse);
+        expect(stored.hiddenAt, isNull);
 
         final afterResume = await alice.loadConversationWith(bob.peerId);
-        expect(afterResume, isEmpty);
+        expect(afterResume, hasLength(1));
+        expect(afterResume.single.id, sentMessage.id);
+        expect(afterResume.single.isDeleted, isTrue);
+        expect(afterResume.single.isHidden, isFalse);
+
+        bob.setOnline(true);
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 1);
+        await waitForBob();
+
+        final delivered = await alice.messageRepo.getMessage(sentMessage.id);
+        expect(delivered, isNotNull);
+        expect(delivered!.status, 'delivered');
+        expect(delivered.isDeleted, isTrue);
+        expect(delivered.isHidden, isTrue);
+        expect(delivered.hiddenAt, delivered.deletedAt);
+
+        final afterReceipt = await alice.loadConversationWith(bob.peerId);
+        expect(afterReceipt, isEmpty);
       },
     );
 

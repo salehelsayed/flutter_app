@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -1869,6 +1870,7 @@ void main() {
         final fakeGroupListener = _FakeGroupMessageListener(
           groupRepo: groupRepo,
           msgRepo: groupMsgRepo,
+          syncMessages: true,
         );
 
         await tester.pumpWidget(
@@ -2558,22 +2560,35 @@ void main() {
           createdAt: DateTime.now().toUtc(),
         );
         await groupMsgRepo.saveMessage(newMsg);
+        const relativePath = 'media/groups/img.jpg';
+        final absolutePath = await mediaFileManager.resolveStoredPath(
+          relativePath,
+        );
+        final file = File(absolutePath)..createSync(recursive: true);
+        file.writeAsBytesSync(utf8.encode('plaintext feed media bytes'));
+        final relayBlobHash = sha256
+            .convert(utf8.encode('encrypted relay blob bytes'))
+            .toString();
         await mediaAttachmentRepo.saveAttachment(
           MediaAttachment(
             id: 'att-gm-1',
             messageId: 'gm-media-1',
             mime: 'image/jpeg',
-            size: 2048,
+            size: file.lengthSync(),
             mediaType: 'image',
-            localPath: 'media/groups/img.jpg',
+            localPath: relativePath,
             downloadStatus: 'done',
+            contentHash: relayBlobHash,
+            encryptionKeyBase64: 'media-key',
+            encryptionNonce: 'media-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: DateTime.now().toUtc().toIso8601String(),
           ),
         );
 
-        // Emit bare GroupMessage (no media field) — mimics real listener
+        // Emit bare GroupMessage (no media field) — mimics real listener.
         fakeGroupListener.emitGroupMessage(newMsg);
-        await pumpFeedFrames(tester);
+        await pumpFeedFrames(tester, count: 12);
 
         // The card should appear
         expect(find.byType(FeedCard), findsOneWidget);
@@ -2592,7 +2607,9 @@ void main() {
         final bubble = messageBubbles.first;
         expect(bubble.media, isNotEmpty);
         expect(bubble.media.first.id, 'att-gm-1');
+        expect(bubble.media.first.downloadStatus, kMediaDownloadStatusDone);
         expect(bubble.media.first.localPath, contains('media/groups/img.jpg'));
+        expect(File(absolutePath).existsSync(), isTrue);
       },
     );
 
@@ -2665,7 +2682,7 @@ void main() {
         await mediaAttachmentRepo.saveAttachment(tamperedAttachment);
 
         fakeGroupListener.emitGroupMessage(newMsg);
-        await pumpFeedFrames(tester);
+        await pumpFeedFrames(tester, count: 12);
 
         expect(find.byType(FeedCard), findsOneWidget);
         final bubbles = tester
@@ -2678,6 +2695,7 @@ void main() {
           kMediaDownloadStatusIntegrityFailed,
         );
         expect(bubble.media.single.localPath, absolutePath);
+        expect(File(absolutePath).existsSync(), isTrue);
       },
     );
 
@@ -6720,12 +6738,16 @@ class _FakeReactionListener extends ReactionListener {
 
 /// Fake [GroupMessageListener] with a controllable stream for testing.
 class _FakeGroupMessageListener extends GroupMessageListener {
-  final _groupMsgEmitter = StreamController<GroupMessage>.broadcast();
+  final StreamController<GroupMessage> _groupMsgEmitter;
 
   _FakeGroupMessageListener({
     required InMemoryGroupRepository groupRepo,
     required InMemoryGroupMessageRepository msgRepo,
-  }) : super(groupRepo: groupRepo, msgRepo: msgRepo);
+    bool syncMessages = false,
+  }) : _groupMsgEmitter = StreamController<GroupMessage>.broadcast(
+         sync: syncMessages,
+       ),
+       super(groupRepo: groupRepo, msgRepo: msgRepo);
 
   @override
   Stream<GroupMessage> get groupMessageStream => _groupMsgEmitter.stream;

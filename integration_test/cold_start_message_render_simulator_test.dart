@@ -47,8 +47,8 @@ import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import '_support/fake_secure_key_store.dart';
 import '../test/core/bridge/fake_bridge.dart';
-import '../test/core/secure_storage/fake_secure_key_store.dart';
 import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../test/features/contacts/domain/repositories/fake_contact_repository.dart';

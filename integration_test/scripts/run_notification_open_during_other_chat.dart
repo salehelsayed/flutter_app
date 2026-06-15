@@ -20,10 +20,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-const _aliceHarness =
-    'integration_test/notification_open_during_other_chat_alice_harness.dart';
-const _bobHarness =
-    'integration_test/notification_open_during_other_chat_bob_harness.dart';
+import '../_support/signal_files.dart';
+
+// Single role-dispatched harness for both alice and bob launches. The
+// SMOKE_ROLE dart-define (passed by _launchHarness) selects which path
+// runs inside the harness.
+const _mergedHarness =
+    'integration_test/notification_open_during_other_chat_harness.dart';
 
 bool _isIosDeviceId(String? id) {
   if (id == null) return false;
@@ -46,43 +49,7 @@ void _log(String tag, String msg) {
 
 late Directory _sharedDir;
 late String _runId;
-
-String _sig(String name) => '${_sharedDir.path}/notifopen_${_runId}_$name';
-
-void _writeSignal(String name) {
-  File(_sig(name)).writeAsStringSync('ok');
-}
-
-Future<void> _waitForSignal(
-  String name, {
-  Duration timeout = const Duration(minutes: 5),
-}) async {
-  final path = _sig(name);
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (File(path).existsSync()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Orchestrator: timed out waiting for $name');
-}
-
-Future<Map<String, dynamic>> _readJsonSignal(
-  String name, {
-  Duration timeout = const Duration(minutes: 5),
-}) async {
-  final path = _sig(name);
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    final file = File(path);
-    if (file.existsSync()) {
-      try {
-        return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-      } catch (_) {}
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Orchestrator: timed out waiting for json: $name');
-}
+late SignalDir _signals;
 
 void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
   stream.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
@@ -148,6 +115,12 @@ Future<void> main(List<String> args) async {
 
   _runId = DateTime.now().millisecondsSinceEpoch.toString();
   _sharedDir = await Directory.systemTemp.createTemp('notif_open_');
+  _signals = SignalDir(
+    dir: _sharedDir.path,
+    prefix: 'notifopen_',
+    runId: '${_runId}_',
+    role: 'Orchestrator',
+  );
 
   final aliceLog = File(
     '${_sharedDir.path}/alice.log',
@@ -165,7 +138,7 @@ Future<void> main(List<String> args) async {
 
   try {
     alice = await _launchHarness(
-      harness: _aliceHarness,
+      harness: _mergedHarness,
       role: 'alice',
       deviceId: aliceDevice,
       dbName: 'notif_open_during_other_chat_${_runId}_alice.db',
@@ -177,14 +150,14 @@ Future<void> main(List<String> args) async {
     // Generous timeout — first iOS Xcode build alone routinely takes
     // 4–5 min, then the harness needs another ~30–60s to come online via
     // relay and write the ready signal.
-    await _waitForSignal(
+    await _signals.waitForSignal(
       'alice_ready',
       timeout: const Duration(minutes: 12),
     );
     _log('ORCH', 'Alice ready — launching Bob');
 
     bob = await _launchHarness(
-      harness: _bobHarness,
+      harness: _mergedHarness,
       role: 'bob',
       deviceId: bobDevice,
       dbName: 'notif_open_during_other_chat_${_runId}_bob.db',
@@ -193,27 +166,39 @@ Future<void> main(List<String> args) async {
     _pipeOutput(bob.stderr, 'BOB-ERR', bobLog);
 
     _log('ORCH', 'Waiting for bob_ready...');
-    await _waitForSignal(
+    await _signals.waitForSignal(
       'bob_ready',
       timeout: const Duration(minutes: 12),
     );
     _log('ORCH', 'Both harnesses ready');
 
     _log('ORCH', 'Waiting for alice to enter user-c chat + background');
-    await _waitForSignal('alice_in_user_c_chat');
-    await _waitForSignal('alice_backgrounded');
+    await _signals.waitForSignal(
+      'alice_in_user_c_chat',
+      timeout: const Duration(minutes: 5),
+    );
+    await _signals.waitForSignal(
+      'alice_backgrounded',
+      timeout: const Duration(minutes: 5),
+    );
 
     _log('ORCH', 'Triggering Bob send');
-    _writeSignal('bob_send_go');
+    _signals.writeSignal('bob_send_go');
 
     _log('ORCH', 'Waiting for alice notification + verdict');
-    await _waitForSignal('alice_notification_received');
-    verdict = await _readJsonSignal('alice_verdict');
+    await _signals.waitForSignal(
+      'alice_notification_received',
+      timeout: const Duration(minutes: 5),
+    );
+    verdict = await _signals.waitForJson(
+      'alice_verdict',
+      timeout: const Duration(minutes: 5),
+    );
 
     _log('ORCH', 'Waiting for cold-start verdict');
     Map<String, dynamic>? coldStartVerdict;
     try {
-      coldStartVerdict = await _readJsonSignal(
+      coldStartVerdict = await _signals.waitForJson(
         'alice_cold_start_verdict',
         timeout: const Duration(minutes: 2),
       );
@@ -224,9 +209,9 @@ Future<void> main(List<String> args) async {
       verdict['coldStart'] = coldStartVerdict;
     }
 
-    _writeSignal('all_done');
-    await _waitForSignal('alice_done', timeout: const Duration(seconds: 60));
-    await _waitForSignal('bob_done', timeout: const Duration(seconds: 60));
+    _signals.writeSignal('all_done');
+    await _signals.waitForSignal('alice_done', timeout: const Duration(seconds: 60));
+    await _signals.waitForSignal('bob_done', timeout: const Duration(seconds: 60));
   } finally {
     _log('ORCH', 'Cleaning up...');
     alice?.kill();

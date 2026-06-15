@@ -100,6 +100,11 @@ void main() {
           downloadStatus: 'done',
           createdAt: msgTs,
           waveform: [0.1, 0.5, 0.9, 0.3],
+          contentHash:
+              'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+          encryptionKeyBase64: 'test-blob-key-base64',
+          encryptionNonce: 'test-blob-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
 
         // ---- Act: resume recovery sequence ----
@@ -133,6 +138,8 @@ void main() {
                 waveform,
                 allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async => outerBridge.consumeUploadMediaResult(),
         );
 
@@ -142,7 +149,9 @@ void main() {
         expect(saved, isNotNull);
         expect(saved!.status, isNot('sending'));
         expect(saved.status, isNot('failed'));
-        expect(saved.status, 'delivered');
+        // 115 P1: the re-send lands in relay-inbox custody → 'inboxed'
+        // (pending UI) until a delivery receipt confirms the drain.
+        expect(saved.status, 'inboxed');
       },
     );
 
@@ -225,6 +234,8 @@ void main() {
                 waveform,
                 allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async => outerBridge2.consumeUploadMediaResult(),
         );
 

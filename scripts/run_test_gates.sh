@@ -24,6 +24,36 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/integration/send_then_lock_delivery_test.dart"
   "test/features/conversation/integration/stuck_sending_recovery_test.dart"
   "test/features/conversation/integration/quote_reply_thread_test.dart"
+  "test/features/conversation/integration/edit_retry_round_trip_test.dart"
+  "test/core/database/migrations/077_message_relay_custody_test.dart"
+  "test/core/inbox/inbox_round_trip_test.dart"
+  "test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart"
+  "test/core/services/incoming_message_router_test.dart"
+  "test/core/services/pending_message_retrier_upload_ordering_test.dart"
+  "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart"
+  "test/features/conversation/application/chat_message_listener_test.dart"
+  "test/features/conversation/application/send_chat_message_use_case_test.dart"
+  "test/features/conversation/application/retry_unacked_messages_use_case_test.dart"
+  "test/features/conversation/application/recovered_inbox_chat_disposition_test.dart"
+  "test/features/conversation/application/delivered_status_minting_sites_test.dart"
+  "test/features/conversation/application/delete_message_use_case_test.dart"
+  "test/features/conversation/application/handle_incoming_message_deletion_use_case_test.dart"
+  "test/features/conversation/application/handle_delivery_receipt_use_case_test.dart"
+  "test/features/conversation/application/send_delivery_receipt_use_case_test.dart"
+  "test/features/conversation/application/verify_inbox_custody_use_case_test.dart"
+  "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
+  "test/core/services/p2p_service_impl_test.dart"
+  "test/features/conversation/application/download_media_use_case_test.dart"
+  "test/features/conversation/application/upload_media_use_case_test.dart"
+  "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"
+  "test/core/bridge/go_bridge_client_test.dart"
+  "test/core/bridge/p2p_bridge_client_test.dart"
+  "test/features/conversation/application/media_download_slow_transfer_simulator_test.dart"
+  "test/features/contact_request/application/handle_incoming_message_use_case_test.dart"
+  "test/features/contact_request/application/retry_incomplete_key_exchanges_use_case_test.dart"
+  "test/features/conversation/application/post_restore_stale_key_recovery_test.dart"
+  "test/features/contact_request/application/contact_request_listener_test.dart"
+  "test/features/identity/domain/repositories/identity_repository_impl_test.dart"
 )
 
 readonly FEED_TESTS=(
@@ -86,8 +116,6 @@ readonly NIGHTLY_ONLY_TESTS=(
   "integration_test/group_real_crypto_onboarding_test.dart"
   "integration_test/group_recovery_e2e_test.dart"
   "integration_test/group_recovery_cli_e2e_test.dart"
-  "integration_test/multi_relay_failover_test.dart"
-  "integration_test/relay_chaos_soak_test.dart"
   "integration_test/soak_e2e_test.dart"
   "integration_test/bidi_text_smoke_test.dart"
 )
@@ -115,39 +143,73 @@ readonly OPTIONAL_MANUAL_TESTS=(
   "test/integration/routing_smoke_group_criteria_test.dart"
   "integration_test/cold_start_sendable_no_user_action_test.dart"
   "integration_test/cold_start_message_render_simulator_test.dart"
+  "integration_test/account_migration_scale_benchmark_test.dart"
+  "integration_test/account_migration_group_media_durability_simulator_test.dart"
+  "integration_test/account_migration_local_transfer_timeout_simulator_test.dart"
   "integration_test/foreground_group_push_drain_test.dart"
-  "integration_test/group_admin_metadata_convergence_simulator_test.dart"
-  "integration_test/group_delete_preserves_friends_simulator_test.dart"
-  "integration_test/group_invite_accept_spinner_simulator_test.dart"
-  "integration_test/group_new_member_media_simulator_proof_test.dart"
+  # Single dispatched group-lifecycle simulator entrypoint (124 Phase 5). The
+  # four former per-suite group simulator files
+  # (group_admin_metadata_convergence_simulator_test.dart,
+  # group_delete_preserves_friends_simulator_test.dart,
+  # group_invite_accept_spinner_simulator_test.dart,
+  # group_new_member_media_simulator_proof_test.dart) are now pure libraries
+  # dispatched via --dart-define=GROUP_SIM_SCENARIO=<key> against this one file
+  # (see the `group-lifecycle-sim` gate below).
+  "integration_test/group_lifecycle_simulator_harness.dart"
   "integration_test/media_message_journey_e2e_test.dart"
+  "integration_test/migration_database_sqlcipher_capability_test.dart"
   "integration_test/notification_open_ui_smoke_test.dart"
   "integration_test/settings_background_choice_smoke_test.dart"
-  "test/performance/conversation_wired_performance_test.dart"
-  "test/performance/conversation_wired_subscription_performance_test.dart"
-  "integration_test/feed_performance_test.dart"
-  "test/performance/feed_wired_init_performance_test.dart"
-  "integration_test/identity_progress_performance_test.dart"
-  "test/performance/orbit_performance_test.dart"
+  # Single dispatched performance entrypoint (124 Phase 5). The six former
+  # per-harness perf suites are now run via `performance` / `performance-sim`
+  # below with --dart-define=PERF_TARGET=<key> against this one file.
+  "integration_test/performance_harness.dart"
 )
 
 readonly OUT_OF_GATE_TESTS=(
   "test/features/loading_states_smoke_test.dart"
+  "test/features/push/infrastructure/push_token_store_impl_test.dart"
+)
+
+# Single dispatched performance entrypoint (124 Phase 5). Each key selects one
+# refactored run<X>Perf harness via --dart-define=PERF_TARGET=<key> against
+# integration_test/performance_harness.dart (build once, re-run per target).
+readonly PERFORMANCE_HARNESS="integration_test/performance_harness.dart"
+readonly PERFORMANCE_TARGETS=(
+  CONVERSATION
+  CONVERSATION_SUB
+  FEED_INIT
+  FEED
+  ORBIT
+  IDENTITY_PROGRESS
+)
+
+# Single dispatched group-lifecycle simulator entrypoint (124 Phase 5). Each key
+# selects one refactored run<X>Sim harness via --dart-define=GROUP_SIM_SCENARIO=<key>
+# against integration_test/group_lifecycle_simulator_harness.dart (build once,
+# re-run per scenario).
+readonly GROUP_LIFECYCLE_SIM_HARNESS="integration_test/group_lifecycle_simulator_harness.dart"
+readonly GROUP_LIFECYCLE_SIM_SCENARIOS=(
+  ADMIN_METADATA
+  DELETE_PRESERVES_FRIENDS
+  INVITE_ACCEPT_SPINNER
+  NEW_MEMBER_MEDIA
 )
 
 usage() {
   cat <<'EOF'
 Usage:
   ./scripts/run_test_gates.sh baseline
-  ./scripts/run_test_gates.sh 1to1
+  ./scripts/run_test_gates.sh 1to1 [options]
   ./scripts/run_test_gates.sh feed
   ./scripts/run_test_gates.sh intro
   ./scripts/run_test_gates.sh groups
   ./scripts/run_test_gates.sh posts
   ./scripts/run_test_gates.sh transport
   ./scripts/run_test_gates.sh runtime-telemetry
+  ./scripts/run_test_gates.sh move-feature
   ./scripts/run_test_gates.sh group-real-network-nightly
-  ./scripts/run_test_gates.sh reliability-sim [all|1to1|group|intro] [options]
+  ./scripts/run_test_gates.sh reliability-sim [all|1to1|group|intro|move-feature] [options]
   ./scripts/run_test_gates.sh host-all [options]
   ./scripts/run_test_gates.sh feature-host-all [options]
   ./scripts/run_test_gates.sh core-host-all [options]
@@ -155,6 +217,10 @@ Usage:
   ./scripts/run_test_gates.sh all
   ./scripts/run_test_gates.sh benchmark
   ./scripts/run_test_gates.sh benchmark-sim
+  ./scripts/run_test_gates.sh performance
+  ./scripts/run_test_gates.sh performance-sim
+  ./scripts/run_test_gates.sh group-lifecycle-sim
+  ./scripts/run_test_gates.sh group-lifecycle-sim-host
   ./scripts/run_test_gates.sh completeness-check
 
 Notes:
@@ -224,6 +290,66 @@ run_transport_gate() {
   run_gate_command "Startup / Transport Gate" "${TRANSPORT_TESTS[@]}"
 }
 
+run_performance_gate() {
+  # Single dispatched entrypoint: re-run the one performance harness per
+  # PERF_TARGET key via --dart-define (no per-harness rebuild). When the first
+  # argument is "sim", pass FLUTTER_DEVICE_ID through so the run targets a
+  # simulator/device; otherwise run on the default (host) device.
+  local mode="${1:-host}"
+  local -a device_args=()
+  if [[ "$mode" == "sim" ]]; then
+    while IFS= read -r path; do
+      device_args+=("$path")
+    done < <(integration_test_args)
+  fi
+
+  printf 'Running Performance Gate (%s)\n' "$mode"
+
+  local perf_target
+  for perf_target in "${PERFORMANCE_TARGETS[@]}"; do
+    printf -- '--- Performance: %s ---\n' "$perf_target"
+    if ((${#device_args[@]} > 0)); then
+      flutter test "${device_args[@]}" \
+        --dart-define="PERF_TARGET=$perf_target" \
+        "$PERFORMANCE_HARNESS"
+    else
+      flutter test \
+        --dart-define="PERF_TARGET=$perf_target" \
+        "$PERFORMANCE_HARNESS"
+    fi
+  done
+}
+
+run_group_lifecycle_sim_gate() {
+  # Single dispatched entrypoint: re-run the one group-lifecycle simulator
+  # harness per GROUP_SIM_SCENARIO key via --dart-define (no per-suite rebuild).
+  # When the first argument is "sim", pass FLUTTER_DEVICE_ID through so the run
+  # targets a simulator/device; otherwise run on the default (host) device.
+  local mode="${1:-sim}"
+  local -a device_args=()
+  if [[ "$mode" == "sim" ]]; then
+    while IFS= read -r path; do
+      device_args+=("$path")
+    done < <(integration_test_args)
+  fi
+
+  printf 'Running Group Lifecycle Simulator Gate (%s)\n' "$mode"
+
+  local scenario
+  for scenario in "${GROUP_LIFECYCLE_SIM_SCENARIOS[@]}"; do
+    printf -- '--- Group sim: %s ---\n' "$scenario"
+    if ((${#device_args[@]} > 0)); then
+      flutter test "${device_args[@]}" \
+        --dart-define="GROUP_SIM_SCENARIO=$scenario" \
+        "$GROUP_LIFECYCLE_SIM_HARNESS"
+    else
+      flutter test \
+        --dart-define="GROUP_SIM_SCENARIO=$scenario" \
+        "$GROUP_LIFECYCLE_SIM_HARNESS"
+    fi
+  done
+}
+
 run_group_real_network_nightly_gate() {
   if [[ -z "${FLUTTER_DEVICE_ID:-}" ]]; then
     printf 'FLUTTER_DEVICE_ID is required for Group Real-Network Nightly Gate.\n' >&2
@@ -234,11 +360,30 @@ run_group_real_network_nightly_gate() {
 
   printf 'Running Group Real-Network Nightly Gate\n'
   printf 'Using MKNOON_RELAY_ADDRESSES=%s\n' "$relay_addresses"
+
+  # The deleted multi_relay_failover_test.dart wrapper re-ran transport_e2e_test
+  # (and group_recovery_cli_e2e_test when a CLI peer fixture was present) only
+  # when >=2 relays were configured. The multi-relay gate now lives inside the
+  # source tests via --dart-define=MKNOON_REQUIRE_MULTI_RELAY=true, so run the
+  # source files directly with the same defines for identical coverage.
   flutter test \
     -d "$FLUTTER_DEVICE_ID" \
     --dart-define=MKNOON_REQUIRE_MULTI_RELAY=true \
     --dart-define=MKNOON_RELAY_ADDRESSES="$relay_addresses" \
-    integration_test/multi_relay_failover_test.dart
+    integration_test/transport_e2e_test.dart
+
+  # group_recovery_cli_e2e_test only had effect under the wrapper when a CLI peer
+  # fixture was configured; mirror that conditional so behavior is preserved.
+  if [[ -n "${CLI_PEER_FIXTURE:-}" ]]; then
+    flutter test \
+      -d "$FLUTTER_DEVICE_ID" \
+      --dart-define=MKNOON_REQUIRE_MULTI_RELAY=true \
+      --dart-define=MKNOON_RELAY_ADDRESSES="$relay_addresses" \
+      --dart-define=CLI_PEER_FIXTURE="$CLI_PEER_FIXTURE" \
+      integration_test/group_recovery_cli_e2e_test.dart
+  else
+    printf 'Skipping group_recovery_cli_e2e_test: CLI_PEER_FIXTURE not set.\n'
+  fi
 }
 
 array_contains() {
@@ -368,6 +513,11 @@ classify_path() {
     return 0
   fi
 
+  if [[ "$path" =~ ^integration_test/.*_performance_test\.dart$ ]]; then
+    printf 'benchmark / performance suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/unit/.*_test\.dart$ ]]; then
     printf 'unit direct suite'
     return 0
@@ -430,7 +580,11 @@ main() {
       run_gate_command "Baseline Gate" "${BASELINE_TESTS[@]}"
       ;;
     1to1)
-      run_gate_command "1:1 Reliability Gate" "${ONE_TO_ONE_TESTS[@]}"
+      if ((${#gate_args[@]} == 0)); then
+        run_gate_command "1:1 Reliability Gate" "${ONE_TO_ONE_TESTS[@]}"
+      else
+        ./scripts/run_host_test_gates.sh 1to1 "${gate_args[@]}"
+      fi
       ;;
     feed)
       run_gate_command "Feed / Surface Gate" "${FEED_TESTS[@]}"
@@ -459,7 +613,7 @@ main() {
       fi
       ./scripts/run_reliability_simulations.sh "${gate_args[@]}"
       ;;
-    host-all|feature-host-all|core-host-all|performance-host)
+    move-feature|host-all|feature-host-all|core-host-all|performance-host)
       if ((${#gate_args[@]} == 0)); then
         ./scripts/run_host_test_gates.sh "$gate"
       else
@@ -486,15 +640,52 @@ main() {
       while IFS= read -r path; do
         sim_args+=("$path")
       done < <(integration_test_args)
-      for f in integration_test/benchmark_*_harness.dart; do
-        if [[ -f "$f" ]]; then
-          if ((${#sim_args[@]} > 0)); then
-            flutter test "${sim_args[@]}" "$f"
-          else
-            flutter test "$f"
-          fi
+      # Single dispatched entrypoint: build the app once and re-run per
+      # BENCHMARK key via --dart-define (no per-harness rebuild).
+      local -a benchmark_keys=(
+        ROUTING_PATHS
+        BACKGROUND_RESUME
+        RELAY_RECOVERY
+        TIME_TO_ONLINE
+        NOTIFICATION_TAP
+        GROUP_PUBLISH
+        MEDIA
+        ONE_TO_ONE_SEND
+        TIMEOUT_ACCURACY
+        ENCRYPTION
+        NODE_STARTUP
+        CONNECTION_REUSE
+        INBOX
+        ACK
+        BRIDGE_CROSSING
+        EVENT_QUEUE
+        VOICE
+      )
+      local benchmark_key
+      for benchmark_key in "${benchmark_keys[@]}"; do
+        echo "--- Benchmark: $benchmark_key ---"
+        if ((${#sim_args[@]} > 0)); then
+          flutter test "${sim_args[@]}" \
+            --dart-define="BENCHMARK=$benchmark_key" \
+            integration_test/benchmark_harness.dart
+        else
+          flutter test \
+            --dart-define="BENCHMARK=$benchmark_key" \
+            integration_test/benchmark_harness.dart
         fi
       done
+      ;;
+    performance)
+      run_performance_gate host
+      ;;
+    performance-sim)
+      run_performance_gate sim
+      ;;
+    group-lifecycle-sim)
+      run_group_lifecycle_sim_gate sim
+      ;;
+    group-lifecycle-sim-host)
+      run_group_lifecycle_sim_gate host
       ;;
     completeness-check)
       run_completeness_check

@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
@@ -16,7 +18,9 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -110,7 +114,12 @@ void main() {
     );
   });
 
-  Widget buildScanner({ShareIntentService? shareIntentService}) {
+  Widget buildScanner({
+    ShareIntentService? shareIntentService,
+    Future<void> Function(String qrData)? onMigrationQrScanned,
+    AccountMigrationTransferRunFn? accountMigrationRunTransfer,
+    DownloadProfilePictureFn? downloadProfilePictureFn,
+  }) {
     return MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -130,7 +139,10 @@ void main() {
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
         ownPeerId: ownPeerId,
+        onMigrationQrScanned: onMigrationQrScanned,
+        accountMigrationRunTransfer: accountMigrationRunTransfer,
         downloadProfilePictureFn:
+            downloadProfilePictureFn ??
             ({
               required bridge,
               required contactRepo,
@@ -150,6 +162,96 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
   }
+
+  testWidgets('contact scanner keeps default contact copy', (tester) async {
+    await tester.pumpWidget(buildScanner());
+    await pumpFrames(tester);
+
+    expect(find.text('Scan QR Code'), findsOneWidget);
+    expect(
+      find.text("Point your camera at a friend's QR code"),
+      findsOneWidget,
+    );
+    expect(find.text("They'll be added to your circle"), findsOneWidget);
+    expect(find.text('Paste QR Data'), findsOneWidget);
+    expect(find.text('Scan migration QR'), findsNothing);
+    expect(
+      find.text('Point your camera at the Move Account QR on your new phone'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('scanner is tuned for fast QR-only detection', (tester) async {
+    await tester.pumpWidget(buildScanner());
+    await pumpFrames(tester);
+
+    final scanner = tester.widget<MobileScanner>(find.byType(MobileScanner));
+    final controller = scanner.controller!;
+
+    expect(controller.detectionSpeed, DetectionSpeed.noDuplicates);
+    expect(controller.formats, [BarcodeFormat.qrCode]);
+    expect(controller.cameraResolution, const Size(1280, 720));
+  });
+
+  testWidgets(
+    'migration QR dispatches to migration handler without contact side effects',
+    (tester) async {
+      final scannedMigrationPayloads = <String>[];
+      var downloadCalls = 0;
+      final qrData = _buildMigrationQrData();
+
+      await tester.pumpWidget(
+        buildScanner(
+          onMigrationQrScanned: (rawQrData) async {
+            scannedMigrationPayloads.add(rawQrData);
+          },
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                downloadCalls++;
+                return null;
+              },
+        ),
+      );
+      await pumpFrames(tester);
+
+      final scanner = tester.widget<QRScannerScreen>(
+        find.byType(QRScannerScreen),
+      );
+      scanner.onScanned(qrData);
+      await pumpFrames(tester);
+
+      expect(scannedMigrationPayloads, [qrData]);
+      expect(await contactRepository.getContactCount(), 0);
+      expect(downloadCalls, 0);
+      expect(bridge.commandLog, isNot(contains('payload.verify')));
+      expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
+      expect(find.text('Added to your circle!'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'migration QR without handler fails safely without contact side effects',
+    (tester) async {
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+
+      final scanner = tester.widget<QRScannerScreen>(
+        find.byType(QRScannerScreen),
+      );
+      scanner.onScanned(_buildMigrationQrData());
+      await pumpFrames(tester);
+
+      expect(await contactRepository.getContactCount(), 0);
+      expect(bridge.commandLog, isNot(contains('payload.verify')));
+      expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
+      expect(find.text('Added to your circle!'), findsNothing);
+    },
+  );
 
   testWidgets(
     '5p: QR scan success with buffered intent navigates to feed and pushes picker',
@@ -213,6 +315,58 @@ void main() {
       expect(find.text('Share with...'), findsNothing);
     },
   );
+
+  testWidgets('contact QR success forwards Move Account runner into feed', (
+    tester,
+  ) async {
+    final shareIntentService = ShareIntentService(resetShareIntent: () {});
+    Future<AccountMigrationTransferResult> runner({
+      required AccountMigrationTransferRequest request,
+      required AccountMigrationTransferProgressCallback onProgress,
+      required bool Function() isCancelled,
+      AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
+    }) async {
+      return const AccountMigrationTransferResult.success();
+    }
+
+    await tester.pumpWidget(
+      buildScanner(
+        shareIntentService: shareIntentService,
+        accountMigrationRunTransfer: runner,
+      ),
+    );
+    await pumpFrames(tester);
+
+    final scanner = tester.widget<QRScannerScreen>(
+      find.byType(QRScannerScreen),
+    );
+    scanner.onScanned(
+      _buildValidQrData(peerId: 'runner-peer-12345', username: 'Bob'),
+    );
+    await pumpFrames(tester);
+
+    expect(find.text('Added to your circle!'), findsOneWidget);
+    await tester.tap(find.text('OK'));
+    await pumpFrames(tester, count: 20);
+
+    final feedWired = tester.widget<FeedWired>(find.byType(FeedWired));
+    expect(feedWired.accountMigrationRunTransfer, same(runner));
+  });
+}
+
+String _buildMigrationQrData({
+  String sessionId = 'mig-session-1',
+  String createdAt = '2026-01-01T12:00:00.000Z',
+  String expiresAt = '2026-01-01T12:05:00.000Z',
+}) {
+  return jsonEncode({
+    'kind': accountMigrationPairingQrKind,
+    'version': currentAccountMigrationPairingQrVersion,
+    'sessionId': sessionId,
+    'createdAt': createdAt,
+    'expiresAt': expiresAt,
+    'newPhoneEphemeralPublicKey': 'new-phone-mlkem-public',
+  });
 }
 
 String _buildValidQrData({

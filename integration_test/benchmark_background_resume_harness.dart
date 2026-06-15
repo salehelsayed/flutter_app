@@ -3,14 +3,12 @@
 /// Exercises the production Phase 6 readiness timing on a real bridge-backed
 /// node across healthy resume, degraded resume with recovery, and an extended
 /// background window.
-@Tags(['device'])
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
@@ -153,62 +151,55 @@ void _printPhase6Metrics(
   }
 }
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runBackgroundResumeBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets(
-    'BR-S1: Healthy resume keeps the already-online compatibility signal',
-    (tester) async {
-      print('\n${'═' * 60}');
-      print('  BENCHMARK: BACKGROUND RESUME — HEALTHY RELAY (BR-S1)');
-      print('${'═' * 60}\n');
+  {
+    print('\n${'═' * 60}');
+    print('  BENCHMARK: BACKGROUND RESUME — HEALTHY RELAY (BR-S1)');
+    print('${'═' * 60}\n');
 
-      final node = await createBenchmarkNode();
-      final messageRepo = InMemoryMessageRepository();
+    final node = await createBenchmarkNode();
+    final messageRepo = InMemoryMessageRepository();
 
-      try {
-        final ready = await node.startAndWaitRelayReady();
-        expect(ready, isTrue, reason: 'Node should reach Online.');
+    try {
+      final ready = await node.startAndWaitRelayReady();
+      expect(ready, isTrue, reason: 'Node should reach Online.');
 
-        await handleAppPaused(messageRepo: messageRepo);
+      await handleAppPaused(messageRepo: messageRepo);
 
-        final events = await captureFlowEvents(() async {
-          node.service.markResumeStarted();
-          node.service.checkResumeAlreadyOnline();
-        });
+      final events = await captureFlowEvents(() async {
+        node.service.markResumeStarted();
+        node.service.checkResumeAlreadyOnline();
+      });
 
-        final badge = firstEventDetails(
-          events,
-          'TIME_TO_ONLINE_BADGE',
-          phase: 'background_resume_already_online',
-        );
-        expect(
-          badge,
-          isNotNull,
-          reason: 'Healthy resume should stay already-online',
-        );
-        printBenchmarkSingle(
-          'sim_background_resume_already_online_ms',
-          badge!['totalMs'] as int,
-        );
-        print(
-          '[BENCHMARK] sim_background_resume_already_online_source = '
-          '${badge['source']}',
-        );
-      } finally {
-        await node.dispose();
-      }
-    },
-  );
+      final badge = firstEventDetails(
+        events,
+        'TIME_TO_ONLINE_BADGE',
+        phase: 'background_resume_already_online',
+      );
+      expect(
+        badge,
+        isNotNull,
+        reason: 'Healthy resume should stay already-online',
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_already_online_ms',
+        badge!['totalMs'] as int,
+      );
+      print(
+        '[BENCHMARK] sim_background_resume_already_online_source = '
+        '${badge['source']}',
+      );
+    } finally {
+      await node.dispose();
+    }
+  }
 
-  testWidgets('BR-S2: Degraded resume records sendable and relay-ready split', (
-    tester,
-  ) async {
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: BACKGROUND RESUME — DEGRADED RELAY (BR-S2)');
     print('${'═' * 60}\n');
@@ -363,9 +354,9 @@ void main() {
     } finally {
       await node.dispose();
     }
-  });
+  }
 
-  testWidgets('BR-S3: Resume after extended background (30s)', (tester) async {
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: BACKGROUND RESUME — EXTENDED 30S (BR-S3)');
     print('${'═' * 60}\n');
@@ -450,5 +441,5 @@ void main() {
     } finally {
       await node.dispose();
     }
-  });
+  }
 }

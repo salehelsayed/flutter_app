@@ -315,6 +315,9 @@ class _GroupListWiredState extends State<GroupListWired>
           _showSnackBar(
             l10n.group_invite_joined(group?.name ?? invite.groupName),
           );
+          if (group != null && mounted) {
+            _onGroupTap(group);
+          }
           break;
         case AcceptPendingGroupInviteResult.notFound:
           _showSnackBar(l10n.group_invite_no_longer_available);

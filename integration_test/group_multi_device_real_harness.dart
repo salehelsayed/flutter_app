@@ -98,6 +98,9 @@ import 'package:flutter_app/core/database/migrations/071_pending_introduction_re
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
+import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
+import 'package:flutter_app/core/database/migrations/076_post_media_attachment_crypto_columns.dart';
+import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -115,6 +118,7 @@ import 'package:flutter_app/features/groups/application/group_membership_update_
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -345,7 +349,7 @@ Future<sqlcipher.Database> _openTestDatabase({
   return openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 74,
+    version: 77,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -420,6 +424,9 @@ Future<sqlcipher.Database> _openTestDatabase({
       await runGroupPendingMembershipMessagesMigration(db);
       await runGroupMessageLastSendAttemptAtMigration(db);
       await runGroupMessageLogicalDeliveryIdMigration(db);
+      await runContactsMlKemKeyUpdatedTsMigration(db);
+      await runPostMediaAttachmentCryptoColumnsMigration(db);
+      await runMessageRelayCustodyMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -509,6 +516,11 @@ Future<sqlcipher.Database> _openTestDatabase({
       if (oldVersion < 72) await runGroupPendingMembershipMessagesMigration(db);
       if (oldVersion < 73) await runGroupMessageLastSendAttemptAtMigration(db);
       if (oldVersion < 74) await runGroupMessageLogicalDeliveryIdMigration(db);
+      if (oldVersion < 75) await runContactsMlKemKeyUpdatedTsMigration(db);
+      if (oldVersion < 76) {
+        await runPostMediaAttachmentCryptoColumnsMigration(db);
+      }
+      if (oldVersion < 77) await runMessageRelayCustodyMigration(db);
     },
   );
 }
@@ -826,6 +838,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
     dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
     dbLoadMediaForMessage: (messageId) => dbLoadMediaForMessage(db, messageId),
+    dbLoadMediaById: (id) => dbLoadMediaById(db, id),
     dbLoadMediaForMessages: (messageIds) =>
         dbLoadMediaForMessages(db, messageIds),
     dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
@@ -1012,6 +1025,26 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     groupDiagnosticEvents: groupDiagnosticEventStream,
     pendingKeyRepairRepo: groupPendingKeyRepairRepo,
     inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepo,
+    // Mirror main.dart: the remaining group creator re-keys when a member it did
+    // not author departs (forward secrecy for best-effort voluntary leave).
+    rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+      final identity = await identityRepo.loadIdentity();
+      if (identity == null) return false;
+      final rotated = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        sendP2PMessage: (peerId, message) async =>
+            p2pService.sendMessage(peerId, message),
+        storeP2PMessageInInbox: (peerId, message) async =>
+            p2pService.storeInInbox(peerId, message),
+      );
+      return rotated != null;
+    },
   );
   final groupMembershipUpdateListener = GroupMembershipUpdateListener(
     groupMembershipUpdateStream: messageRouter.groupMembershipUpdateStream,
@@ -1085,7 +1118,25 @@ Future<String> importJoinedGroupFixture({
       .toList(growable: false);
   final groupConfig = Map<String, dynamic>.from(fixture['groupConfig'] as Map);
 
-  await stack.groupRepo.saveGroup(group);
+  // The fixture's group row carries the CREATOR's myRole (admin). Correct it to
+  // the importing peer's actual role from the members list so role-gated actions
+  // (voluntary leave, etc.) behave correctly for a joiner instead of treating it
+  // as the sole admin.
+  MemberRole? selfMemberRole;
+  for (final member in members) {
+    if (member.peerId == stack.identity.peerId) {
+      selfMemberRole = member.role;
+      break;
+    }
+  }
+  final importedGroup = selfMemberRole == null
+      ? group
+      : group.copyWith(
+          myRole: selfMemberRole == MemberRole.admin
+              ? GroupRole.admin
+              : GroupRole.member,
+        );
+  await stack.groupRepo.saveGroup(importedGroup);
   for (final member in members) {
     await stack.groupRepo.saveMember(member);
   }
@@ -1258,6 +1309,7 @@ Future<void> _runPrimaryScenario() async {
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
       inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+      includeSenderPeerIdInDurableRecipients: true,
     );
     expect(
       sendResult.$1,

@@ -5,6 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -12,6 +16,7 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
+import '../local_discovery/fake_local_p2p_service.dart';
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
 /// Captures [FLOW] log lines emitted during [action] and returns parsed events.
@@ -135,6 +140,46 @@ String _chatEnvelope({
   });
 }
 
+LocalChatMessage _lanChatMessage({
+  required String id,
+  String from = 'remote-peer',
+  String to = 'self-peer',
+  String text = 'hello lan',
+}) {
+  return LocalChatMessage(
+    from: from,
+    to: to,
+    content: _chatEnvelope(id: id, text: text, senderPeerId: from),
+    timestamp: DateTime.utc(2026, 4),
+    isIncoming: true,
+  );
+}
+
+Future<void> _waitForCondition(
+  bool Function() condition, {
+  required String reason,
+}) async {
+  for (var i = 0; i < 50; i++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  fail(reason);
+}
+
+class _GateableInboxStagingRepository extends InMemoryInboxStagingRepository {
+  Completer<void>? stageGate;
+
+  @override
+  Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
+    final ids = await super.stageEntries(entries);
+    final gate = stageGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    return ids;
+  }
+}
+
 void main() {
   late _FakeBridge bridge;
   late P2PServiceImpl service;
@@ -157,7 +202,274 @@ void main() {
     service.dispose();
   });
 
+  group('account migration runtime gate', () {
+    test(
+      'blocks bridge and local network side effects before commands',
+      () async {
+        service.dispose();
+
+        final blockedOperations = <String>{};
+        final observedOperations = <String>[];
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: inboxStagingRepository,
+          accountMigrationNetworkGate: ({peerId, required operation}) async {
+            observedOperations.add(operation);
+            return !blockedOperations.contains(operation);
+          },
+        );
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+
+        expect(
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
+          isTrue,
+        );
+        bridge.calledCommands.clear();
+        bridge.payloadsByCommand.clear();
+
+        blockedOperations.addAll({
+          'p2p_warm_background',
+          'p2p_send_message',
+          'p2p_send_message_with_reply',
+          'p2p_discover_peer',
+          'p2p_dial_peer',
+          'p2p_store_inbox',
+          'p2p_retrieve_inbox',
+          'p2p_register_push_token',
+          'p2p_immediate_health_check',
+          'p2p_drain_offline_inbox',
+          'p2p_drain_offline_inbox_full',
+          'p2p_probe_relay',
+          'p2p_discover_local_peer',
+          'p2p_send_local_message',
+          'p2p_send_local_media',
+        });
+
+        await service.warmBackground();
+        expect(await service.sendMessage('remote-peer', 'hello'), isFalse);
+        final reply = await service.sendMessageWithReply(
+          'remote-peer',
+          'hello',
+        );
+        expect(reply.sent, isFalse);
+        expect(await service.discoverPeer('remote-peer'), isNull);
+        expect(await service.dialPeer('remote-peer'), isFalse);
+        expect(await service.storeInInbox('remote-peer', 'hello'), isFalse);
+        expect(await service.retrieveInbox(), isEmpty);
+        expect(await service.registerPushToken('token', 'ios'), isFalse);
+        await service.performImmediateHealthCheck();
+        await service.drainOfflineInbox();
+        await service.drainOfflineInboxFully();
+        expect(await service.probeRelay('remote-peer'), RelayProbeResult.error);
+        expect(
+          await service.discoverLocalPeer(
+            'remote-peer',
+            timeout: const Duration(milliseconds: 1),
+          ),
+          isFalse,
+        );
+        expect(
+          await service.sendLocalMessage('remote-peer', 'hello', 'self-peer'),
+          isFalse,
+        );
+        expect(
+          await service.sendLocalMedia(
+            peerId: 'remote-peer',
+            filePath: '/tmp/media.jpg',
+            mime: 'image/jpeg',
+            mediaId: 'media-1',
+            fromPeerId: 'self-peer',
+          ),
+          isFalse,
+        );
+
+        expect(bridge.calledCommands, isEmpty);
+        expect(observedOperations, containsAll(blockedOperations));
+      },
+    );
+
+    test(
+      'uses local account peer for target-peer bridge operation gates',
+      () async {
+        service.dispose();
+
+        final observedPeerByOperation = <String, String?>{};
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: inboxStagingRepository,
+          accountMigrationNetworkGate: ({peerId, required operation}) async {
+            observedPeerByOperation[operation] = peerId;
+            return true;
+          },
+        );
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'message:send',
+          (_) => jsonEncode({'ok': true, 'sent': true, 'acked': true}),
+        );
+        bridge.whenCommand(
+          'rendezvous:discover',
+          (_) => jsonEncode({'ok': true, 'peers': []}),
+        );
+        bridge.whenCommand(
+          'peer:dial',
+          (_) => jsonEncode({'ok': true, 'connected': true}),
+        );
+        bridge.whenCommand('inbox:store', (_) => jsonEncode({'ok': true}));
+        bridge.whenCommand('relay:probe', (_) => jsonEncode({'ok': true}));
+
+        expect(
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
+          isTrue,
+        );
+
+        expect(await service.sendMessage('remote-peer', 'hello'), isTrue);
+        expect(
+          (await service.sendMessageWithReply('remote-peer', 'hello')).sent,
+          isTrue,
+        );
+        expect(await service.discoverPeer('remote-peer'), isNull);
+        expect(await service.dialPeer('remote-peer'), isTrue);
+        expect(await service.storeInInbox('remote-peer', 'hello'), isTrue);
+        bridge.whenCommand(
+          'inbox:store',
+          (_) => jsonEncode({
+            'ok': true,
+            'storeStatus': 'stored',
+            'expiresAtMs': 1765619200000,
+            'occupancy': 3,
+            'capacity': 100,
+          }),
+        );
+        final enriched = await service.storeInInboxDetailed(
+          'remote-peer',
+          'hello',
+        );
+        expect(enriched.status, InboxStoreStatus.stored);
+        expect(enriched.expiresAtMs, 1765619200000);
+        expect(enriched.occupancy, 3);
+        expect(enriched.capacity, 100);
+
+        bridge.whenCommand('inbox:store', (_) => jsonEncode({'ok': true}));
+        final oldRelay = await service.storeInInboxDetailed(
+          'remote-peer',
+          'hello',
+        );
+        expect(oldRelay.status, InboxStoreStatus.stored);
+        expect(oldRelay.expiresAtMs, isNull);
+
+        bridge.whenCommand(
+          'inbox:store',
+          (_) => jsonEncode({
+            'ok': false,
+            'errorCode': 'INBOX_FULL',
+            'error': 'recipient inbox full',
+          }),
+        );
+        final full = await service.storeInInboxDetailed('remote-peer', 'hello');
+        expect(full.status, InboxStoreStatus.rejectedFull);
+        expect(full.errorCode, 'INBOX_FULL');
+        expect(
+          await service.probeRelay('remote-peer'),
+          RelayProbeResult.connected,
+        );
+        expect(
+          await service.discoverLocalPeer(
+            'remote-peer',
+            timeout: const Duration(milliseconds: 1),
+          ),
+          isFalse,
+        );
+        expect(
+          await service.sendLocalMessage('remote-peer', 'hello', 'self-peer'),
+          isFalse,
+        );
+        expect(
+          await service.sendLocalMedia(
+            peerId: 'remote-peer',
+            filePath: '/tmp/media.jpg',
+            mime: 'image/jpeg',
+            mediaId: 'media-1',
+            fromPeerId: 'self-peer',
+          ),
+          isFalse,
+        );
+
+        for (final operation in const [
+          'p2p_send_message',
+          'p2p_send_message_with_reply',
+          'p2p_discover_peer',
+          'p2p_dial_peer',
+          'p2p_store_inbox',
+          'p2p_probe_relay',
+          'p2p_discover_local_peer',
+          'p2p_send_local_message',
+          'p2p_send_local_media',
+        ]) {
+          expect(
+            observedPeerByOperation[operation],
+            'self-peer',
+            reason: operation,
+          );
+        }
+      },
+    );
+  });
+
   group('transport inference', () {
+    test(
+      'account migration gate blocks inbound Go messages before stream emission',
+      () async {
+        final blockedService = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: inboxStagingRepository,
+          accountMigrationNetworkGate: ({peerId, required operation}) async =>
+              false,
+        );
+        addTearDown(blockedService.dispose);
+
+        final received = <ChatMessage>[];
+        final sub = blockedService.messageStream.listen(received.add);
+        addTearDown(sub.cancel);
+
+        bridge.onMessageReceived?.call(
+          const ChatMessage(
+            from: 'remote-peer',
+            to: 'self-peer',
+            content: 'hello',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            isIncoming: true,
+          ),
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(received, isEmpty);
+      },
+    );
+
     test(
       'incoming Go transport wins over conflicting mixed direct and relay state',
       () async {
@@ -337,28 +649,477 @@ void main() {
     });
   });
 
-  group('durable inbox staging', () {
+  group('sendLocalMessageDurable', () {
     test(
-      'direct chat with confirmNonce stages locally, confirms, and commits via replay callback',
+      'returns detailed LAN ack and bool wrapper succeeds only on committed',
       () async {
+        service.dispose();
+
+        final localP2P = FakeLocalP2PService();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: inboxStagingRepository,
+        );
+
+        localP2P.sendMessageAck = LanSendAck.committed;
+        expect(
+          await service.sendLocalMessageDurable(
+            'remote-peer',
+            '{"text":"committed"}',
+            'self-peer',
+          ),
+          LanSendAck.committed,
+        );
+        expect(
+          await service.sendLocalMessage(
+            'remote-peer',
+            '{"text":"committed"}',
+            'self-peer',
+          ),
+          isTrue,
+        );
+
+        localP2P.sendMessageAck = LanSendAck.legacyAck;
+        expect(
+          await service.sendLocalMessageDurable(
+            'remote-peer',
+            '{"text":"legacy"}',
+            'self-peer',
+          ),
+          LanSendAck.legacyAck,
+        );
+        expect(
+          await service.sendLocalMessage(
+            'remote-peer',
+            '{"text":"legacy"}',
+            'self-peer',
+          ),
+          isFalse,
+        );
+
+        localP2P.sendMessageAck = LanSendAck.failed;
+        expect(
+          await service.sendLocalMessageDurable(
+            'remote-peer',
+            '{"text":"failed"}',
+            'self-peer',
+          ),
+          LanSendAck.failed,
+        );
+        expect(
+          await service.sendLocalMessage(
+            'remote-peer',
+            '{"text":"failed"}',
+            'self-peer',
+          ),
+          isFalse,
+        );
+      },
+    );
+  });
+
+  group('durable inbox staging', () {
+    test('configures a LAN commit handler when local P2P is present', () {
+      final localP2P = FakeLocalP2PService();
+
+      service = P2PServiceImpl(
+        bridge: bridge,
+        localP2PService: localP2P,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+      );
+
+      expect(localP2P.inboundChatCommitHandler, isNotNull);
+    });
+
+    test(
+      'stages LAN chat into inbox_staging before the commit decision and deletes the row on committed replay',
+      () async {
+        final localP2P = FakeLocalP2PService();
+        final repo = _GateableInboxStagingRepository();
+        final stageGate = Completer<void>();
+        repo.stageGate = stageGate;
+        final replayGate = Completer<RecoveredInboxReplayOutcome>();
+        final replayedStagedIds = <String?>[];
+        var decisionCompleted = false;
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: repo,
+          replayLiveLanChatMessage: (message, {String? stagedEntryId}) async {
+            replayedStagedIds.add(stagedEntryId);
+            expect(message.transport, 'wifi');
+            expect(message.confirmNonce, isNull);
+            return replayGate.future;
+          },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                fail('live LAN replay should prefer the live callback');
+              },
+        );
+
+        final handler = localP2P.inboundChatCommitHandler!;
+        final events = await _captureFlowEvents(() async {
+          final decisionFuture =
+              Future<LanInboundDecision>.sync(
+                () => handler(_lanChatMessage(id: 'msg-lan-001'), nonce: 'n1'),
+              )..then((_) {
+                decisionCompleted = true;
+              });
+
+          await _waitForCondition(
+            () => repo.entry('lan:n1') != null,
+            reason: 'LAN row should be staged before the commit decision',
+          );
+          expect(decisionCompleted, isFalse);
+          expect(repo.entry('lan:n1')!.messageType, 'chat_message');
+
+          stageGate.complete();
+          final decision = await decisionFuture;
+          expect(decision.isCommitted, isTrue);
+
+          await _waitForCondition(
+            () => replayedStagedIds.isNotEmpty,
+            reason: 'live LAN replay callback should be invoked',
+          );
+          expect(replayedStagedIds, ['lan:n1']);
+
+          replayGate.complete((
+            disposition: RecoveredInboxChatDisposition.committed,
+            reasonCode: 'stored',
+            reasonDetail: null,
+          ));
+          await _waitForCondition(
+            () => repo.entry('lan:n1') == null,
+            reason: 'committed LAN replay should delete the staged row',
+          );
+        });
+
+        expect(
+          events.any(
+            (event) =>
+                event['event'] == 'P2P_SERVICE_LAN_STAGED_CHAT_COMMITTED',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'rejects LAN commit when the account-migration gate blocks inbound',
+      () async {
+        final localP2P = FakeLocalP2PService();
         final repo = InMemoryInboxStagingRepository();
-        final replayedIds = <String>[];
+        final emitted = <ChatMessage>[];
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: repo,
+          accountMigrationNetworkGate: ({peerId, required operation}) async {
+            expect(operation, 'p2p_inbound_message');
+            expect(peerId, 'self-peer');
+            return false;
+          },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                fail('migration-gated LAN messages should not replay');
+              },
+        );
+        final sub = service.messageStream.listen(emitted.add);
+
+        final events = await _captureFlowEvents(() async {
+          final decision = await Future<LanInboundDecision>.sync(
+            () => localP2P.inboundChatCommitHandler!(
+              _lanChatMessage(id: 'msg-lan-gated'),
+              nonce: 'n-gated',
+            ),
+          );
+
+          expect(decision.isRejected, isTrue);
+          expect(decision.reason, 'account_migration_blocked');
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+
+        expect(repo.entry('lan:n-gated'), isNull);
+        expect(emitted, isEmpty);
+        expect(
+          events.any(
+            (event) =>
+                event['event'] == 'ACCOUNT_MIGRATION_INBOUND_EVENT_BLOCKED',
+          ),
+          isTrue,
+        );
+
+        await sub.cancel();
+      },
+    );
+
+    test(
+      'marks LAN staged row retryable on decryptionDeferred replay outcome',
+      () async {
+        final localP2P = FakeLocalP2PService();
+        final repo = InMemoryInboxStagingRepository();
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                expect(stagedEntryId, 'lan:n-retry');
+                return (
+                  disposition: RecoveredInboxChatDisposition.retryable,
+                  reasonCode: 'decryption_deferred',
+                  reasonDetail: 'BRIDGE_TIMEOUT',
+                );
+              },
+        );
+
+        final decision = await Future<LanInboundDecision>.sync(
+          () => localP2P.inboundChatCommitHandler!(
+            _lanChatMessage(id: 'msg-lan-retry'),
+            nonce: 'n-retry',
+          ),
+        );
+        expect(decision.isCommitted, isTrue);
+
+        await _waitForCondition(
+          () => repo.entry('lan:n-retry')?.status == 'retryable',
+          reason: 'LAN replay retryable outcome should mark the row retryable',
+        );
+        final entry = repo.entry('lan:n-retry')!;
+        expect(entry.rejectReasonCode, 'decryption_deferred');
+        expect(entry.rejectReasonDetail, 'BRIDGE_TIMEOUT');
+      },
+    );
+
+    test(
+      'quarantines LAN staged row on decryptionFailed replay outcome',
+      () async {
+        final localP2P = FakeLocalP2PService();
+        final repo = InMemoryInboxStagingRepository();
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                expect(stagedEntryId, 'lan:n-quarantine');
+                return (
+                  disposition: RecoveredInboxChatDisposition.quarantined,
+                  reasonCode: 'decryption_failed',
+                  reasonDetail: 'message authentication failed',
+                );
+              },
+        );
+
+        final decision = await Future<LanInboundDecision>.sync(
+          () => localP2P.inboundChatCommitHandler!(
+            _lanChatMessage(id: 'msg-lan-quarantine'),
+            nonce: 'n-quarantine',
+          ),
+        );
+        expect(decision.isCommitted, isTrue);
+
+        await _waitForCondition(
+          () => repo.entry('lan:n-quarantine')?.status == 'quarantined',
+          reason: 'LAN replay quarantine outcome should quarantine the row',
+        );
+        final entry = repo.entry('lan:n-quarantine')!;
+        expect(entry.rejectReasonCode, 'decryption_failed');
+        expect(entry.rejectReasonDetail, 'message authentication failed');
+      },
+    );
+
+    test(
+      'LAN staged row left by a killed process is recovered by startup replay sweep',
+      () async {
+        final localP2P = FakeLocalP2PService();
+        final repo = InMemoryInboxStagingRepository();
+        final killedReplay = Completer<RecoveredInboxReplayOutcome>();
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: repo,
+          replayLiveLanChatMessage: (message, {String? stagedEntryId}) =>
+              killedReplay.future,
+          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) =>
+              killedReplay.future,
+        );
+
+        final decision = await Future<LanInboundDecision>.sync(
+          () => localP2P.inboundChatCommitHandler!(
+            _lanChatMessage(id: 'msg-lan-restart'),
+            nonce: 'n-restart',
+          ),
+        );
+        expect(decision.isCommitted, isTrue);
+        expect(repo.entry('lan:n-restart'), isNotNull);
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        final replayed = <String?>[];
         service = P2PServiceImpl(
           bridge: bridge,
           inboxStagingRepository: repo,
-          replayRecoveredInboxChatMessage: (message) async {
-            final payload =
-                (jsonDecode(message.content) as Map<String, dynamic>)['payload']
-                    as Map<String, dynamic>;
-            replayedIds.add(payload['id'] as String);
-            expect(message.confirmNonce, isNull);
-            expect(message.transport, 'direct');
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                replayed.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        await service.drainOfflineInbox();
+
+        expect(replayed, ['lan:n-restart']);
+        expect(repo.entry('lan:n-restart'), isNull);
+
+        killedReplay.complete((
+          disposition: RecoveredInboxChatDisposition.committed,
+          reasonCode: 'late',
+          reasonDetail: null,
+        ));
+      },
+    );
+
+    test(
+      'live LAN replay routes through live replay callback so notifications are not suppressed',
+      () async {
+        final localP2P = FakeLocalP2PService();
+        final repo = InMemoryInboxStagingRepository();
+        final liveReplayed = <String?>[];
+        final recoveredReplayed = <String?>[];
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: repo,
+          replayLiveLanChatMessage: (message, {String? stagedEntryId}) async {
+            liveReplayed.add(stagedEntryId);
             return (
               disposition: RecoveredInboxChatDisposition.committed,
               reasonCode: 'stored',
               reasonDetail: null,
             );
           },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                recoveredReplayed.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+
+        await Future<LanInboundDecision>.sync(
+          () => localP2P.inboundChatCommitHandler!(
+            _lanChatMessage(id: 'msg-lan-live'),
+            nonce: 'n-live',
+          ),
+        );
+
+        await _waitForCondition(
+          () => liveReplayed.isNotEmpty,
+          reason: 'live LAN replay callback should be used when present',
+        );
+        expect(liveReplayed, ['lan:n-live']);
+        expect(recoveredReplayed, isEmpty);
+
+        final fallbackLocalP2P = FakeLocalP2PService();
+        final fallbackRecovered = <String?>[];
+        service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: fallbackLocalP2P,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                fallbackRecovered.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+
+        await Future<LanInboundDecision>.sync(
+          () => fallbackLocalP2P.inboundChatCommitHandler!(
+            _lanChatMessage(id: 'msg-lan-fallback'),
+            nonce: 'n-fallback',
+          ),
+        );
+        await _waitForCondition(
+          () => fallbackRecovered.isNotEmpty,
+          reason: 'recovered callback should be fallback for live LAN replay',
+        );
+        expect(fallbackRecovered, ['lan:n-fallback']);
+      },
+    );
+
+    test(
+      'direct chat with confirmNonce stages locally, confirms, and commits via '
+      'the live-direct replay callback (recovery callback never used)',
+      () async {
+        // 118 Phase 1: the LIVE direct path now routes through the
+        // notify-capable live-direct callback; the suppressing recovery
+        // callback must NOT see a `direct:` entry on the live path.
+        final repo = InMemoryInboxStagingRepository();
+        final replayedIds = <String>[];
+        final replayedStagedEntryIds = <String?>[];
+        final recoveredStagedEntryIds = <String?>[];
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayLiveDirectChatMessage:
+              (message, {String? stagedEntryId}) async {
+                replayedStagedEntryIds.add(stagedEntryId);
+                final payload =
+                    (jsonDecode(message.content)
+                            as Map<String, dynamic>)['payload']
+                        as Map<String, dynamic>;
+                replayedIds.add(payload['id'] as String);
+                expect(message.confirmNonce, isNull);
+                expect(message.transport, 'direct');
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                recoveredStagedEntryIds.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
         );
 
         bridge.whenCommand(
@@ -385,6 +1146,8 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 10));
 
         expect(replayedIds, ['msg-direct-001']);
+        expect(replayedStagedEntryIds, ['direct:nonce-direct-001']);
+        expect(recoveredStagedEntryIds, isEmpty);
         expect(repo.entry('direct:nonce-direct-001'), isNull);
         final confirmPayloads = bridge.payloadsFor('message:confirm');
         expect(confirmPayloads, hasLength(1));
@@ -396,18 +1159,23 @@ void main() {
     );
 
     test(
-      'direct chat with confirmNonce keeps staged row retryable when replay callback asks for retry',
+      'direct chat with confirmNonce keeps staged row retryable when the '
+      'live-direct replay callback asks for retry',
       () async {
         final repo = InMemoryInboxStagingRepository();
         service = P2PServiceImpl(
           bridge: bridge,
           inboxStagingRepository: repo,
-          replayRecoveredInboxChatMessage: (_) async {
+          replayLiveDirectChatMessage: (_, {String? stagedEntryId}) async {
             return (
               disposition: RecoveredInboxChatDisposition.retryable,
               reasonCode: 'missing_mlkem_secret',
               reasonDetail: 'secret unavailable',
             );
+          },
+          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
+            fail('live direct retry must not route through the recovery '
+                'callback');
           },
         );
 
@@ -484,6 +1252,224 @@ void main() {
       },
     );
 
+    test(
+      'live direct chat does NOT fall back to the suppressing recovery '
+      'callback when the live-direct callback is absent (no ?? recovery)',
+      () async {
+        // 118 Phase 1 (no-fallback guard): a direct: message must never reach
+        // the suppressing recovery callback. When the live-direct callback is
+        // absent (alternate entrypoint), it falls to the notify-capable
+        // un-staged stream emit, NOT the recovery callback that swallows the
+        // notification.
+        final repo = InMemoryInboxStagingRepository();
+        final recoveredStagedEntryIds = <String?>[];
+        final emitted = <ChatMessage>[];
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          // No replayLiveDirectChatMessage wired on purpose.
+          replayLiveLanChatMessage: (message, {String? stagedEntryId}) async {
+            return (
+              disposition: RecoveredInboxChatDisposition.committed,
+              reasonCode: 'stored',
+              reasonDetail: null,
+            );
+          },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                recoveredStagedEntryIds.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+        final sub = service.messageStream.listen(emitted.add);
+
+        bridge.whenCommand(
+          'message:confirm',
+          (_) => jsonEncode({'ok': true, 'confirmed': true}),
+        );
+
+        bridge.onMessageReceived?.call(
+          ChatMessage(
+            from: 'remote-peer',
+            to: 'self-peer',
+            content: _chatEnvelope(
+              id: 'msg-direct-nofallback',
+              text: 'no fallback',
+              senderPeerId: 'remote-peer',
+            ),
+            timestamp: '2026-04-01T00:00:00.000Z',
+            isIncoming: true,
+            transport: 'direct',
+            confirmNonce: 'nonce-direct-nofallback',
+          ),
+        );
+
+        await _waitForCondition(
+          () => emitted.isNotEmpty,
+          reason:
+              'a live direct message must reach the notify-capable stream, '
+              'not the suppressing recovery callback',
+        );
+
+        expect(recoveredStagedEntryIds, isEmpty);
+        expect(emitted, hasLength(1));
+        expect(emitted.single.confirmNonce, 'nonce-direct-nofallback');
+
+        await sub.cancel();
+      },
+    );
+
+    group('118 recovery-sweep prefix-aware routing', () {
+      P2PServiceImpl buildSweepService({
+        required InMemoryInboxStagingRepository repo,
+        required List<String?> liveDirect,
+        required List<String?> liveLan,
+        required List<String?> recovered,
+      }) {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        return P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayLiveDirectChatMessage:
+              (message, {String? stagedEntryId}) async {
+                liveDirect.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+          replayLiveLanChatMessage: (message, {String? stagedEntryId}) async {
+            liveLan.add(stagedEntryId);
+            return (
+              disposition: RecoveredInboxChatDisposition.committed,
+              reasonCode: 'stored',
+              reasonDetail: null,
+            );
+          },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                recovered.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+      }
+
+      InboxStagingEntry seedChatEntry(String entryId) => InboxStagingEntry(
+        entryId: entryId,
+        ownerPeerId: 'self-peer',
+        senderPeerId: 'remote-peer',
+        messageType: 'chat_message',
+        relayTimestamp: '2026-04-01T00:00:00.000Z',
+        envelope: _chatEnvelope(
+          id: 'msg-$entryId',
+          text: 'swept',
+          senderPeerId: 'remote-peer',
+        ),
+        stagedAt: '2026-04-01T00:00:01.000Z',
+      );
+
+      test(
+        'a retried direct: entry stays notify-capable (live-direct) on the '
+        'prefix-blind sweep',
+        () async {
+          final repo = InMemoryInboxStagingRepository();
+          repo.seed(seedChatEntry('direct:nonce-retry-sweep'));
+          final liveDirect = <String?>[];
+          final liveLan = <String?>[];
+          final recovered = <String?>[];
+          service = buildSweepService(
+            repo: repo,
+            liveDirect: liveDirect,
+            liveLan: liveLan,
+            recovered: recovered,
+          );
+
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          await service.drainOfflineInbox();
+
+          expect(liveDirect, ['direct:nonce-retry-sweep']);
+          expect(recovered, isEmpty);
+          expect(liveLan, isEmpty);
+          expect(repo.entry('direct:nonce-retry-sweep'), isNull);
+        },
+      );
+
+      test(
+        'a retried lan: entry stays notify-capable (live-lan) on the sweep',
+        () async {
+          final repo = InMemoryInboxStagingRepository();
+          repo.seed(seedChatEntry('lan:nonce-retry-sweep'));
+          final liveDirect = <String?>[];
+          final liveLan = <String?>[];
+          final recovered = <String?>[];
+          service = buildSweepService(
+            repo: repo,
+            liveDirect: liveDirect,
+            liveLan: liveLan,
+            recovered: recovered,
+          );
+
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          await service.drainOfflineInbox();
+
+          expect(liveLan, ['lan:nonce-retry-sweep']);
+          expect(recovered, isEmpty);
+          expect(liveDirect, isEmpty);
+          expect(repo.entry('lan:nonce-retry-sweep'), isNull);
+        },
+      );
+
+      test(
+        'a genuine relay-recovered (non-prefixed) entry stays on the '
+        'suppressing recovery callback even when live callbacks are wired',
+        () async {
+          final repo = InMemoryInboxStagingRepository();
+          repo.seed(seedChatEntry('relay-recovered-1'));
+          final liveDirect = <String?>[];
+          final liveLan = <String?>[];
+          final recovered = <String?>[];
+          service = buildSweepService(
+            repo: repo,
+            liveDirect: liveDirect,
+            liveLan: liveLan,
+            recovered: recovered,
+          );
+
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          await service.drainOfflineInbox();
+
+          expect(recovered, ['relay-recovered-1']);
+          expect(liveDirect, isEmpty);
+          expect(liveLan, isEmpty);
+          expect(repo.entry('relay-recovered-1'), isNull);
+        },
+      );
+    });
+
     test('replays staged chat rows before fetching new relay pages', () async {
       final repo = InMemoryInboxStagingRepository();
       repo.seed(
@@ -528,14 +1514,135 @@ void main() {
       service = P2PServiceImpl(
         bridge: bridge,
         inboxStagingRepository: repo,
-        replayRecoveredInboxChatMessage: (message) async {
-          final payload =
-              (jsonDecode(message.content) as Map<String, dynamic>)['payload']
-                  as Map<String, dynamic>;
-          replayedIds.add(payload['id'] as String);
+        replayRecoveredInboxChatMessage:
+            (message, {String? stagedEntryId}) async {
+              final payload =
+                  (jsonDecode(message.content)
+                          as Map<String, dynamic>)['payload']
+                      as Map<String, dynamic>;
+              replayedIds.add(payload['id'] as String);
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'stored',
+                reasonDetail: null,
+              );
+            },
+      );
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      await service.drainOfflineInbox();
+
+      expect(repo.entry('entry-existing'), isNull);
+      expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+    });
+
+    test(
+      'quarantined disposition keeps entry, marks quarantined, does not delete',
+      () async {
+        final repo = InMemoryInboxStagingRepository();
+        repo.seed(
+          InboxStagingEntry(
+            entryId: 'entry-quarantine',
+            ownerPeerId: 'self-peer',
+            senderPeerId: 'remote-peer',
+            messageType: 'chat_message',
+            relayTimestamp: '2026-04-01T00:00:00.000Z',
+            envelope: jsonEncode({
+              'type': 'chat_message',
+              'version': '2',
+              'senderPeerId': 'remote-peer',
+              'encrypted': {'kem': 'k', 'ciphertext': 'c', 'nonce': 'n'},
+            }),
+            stagedAt: '2026-04-01T00:00:01.000Z',
+          ),
+        );
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
+            return (
+              disposition: RecoveredInboxChatDisposition.quarantined,
+              reasonCode: 'decryption_failed',
+              reasonDetail: 'message authentication failed',
+            );
+          },
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        await service.drainOfflineInbox();
+
+        final entry = repo.entry('entry-quarantine');
+        expect(entry, isNotNull, reason: 'entry must never be deleted');
+        expect(entry!.status, 'quarantined');
+        expect(entry.rejectReasonCode, 'decryption_failed');
+        expect(entry.rejectReasonDetail, 'message authentication failed');
+      },
+    );
+
+    test('rejected disposition marks rejected', () async {
+      final repo = InMemoryInboxStagingRepository();
+      repo.seed(
+        InboxStagingEntry(
+          entryId: 'entry-reject',
+          ownerPeerId: 'self-peer',
+          senderPeerId: 'remote-peer',
+          messageType: 'chat_message',
+          relayTimestamp: '2026-04-01T00:00:00.000Z',
+          envelope: jsonEncode({
+            'type': 'chat_message',
+            'version': '1',
+            'payload': {
+              'id': 'msg-reject',
+              'text': 'hello',
+              'senderPeerId': 'remote-peer',
+              'senderUsername': 'Alice',
+              'timestamp': '2026-04-01T00:00:00.000Z',
+            },
+          }),
+          stagedAt: '2026-04-01T00:00:01.000Z',
+        ),
+      );
+
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve_pending',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
           return (
-            disposition: RecoveredInboxChatDisposition.committed,
-            reasonCode: 'stored',
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: 'blocked_sender',
             reasonDetail: null,
           );
         },
@@ -544,8 +1651,76 @@ void main() {
       await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
       await service.drainOfflineInbox();
 
-      expect(repo.entry('entry-existing'), isNull);
-      expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+      final entry = repo.entry('entry-reject');
+      expect(entry, isNotNull);
+      expect(entry!.status, 'rejected');
+      expect(entry.rejectReasonCode, 'blocked_sender');
+    });
+
+    test('retryable past attempt cap transitions to quarantined', () async {
+      final repo = InMemoryInboxStagingRepository();
+      repo.seed(
+        InboxStagingEntry(
+          entryId: 'entry-capped',
+          ownerPeerId: 'self-peer',
+          senderPeerId: 'remote-peer',
+          messageType: 'chat_message',
+          relayTimestamp: '2026-04-01T00:00:00.000Z',
+          envelope: jsonEncode({
+            'type': 'chat_message',
+            'version': '2',
+            'senderPeerId': 'remote-peer',
+            'encrypted': {'kem': 'k', 'ciphertext': 'c', 'nonce': 'n'},
+          }),
+          status: 'retryable',
+          attemptCount: 9,
+          stagedAt: '2026-04-01T00:00:01.000Z',
+        ),
+      );
+
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve_pending',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
+          return (
+            disposition: RecoveredInboxChatDisposition.retryable,
+            reasonCode: 'decryption_deferred',
+            reasonDetail: null,
+          );
+        },
+      );
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+      // First drain: attempt_count 9 -> 10, still retryable.
+      await service.drainOfflineInbox();
+      var entry = repo.entry('entry-capped');
+      expect(entry, isNotNull);
+      expect(entry!.status, 'retryable');
+      expect(entry.attemptCount, 10);
+
+      // Second drain: marking retryable would exceed the cap -> quarantined.
+      await service.drainOfflineInbox();
+      entry = repo.entry('entry-capped');
+      expect(entry, isNotNull, reason: 'capped entry must never be deleted');
+      expect(entry!.status, 'quarantined');
+      expect(entry.rejectReasonCode, 'attempt_cap_exceeded');
     });
 
     test('stages, acks, and deletes committed chat entries', () async {
@@ -596,17 +1771,19 @@ void main() {
       service = P2PServiceImpl(
         bridge: bridge,
         inboxStagingRepository: repo,
-        replayRecoveredInboxChatMessage: (message) async {
-          final payload =
-              (jsonDecode(message.content) as Map<String, dynamic>)['payload']
-                  as Map<String, dynamic>;
-          replayedIds.add(payload['id'] as String);
-          return (
-            disposition: RecoveredInboxChatDisposition.committed,
-            reasonCode: 'stored',
-            reasonDetail: null,
-          );
-        },
+        replayRecoveredInboxChatMessage:
+            (message, {String? stagedEntryId}) async {
+              final payload =
+                  (jsonDecode(message.content)
+                          as Map<String, dynamic>)['payload']
+                      as Map<String, dynamic>;
+              replayedIds.add(payload['id'] as String);
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'stored',
+                reasonDetail: null,
+              );
+            },
       );
 
       await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
@@ -616,6 +1793,137 @@ void main() {
       expect(repo.entry('entry-001'), isNull);
       expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
       expect(bridge.calledCommands, contains('inbox:ack'));
+    });
+
+    test(
+      'gate denial at the ACK boundary keeps relay entries unacked',
+      () async {
+        // A Move Account export pause can land while a drain is already past
+        // its entry gate; the ACK boundary re-check must keep the relay copy
+        // alive for the new phone.
+        final repo = InMemoryInboxStagingRepository();
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'id': 'entry-gated-001',
+                'from': 'remote-peer',
+                'message': jsonEncode({
+                  'type': 'chat_message',
+                  'version': '1',
+                  'payload': {
+                    'id': 'msg-gated-001',
+                    'text': 'hello',
+                    'senderPeerId': 'remote-peer',
+                    'senderUsername': 'Alice',
+                    'timestamp': '2026-04-01T00:00:00.000Z',
+                  },
+                }),
+                'timestamp': '2026-04-01T00:00:00.000Z',
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:ack',
+          (_) => jsonEncode({'ok': true, 'acked': 1}),
+        );
+
+        final blockedOperations = <String>{'p2p_inbox_ack_after_stage'};
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          accountMigrationNetworkGate: ({peerId, required operation}) async =>
+              !blockedOperations.contains(operation),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        await service.drainOfflineInbox();
+
+        expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+        expect(bridge.calledCommands, isNot(contains('inbox:ack')));
+        expect(repo.entry('entry-gated-001'), isNotNull);
+      },
+    );
+
+    test('gate denial stops backlog pagination between drain pages', () async {
+      final repo = InMemoryInboxStagingRepository();
+      var retrieveCalls = 0;
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand('inbox:retrieve_pending', (_) {
+        retrieveCalls++;
+        return jsonEncode({
+          'ok': true,
+          'messages': [
+            {
+              'id': 'entry-page-$retrieveCalls',
+              'from': 'remote-peer',
+              'message': jsonEncode({
+                'type': 'chat_message',
+                'version': '1',
+                'payload': {
+                  'id': 'msg-page-$retrieveCalls',
+                  'text': 'hello',
+                  'senderPeerId': 'remote-peer',
+                  'senderUsername': 'Alice',
+                  'timestamp': '2026-04-01T00:00:00.000Z',
+                },
+              }),
+              'timestamp': '2026-04-01T00:00:00.000Z',
+            },
+          ],
+          'hasMore': true,
+        });
+      });
+      bridge.whenCommand(
+        'inbox:ack',
+        (_) => jsonEncode({'ok': true, 'acked': 1}),
+      );
+
+      final blockedOperations = <String>{'p2p_drain_offline_inbox_page'};
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        accountMigrationNetworkGate: ({peerId, required operation}) async =>
+            !blockedOperations.contains(operation),
+        replayRecoveredInboxChatMessage:
+            (message, {String? stagedEntryId}) async => (
+              disposition: RecoveredInboxChatDisposition.committed,
+              reasonCode: 'stored',
+              reasonDetail: null,
+            ),
+      );
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      await service.drainOfflineInboxFully();
+
+      // First page drained on the foreground budget; the continuation is
+      // gated per page, so no second retrieve happens.
+      expect(retrieveCalls, 1);
     });
 
     test(
@@ -666,7 +1974,7 @@ void main() {
         service = P2PServiceImpl(
           bridge: bridge,
           inboxStagingRepository: repo,
-          replayRecoveredInboxChatMessage: (_) async {
+          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
             return (
               disposition: RecoveredInboxChatDisposition.retryable,
               reasonCode: 'missing_mlkem_secret',

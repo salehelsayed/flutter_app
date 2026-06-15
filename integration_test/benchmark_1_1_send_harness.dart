@@ -3,10 +3,8 @@
 /// Measures cold vs warm send latency with a real Go CLI test peer.
 /// Requires orchestrator to start the test peer and provide fixture file.
 /// Run: dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios A
-@Tags(['device'])
 library;
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -19,41 +17,21 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 
 import '../test/shared/fakes/in_memory_message_repository.dart';
 
+import '_support/cli_peer_fixture.dart';
 import 'benchmark_helpers.dart';
 
-const _configuredCliPeerFixture = String.fromEnvironment(
-  'CLI_PEER_FIXTURE',
-  defaultValue: '',
-);
-
-Map<String, dynamic>? _loadCliPeerFixture() {
-  final path = _configuredCliPeerFixture.isNotEmpty
-      ? _configuredCliPeerFixture
-      : '${Directory.systemTemp.path}/cli_peer_fixture.json';
-  final file = File(path);
-  if (!file.existsSync()) return null;
-  try {
-    return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  } catch (e) {
-    print('[TEST] Failed to parse CLI peer fixture: $e');
-    return null;
-  }
-}
-
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runOneToOneSendBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('A-Sim-1: Cold send to test peer', (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  BENCHMARK: 1:1 SEND (A-Sim-1)');
     print('${'═' * 60}\n');
 
-    final fixture = _loadCliPeerFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture found — run via orchestrator');
       return;
@@ -164,14 +142,14 @@ void main() {
     print('[BENCHMARK] sim_1_1_send_path_distribution $distribution');
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('A-Sim-2: 10 warm sequential sends', (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  BENCHMARK: SEQUENTIAL WARM SENDS (A-Sim-2)');
     print('${'═' * 60}\n');
 
-    final fixture = _loadCliPeerFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture');
       return;
@@ -230,9 +208,9 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('A-Sim-3: Inbox fallback (peer offline)', (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  BENCHMARK: INBOX FALLBACK (A-Sim-3)');
     print('${'═' * 60}\n');
@@ -265,5 +243,5 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 }

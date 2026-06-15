@@ -7,11 +7,13 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -28,9 +30,12 @@ enum ChatMessageProcessState {
   notChatMessage,
   missingMlKemSecret,
   decryptionFailed,
+  decryptionDeferred,
   unknownSender,
   duplicate,
+  ignoredEdit,
   editMissingOriginal,
+  accountMigrationBlocked,
   error,
 }
 
@@ -59,14 +64,32 @@ class ChatMessageListener {
   final ContactRepository contactRepo;
   final Bridge? bridge;
   final Future<String?> Function()? getOwnMlKemSecretKey;
+
+  /// Resolves the ring of PRIOR ML-KEM secrets (newest first) used as
+  /// decrypt fallbacks after a same-device key regeneration (P0-B).
+  final Future<List<String>> Function()? getOwnMlKemSecretKeyRing;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
   final NotificationService? notificationService;
   final ActiveConversationTracker? conversationTracker;
+  // 118 Phase 4: shared per-conversation tone debounce (direct + group keys are
+  // disjoint, so one tracker serves both listeners).
+  final NotificationToneTracker? notificationToneTracker;
   final AppLifecycleState Function()? getAppLifecycleState;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
   final RecentRemoteNotificationGate? remoteNotificationGate;
   final Duration backgroundNotificationDuplicateGuardDelay;
+  final AccountMigrationNetworkGate accountMigrationNetworkGate;
+
+  /// 115 P2: optional delivery-receipt sender. When set, relay-inbox
+  /// arrivals (per the shared origin contract) confirm durable persist back
+  /// to the message sender. Live direct/LAN messages never mint receipts —
+  /// their own acks carry the confirmation.
+  final Future<void> Function({
+    required String contactPeerId,
+    required List<String> messageIds,
+  })?
+  sendDeliveryReceipt;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
@@ -78,14 +101,18 @@ class ChatMessageListener {
     required this.contactRepo,
     this.bridge,
     this.getOwnMlKemSecretKey,
+    this.getOwnMlKemSecretKeyRing,
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.notificationService,
     this.conversationTracker,
+    this.notificationToneTracker,
     this.getAppLifecycleState,
     this.downloadProfilePictureFn,
     this.remoteNotificationGate,
     this.backgroundNotificationDuplicateGuardDelay = const Duration(seconds: 2),
+    this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
+    this.sendDeliveryReceipt,
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -240,14 +267,52 @@ class ChatMessageListener {
       case ChatMessageProcessState.stored:
       case ChatMessageProcessState.blockedSender:
       case ChatMessageProcessState.duplicate:
+      case ChatMessageProcessState.ignoredEdit:
         return true;
       case ChatMessageProcessState.notChatMessage:
       case ChatMessageProcessState.missingMlKemSecret:
       case ChatMessageProcessState.decryptionFailed:
+      case ChatMessageProcessState.decryptionDeferred:
       case ChatMessageProcessState.unknownSender:
       case ChatMessageProcessState.editMissingOriginal:
+      case ChatMessageProcessState.accountMigrationBlocked:
       case ChatMessageProcessState.error:
         return false;
+    }
+  }
+
+  Future<bool> _allowsInboundAccountSideEffects(ChatMessage message) async {
+    const operation = 'chat_listener_inbound_message';
+    try {
+      final peerId = message.to.trim().isEmpty ? null : message.to;
+      final allowed = await accountMigrationNetworkGate(
+        peerId: peerId,
+        operation: operation,
+      );
+      if (!allowed) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ACCOUNT_MIGRATION_INBOUND_EVENT_BLOCKED',
+          details: {
+            'operation': operation,
+            'family': 'direct_chat',
+            'peerId': ?peerId,
+          },
+        );
+      }
+      return allowed;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_INBOUND_EVENT_BLOCKED',
+        details: {
+          'operation': operation,
+          'family': 'direct_chat',
+          'reason': 'gate_error',
+          'error': e.toString(),
+        },
+      );
+      return false;
     }
   }
 
@@ -275,6 +340,7 @@ class ChatMessageListener {
   Future<ChatMessageProcessOutcome> processIncomingMessage(
     ChatMessage message, {
     bool suppressNotification = false,
+    String? stagedEntryId,
   }) async {
     Future<ChatMessageProcessOutcome> finish(
       ChatMessageProcessOutcome outcome,
@@ -284,6 +350,12 @@ class ChatMessageListener {
     }
 
     try {
+      if (!await _allowsInboundAccountSideEffects(message)) {
+        return const ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.accountMigrationBlocked,
+        );
+      }
+
       // Check if sender is blocked — reject message entirely (don't persist)
       final senderPeerId = message.from;
       final senderContact = await contactRepo.getContact(senderPeerId);
@@ -312,6 +384,9 @@ class ChatMessageListener {
       final ownSecretKey = getOwnMlKemSecretKey != null
           ? await getOwnMlKemSecretKey!()
           : null;
+      final ownSecretKeyRing = getOwnMlKemSecretKeyRing != null
+          ? await getOwnMlKemSecretKeyRing!()
+          : null;
 
       final (
         result,
@@ -323,8 +398,17 @@ class ChatMessageListener {
         contactRepo: contactRepo,
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
+        fallbackMlKemSecretKeys: ownSecretKeyRing,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
         transport: message.transport,
+        stagedEntryId: stagedEntryId,
+        sendDeliveryReceipt: sendDeliveryReceipt == null
+            ? null
+            : (messageId) => sendDeliveryReceipt!(
+                contactPeerId: message.from,
+                messageIds: [messageId],
+              ),
       );
 
       if (updatedContact != null) {
@@ -358,6 +442,24 @@ class ChatMessageListener {
         );
       }
 
+      if (result == HandleChatMessageResult.decryptionDeferred) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_DECRYPT_DEFERRED',
+          details: {
+            'from': senderPeerId.length > 10
+                ? senderPeerId.substring(0, 10)
+                : senderPeerId,
+          },
+        );
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.decryptionDeferred,
+            updatedContact: updatedContact,
+          ),
+        );
+      }
+
       if (result == HandleChatMessageResult.unknownSender) {
         return finish(
           ChatMessageProcessOutcome(
@@ -371,6 +473,15 @@ class ChatMessageListener {
         return finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.duplicate,
+            updatedContact: updatedContact,
+          ),
+        );
+      }
+
+      if (result == HandleChatMessageResult.ignoredEdit) {
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.ignoredEdit,
             updatedContact: updatedContact,
           ),
         );
@@ -457,10 +568,21 @@ class ChatMessageListener {
             ),
             suppressNotification: suppressNotification,
             messageId: conversationMessage.id,
+            toneTracker: notificationToneTracker,
             consumeRecentRemoteNotificationAnnouncement:
                 ({required payload, String? messageId}) =>
                     (remoteNotificationGate ?? recentRemoteNotificationGate)
                         .consumeIfRecentAnnouncement(
+                          payload: payload,
+                          messageId: messageId,
+                        ),
+            // 118 Phase 2: live-wins handshake — a live direct notification
+            // writes a dedup marker so a late FCM isolate for the same message
+            // suppresses instead of double-alerting.
+            markRecentRemoteNotificationAnnouncement:
+                ({required payload, String? messageId}) =>
+                    (remoteNotificationGate ?? recentRemoteNotificationGate)
+                        .markAnnouncement(
                           payload: payload,
                           messageId: messageId,
                         ),

@@ -2000,7 +2000,7 @@ void main() {
         verdicts: _validGm001Verdicts(),
       );
 
-      expect(verdict.ok, isTrue);
+      expect(verdict.ok, isTrue, reason: verdict.detail);
       expect(verdict.detail, contains('gm001 verdicts valid'));
     });
 
@@ -4229,6 +4229,74 @@ void main() {
       expect(verdict.detail, contains('ge002 verdicts valid'));
     });
 
+    test('accepts GE-002 live-only remaining-pair sender proof', () {
+      final verdicts = _validGe002Verdicts();
+      final alice = Map<String, dynamic>.from(verdicts[0]);
+      final sentMessages = (alice['sentMessages'] as List<dynamic>)
+          .map(
+            (sent) => <String, Object?>{
+              ...Map<String, Object?>.from(sent as Map),
+              'recipientPeerIds': const <String>[],
+              'actualDurablePayloadProof': false,
+              'actualTopicPeerProof': true,
+              'topicPeers': 1,
+              'deliveryMode': 'live_only',
+              'inboxStored': false,
+            },
+          )
+          .toList(growable: false);
+      verdicts[0] = <String, dynamic>{
+        ...alice,
+        'sentMessages': sentMessages,
+        'ge002RemovalContinuityProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            alice['ge002RemovalContinuityProof'] as Map,
+          ),
+          'actualDurablePayloadProof': false,
+          'actualLiveTopicPeerProof': true,
+          'everyPostRemovalExcludedCharlie': true,
+        },
+      };
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('ge002 verdicts valid'));
+    });
+
+    test('rejects GE-002 missing durable and live sender proof', () {
+      final verdicts = _validGe002Verdicts();
+      final alice = Map<String, dynamic>.from(verdicts[0]);
+      verdicts[0] = <String, dynamic>{
+        ...alice,
+        'ge002RemovalContinuityProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            alice['ge002RemovalContinuityProof'] as Map,
+          ),
+          'actualDurablePayloadProof': false,
+          'actualLiveTopicPeerProof': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ge002RemovalContinuityProof.actualDurablePayloadProof or actualLiveTopicPeerProof must be true',
+        ),
+      );
+    });
+
     test('rejects GE-002 Charlie post-removal leakage', () {
       final leaked = _validGe002Verdicts();
       leaked[2] = {
@@ -4279,6 +4347,43 @@ void main() {
       );
 
       expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('ge003 verdicts valid'));
+    });
+
+    test('accepts GE-003 live-only remaining-pair sender proof', () {
+      final verdicts = _validGe003Verdicts();
+      final bob = Map<String, dynamic>.from(verdicts[1]);
+      final sentMessages = (bob['sentMessages'] as List<dynamic>)
+          .map(
+            (sent) => <String, Object?>{
+              ...Map<String, Object?>.from(sent as Map),
+              'recipientPeerIds': const <String>[],
+              'actualDurablePayloadProof': false,
+              'actualTopicPeerProof': true,
+              'topicPeers': 1,
+              'deliveryMode': 'live_only',
+              'inboxStored': false,
+            },
+          )
+          .toList(growable: false);
+      verdicts[1] = <String, dynamic>{
+        ...bob,
+        'sentMessages': sentMessages,
+        'ge003RemainingPairProof': <String, Object?>{
+          ...Map<String, Object?>.from(bob['ge003RemainingPairProof'] as Map),
+          'actualDurablePayloadProof': false,
+          'actualLiveTopicPeerProof': true,
+          'everyPostRemovalExcludedCharlie': true,
+        },
+      };
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge003',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
       expect(verdict.detail, contains('ge003 verdicts valid'));
     });
 
@@ -4335,6 +4440,93 @@ void main() {
       expect(verdict.detail, contains('ge004 verdicts valid'));
     });
 
+    test('accepts GE-004 live-only all-online re-add sender proof', () {
+      final liveOnly = _validGe004Verdicts();
+      final aliceSent = Map<String, Object?>.from(
+        (liveOnly[0]['sentMessages'] as List).single as Map,
+      );
+      final aliceProof = Map<String, Object?>.from(
+        liveOnly[0]['ge004ReaddExchangeProof'] as Map,
+      );
+      liveOnly[0] = <String, dynamic>{
+        ...liveOnly[0],
+        'sentMessages': <Map<String, Object?>>[
+          <String, Object?>{
+            ...aliceSent,
+            'recipientPeerIds': const <String>[],
+            'actualDurablePayloadProof': false,
+            'actualTopicPeerProof': true,
+            'topicPeers': 2,
+            'deliveryMode': 'live_only',
+            'inboxStored': false,
+          },
+        ],
+        'ge004ReaddExchangeProof': <String, Object?>{
+          ...aliceProof,
+          'actualDurablePayloadProof': false,
+          'actualLiveTopicPeerProof': true,
+        },
+      };
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge004',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: liveOnly,
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('ge004 verdicts valid'));
+    });
+
+    test('rejects GE-004 missing durable and live sender proof', () {
+      final missingProof = _validGe004Verdicts();
+      final aliceSent = Map<String, Object?>.from(
+        (missingProof[0]['sentMessages'] as List).single as Map,
+      );
+      final aliceProof = Map<String, Object?>.from(
+        missingProof[0]['ge004ReaddExchangeProof'] as Map,
+      );
+      missingProof[0] = <String, dynamic>{
+        ...missingProof[0],
+        'sentMessages': <Map<String, Object?>>[
+          <String, Object?>{
+            ...aliceSent,
+            'recipientPeerIds': const <String>[],
+            'actualDurablePayloadProof': false,
+            'actualTopicPeerProof': false,
+            'topicPeers': 0,
+            'deliveryMode': 'live_only',
+            'inboxStored': false,
+          },
+        ],
+        'ge004ReaddExchangeProof': <String, Object?>{
+          ...aliceProof,
+          'actualDurablePayloadProof': false,
+          'actualLiveTopicPeerProof': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge004',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ge004ReaddExchangeProof.actualDurablePayloadProof or actualLiveTopicPeerProof must be true',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe004PostReadd must report actual durable payload proof or live topic peer proof',
+        ),
+      );
+    });
+
     test('rejects GE-004 missing Charlie post-readd receipt', () {
       final missing = _validGe004Verdicts();
       final aliceProof = Map<String, Object?>.from(
@@ -4387,6 +4579,95 @@ void main() {
 
       expect(verdict.ok, isTrue);
       expect(verdict.detail, contains('ge005 verdicts valid'));
+    });
+
+    test('accepts GE-005 live-only removed-window sender proof', () {
+      final verdicts = _validGe005Verdicts();
+      final aliceSent = (verdicts[0]['sentMessages'] as List)
+          .cast<Map<String, Object?>>()
+          .map(
+            (entry) => <String, Object?>{
+              ...entry,
+              'recipientPeerIds': const <String>[],
+              'actualDurablePayloadProof': false,
+              'actualTopicPeerProof': true,
+              'deliveryMode': 'live_only',
+              'topicPeers': 1,
+              'inboxStored': false,
+            },
+          )
+          .toList(growable: false);
+      final aliceProof = Map<String, Object?>.from(
+        verdicts[0]['ge005RemoveReaddLoopProof'] as Map,
+      );
+      verdicts[0] = <String, dynamic>{
+        ...verdicts[0],
+        'sentMessages': aliceSent,
+        'ge005RemoveReaddLoopProof': <String, Object?>{
+          ...aliceProof,
+          'actualDurablePayloadProof': false,
+          'actualLiveTopicPeerProof': true,
+        },
+      };
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge005',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('ge005 verdicts valid'));
+    });
+
+    test('rejects GE-005 removed-window sender without delivery proof', () {
+      final verdicts = _validGe005Verdicts();
+      final aliceSent = (verdicts[0]['sentMessages'] as List)
+          .cast<Map<String, Object?>>()
+          .map(
+            (entry) => <String, Object?>{
+              ...entry,
+              'recipientPeerIds': const <String>[],
+              'actualDurablePayloadProof': false,
+              'actualTopicPeerProof': false,
+              'deliveryMode': 'live_only',
+              'topicPeers': 1,
+              'inboxStored': false,
+            },
+          )
+          .toList(growable: false);
+      final aliceProof = Map<String, Object?>.from(
+        verdicts[0]['ge005RemoveReaddLoopProof'] as Map,
+      );
+      verdicts[0] = <String, dynamic>{
+        ...verdicts[0],
+        'sentMessages': aliceSent,
+        'ge005RemoveReaddLoopProof': <String, Object?>{
+          ...aliceProof,
+          'actualDurablePayloadProof': false,
+          'actualLiveTopicPeerProof': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge005',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ge005RemoveReaddLoopProof.actualDurablePayloadProof or actualLiveTopicPeerProof must be true',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe005Removed01 must report actual durable payload proof or live topic peer proof',
+        ),
+      );
     });
 
     test('rejects GE-005 removed-window Charlie leakage', () {
@@ -4446,6 +4727,44 @@ void main() {
 
       expect(verdict.ok, isTrue);
       expect(verdict.detail, contains('ge006 verdicts valid'));
+    });
+
+    test('rejects GE-006 Alice post-readd without durable Charlie proof', () {
+      final missingDurable = _validGe006Verdicts();
+      final aliceSent = (missingDurable[0]['sentMessages'] as List)
+          .cast<Map<String, Object?>>()
+          .map((message) {
+            if (message['key'] != 'aliceGe006PostReadd') {
+              return message;
+            }
+            return <String, Object?>{
+              ...message,
+              'recipientPeerIds': const <String>['bob-peer'],
+              'actualDurablePayloadProof': false,
+            };
+          })
+          .toList(growable: false);
+      missingDurable[0] = {...missingDurable[0], 'sentMessages': aliceSent};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge006',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDurable,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe006PostReadd must report actual durable payload proof',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe006PostReadd recipientPeerIds mismatch, missing charlie-peer',
+        ),
+      );
     });
 
     test('rejects GE-006 removed-window Charlie leakage', () {
@@ -4553,6 +4872,59 @@ void main() {
 
       expect(verdict.ok, isTrue);
       expect(verdict.detail, contains('ge007 verdicts valid'));
+    });
+
+    test('rejects GE-007 missing Alice durable Bob replay proof', () {
+      final missing = _validGe007Verdicts();
+      final aliceProof = Map<String, Object?>.from(
+        missing[0]['ge007OfflineObserverProof'] as Map,
+      );
+      final aliceSent = (missing[0]['sentMessages'] as List)
+          .map((entry) => Map<String, Object?>.from(entry as Map))
+          .toList(growable: false);
+      for (final sent in aliceSent) {
+        sent['recipientPeerIds'] = const <String>[];
+        sent['actualDurablePayloadProof'] = false;
+      }
+      missing[0] = {
+        ...missing[0],
+        'sentMessages': aliceSent,
+        'ge007OfflineObserverProof': <String, Object?>{
+          ...aliceProof,
+          'removedWindowDurableIncludesBob': false,
+          'postReaddDurableIncludesBob': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missing,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe007RemovedWindow missing recipientPeerIds',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains('alice: sent aliceGe007PostReadd missing recipientPeerIds'),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ge007OfflineObserverProof.removedWindowDurableIncludesBob must be true',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ge007OfflineObserverProof.postReaddDurableIncludesBob must be true',
+        ),
+      );
     });
 
     test('rejects GE-007 missing Bob removed-window catch-up', () {
@@ -4688,6 +5060,71 @@ void main() {
       expect(verdict.detail, contains('ge008 verdicts valid'));
     });
 
+    test('accepts GE-008 Alice live-topic send storm proof', () {
+      final liveTopic = _validGe008Verdicts();
+      final aliceSent =
+          ((liveTopic[0]['sentMessages'] as List).cast<Map<String, Object?>>())
+              .map((entry) {
+                final key = entry['key'] as String;
+                final minTopicPeers = key.contains('Removed') ? 1 : 2;
+                return <String, Object?>{
+                  ...entry,
+                  'recipientPeerIds': const <String>[],
+                  'actualDurablePayloadProof': false,
+                  'actualTopicPeerProof': true,
+                  'deliveryMode': 'live_only',
+                  'inboxStored': false,
+                  'topicPeers': minTopicPeers,
+                };
+              })
+              .toList(growable: false);
+      liveTopic[0] = {...liveTopic[0], 'sentMessages': aliceSent};
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge008',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: liveTopic,
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('ge008 verdicts valid'));
+    });
+
+    test('rejects GE-008 live-topic proof with insufficient topic peers', () {
+      final insufficient = _validGe008Verdicts();
+      final aliceSent =
+          ((insufficient[0]['sentMessages'] as List)
+                  .cast<Map<String, Object?>>())
+              .map((entry) {
+                if (entry['key'] != 'aliceGe008Removed0') {
+                  return entry;
+                }
+                return <String, Object?>{
+                  ...entry,
+                  'recipientPeerIds': const <String>[],
+                  'actualDurablePayloadProof': false,
+                  'actualTopicPeerProof': true,
+                  'deliveryMode': 'live_only',
+                  'inboxStored': false,
+                  'topicPeers': 0,
+                };
+              })
+              .toList(growable: false);
+      insufficient[0] = {...insufficient[0], 'sentMessages': aliceSent};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge008',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: insufficient,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: sent aliceGe008Removed0 topicPeers must be >= 1'),
+      );
+    });
+
     test('rejects GE-008 Charlie removed-window leak', () {
       final leaked = _validGe008Verdicts();
       final charlieProof = Map<String, Object?>.from(
@@ -4794,6 +5231,60 @@ void main() {
 
       expect(verdict.ok, isTrue);
       expect(verdict.detail, contains('ge009 verdicts valid'));
+    });
+
+    test('rejects GE-009 Alice post-readd without durable Charlie proof', () {
+      final invalid = _validGe009Verdicts();
+      final aliceSent =
+          ((invalid[0]['sentMessages'] as List).cast<Map<String, Object?>>())
+              .map((entry) {
+                if (entry['key'] != 'aliceGe009PostReadd') {
+                  return entry;
+                }
+                return <String, Object?>{
+                  ...entry,
+                  'recipientPeerIds': const <String>[],
+                  'actualDurablePayloadProof': false,
+                  'deliveryMode': 'live_only',
+                  'inboxStored': false,
+                };
+              })
+              .toList(growable: false);
+      final aliceProof = Map<String, Object?>.from(
+        invalid[0]['ge009PartitionHealProof'] as Map,
+      );
+      invalid[0] = {
+        ...invalid[0],
+        'sentMessages': aliceSent,
+        'ge009PartitionHealProof': <String, Object?>{
+          ...aliceProof,
+          'postReaddDurableIncludedCharlie': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge009',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: invalid,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: sent aliceGe009PostReadd missing recipientPeerIds'),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe009PostReadd must report actual durable payload proof',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ge009PartitionHealProof.postReaddDurableIncludedCharlie must be true',
+        ),
+      );
     });
 
     test('rejects GE-009 missing Charlie replay drain', () {
@@ -4981,6 +5472,57 @@ void main() {
       expect(verdict.detail, contains('go002 verdicts valid'));
     });
 
+    test('rejects GO-002 sender without retry recipient proof', () {
+      final invalid = _validGo002Verdicts();
+      final sent = Map<String, Object?>.from(
+        (invalid[0]['sentMessages'] as List).single as Map,
+      );
+      final proof = Map<String, Object?>.from(
+        invalid[0]['go002InboxStoreFailureSenderStatusProof'] as Map,
+      );
+      invalid[0] = {
+        ...invalid[0],
+        'sentMessages': <Map<String, Object?>>[
+          <String, Object?>{
+            ...sent,
+            'recipientPeerIds': const <String>[],
+            'failedInboxRecipientPeerIds': const <String>[],
+          },
+        ],
+        'go002InboxStoreFailureSenderStatusProof': <String, Object?>{
+          ...proof,
+          'recipientPeerIds': const <String>[],
+          'failedInboxRecipientPeerIds': const <String>[],
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'go002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: invalid,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: go002InboxStoreFailureSenderStatusProof.recipientPeerIds must include peer IDs',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: go002InboxStoreFailureSenderStatusProof.failedInboxRecipientPeerIds must include peer IDs',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGo002InboxStoreFailure missing recipientPeerIds',
+        ),
+      );
+    });
+
     test('rejects GO-002 sender marked reliable before retry', () {
       final invalid = _validGo002Verdicts();
       final proof = Map<String, Object?>.from(
@@ -5081,6 +5623,59 @@ void main() {
         rejected.detail,
         contains(
           'alice: ge010ZeroLivePeersInboxFallbackProof.honestSenderFallbackStatus must be true',
+        ),
+      );
+    });
+
+    test('rejects GE-010 sender without durable inbox fallback proof', () {
+      final invalid = _validGe010Verdicts();
+      final sent = Map<String, Object?>.from(
+        (invalid[0]['sentMessages'] as List).single as Map,
+      );
+      final proof = Map<String, Object?>.from(
+        invalid[0]['ge010ZeroLivePeersInboxFallbackProof'] as Map,
+      );
+      invalid[0] = {
+        ...invalid[0],
+        'sentMessages': <Map<String, Object?>>[
+          <String, Object?>{
+            ...sent,
+            'recipientPeerIds': const <String>[],
+            'actualDurablePayloadProof': false,
+            'inboxStored': false,
+          },
+        ],
+        'ge010ZeroLivePeersInboxFallbackProof': <String, Object?>{
+          ...proof,
+          'inboxStored': false,
+          'actualDurablePayloadProof': false,
+          'recipientPeerIds': const <String>[],
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ge010',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: invalid,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe010ZeroPeerFallback missing recipientPeerIds',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceGe010ZeroPeerFallback must report actual durable payload proof',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ge010ZeroLivePeersInboxFallbackProof.inboxStored must be true',
         ),
       );
     });
@@ -7943,8 +8538,39 @@ void main() {
         verdicts: _validGo003Verdicts(),
       );
 
-      expect(verdict.ok, isTrue);
+      expect(verdict.ok, isTrue, reason: verdict.detail);
       expect(verdict.detail, contains('go003 verdicts valid'));
+    });
+
+    test('rejects GO-003 healthy sender without delivery proof', () {
+      final invalid = _validGo003Verdicts();
+      final sent = Map<String, Object?>.from(
+        (invalid[0]['sentMessages'] as List).single as Map,
+      );
+      invalid[0] = {
+        ...invalid[0],
+        'sentMessages': <Map<String, Object?>>[
+          <String, Object?>{
+            ...sent,
+            'actualTopicPeerProof': false,
+            'topicPeers': 0,
+          },
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'go003',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: invalid,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceAfterStaleCharlieReject must report actual durable payload proof or live topic peer proof',
+        ),
+      );
     });
 
     test('accepts valid GM-018 remaining-member continuity verdicts', () {
@@ -16552,6 +17178,7 @@ List<Map<String, dynamic>> _validGe005Verdicts() {
     required List<String> readdWindowSentKeys,
     required List<String> readdWindowReceivedKeys,
     bool actualDurablePayloadProof = false,
+    bool actualLiveTopicPeerProof = false,
     bool removedWindowExcludedCharlie = false,
     bool readdWindowIncludedCharlie = false,
   }) {
@@ -16561,6 +17188,7 @@ List<Map<String, dynamic>> _validGe005Verdicts() {
       'finalMemberListIncludesAll': true,
       'finalMemberPeerIds': members,
       'actualDurablePayloadProof': actualDurablePayloadProof,
+      'actualLiveTopicPeerProof': actualLiveTopicPeerProof,
       'removedWindowExcludedCharlie': removedWindowExcludedCharlie,
       'readdWindowIncludedCharlie': readdWindowIncludedCharlie,
       'removedWindowSentCount': removedWindowSentCount,
@@ -30090,7 +30718,12 @@ List<Map<String, dynamic>> _validGm016Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 1,
-          'recipientPeerIds': <String>['bob-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'topicPeers': 1,
+          'inboxStored': false,
         },
       ],
       extra: const <String, Object?>{
@@ -30181,7 +30814,12 @@ List<Map<String, dynamic>> _validGm017Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 1,
-          'recipientPeerIds': <String>['bob-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'topicPeers': 1,
+          'inboxStored': false,
         },
       ],
       extra: const <String, Object?>{
@@ -30284,7 +30922,12 @@ List<Map<String, dynamic>> _validGo003Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 1,
-          'recipientPeerIds': <String>['bob-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'topicPeers': 1,
+          'inboxStored': false,
         },
       ],
       extra: const <String, Object?>{

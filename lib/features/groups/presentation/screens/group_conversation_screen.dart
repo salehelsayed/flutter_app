@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
@@ -194,7 +196,7 @@ class GroupConversationScreen extends StatelessWidget {
                 Expanded(
                   child: messages.isEmpty
                       ? _buildEmptyOrLoadingState(context)
-                      : _buildMessageList(),
+                      : _buildMessageList(context),
                 ),
                 if (composerStateListenable == null)
                   _buildComposerSection(_legacyComposerState)
@@ -530,17 +532,22 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildMessageList() {
+  Widget _buildMessageList(BuildContext context) {
+    final displayItems = _buildGroupDisplayItems(context);
     return ListView.builder(
       key: const ValueKey('group-messages'),
       controller: scrollController,
       reverse: true,
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      itemCount: messages.length,
+      itemCount: displayItems.length,
       itemBuilder: (context, index) {
-        // Reversed list: index 0 = newest
-        final message = messages[messages.length - 1 - index];
+        // Reversed display list: index 0 = newest.
+        final item = displayItems[index];
+        if (item.type == _GroupItemType.dateSeparator) {
+          return DateSeparator(label: item.dateLabel!);
+        }
+        final message = item.message!;
         final isSent = message.senderPeerId == ownPeerId;
         final (quotedText, isQuoteUnavailable) = _resolveQuotedText(message);
         final messageMedia = mediaMap[message.id] ?? message.media;
@@ -650,6 +657,39 @@ class GroupConversationScreen extends StatelessWidget {
         return bubble;
       },
     );
+  }
+
+  /// Flattens [messages] into display items, inserting a WhatsApp-style date
+  /// separator before the first message of each calendar day. The result is
+  /// reversed for the reversed ListView (index 0 = newest), so each separator
+  /// renders above that day's first message.
+  ///
+  /// Dedup is keyed on a SET of already-emitted day labels rather than just the
+  /// previous one: group messages are ordered by [orderGroupMessagesForTimeline]
+  /// (replies are pulled after their quoted parent), so the day sequence is not
+  /// guaranteed monotonic. A set guarantees each calendar day gets exactly one
+  /// separator even when a reordered reply revisits an earlier day.
+  List<_GroupDisplayItem> _buildGroupDisplayItems(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final locale = Localizations.localeOf(context).toString();
+    final now = DateTime.now();
+
+    final items = <_GroupDisplayItem>[];
+    final emittedLabels = <String>{};
+    for (final message in messages) {
+      final label = formatDaySeparatorLabel(
+        message.timestamp,
+        now: now,
+        todayLabel: l10n.date_today,
+        yesterdayLabel: l10n.date_yesterday,
+        locale: locale,
+      );
+      if (emittedLabels.add(label)) {
+        items.add(_GroupDisplayItem.dateSeparator(label));
+      }
+      items.add(_GroupDisplayItem.message(message));
+    }
+    return items.reversed.toList();
   }
 
   Widget _buildHighlightedMessageCue(
@@ -938,4 +978,21 @@ class _GroupConversationLoadingBar extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _GroupItemType { dateSeparator, message }
+
+/// A single row in the group message list: either a day separator or a message.
+class _GroupDisplayItem {
+  final _GroupItemType type;
+  final GroupMessage? message;
+  final String? dateLabel;
+
+  const _GroupDisplayItem._({required this.type, this.message, this.dateLabel});
+
+  factory _GroupDisplayItem.dateSeparator(String label) =>
+      _GroupDisplayItem._(type: _GroupItemType.dateSeparator, dateLabel: label);
+
+  factory _GroupDisplayItem.message(GroupMessage message) =>
+      _GroupDisplayItem._(type: _GroupItemType.message, message: message);
 }

@@ -703,6 +703,10 @@ class GroupTestUser {
   dissolveGroupViaBridge({
     required String groupId,
     DateTime? dissolvedAt,
+    // When false, reproduces the pre-Option-A production caller: the signed
+    // audit OMITS the actor device/transport binding while the live network
+    // still stamps senderDeviceId. Receivers must still converge (Option B).
+    bool signActorBinding = true,
   }) async {
     final members = await groupRepo.getMembers(groupId);
     final (result, group) = await group_dissolve.dissolveGroup(
@@ -714,9 +718,9 @@ class GroupTestUser {
       actorUsername: username,
       actorPublicKey: publicKey,
       actorPrivateKey: privateKey,
-      actorDeviceId: deviceId,
-      actorTransportPeerId: deviceId,
-      actorKeyPackageId: deviceIdentity.keyPackageId,
+      actorDeviceId: signActorBinding ? deviceId : null,
+      actorTransportPeerId: signActorBinding ? deviceId : null,
+      actorKeyPackageId: signActorBinding ? deviceIdentity.keyPackageId : null,
       dissolvedAt: dissolvedAt,
     );
 

@@ -1,9 +1,14 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
+import 'package:flutter_app/features/account_migration/domain/repositories/account_migration_authority_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 /// Represents the startup routing decision based on identity and contacts.
 enum StartupDecision {
+  /// Migration authority forbids normal account startup on this device.
+  accountMigrationBlocked,
+
   /// Identity exists and at least one contact is stored.
   hasIdentityWithContacts,
 
@@ -24,6 +29,7 @@ enum StartupDecision {
 Future<StartupDecision> decideStartupRoute({
   required IdentityRepository identityRepo,
   required ContactRepository contactRepo,
+  AccountMigrationAuthorityRepository? migrationAuthorityRepository,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -32,6 +38,38 @@ Future<StartupDecision> decideStartupRoute({
   );
 
   final identity = await identityRepo.loadIdentity();
+  var migrationAuthority = await migrationAuthorityRepository?.loadAuthority();
+
+  if (migrationAuthority != null &&
+      !migrationAuthority.isFailClosed &&
+      migrationAuthority.state ==
+          AccountMigrationAuthorityState.migrationExportingNetworkPaused) {
+    // An export pause is only meaningful while a Move Account transfer run is
+    // alive in this process; finding it at startup means the app died (or was
+    // killed) mid-export. Restore active authority so the old phone neither
+    // blocks startup nor stays silently offline behind the network gate.
+    final restored = AccountMigrationAuthorityRecord(
+      state: AccountMigrationAuthorityState.migrationFailedActiveRestored,
+      accountPeerId: migrationAuthority.accountPeerId,
+    );
+    await migrationAuthorityRepository!.saveAuthority(restored);
+    migrationAuthority = restored;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ID_STARTUP_MIGRATION_EXPORT_PAUSE_RECOVERED',
+      details: {},
+    );
+  }
+
+  if (migrationAuthority != null &&
+      migrationAuthority.state.blocksNormalStartup) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ID_STARTUP_MIGRATION_BLOCKED',
+      details: {'state': migrationAuthority.state.wireName},
+    );
+    return StartupDecision.accountMigrationBlocked;
+  }
 
   if (identity == null) {
     emitFlowEvent(

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -90,6 +91,29 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 
 const mediaUploadProgressEmitChunkBytes int64 = 256 * 1024
 const mediaUploadProgressEmitInterval = 250 * time.Millisecond
+const mediaSourceRoleRelayMediaStore = "relay_media_store"
+
+type mediaStream struct {
+	stream          network.Stream
+	cancel          context.CancelFunc
+	operation       string
+	sourcePeerId    string
+	streamTransport string
+}
+
+// MediaDownloadResult includes the downloaded blob metadata plus the concrete
+// source telemetry needed to distinguish relay-store fetches from peer-phone
+// fetches in Flutter logs.
+type MediaDownloadResult struct {
+	Mime                string
+	Size                int64
+	SourceRole          string
+	SourcePeerId        string
+	SourcePeerShort     string
+	StreamTransport     string
+	ServedByPhone       bool
+	RoutedViaRelayStore bool
+}
 
 type mediaUploadProgressReader struct {
 	reader         io.Reader
@@ -117,68 +141,126 @@ func (r *mediaUploadProgressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// openMediaStream connects to the relay and opens a MediaProtocol stream.
-// Tries each configured relay in order until one succeeds.
-func (n *Node) openMediaStream() (network.Stream, context.CancelFunc, error) {
+func relayMediaTelemetryFields(operation, sourcePeerId, streamTransport string) map[string]interface{} {
+	if streamTransport == "" {
+		streamTransport = "unknown"
+	}
+	return map[string]interface{}{
+		"operation":           operation,
+		"sourceRole":          mediaSourceRoleRelayMediaStore,
+		"sourcePeerId":        sourcePeerId,
+		"sourcePeerShort":     shortPeerID(sourcePeerId),
+		"streamTransport":     streamTransport,
+		"servedByPhone":       false,
+		"routedViaRelayStore": true,
+	}
+}
+
+func (s *mediaStream) telemetryFields() map[string]interface{} {
+	if s == nil {
+		return map[string]interface{}{
+			"operation":           "unknown",
+			"sourceRole":          "unknown",
+			"sourcePeerId":        "",
+			"sourcePeerShort":     "",
+			"streamTransport":     "unknown",
+			"servedByPhone":       false,
+			"routedViaRelayStore": false,
+		}
+	}
+	return relayMediaTelemetryFields(s.operation, s.sourcePeerId, s.streamTransport)
+}
+
+func mediaEventDetails(s *mediaStream, details map[string]interface{}) map[string]interface{} {
+	merged := s.telemetryFields()
+	for key, value := range details {
+		merged[key] = value
+	}
+	return merged
+}
+
+func mediaDownloadResultFromStream(s *mediaStream, mime string, size int64) MediaDownloadResult {
+	fields := s.telemetryFields()
+	return MediaDownloadResult{
+		Mime:                mime,
+		Size:                size,
+		SourceRole:          fields["sourceRole"].(string),
+		SourcePeerId:        fields["sourcePeerId"].(string),
+		SourcePeerShort:     fields["sourcePeerShort"].(string),
+		StreamTransport:     fields["streamTransport"].(string),
+		ServedByPhone:       fields["servedByPhone"].(bool),
+		RoutedViaRelayStore: fields["routedViaRelayStore"].(bool),
+	}
+}
+
+func (n *Node) openMediaStreamForRelay(operation string, relay RelayInfo) (*mediaStream, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
 
 	if h == nil {
-		return nil, nil, fmt.Errorf("node not started")
+		return nil, fmt.Errorf("node not started")
 	}
 
-	rs := n.buildRelaySelector(nil)
+	totalStart := time.Now()
+	ctx, cancel := context.WithTimeout(n.ctx, MediaTimeout)
 
-	type streamResult struct {
-		stream network.Stream
-		cancel context.CancelFunc
+	connectStart := time.Now()
+	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+		cancel()
+		n.emitEvent("media:stream_open_timing", mediaEventDetails(&mediaStream{
+			operation:       operation,
+			sourcePeerId:    relay.ID.String(),
+			streamTransport: "unknown",
+		}, map[string]interface{}{
+			"connectMs": time.Since(connectStart).Milliseconds(),
+			"totalMs":   time.Since(totalStart).Milliseconds(),
+			"outcome":   "connect_failed",
+		}))
+		return nil, fmt.Errorf("connect to relay: %w", err)
 	}
+	connectMs := time.Since(connectStart).Milliseconds()
 
-	result, err := ForEachWithResult(rs, func(relay RelayInfo) (*streamResult, error) {
-		totalStart := time.Now()
-		ctx, cancel := context.WithTimeout(n.ctx, MediaTimeout)
-
-		connectStart := time.Now()
-		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-			cancel()
-			n.emitEvent("media:stream_open_timing", map[string]interface{}{
-				"connectMs": time.Since(connectStart).Milliseconds(),
-				"totalMs":   time.Since(totalStart).Milliseconds(),
-				"outcome":   "connect_failed",
-			})
-			return nil, fmt.Errorf("connect to relay: %w", err)
-		}
-		connectMs := time.Since(connectStart).Milliseconds()
-
-		streamStart := time.Now()
-		s, err := h.NewStream(ctx, relay.ID, MediaProtocol)
-		if err != nil {
-			cancel()
-			n.emitEvent("media:stream_open_timing", map[string]interface{}{
-				"connectMs":   connectMs,
-				"newStreamMs": time.Since(streamStart).Milliseconds(),
-				"totalMs":     time.Since(totalStart).Milliseconds(),
-				"outcome":     "stream_failed",
-			})
-			return nil, fmt.Errorf("open media stream: %w", err)
-		}
-		n.emitEvent("media:stream_open_timing", map[string]interface{}{
+	streamStart := time.Now()
+	s, err := h.NewStream(ctx, relay.ID, MediaProtocol)
+	if err != nil {
+		cancel()
+		n.emitEvent("media:stream_open_timing", mediaEventDetails(&mediaStream{
+			operation:       operation,
+			sourcePeerId:    relay.ID.String(),
+			streamTransport: "unknown",
+		}, map[string]interface{}{
 			"connectMs":   connectMs,
 			"newStreamMs": time.Since(streamStart).Milliseconds(),
 			"totalMs":     time.Since(totalStart).Milliseconds(),
-			"outcome":     "success",
-		})
-		setStreamDeadline(s, MediaTimeout)
-
-		return &streamResult{stream: s, cancel: cancel}, nil
-	})
-
-	if err != nil {
-		return nil, nil, err
+			"outcome":     "stream_failed",
+		}))
+		return nil, err
 	}
+	stream := &mediaStream{
+		stream:          s,
+		cancel:          cancel,
+		operation:       operation,
+		sourcePeerId:    relay.ID.String(),
+		streamTransport: classifyStreamTransport(s),
+	}
+	n.emitEvent("media:stream_open_timing", mediaEventDetails(stream, map[string]interface{}{
+		"connectMs":   connectMs,
+		"newStreamMs": time.Since(streamStart).Milliseconds(),
+		"totalMs":     time.Since(totalStart).Milliseconds(),
+		"outcome":     "success",
+	}))
+	setStreamDeadline(s, MediaTimeout)
+	return stream, nil
+}
 
-	return result.stream, result.cancel, nil
+// openMediaStream connects to the relay and opens a MediaProtocol stream.
+// Tries each configured relay in order until one succeeds.
+func (n *Node) openMediaStream(operation string) (*mediaStream, error) {
+	rs := n.buildRelaySelector(nil)
+	return ForEachWithResult(rs, func(relay RelayInfo) (*mediaStream, error) {
+		return n.openMediaStreamForRelay(operation, relay)
+	})
 }
 
 // sendMediaRequest sends a framed JSON request and reads the framed JSON response.
@@ -205,13 +287,26 @@ func sendMediaRequest(s network.Stream, req *mediaRequest) (*mediaResponse, erro
 	return &resp, nil
 }
 
-func copyMediaDownloadToFile(outputPath string, reader io.Reader, expectedSize int64, idleTimeout time.Duration) (int64, error) {
+func copyMediaDownloadToFile(outputPath string, reader io.Reader, expectedSize int64, idleTimeout time.Duration, progressFn func(receivedBytes, totalBytes int64)) (int64, error) {
 	f, err := os.Create(outputPath)
 	if err != nil {
 		return 0, fmt.Errorf("create output file: %w", err)
 	}
 
-	idleReader := newIdleTimeoutReader(reader, idleTimeout)
+	src := reader
+	if progressFn != nil {
+		// Same 256KiB/250ms cadence as the upload reader. Each tick lets the
+		// caller re-arm its stream deadline so a slow-but-moving transfer is
+		// never killed by a fixed wall clock; stall detection (idleTimeout)
+		// stays the failure authority.
+		src = &mediaUploadProgressReader{
+			reader:         reader,
+			totalBytes:     expectedSize,
+			lastEmitAt:     time.Now(),
+			emitProgressFn: progressFn,
+		}
+	}
+	idleReader := newIdleTimeoutReader(src, idleTimeout)
 	written, copyErr := io.CopyN(f, idleReader, expectedSize)
 	closeErr := f.Close()
 	if copyErr == nil {
@@ -230,11 +325,12 @@ func copyMediaDownloadToFile(outputPath string, reader io.Reader, expectedSize i
 
 // MediaUpload uploads a file to the relay's media store.
 func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []string) error {
-	s, cancel, err := n.openMediaStream()
+	ms, err := n.openMediaStream("upload")
 	if err != nil {
 		return err
 	}
-	defer cancel()
+	s := ms.stream
+	defer ms.cancel()
 	streamOK := false
 	defer finishStream(s, &streamOK)
 
@@ -309,24 +405,61 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 	if transferMs > 0 {
 		throughput = (fi.Size() * 1000) / transferMs
 	}
-	n.emitEvent("media:upload_complete", map[string]interface{}{
+	n.emitEvent("media:upload_complete", mediaEventDetails(ms, map[string]interface{}{
 		"id":                    id,
 		"totalBytes":            fi.Size(),
 		"totalMs":               transferMs,
 		"throughputBytesPerSec": throughput,
-	})
+	}))
 	log.Printf("[MEDIA] Uploaded blob %s (%d bytes) to %s", id, fi.Size(), toPeerId[:min(20, len(toPeerId))])
 	streamOK = true
 	return nil
 }
 
 // MediaDownload downloads a blob from the relay's media store.
-func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, err error) {
-	s, cancel, sErr := n.openMediaStream()
-	if sErr != nil {
-		return "", 0, sErr
+func (n *Node) MediaDownload(id, outputPath string) (MediaDownloadResult, error) {
+	rs := n.buildRelaySelector(nil)
+	return n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo) (MediaDownloadResult, bool, error) {
+		ms, err := n.openMediaStreamForRelay("download", relay)
+		if err != nil {
+			return MediaDownloadResult{}, true, err
+		}
+		return n.mediaDownloadFromStream(ms, id, outputPath)
+	})
+}
+
+func (n *Node) mediaDownloadAcrossRelays(
+	rs *RelaySelector,
+	attempt func(RelayInfo) (MediaDownloadResult, bool, error),
+) (MediaDownloadResult, error) {
+	relays := rs.Relays()
+	if len(relays) == 0 {
+		return MediaDownloadResult{}, fmt.Errorf("no relays configured")
 	}
-	defer cancel()
+
+	var lastErr error
+	for i, relay := range relays {
+		candidates := relayInfoAttemptCandidates(relay)
+		for j, candidate := range candidates {
+			result, retry, err := attempt(candidate)
+			if err == nil {
+				return result, nil
+			}
+			lastErr = err
+			if !retry {
+				return MediaDownloadResult{}, err
+			}
+			log.Printf("[MEDIA] Relay %d/%d addr %d/%d (%s) media download failed, trying next eligible relay: %v",
+				i+1, len(relays), j+1, len(candidates), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
+		}
+	}
+
+	return MediaDownloadResult{}, fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
+}
+
+func (n *Node) mediaDownloadFromStream(ms *mediaStream, id, outputPath string) (MediaDownloadResult, bool, error) {
+	s := ms.stream
+	defer ms.cancel()
 	streamOK := false
 	defer finishStream(s, &streamOK)
 
@@ -336,17 +469,41 @@ func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, er
 		ID:     id,
 	})
 	if sErr != nil {
-		return "", 0, fmt.Errorf("download request: %w", sErr)
+		err := fmt.Errorf("download request: %w", sErr)
+		n.emitEvent("media:download_failed", mediaEventDetails(ms, map[string]interface{}{
+			"id":    id,
+			"error": err.Error(),
+		}))
+		return MediaDownloadResult{}, true, err
 	}
 
 	if resp.Status != "OK" {
-		return "", 0, fmt.Errorf("download failed: %s", resp.Error)
+		err := fmt.Errorf("download failed: %s", resp.Error)
+		n.emitEvent("media:download_failed", mediaEventDetails(ms, map[string]interface{}{
+			"id":    id,
+			"error": err.Error(),
+		}))
+		return MediaDownloadResult{}, resp.Error == "not found", err
 	}
 
-	// Read exactly resp.Size bytes
+	// Read exactly resp.Size bytes. Each progress tick re-arms the stream
+	// deadline (rolling), so the transfer only dies on a genuine stall.
 	downloadStart := time.Now()
-	if _, sErr := copyMediaDownloadToFile(outputPath, s, resp.Size, MediaIdleTimeout); sErr != nil {
-		return "", 0, sErr
+	downloadProgressFn := func(receivedBytes, totalBytes int64) {
+		setStreamDeadline(s, MediaTimeout)
+		n.emitEvent("media:download_progress", map[string]interface{}{
+			"id":            id,
+			"receivedBytes": receivedBytes,
+			"totalBytes":    totalBytes,
+			"fromPeerId":    ms.sourcePeerId,
+		})
+	}
+	if _, sErr := copyMediaDownloadToFile(outputPath, s, resp.Size, MediaIdleTimeout, downloadProgressFn); sErr != nil {
+		n.emitEvent("media:download_failed", mediaEventDetails(ms, map[string]interface{}{
+			"id":    id,
+			"error": sErr.Error(),
+		}))
+		return MediaDownloadResult{}, !strings.HasPrefix(sErr.Error(), "create output file:"), sErr
 	}
 
 	downloadMs := time.Since(downloadStart).Milliseconds()
@@ -354,24 +511,25 @@ func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, er
 	if downloadMs > 0 {
 		dlThroughput = (resp.Size * 1000) / downloadMs
 	}
-	n.emitEvent("media:download_complete", map[string]interface{}{
+	n.emitEvent("media:download_complete", mediaEventDetails(ms, map[string]interface{}{
 		"id":                    id,
 		"totalBytes":            resp.Size,
 		"totalMs":               downloadMs,
 		"throughputBytesPerSec": dlThroughput,
-	})
+	}))
 	log.Printf("[MEDIA] Downloaded blob %s (%d bytes, %s)", id, resp.Size, resp.Mime)
 	streamOK = true
-	return resp.Mime, resp.Size, nil
+	return mediaDownloadResultFromStream(ms, resp.Mime, resp.Size), false, nil
 }
 
 // MediaDelete deletes a blob from the relay's media store.
 func (n *Node) MediaDelete(id string) error {
-	s, cancel, err := n.openMediaStream()
+	ms, err := n.openMediaStream("delete")
 	if err != nil {
 		return err
 	}
-	defer cancel()
+	s := ms.stream
+	defer ms.cancel()
 	streamOK := false
 	defer finishStream(s, &streamOK)
 
@@ -394,11 +552,12 @@ func (n *Node) MediaDelete(id string) error {
 
 // MediaList lists blobs available for this peer on the relay.
 func (n *Node) MediaList() ([]MediaMeta, error) {
-	s, cancel, err := n.openMediaStream()
+	ms, err := n.openMediaStream("list")
 	if err != nil {
 		return nil, err
 	}
-	defer cancel()
+	s := ms.stream
+	defer ms.cancel()
 	streamOK := false
 	defer finishStream(s, &streamOK)
 
@@ -422,11 +581,12 @@ func (n *Node) MediaList() ([]MediaMeta, error) {
 
 // ProfileUpload uploads the user's profile picture to the relay.
 func (n *Node) ProfileUpload(mime, filePath string) error {
-	s, cancel, err := n.openMediaStream()
+	ms, err := n.openMediaStream("profile_upload")
 	if err != nil {
 		return err
 	}
-	defer cancel()
+	s := ms.stream
+	defer ms.cancel()
 	streamOK := false
 	defer finishStream(s, &streamOK)
 
@@ -493,11 +653,12 @@ func (n *Node) ProfileUpload(mime, filePath string) error {
 
 // ProfileDownload downloads a peer's profile picture from the relay.
 func (n *Node) ProfileDownload(ownerPeerId, outputPath string) (mime string, size int64, err error) {
-	s, cancel, sErr := n.openMediaStream()
+	ms, sErr := n.openMediaStream("profile_download")
 	if sErr != nil {
 		return "", 0, sErr
 	}
-	defer cancel()
+	s := ms.stream
+	defer ms.cancel()
 	streamOK := false
 	defer finishStream(s, &streamOK)
 

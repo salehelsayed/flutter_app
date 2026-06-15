@@ -1,18 +1,20 @@
-/// Integration tests for offline inbox roundtrip scenarios.
-///
-/// Tests verify that:
-/// - Inbox drain completes before relay shows green online status
-/// - Resume delivers queued messages before live reconnect
-/// - Large backlogs show first page quickly with background continuation
-/// - Cold start after reboot uses inbox-first recovery
-/// - Foreground send uses short budget while background recovery is separate
+// Integration tests for offline inbox roundtrip scenarios.
+//
+// Tests verify that:
+// - Inbox drain completes before relay shows green online status
+// - Resume delivers queued messages before live reconnect
+// - Large backlogs show first page quickly with background continuation
+// - Cold start after reboot uses inbox-first recovery
+// - Foreground send uses short budget while background recovery is separate
 
-import 'dart:async';
-import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import '../../../shared/fakes/fake_p2p_network.dart' as shared_fakes;
+import '../../../shared/fakes/test_user.dart' as shared_fakes;
 
 // Reuse the integration test infrastructure from two_user_message_exchange_test.dart
 import 'two_user_message_exchange_test.dart';
@@ -362,6 +364,192 @@ void main() {
         expect(msg, isNotNull);
         // Foreground send should complete quickly
         expect(stopwatch.elapsed.inSeconds, lessThan(5));
+      },
+    );
+
+    test(
+      'cap-rejected send stays retryable and delivers after receiver drains capacity',
+      () async {
+        final cappedNetwork = shared_fakes.FakeP2PNetwork()
+          ..maxInboxPerPeer = 2;
+        final receiptAlice = shared_fakes.TestUser.create(
+          peerId: '12D3KooWSharedAlicePeer0001',
+          username: 'Alice',
+          network: cappedNetwork,
+          withDeliveryReceipts: true,
+        );
+        final receiptBob = shared_fakes.TestUser.create(
+          peerId: '12D3KooWSharedBobPeer000002',
+          username: 'Bob',
+          network: cappedNetwork,
+          withDeliveryReceipts: true,
+        );
+        receiptAlice.addContact(receiptBob);
+        receiptBob.addContact(receiptAlice);
+        receiptAlice.start();
+        receiptBob.start();
+
+        try {
+          receiptBob.setOnline(false);
+
+          final (firstResult, first) = await receiptAlice.sendMessage(
+            receiptBob.peerId,
+            'cap accepted 1',
+          );
+          final (secondResult, second) = await receiptAlice.sendMessage(
+            receiptBob.peerId,
+            'cap accepted 2',
+          );
+          final (rejectedResult, rejected) = await receiptAlice.sendMessage(
+            receiptBob.peerId,
+            'cap rejected retryable',
+          );
+
+          expect(firstResult, SendChatMessageResult.success);
+          expect(secondResult, SendChatMessageResult.success);
+          expect(rejectedResult, SendChatMessageResult.success);
+          expect(first?.status, 'inboxed');
+          expect(second?.status, 'inboxed');
+          expect(rejected?.status, 'sent');
+          expect(rejected?.transport, 'inbox');
+          expect(rejected?.wireEnvelope, isNotNull);
+          expect(cappedNetwork.inboxCount(receiptBob.peerId), 2);
+
+          receiptBob.setOnline(true);
+          expect(await receiptBob.drainOfflineInbox(), 2);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+
+          expect(
+            (await receiptAlice.messageRepo.getMessage(first!.id))?.status,
+            'delivered',
+          );
+          expect(
+            (await receiptAlice.messageRepo.getMessage(second!.id))?.status,
+            'delivered',
+          );
+          expect(
+            (await receiptAlice.messageRepo.getMessage(rejected!.id))?.status,
+            'sent',
+          );
+
+          final retried = await retryUnackedMessages(
+            messageRepo: receiptAlice.messageRepo,
+            p2pService: receiptAlice.p2pService,
+          );
+          expect(retried, 1);
+          expect(cappedNetwork.inboxCount(receiptBob.peerId), 1);
+          expect(
+            (await receiptAlice.messageRepo.getMessage(rejected.id))?.status,
+            'inboxed',
+          );
+
+          expect(await receiptBob.drainOfflineInbox(), 1);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+
+          expect(
+            (await receiptAlice.messageRepo.getMessage(rejected.id))?.status,
+            'delivered',
+          );
+          expect(
+            await receiptBob.loadConversationWith(receiptAlice.peerId),
+            hasLength(3),
+          );
+        } finally {
+          receiptAlice.dispose();
+          receiptBob.dispose();
+        }
+      },
+    );
+
+    test(
+      'lost receipt after drain is repaired by re-store and duplicate receipt',
+      () async {
+        final receiptNetwork = shared_fakes.FakeP2PNetwork();
+        final receiptAlice = shared_fakes.TestUser.create(
+          peerId: '12D3KooWSharedAlicePeer0003',
+          username: 'Alice',
+          network: receiptNetwork,
+          withDeliveryReceipts: true,
+        );
+        final receiptBob = shared_fakes.TestUser.create(
+          peerId: '12D3KooWSharedBobPeer000004',
+          username: 'Bob',
+          network: receiptNetwork,
+          withDeliveryReceipts: true,
+        );
+        receiptAlice.addContact(receiptBob);
+        receiptBob.addContact(receiptAlice);
+        receiptAlice.start();
+        receiptBob.start();
+
+        try {
+          receiptBob.setOnline(false);
+          final (sentResult, sent) = await receiptAlice.sendMessage(
+            receiptBob.peerId,
+            'receipt lost once',
+          );
+          expect(sentResult, SendChatMessageResult.success);
+          expect(sent?.status, 'inboxed');
+
+          receiptAlice.setOnline(false);
+          receiptNetwork.inboxDisabled = true;
+          receiptBob.setOnline(true);
+          expect(await receiptBob.drainOfflineInbox(), 1);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+
+          final stillInboxed = await receiptAlice.messageRepo.getMessage(
+            sent!.id,
+          );
+          expect(stillInboxed?.status, 'inboxed');
+          expect(stillInboxed?.wireEnvelope, isNotNull);
+          expect(
+            await receiptBob.loadConversationWith(receiptAlice.peerId),
+            hasLength(1),
+          );
+
+          receiptNetwork.inboxDisabled = false;
+          final staleUnreceipted = stillInboxed!.copyWith(
+            custodyCheckedAt: DateTime.now()
+                .toUtc()
+                .subtract(const Duration(hours: 25))
+                .toIso8601String(),
+          );
+          final restored = await verifyInboxCustody(
+            loadInboxCustody: ({required recheckOlderThan}) async => [
+              staleUnreceipted,
+            ],
+            storeInInboxDetailed: receiptAlice.p2pService.storeInInboxDetailed,
+            markCustodyChecked: (messageId, {relayExpiresAtMs}) async {
+              final current = await receiptAlice.messageRepo.getMessage(
+                messageId,
+              );
+              if (current != null) {
+                await receiptAlice.messageRepo.saveMessage(
+                  current.copyWith(relayExpiresAt: relayExpiresAtMs),
+                );
+              }
+            },
+            messageRepo: receiptAlice.messageRepo,
+          );
+          expect(restored, 1);
+          expect(receiptNetwork.inboxCount(receiptBob.peerId), 1);
+          receiptAlice.setOnline(true);
+
+          expect(await receiptBob.drainOfflineInbox(), 1);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+
+          expect(
+            (await receiptAlice.messageRepo.getMessage(sent.id))?.status,
+            'delivered',
+          );
+          expect(
+            await receiptBob.loadConversationWith(receiptAlice.peerId),
+            hasLength(1),
+          );
+        } finally {
+          receiptAlice.dispose();
+          receiptBob.dispose();
+        }
       },
     );
   });

@@ -8,7 +8,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
+import 'package:integration_test/integration_test.dart'
+    show
+        IntegrationTestWidgetsFlutterBinding,
+        VmServiceProxyGoldenFileComparator;
 
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -746,19 +749,7 @@ Future<void> _captureScenario(
   _printReportEntry(timelineSummaryKey);
 }
 
-void main() {
-  final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
-  if (skipOnMobileDevice) {
-    testWidgets(
-      'captures ConversationWired subscription evidence',
-      (_) async {},
-      skip: true,
-    );
-    return;
-  }
-  VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
-  binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+void registerConversationSubPerf() {
   const scenarios = <_ConversationScenario>[
     _ConversationScenario(
       id: 'conversation_route_open_idle',
@@ -778,9 +769,14 @@ void main() {
     ),
   ];
 
-  testWidgets('captures ConversationWired subscription evidence', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('CONVERSATION_SUB 1', (tester) async {
+    final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    if (skipOnMobileDevice) {
+      return;
+    }
+    VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
+    binding = IntegrationTestWidgetsFlutterBinding.instance;
+
     binding.reportData ??= <String, dynamic>{};
     binding
         .reportData!['conversation_subscription_perf_meta'] = <String, dynamic>{

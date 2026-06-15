@@ -637,6 +637,195 @@ void main() {
         timeout: const Timeout(Duration(seconds: 120)),
       );
     });
+
+    // --- 112 Phase 1.5: enc-flagged LAN offers stage ciphertext ---
+    // Receiver capability ships in build N (the rollout floor) so the
+    // Phase-4 LAN sender flip can be held behind the same floor as relay.
+    group('enc-flagged offers', () {
+      test(
+        'enc-flagged upload persists as staged ciphertext artifact, not '
+        'promoted to canonical media',
+        () async {
+          final random = Random(7);
+          final bytes = List<int>.generate(1024, (_) => random.nextInt(256));
+          final hash = sha256.convert(bytes).toString();
+          // Phase-4 senders advertise an opaque mime on enc offers — the
+          // receiver must accept it; the real mime travels only inside the
+          // encrypted envelope.
+          final offer = MediaOffer(
+            id: 'enc-blob-1',
+            from: 'senderPeer',
+            to: 'receiverPeer',
+            mime: 'application/octet-stream',
+            size: 1024,
+            sha256: hash,
+            token: 'enc-token',
+            nonce: 'enc-nonce',
+            enc: true,
+            encScheme: 'blob_aes_256_gcm_v1',
+          );
+          expect(mediaServer.acceptOffer(offer), isTrue);
+
+          final ready = <LocalMediaReady>[];
+          final sub = mediaServer.mediaReadyStream.listen(ready.add);
+          addTearDown(sub.cancel);
+
+          final response = await _putMedia(
+            'enc-blob-1',
+            bytes,
+            authToken: 'enc-token',
+            contentType: 'application/octet-stream',
+          );
+          expect(response.statusCode, HttpStatus.ok);
+          await response.drain<void>();
+
+          final persisted = await mediaServer.persistMedia(
+            'enc-blob-1',
+            'senderPeer',
+          );
+          expect(persisted, isNotNull);
+          // Staged ciphertext artifact — never a renderable canonical
+          // media extension.
+          expect(persisted, endsWith('.enc'));
+          expect(File(persisted!).existsSync(), isTrue);
+          expect(File(persisted).readAsBytesSync(), bytes);
+
+          await Future<void>.delayed(Duration.zero);
+          expect(ready, hasLength(1));
+          expect(ready.single.enc, isTrue);
+          expect(ready.single.encScheme, 'blob_aes_256_gcm_v1');
+        },
+      );
+
+      test('audio/mp4 maps to .m4a extension', () async {
+        final random = Random(9);
+        final bytes = List<int>.generate(64, (_) => random.nextInt(256));
+        final hash = sha256.convert(bytes).toString();
+        final offer = _makeOffer(
+          id: 'voice-1',
+          mime: 'audio/mp4',
+          size: 64,
+          sha256hex: hash,
+          token: 'voice-token',
+        );
+        expect(mediaServer.acceptOffer(offer), isTrue);
+
+        final response = await _putMedia(
+          'voice-1',
+          bytes,
+          authToken: 'voice-token',
+          contentType: 'audio/mp4',
+        );
+        expect(response.statusCode, HttpStatus.ok);
+        await response.drain<void>();
+
+        final persisted = await mediaServer.persistMedia(
+          'voice-1',
+          'senderPeer',
+        );
+        // Voice notes record as audio/mp4 — they must land as .m4a, not the
+        // .bin fallback (the voice .bin bug).
+        expect(persisted, endsWith('.m4a'));
+      });
+
+      test('re-encode-fallback video containers map to playable extensions',
+          () async {
+        // When the video re-encode falls back to the original container, the
+        // real mime is one of these. The staged file must get a playable
+        // extension, never the .bin fallback.
+        const cases = {
+          'video/x-m4v': '.m4v',
+          'video/x-msvideo': '.avi',
+          'video/x-matroska': '.mkv',
+        };
+        var index = 0;
+        for (final entry in cases.entries) {
+          final mime = entry.key;
+          final expectedExt = entry.value;
+          final id = 'fallback-video-$index';
+          index++;
+          final random = Random(index + 20);
+          final bytes = List<int>.generate(64, (_) => random.nextInt(256));
+          final hash = sha256.convert(bytes).toString();
+          final offer = _makeOffer(
+            id: id,
+            mime: mime,
+            size: 64,
+            sha256hex: hash,
+            token: 'token-$id',
+          );
+          expect(mediaServer.acceptOffer(offer), isTrue);
+
+          final response = await _putMedia(
+            id,
+            bytes,
+            authToken: 'token-$id',
+            contentType: mime,
+          );
+          expect(response.statusCode, HttpStatus.ok);
+          await response.drain<void>();
+
+          final persisted = await mediaServer.persistMedia(id, 'senderPeer');
+          expect(
+            persisted,
+            endsWith(expectedExt),
+            reason: '$mime should map to $expectedExt, got $persisted',
+          );
+        }
+      });
+
+      test(
+        'unflagged legacy plaintext LAN upload still promotes as today',
+        () async {
+          final random = Random(11);
+          final bytes = List<int>.generate(256, (_) => random.nextInt(256));
+          final hash = sha256.convert(bytes).toString();
+          final offer = _makeOffer(
+            id: 'plain-blob-1',
+            size: 256,
+            sha256hex: hash,
+            token: 'plain-token',
+          );
+          expect(mediaServer.acceptOffer(offer), isTrue);
+
+          final ready = <LocalMediaReady>[];
+          final sub = mediaServer.mediaReadyStream.listen(ready.add);
+          addTearDown(sub.cancel);
+
+          final response = await _putMedia(
+            'plain-blob-1',
+            bytes,
+            authToken: 'plain-token',
+          );
+          expect(response.statusCode, HttpStatus.ok);
+          await response.drain<void>();
+
+          final persisted = await mediaServer.persistMedia(
+            'plain-blob-1',
+            'senderPeer',
+          );
+          expect(persisted, endsWith('.jpg'));
+          expect(File(persisted!).readAsBytesSync(), bytes);
+
+          await Future<void>.delayed(Duration.zero);
+          expect(ready, hasLength(1));
+          expect(ready.single.enc, isFalse);
+        },
+      );
+
+      test(
+        'plaintext offer with disallowed mime is still rejected',
+        () async {
+          final offer = _makeOffer(
+            id: 'plain-octet',
+            mime: 'application/octet-stream',
+          );
+          // The mime whitelist exemption applies ONLY to enc-flagged
+          // offers; legacy plaintext offers keep today's validation.
+          expect(mediaServer.acceptOffer(offer), isFalse);
+        },
+      );
+    });
   });
 }
 

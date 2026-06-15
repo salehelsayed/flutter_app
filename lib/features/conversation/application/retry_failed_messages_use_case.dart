@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
@@ -11,11 +13,25 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 enum _RetryFailedMessageSkipReason { none, localFileMissing, uploadCancelled }
+
+/// 116 EF-1 (row-derived action): the semantic action of a retried row comes
+/// from the DB row, never from caller defaults — an `editedAt`-bearing row
+/// goes back out as an EDIT with its original metadata. Shared by the
+/// full-send fallback below, the tombstone route (116 P3), and the 115
+/// custody sweep.
+String deriveRetryAction(ConversationMessage msg) {
+  if (msg.editedAt != null && !msg.isDeleted) {
+    return MessagePayload.actionEdit;
+  }
+  return MessagePayload.actionSend;
+}
 
 /// Retries all failed outgoing messages.
 ///
@@ -174,6 +190,14 @@ Future<int> _retryFailedMessagesInternal({
   return successCount;
 }
 
+/// 116 EF-3 single-flight: at most one in-flight retry per message id across
+/// all four triggers (PendingMessageRetrier periodic, reconnect debounce,
+/// app-resume 8c, UI retry button). File-private top-level set — every
+/// trigger funnels through [_retryFailedMessageCandidate] in the same
+/// isolate. If retries ever move to a background isolate, this guard must
+/// move with them.
+final Set<String> _retryInFlightMessageIds = {};
+
 Future<bool> _retryFailedMessageCandidate({
   required ConversationMessage msg,
   required MessageRepository messageRepo,
@@ -184,7 +208,39 @@ Future<bool> _retryFailedMessageCandidate({
   required UploadMediaFn uploadFn,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
+  if (!_retryInFlightMessageIds.add(msg.id)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_MESSAGE_SKIPPED_IN_FLIGHT',
+      details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+    );
+    return false;
+  }
   try {
+    // 116 EF-3 settled-recheck: the loaded list may hold a stale snapshot of
+    // a row that settled between load and execution — re-fetch and use the
+    // FRESH row for all subsequent derivation.
+    final fresh = await messageRepo.getMessage(msg.id);
+    if (fresh == null || fresh.isIncoming || fresh.status != 'failed') {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_MESSAGE_SKIPPED_SETTLED',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      return false;
+    }
+    msg = fresh;
+
+    if (msg.isDeleted) {
+      return _retryFailedDeletedTombstone(
+        msg: msg,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+    }
+
     // Prefer wire_envelope -> inbox-only (preserves media, no re-encrypt)
     if (msg.wireEnvelope != null && msg.wireEnvelope!.isNotEmpty) {
       if (msg.transport == 'inbox') {
@@ -280,6 +336,11 @@ Future<bool> _retryFailedMessageCandidate({
       return false;
     }
 
+    // 116 EF-1: the fallback derives action/editedAt/createdAt from the ROW
+    // so a failed edit goes back out as an EDIT (the row's ORIGINAL editedAt
+    // preserves the receiver staleness-gate ordering), and plain rows keep
+    // their original createdAt instead of re-minting it.
+    final retryAction = deriveRetryAction(msg);
     final (result, _) = await sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -287,8 +348,11 @@ Future<bool> _retryFailedMessageCandidate({
       text: msg.text,
       senderPeerId: identity.peerId,
       senderUsername: identity.username,
+      action: retryAction,
+      editedAt: msg.editedAt,
       messageId: msg.id,
       timestamp: msg.timestamp,
+      createdAt: msg.createdAt,
       bridge: bridge,
       recipientMlKemPublicKey: mlKemPk,
       quotedMessageId: msg.quotedMessageId,
@@ -301,7 +365,10 @@ Future<bool> _retryFailedMessageCandidate({
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_FAILED_MESSAGE_SUCCESS',
-        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        details: {
+          'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+          'action': retryAction,
+        },
       );
       return true;
     }
@@ -312,6 +379,7 @@ Future<bool> _retryFailedMessageCandidate({
       details: {
         'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
         'reason': result.name,
+        'action': retryAction,
       },
     );
     return false;
@@ -325,7 +393,234 @@ Future<bool> _retryFailedMessageCandidate({
       },
     );
     return false;
+  } finally {
+    _retryInFlightMessageIds.remove(msg.id);
   }
+}
+
+Future<bool> _retryFailedDeletedTombstone({
+  required ConversationMessage msg,
+  required MessageRepository messageRepo,
+  required ContactRepository contactRepo,
+  required P2PService p2pService,
+  required Bridge bridge,
+}) async {
+  if (!p2pService.currentState.isStarted) {
+    _emitDeleteTombstoneStillFailed(msg, reason: 'node_not_running');
+    return false;
+  }
+
+  final existingEnvelope = msg.wireEnvelope?.trim();
+  if (existingEnvelope != null &&
+      existingEnvelope.isNotEmpty &&
+      _isV2DeletionWireEnvelope(existingEnvelope)) {
+    return _storeOrReplayDeleteEnvelope(
+      msg: msg,
+      messageRepo: messageRepo,
+      p2pService: p2pService,
+      wireEnvelope: existingEnvelope,
+      rebuilt: false,
+    );
+  }
+
+  final contact = await contactRepo.getContact(msg.contactPeerId);
+  final recipientKey = contact?.mlKemPublicKey?.trim();
+  if (recipientKey == null || recipientKey.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_DELETE_REBUILD_UNAVAILABLE',
+      details: {
+        'id': _messageIdPreview(msg.id),
+        'reason': 'missing_recipient_key',
+      },
+    );
+    return false;
+  }
+
+  String rebuiltEnvelope;
+  try {
+    rebuiltEnvelope = await buildDeletionWireEnvelope(
+      bridge: bridge,
+      originalMessage: msg,
+      deletedAt: msg.deletedAt ?? msg.timestamp,
+      recipientMlKemPublicKey: recipientKey,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_DELETE_REBUILD_UNAVAILABLE',
+      details: {
+        'id': _messageIdPreview(msg.id),
+        'reason': 'encrypt_failed',
+        'error': e.toString(),
+      },
+    );
+    return false;
+  }
+
+  return _storeOrReplayDeleteEnvelope(
+    msg: msg,
+    messageRepo: messageRepo,
+    p2pService: p2pService,
+    wireEnvelope: rebuiltEnvelope,
+    rebuilt: true,
+  );
+}
+
+Future<bool> _storeOrReplayDeleteEnvelope({
+  required ConversationMessage msg,
+  required MessageRepository messageRepo,
+  required P2PService p2pService,
+  required String wireEnvelope,
+  required bool rebuilt,
+}) async {
+  if (msg.transport == 'inbox') {
+    await messageRepo.saveMessage(
+      normalizeOutgoingDeleteTombstoneVisibility(
+        msg.copyWith(
+          status: 'inboxed',
+          transport: 'inbox',
+          wireEnvelope: wireEnvelope,
+        ),
+      ),
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_MESSAGE_ALREADY_INBOX',
+      details: {'id': _messageIdPreview(msg.id), 'type': 'message_deletion'},
+    );
+    return true;
+  }
+
+  try {
+    final stored = await p2pService.storeInInbox(
+      msg.contactPeerId,
+      wireEnvelope,
+    );
+    if (stored) {
+      await messageRepo.saveMessage(
+        normalizeOutgoingDeleteTombstoneVisibility(
+          msg.copyWith(
+            status: 'inboxed',
+            transport: 'inbox',
+            wireEnvelope: wireEnvelope,
+          ),
+        ),
+      );
+      _emitDeleteTombstoneSuccess(
+        msg,
+        via: 'inbox',
+        status: 'inboxed',
+        rebuilt: rebuilt,
+      );
+      return true;
+    }
+  } catch (_) {
+    // Inbox custody failed; fall through to direct deletion-envelope replay.
+  }
+
+  SendMessageResult sendResult;
+  try {
+    sendResult = await p2pService.sendMessageWithReply(
+      msg.contactPeerId,
+      wireEnvelope,
+      timeoutMs: interactiveDirectBudget.inMilliseconds,
+    );
+  } catch (e) {
+    _emitDeleteTombstoneStillFailed(msg, reason: 'send_error', error: e);
+    return false;
+  }
+
+  if (!sendResult.sent) {
+    _emitDeleteTombstoneStillFailed(msg, reason: 'send_failed');
+    return false;
+  }
+
+  final via = _resolveRetryDeleteTransport(
+    p2pService,
+    msg.contactPeerId,
+    sendResult,
+  );
+  final status = sendResult.acknowledged ? 'delivered' : 'sent';
+  await messageRepo.saveMessage(
+    normalizeOutgoingDeleteTombstoneVisibility(
+      msg.copyWith(
+        status: status,
+        transport: via,
+        wireEnvelope: sendResult.acknowledged ? null : wireEnvelope,
+      ),
+    ),
+  );
+  _emitDeleteTombstoneSuccess(msg, via: via, status: status, rebuilt: rebuilt);
+  return true;
+}
+
+bool _isV2DeletionWireEnvelope(String wireEnvelope) {
+  try {
+    final decoded = jsonDecode(wireEnvelope);
+    if (decoded is! Map<String, dynamic>) {
+      return false;
+    }
+    return decoded['type'] == 'message_deletion' &&
+        decoded['version'].toString() == '2';
+  } catch (_) {
+    return false;
+  }
+}
+
+String _resolveRetryDeleteTransport(
+  P2PService p2pService,
+  String peerId,
+  SendMessageResult sendResult,
+) {
+  final actualTransport = sendResult.transport;
+  if (actualTransport != null && actualTransport.isNotEmpty) {
+    return actualTransport;
+  }
+
+  final hasRelayConnection = p2pService.currentState.connections.any(
+    (connection) =>
+        connection.peerId == peerId &&
+        connection.multiaddrs.any(
+          (multiaddr) => multiaddr.contains('/p2p-circuit'),
+        ),
+  );
+  return hasRelayConnection ? 'relay' : 'direct';
+}
+
+void _emitDeleteTombstoneSuccess(
+  ConversationMessage msg, {
+  required String via,
+  required String status,
+  required bool rebuilt,
+}) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'RETRY_FAILED_DELETE_TOMBSTONE_SUCCESS',
+    details: {
+      'id': _messageIdPreview(msg.id),
+      'via': via,
+      'status': status,
+      'rebuilt': rebuilt,
+    },
+  );
+}
+
+void _emitDeleteTombstoneStillFailed(
+  ConversationMessage msg, {
+  required String reason,
+  Object? error,
+}) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'RETRY_FAILED_MESSAGE_STILL_FAILED',
+    details: {
+      'id': _messageIdPreview(msg.id),
+      'reason': reason,
+      'type': 'message_deletion',
+      if (error != null) 'error': error.toString(),
+    },
+  );
 }
 
 /// Resolves which attachments (if any) should be passed to [sendChatMessage]
@@ -468,3 +763,5 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
 
   return result;
 }
+
+String _messageIdPreview(String id) => id.length > 8 ? id.substring(0, 8) : id;

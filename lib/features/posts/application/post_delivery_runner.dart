@@ -179,7 +179,23 @@ class PostDeliveryRunner {
     );
     var innerPayloadJson = pass.innerPayloadJson;
     PostPassEnvelope? innerEnvelope;
-    if (innerPayloadJson == null || innerPayloadJson.isEmpty) {
+    String? passPayloadBlockReason;
+    if ((innerPayloadJson == null || innerPayloadJson.isEmpty) &&
+        snapshotPost.media.any(
+          (attachment) =>
+              attachment.encryptionKeyBase64 != null &&
+              attachment.encryptionNonce != null,
+        )) {
+      // Latent key-drop guard (doc 113 P3): rebuilding via fromPass would
+      // ship encrypted blobIds with mediaKeys == null — recipients would get
+      // ciphertext they can never decrypt. Fail the delivery instead.
+      passPayloadBlockReason = 'repost_payload_missing';
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_PASS_PAYLOAD_MISSING',
+        details: {'passId': pass.passId, 'postId': snapshotPost.id},
+      );
+    } else if (innerPayloadJson == null || innerPayloadJson.isEmpty) {
       final participantBasePeerIds =
           await loadPersistedRepostParticipantPeerIds(
             postRepo: postRepo,
@@ -227,6 +243,9 @@ class PostDeliveryRunner {
         maxConcurrentRecipients: maxConcurrentRecipients,
         resolvedRecipients: resolvedRecipients,
         buildWireEnvelope: (recipient) {
+          if (passPayloadBlockReason != null) {
+            throw _RecipientDeliveryBuildException(passPayloadBlockReason);
+          }
           final scopedInnerPayloadJson = _buildRecipientScopedPostPassInnerJson(
             pass: progress.latestPass,
             innerPayloadJson: innerPayloadJson!,
@@ -513,7 +532,21 @@ Future<String> _buildWireEnvelope({
   int? nearbyDistanceM,
 }) async {
   final envelope = PostCreateEnvelope.fromPost(post);
+  // G3/KC-P3 fail-closed gate: a post whose attachment rows carry key
+  // material must NEVER downgrade to plaintext v1 — media_keys only travel
+  // inside ML-KEM v2 envelopes. Text-only and pre-flip keyless-media posts
+  // keep today's fallback.
+  final mediaEncryptionRequired = envelope.mediaKeys?.isNotEmpty == true;
   if (bridge == null || recipient.mlKemPublicKey == null) {
+    if (mediaEncryptionRequired) {
+      throw _postMediaEncryptionRequired(
+        post: post,
+        recipient: recipient,
+        reason: bridge == null
+            ? 'post_media_encryption_unavailable'
+            : 'post_recipient_missing_mlkem_key',
+      );
+    }
     return envelope.toJson(
       selectedPeerIds: post.audience.selectedPeerIds,
       recipientPeerIds: recipientPeerIds,
@@ -532,6 +565,16 @@ Future<String> _buildWireEnvelope({
   );
 
   if (encryptResult['ok'] != true) {
+    if (mediaEncryptionRequired) {
+      final errorCode = encryptResult['errorCode']?.toString();
+      throw _postMediaEncryptionRequired(
+        post: post,
+        recipient: recipient,
+        reason: errorCode == null || errorCode.isEmpty
+            ? 'post_media_encrypt_failed'
+            : 'post_media_encrypt_failed:$errorCode',
+      );
+    }
     return envelope.toJson(
       selectedPeerIds: post.audience.selectedPeerIds,
       recipientPeerIds: recipientPeerIds,
@@ -547,6 +590,23 @@ Future<String> _buildWireEnvelope({
     ciphertext: encryptResult['ciphertext'] as String,
     nonce: encryptResult['nonce'] as String,
   );
+}
+
+_RecipientDeliveryBuildException _postMediaEncryptionRequired({
+  required PostModel post,
+  required ContactModel recipient,
+  required String reason,
+}) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'POST_MEDIA_ENCRYPTION_REQUIRED',
+    details: {
+      'postId': post.id,
+      'recipientPeerId': recipient.peerId,
+      'reason': reason,
+    },
+  );
+  return _RecipientDeliveryBuildException(reason);
 }
 
 Future<String> _buildPostPassWireEnvelope({

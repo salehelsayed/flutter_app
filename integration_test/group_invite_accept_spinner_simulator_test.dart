@@ -29,7 +29,6 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -45,8 +44,8 @@ import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import '_support/fake_secure_key_store.dart';
 import '../test/core/bridge/fake_bridge.dart';
-import '../test/core/secure_storage/fake_secure_key_store.dart';
 import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../test/features/contacts/domain/repositories/fake_contact_repository.dart';
@@ -59,13 +58,8 @@ import '../test/shared/fakes/in_memory_message_repository.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  testWidgets(
-    'simulator: tapping Accept on a pending group invite clears the spinner '
-    'and joins the group within 10 seconds',
-    (tester) async {
+void registerInviteAcceptSpinnerSim() {
+  testWidgets('INVITE_ACCEPT_SPINNER 1', (tester) async {
       // -- arrange: full OrbitWired stack with in-memory fakes.
       final identityRepo = FakeIdentityRepository();
       final contactRepo = FakeContactRepository();
@@ -289,8 +283,7 @@ void main() {
         reason: 'pending invite should be cleared after successful accept',
       );
       expect(find.text('Joined Writers Room'), findsOneWidget);
-    },
-  );
+  });
 }
 
 /// Builds a `PendingGroupInvite` shaped to pass auth/freshness checks for

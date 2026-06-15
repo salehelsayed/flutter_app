@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -120,6 +121,8 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
+  final VoidCallback? onReviewSend;
+  final VoidCallback? onReviewDiscard;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final ValueListenable<ConversationComposerViewState>? composerStateListenable;
@@ -138,6 +141,8 @@ class ConversationScreen extends StatefulWidget {
   final ValueChanged<String>? onRetryFailedMessage;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
+  final Future<void> Function(String messageId, String attachmentId)?
+  onRetryUnavailableMedia;
   final ValueChanged<String>? onDeleteMessage;
   final String? activeQuoteText;
   final bool isActiveQuoteUnavailable;
@@ -179,6 +184,8 @@ class ConversationScreen extends StatefulWidget {
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
+    this.onReviewSend,
+    this.onReviewDiscard,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.composerStateListenable,
@@ -197,6 +204,7 @@ class ConversationScreen extends StatefulWidget {
     this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
+    this.onRetryUnavailableMedia,
     this.onDeleteMessage,
     this.activeQuoteText,
     this.isActiveQuoteUnavailable = false,
@@ -340,6 +348,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
           onRecordStart: widget.onRecordStart,
           onRecordStop: widget.onRecordStop,
           onRecordCancel: widget.onRecordCancel,
+          onReviewSend: widget.onReviewSend,
+          onReviewDiscard: widget.onReviewDiscard,
           recordingDuration: composerState.recordingDuration,
           amplitudeValues: composerState.amplitudeValues,
           initialText: widget.initialText,
@@ -548,6 +558,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
                     ? () => widget.onDeleteFailedMedia!(message.id)
                     : null,
                 failedMediaActionKeySuffix: message.id,
+                onRetryUnavailableMedia: widget.onRetryUnavailableMedia != null
+                    ? (attachmentId) => widget.onRetryUnavailableMedia!(
+                        message.id,
+                        attachmentId,
+                      )
+                    : null,
                 onMediaTap: mediaTapHandler,
               );
             }
@@ -790,17 +806,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
   String _formatDateLabel(String isoTimestamp) {
     try {
       final date = DateTime.parse(isoTimestamp);
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final messageDate = DateTime(date.year, date.month, date.day);
       final l10n = AppLocalizations.of(context)!;
       final locale = Localizations.localeOf(context).toString();
-
-      if (messageDate == today) return l10n.date_today;
-      if (messageDate == today.subtract(const Duration(days: 1))) {
-        return l10n.date_yesterday;
-      }
-      return intl.DateFormat.MMMd(locale).format(date);
+      return formatDaySeparatorLabel(
+        date,
+        now: DateTime.now(),
+        todayLabel: l10n.date_today,
+        yesterdayLabel: l10n.date_yesterday,
+        locale: locale,
+      );
     } catch (_) {
       return AppLocalizations.of(context)?.date_today ?? 'Today';
     }

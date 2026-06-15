@@ -25,6 +25,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import '../_support/signal_files.dart';
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -209,45 +211,54 @@ class TestPeer {
 
 late final Directory _signalDir;
 
+/// Canonical flat (no prefix, no runId) signal helper over `_signalDir`.
+/// Path is byte-identical to the old `'${_signalDir.path}/$name'`. Poll cadence
+/// kept at the historical soak value of 500ms.
+late final SignalDir _sig;
+
+/// Mirrors the inline `_writeSignal(name, [content = ''])`: default content was
+/// an EMPTY string (not the canonical 'ok'), so pass `content: ''` to keep the
+/// on-disk bytes identical.
 void _writeSignal(String name, [String content = '']) {
-  File('${_signalDir.path}/$name').writeAsStringSync(content);
+  _sig.writeSignal(name, content: content);
 }
 
-bool _signalExists(String name) {
-  return File('${_signalDir.path}/$name').existsSync();
-}
+bool _signalExists(String name) => _sig.exists(name);
 
-String? _readSignal(String name) {
-  final f = File('${_signalDir.path}/$name');
-  if (!f.existsSync()) return null;
-  return f.readAsStringSync();
-}
+String? _readSignal(String name) => _sig.read(name);
 
+/// Mirrors the inline `_waitForSignal`: returns the signal's content, or `null`
+/// on timeout (the orchestrator branches on `== null` for graceful cleanup, so
+/// the canonical loud throw is caught and converted back to `null` here).
 Future<String?> _waitForSignal(
   String name, {
   required Duration timeout,
-  Duration pollInterval = const Duration(milliseconds: 500),
 }) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    final content = _readSignal(name);
-    if (content != null) {
-      return content;
-    }
-    await Future.delayed(pollInterval);
+  try {
+    await _sig.waitForSignal(name, timeout: timeout);
+    return _sig.read(name);
+  } on SignalTimeoutException {
+    return null;
   }
-  return null;
 }
 
+/// Mirrors the inline `_waitForJsonSignal`: returns the decoded map, or `null`
+/// on timeout/empty. An empty (zero-length) signal file decodes to nothing, so
+/// it is treated as not-yet-ready (matching the old `content.isEmpty` guard)
+/// and ultimately surfaces as `null` on timeout.
 Future<Map<String, dynamic>?> _waitForJsonSignal(
   String name, {
   required Duration timeout,
 }) async {
-  final content = await _waitForSignal(name, timeout: timeout);
-  if (content == null || content.isEmpty) {
+  try {
+    return await _sig.waitForJson(
+      name,
+      timeout: timeout,
+      validate: (_) => true,
+    );
+  } on SignalTimeoutException {
     return null;
   }
-  return jsonDecode(content) as Map<String, dynamic>;
 }
 
 Future<bool> _discoverAndDialFlutterPeer(
@@ -358,6 +369,11 @@ Future<void> main(List<String> args) async {
     _signalDir.deleteSync(recursive: true);
   }
   _signalDir.createSync(recursive: true);
+  _sig = SignalDir.flat(
+    _signalDir.path,
+    role: 'Orchestrator(soak)',
+    pollInterval: const Duration(milliseconds: 500),
+  );
   _log('SOAK', 'Signal dir: ${_signalDir.path}');
 
   // 2. Build test peer

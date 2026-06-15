@@ -8,6 +8,8 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart'
+    show PostMediaCryptoEntry;
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -105,6 +107,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
       postRepo: postRepo,
       postId: mergedPost.id,
       incomingMedia: envelope.media,
+      mediaKeys: envelope.mediaKeys,
       hydratePostMediaFn: hydratePostMediaFn,
       existingMedia: await postRepo.loadPostMediaAttachments(mergedPost.id),
       hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
@@ -154,6 +157,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     postRepo: postRepo,
     postId: post.id,
     incomingMedia: envelope.media,
+    mediaKeys: envelope.mediaKeys,
     hydratePostMediaFn: hydratePostMediaFn,
     hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
   );
@@ -248,6 +252,7 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
   required String postId,
   required List<PostMediaAttachmentModel> incomingMedia,
   required String hydrateErrorEvent,
+  Map<String, PostMediaCryptoEntry>? mediaKeys,
   HydratePostMediaFn? hydratePostMediaFn,
   List<PostMediaAttachmentModel> existingMedia =
       const <PostMediaAttachmentModel>[],
@@ -263,10 +268,16 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
       continue;
     }
 
+    final cryptoEntry = mediaKeys?[attachment.mediaId];
     final pendingAttachment = attachment.copyWith(
       postId: postId,
       downloadStatus: 'pending',
       localPath: null,
+      encryptionKeyBase64: cryptoEntry?.keyBase64,
+      encryptionNonce: cryptoEntry?.nonce,
+      encryptionScheme: cryptoEntry?.scheme,
+      contentHash: cryptoEntry?.contentHash,
+      isEncrypted: cryptoEntry != null ? true : null,
     );
     await postRepo.savePostMediaAttachment(pendingAttachment);
     if (hydratePostMediaFn == null) {

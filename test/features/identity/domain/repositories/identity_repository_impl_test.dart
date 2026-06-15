@@ -370,12 +370,16 @@ void main() {
       );
 
       await repo.saveIdentity(identity);
+      // saveIdentity performs one secure-storage read (previous ML-KEM
+      // secret check for the P0-B ring); the cache assertion is that
+      // loadIdentity afterwards adds NO further reads.
+      final readsAfterSave = secureKeyStore.readCount;
       final reloaded = await repo.loadIdentity();
 
       expect(reloaded, isNotNull);
       expect(reloaded, equals(identity));
       expect(loadCallCount, 0);
-      expect(secureKeyStore.readCount, 0);
+      expect(secureKeyStore.readCount, readsAfterSave);
     });
 
     test('replaces a cached null after saveIdentity', () async {
@@ -397,11 +401,30 @@ void main() {
       expect(secureKeyStore.readCount, 0);
 
       await repo.saveIdentity(identity);
+      final readsAfterSave = secureKeyStore.readCount;
       final reloaded = await repo.loadIdentity();
 
       expect(reloaded, equals(identity));
       expect(loadCallCount, 1);
-      expect(secureKeyStore.readCount, 0);
+      expect(secureKeyStore.readCount, readsAfterSave);
+    });
+
+    test('invalidateCache lets external DB imports become visible', () async {
+      storedRow = null;
+
+      final initialLoad = await repo.loadIdentity();
+      expect(initialLoad, isNull);
+      expect(loadCallCount, 1);
+
+      storedRow = makeDbRow();
+      await seedIdentitySecrets();
+      repo.invalidateCache();
+
+      final imported = await repo.loadIdentity();
+
+      expect(imported?.peerId, testPeerId);
+      expect(loadCallCount, 2);
+      expect(secureKeyStore.readCount, 3);
     });
 
     test('failed saveIdentity does not poison a warm cache', () async {

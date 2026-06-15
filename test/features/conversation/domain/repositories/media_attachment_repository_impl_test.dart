@@ -28,6 +28,10 @@ void main() {
             ),
           );
       },
+      dbLoadMediaById: (id) async {
+        final row = store[id];
+        return row == null ? null : Map<String, Object?>.from(row);
+      },
       dbLoadMediaForMessages: (messageIds) async {
         return store.values
             .where((row) => messageIds.contains(row['message_id']))
@@ -109,6 +113,7 @@ void main() {
     int? height = 1080,
     String downloadStatus = 'pending',
     String createdAt = '2026-02-20T10:00:00.000Z',
+    String? localPath,
     String? encryptionKeyBase64,
     String? encryptionNonce,
     String? encryptionScheme,
@@ -121,6 +126,7 @@ void main() {
       mediaType: mediaType,
       width: width,
       height: height,
+      localPath: localPath,
       downloadStatus: downloadStatus,
       createdAt: createdAt,
       encryptionKeyBase64: encryptionKeyBase64,
@@ -147,6 +153,60 @@ void main() {
       expect(store.length, 1);
       expect(store['blob-001']!['download_status'], 'done');
     });
+
+    test(
+      'saveAttachment preserves a completed local path from stale pending saves',
+      () async {
+        await repo.saveAttachment(makeAttachment(downloadStatus: 'pending'));
+        await repo.updateLocalPath('blob-001', 'media/peer/blob-001.jpg');
+
+        await repo.saveAttachment(makeAttachment(downloadStatus: 'pending'));
+
+        expect(store.length, 1);
+        expect(store['blob-001']!['local_path'], 'media/peer/blob-001.jpg');
+        expect(store['blob-001']!['download_status'], 'done');
+      },
+    );
+
+    test(
+      'saveAttachment preserves completed media state over stale upload pending saves',
+      () async {
+        await repo.saveAttachment(
+          makeAttachment(
+            downloadStatus: 'done',
+            localPath: 'media/peer/blob-001.jpg',
+          ),
+        );
+
+        await repo.saveAttachment(
+          makeAttachment(
+            downloadStatus: 'upload_pending',
+            localPath: 'pending_uploads/msg-001/blob-001.jpg',
+          ),
+        );
+
+        expect(store.length, 1);
+        expect(store['blob-001']!['local_path'], 'media/peer/blob-001.jpg');
+        expect(store['blob-001']!['download_status'], 'done');
+      },
+    );
+
+    test(
+      'saveAttachment still allows terminal failure to clear a completed path',
+      () async {
+        await repo.saveAttachment(
+          makeAttachment(
+            downloadStatus: 'done',
+            localPath: 'media/peer/blob-001.jpg',
+          ),
+        );
+
+        await repo.saveAttachment(makeAttachment(downloadStatus: 'failed'));
+
+        expect(store['blob-001']!['local_path'], isNull);
+        expect(store['blob-001']!['download_status'], 'failed');
+      },
+    );
 
     test(
       'PREREQ-SECRET-STORAGE-WRAPPING saveAttachment stores media key in secure storage and only a reference in SQL',
@@ -303,6 +363,18 @@ void main() {
     test('getAttachmentsForMessage returns empty list when none', () async {
       final result = await repo.getAttachmentsForMessage('nonexistent');
       expect(result, isEmpty);
+    });
+
+    test('getAttachmentById returns failed attachment by blob id', () async {
+      await repo.saveAttachment(
+        makeAttachment(id: 'blob-failed', downloadStatus: 'failed'),
+      );
+
+      final result = await repo.getAttachmentById('blob-failed');
+
+      expect(result, isNotNull);
+      expect(result!.id, 'blob-failed');
+      expect(result.downloadStatus, 'failed');
     });
 
     test('getAttachmentsForMessage returns matching attachments', () async {

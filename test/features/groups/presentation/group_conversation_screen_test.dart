@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -994,9 +996,16 @@ void main() {
       createdAt: timestamp,
       isIncoming: true,
       media: [
+        // The video overlay renders only for DONE media whose local file
+        // exists on disk (media_grid_cell gates on File.existsSync) — use a
+        // real temp file, written synchronously (testWidgets sync-I/O rule).
         makeVideoAttachment(
           id: 'att-post-join-video',
           messageId: 'msg-post-join-media',
+          downloadStatus: 'done',
+          localPath: (File(
+            '${Directory.systemTemp.path}/gcs_post_join_video.mp4',
+          )..writeAsBytesSync(List<int>.filled(64, 1))).path,
         ),
         makeAudioAttachment(
           id: 'att-post-join-voice',
@@ -1010,6 +1019,14 @@ void main() {
         ),
       ],
     );
+    addTearDown(() {
+      final videoFile = File(
+        '${Directory.systemTemp.path}/gcs_post_join_video.mp4',
+      );
+      if (videoFile.existsSync()) {
+        videoFile.deleteSync();
+      }
+    });
 
     await tester.pumpWidget(
       buildTestWidget(messages: [mediaMessage], initialLoadDone: true),

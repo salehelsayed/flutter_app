@@ -74,6 +74,9 @@ Object? _sanitizeDiagnosticValue(String key, Object? value) {
 
 bool _isSensitiveKey(String key) {
   final normalized = key.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+  if (normalized == 'plaintexthashvalidationskipped') {
+    return false;
+  }
   const sensitiveFragments = [
     'privatekey',
     'secretkey',

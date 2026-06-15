@@ -54,6 +54,7 @@ void main() {
     expect(log.map((call) => call.method).toList(), <String>[
       'initialize',
       'createNotificationChannel',
+      'createNotificationChannel',
       'getNotificationAppLaunchDetails',
     ]);
 
@@ -197,6 +198,80 @@ void main() {
       expect(args['body'], 'Alice: Ping');
       expect(args['payload'], 'group:group-789|message:msg-789');
       expect(args['id'], 'group:group-789'.hashCode);
+    },
+  );
+
+  test(
+    'showMessageNotification silent:true uses the silent channel and the '
+    'per-conversation notification id',
+    () async {
+      final service = FlutterNotificationService();
+
+      await service.initialize();
+      await service.showMessageNotification(
+        contactPeerId: 'peer-silent',
+        senderUsername: 'Alice',
+        messageText: 'follow-up',
+        silent: true,
+      );
+
+      final showCall = log.last;
+      expect(showCall.method, 'show');
+
+      final args = showCall.arguments as Map;
+      // Reuses the per-conversation id so the OS updates in place.
+      expect(args['id'], 'peer-silent'.hashCode);
+
+      final platformSpecifics = args['platformSpecifics'] as Map;
+      expect(platformSpecifics['channelId'], mknoonMessagesSilentChannelId);
+    },
+  );
+
+  test(
+    'notification id is per-conversation and stable across a burst for both '
+    'direct and group (silent updates reuse the same id)',
+    () async {
+      final service = FlutterNotificationService();
+      await service.initialize();
+
+      // Direct burst: different per-message payload, SAME notification id.
+      await service.showMessageNotification(
+        contactPeerId: 'peer-1',
+        senderUsername: 'Alice',
+        messageText: 'first',
+        payload: 'peer-1',
+      );
+      final firstDirectId = (log.last.arguments as Map)['id'];
+      await service.showMessageNotification(
+        contactPeerId: 'peer-1',
+        senderUsername: 'Alice',
+        messageText: 'second',
+        payload: 'peer-1',
+        silent: true,
+      );
+      final secondDirectId = (log.last.arguments as Map)['id'];
+      expect(firstDirectId, 'peer-1'.hashCode);
+      expect(secondDirectId, firstDirectId);
+
+      // Group burst: DIFFERENT routePayload (different embedded messageId),
+      // SAME notification id — proves the per-message id does not leak in.
+      await service.showMessageNotification(
+        contactPeerId: 'group:g1',
+        senderUsername: 'Team',
+        messageText: 'g-first',
+        payload: 'group:g1|message:a',
+      );
+      final firstGroupId = (log.last.arguments as Map)['id'];
+      await service.showMessageNotification(
+        contactPeerId: 'group:g1',
+        senderUsername: 'Team',
+        messageText: 'g-second',
+        payload: 'group:g1|message:b',
+        silent: true,
+      );
+      final secondGroupId = (log.last.arguments as Map)['id'];
+      expect(firstGroupId, 'group:g1'.hashCode);
+      expect(secondGroupId, firstGroupId);
     },
   );
 

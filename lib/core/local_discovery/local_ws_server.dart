@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_media_sender.dart';
 import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+
+typedef MigrationTransferRequestHandler =
+    Future<void> Function(HttpRequest request, String path);
 
 /// Local WebSocket server for direct peer-to-peer messaging on the same WiFi.
 ///
@@ -15,7 +19,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 /// Outgoing path: [sendMessage] connects to a remote peer's WS server,
 /// sends a JSON message, and waits for an ack.
 ///
-/// Media path: HTTP PUT /media/<id> for local WiFi file transfers,
+/// Media path: `HTTP PUT /media/<id>` for local WiFi file transfers,
 /// coordinated via WS signaling (media_offer / media_offer_accepted /
 /// media_uploaded).
 ///
@@ -32,6 +36,7 @@ class LocalWsServer {
   static const Duration _connectTimeout = Duration(milliseconds: 800);
 
   final Duration idleTimeout;
+  final Duration commitBudget;
 
   HttpServer? _server;
   int? _boundPort;
@@ -45,6 +50,9 @@ class LocalWsServer {
   /// Media server for handling PUT uploads (null until configured).
   LocalMediaServer? _mediaServer;
 
+  MigrationTransferRequestHandler? _migrationTransferHandler;
+  LanInboundChatCommitHandler? _inboundChatCommitHandler;
+
   /// Maps media ID → sender's inbound WebSocket for sending back
   /// media_uploaded / media_failed notifications.
   final _mediaWsSenders = <String, WebSocket>{};
@@ -52,7 +60,10 @@ class LocalWsServer {
   /// Media sender for outbound file transfers.
   final _mediaSender = LocalMediaSender();
 
-  LocalWsServer({this.idleTimeout = const Duration(seconds: 60)});
+  LocalWsServer({
+    this.idleTimeout = const Duration(seconds: 60),
+    this.commitBudget = const Duration(milliseconds: 1200),
+  });
 
   /// The port the server is bound to, or null if not started.
   int? get port => _boundPort;
@@ -69,10 +80,30 @@ class LocalWsServer {
     _mediaServer = mediaServer;
   }
 
+  /// Configure the migration-specific local transfer route.
+  ///
+  /// This intentionally stays separate from the chat media `/media/<id>` route
+  /// so account migration bundles cannot be accepted as ordinary media.
+  void configureMigrationTransferHandler(
+    MigrationTransferRequestHandler handler,
+  ) {
+    _migrationTransferHandler = handler;
+  }
+
+  /// Configure the chat commit handler that decides when inbound chat can ack.
+  void configureInboundChatCommitHandler(LanInboundChatCommitHandler handler) {
+    _inboundChatCommitHandler = handler;
+  }
+
   /// Start the WebSocket server on a random available port.
   ///
   /// Returns the bound port number.
   Future<int> start() async {
+    final existingPort = _boundPort;
+    if (_server != null && existingPort != null) {
+      return existingPort;
+    }
+
     _server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     _boundPort = _server!.port;
 
@@ -88,6 +119,18 @@ class LocalWsServer {
 
   void _handleHttpRequest(HttpRequest request) {
     final path = request.uri.path;
+
+    if (path.startsWith('/migration/')) {
+      final handler = _migrationTransferHandler;
+      if (handler == null) {
+        request.response
+          ..statusCode = HttpStatus.notFound
+          ..close();
+        return;
+      }
+      handler(request, path);
+      return;
+    }
 
     // Media upload route: PUT /media/<id>
     if (path.startsWith('/media/')) {
@@ -130,6 +173,15 @@ class LocalWsServer {
   }
 
   void _handleMediaUpload(HttpRequest request, String mediaId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LOCAL_MEDIA_WS_UPLOAD_ROUTE_RECEIVED',
+      details: {
+        'id': mediaId,
+        'method': request.method,
+        'senderTracked': _mediaWsSenders.containsKey(mediaId),
+      },
+    );
     if (request.method != 'PUT') {
       request.response
         ..statusCode = HttpStatus.methodNotAllowed
@@ -147,7 +199,19 @@ class LocalWsServer {
 
     mediaServer.handleUpload(request, mediaId).then((result) {
       final senderWs = _mediaWsSenders[mediaId];
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_WS_UPLOAD_RESULT_READY',
+        details: {
+          'id': mediaId,
+          'success': result.success,
+          if (result.reason != null) 'reason': result.reason,
+          'hasSenderWs': senderWs != null,
+          if (senderWs != null) 'senderWsReadyState': senderWs.readyState,
+        },
+      );
       if (senderWs != null && senderWs.readyState == WebSocket.open) {
+        final ackType = result.success ? 'media_uploaded' : 'media_failed';
         if (result.success) {
           senderWs.add(
             jsonEncode({
@@ -167,6 +231,24 @@ class LocalWsServer {
             }),
           );
         }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MEDIA_WS_UPLOAD_ACK_SENT',
+          details: {'id': mediaId, 'type': ackType, 'success': result.success},
+        );
+      } else {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MEDIA_WS_UPLOAD_ACK_NOT_SENT',
+          details: {
+            'id': mediaId,
+            'success': result.success,
+            'reason': senderWs == null
+                ? 'sender_ws_missing'
+                : 'sender_ws_closed',
+            if (senderWs != null) 'senderWsReadyState': senderWs.readyState,
+          },
+        );
       }
       _mediaWsSenders.remove(mediaId);
     });
@@ -193,10 +275,7 @@ class LocalWsServer {
         return;
       }
 
-      // Acknowledge receipt — echo back nonce for per-message correlation.
       final nonce = json['nonce'] as String?;
-      ws.add(jsonEncode({'ack': true, if (nonce != null) 'nonce': nonce}));
-
       final message = LocalChatMessage(
         from: from,
         to: to,
@@ -204,6 +283,15 @@ class LocalWsServer {
         timestamp: DateTime.now().toUtc(),
         isIncoming: true,
       );
+
+      final commitHandler = _inboundChatCommitHandler;
+      if (commitHandler != null) {
+        _handleInboundChatWithCommitHandler(ws, message, nonce, commitHandler);
+        return;
+      }
+
+      // Acknowledge receipt — echo back nonce for per-message correlation.
+      _sendLegacyAck(ws, nonce);
 
       emitFlowEvent(
         layer: 'FL',
@@ -217,7 +305,127 @@ class LocalWsServer {
     }
   }
 
+  Future<void> _handleInboundChatWithCommitHandler(
+    WebSocket ws,
+    LocalChatMessage message,
+    String? nonce,
+    LanInboundChatCommitHandler commitHandler,
+  ) async {
+    try {
+      final decision = await Future<LanInboundDecision>.sync(
+        () => commitHandler(message, nonce: nonce),
+      ).timeout(commitBudget);
+
+      if (decision.isCommitted) {
+        _sendCommittedAck(ws, nonce);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_WS_COMMIT_ACK_SENT',
+          details: {'from': message.from, 'to': message.to},
+        );
+        return;
+      }
+
+      if (decision.isAccepted) {
+        _sendLegacyAck(ws, nonce);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_WS_LEGACY_ACK_SENT',
+          details: {'from': message.from, 'to': message.to},
+        );
+        return;
+      }
+
+      _sendNack(ws, nonce, decision.reason ?? 'rejected');
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_WS_COMMIT_NACK_SENT',
+        details: {
+          'from': message.from,
+          'to': message.to,
+          'reason': decision.reason ?? 'rejected',
+        },
+      );
+    } on TimeoutException {
+      _sendNack(ws, nonce, 'commit_timeout');
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_WS_COMMIT_TIMEOUT',
+        details: {
+          'from': message.from,
+          'to': message.to,
+          'timeoutMs': commitBudget.inMilliseconds,
+        },
+      );
+    } catch (_) {
+      _sendNack(ws, nonce, 'commit_error');
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_WS_COMMIT_NACK_SENT',
+        details: {
+          'from': message.from,
+          'to': message.to,
+          'reason': 'commit_error',
+        },
+      );
+    }
+  }
+
+  void _sendLegacyAck(WebSocket ws, String? nonce) {
+    ws.add(jsonEncode(_legacyAckFrame(nonce)));
+  }
+
+  void _sendCommittedAck(WebSocket ws, String? nonce) {
+    ws.add(jsonEncode(_committedAckFrame(nonce)));
+  }
+
+  void _sendNack(WebSocket ws, String? nonce, String reason) {
+    ws.add(jsonEncode(_nackFrame(nonce, reason)));
+  }
+
+  Map<String, Object?> _legacyAckFrame(String? nonce) => {
+    'ack': true,
+    if (nonce != null) 'nonce': nonce,
+  };
+
+  Map<String, Object?> _committedAckFrame(String? nonce) => {
+    'ack': true,
+    'committed': true,
+    if (nonce != null) 'nonce': nonce,
+  };
+
+  Map<String, Object?> _nackFrame(String? nonce, String reason) => {
+    'ack': false,
+    if (nonce != null) 'nonce': nonce,
+    'reason': reason,
+  };
+
+  LanSendAck _classifyAckFrame(dynamic event, String nonce) {
+    if (event is! String) {
+      throw const FormatException('Ack frame was not text');
+    }
+    final json = jsonDecode(event) as Map<String, dynamic>;
+    if (json['nonce'] != nonce) {
+      throw const FormatException('Ack nonce mismatch');
+    }
+    final ack = json['ack'];
+    if (ack == true) {
+      return json['committed'] == true
+          ? LanSendAck.committed
+          : LanSendAck.legacyAck;
+    }
+    if (ack == false) {
+      return LanSendAck.failed;
+    }
+    throw const FormatException('Ack frame missing ack boolean');
+  }
+
   void _handleMediaOffer(WebSocket ws, Map<String, dynamic> json) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LOCAL_MEDIA_WS_OFFER_RECEIVED',
+      details: {'id': json['id'], 'mime': json['mime'], 'size': json['size']},
+    );
     final mediaServer = _mediaServer;
     if (mediaServer == null) {
       final nonce = json['nonce'] as String?;
@@ -229,6 +437,15 @@ class LocalWsServer {
           'reason': 'media_not_supported',
         }),
       );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_WS_OFFER_ACK_SENT',
+        details: {
+          'id': json['id'],
+          'type': 'media_offer_rejected',
+          'reason': 'media_not_supported',
+        },
+      );
       return;
     }
 
@@ -237,6 +454,11 @@ class LocalWsServer {
     if (mediaServer.acceptOffer(offer)) {
       // Store the sender's WS for sending media_uploaded back later.
       _mediaWsSenders[offer.id] = ws;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_WS_MEDIA_SENDER_TRACKED',
+        details: {'id': offer.id, 'trackedCount': _mediaWsSenders.length},
+      );
 
       ws.add(
         jsonEncode({
@@ -245,6 +467,11 @@ class LocalWsServer {
           'token': offer.token,
           'nonce': offer.nonce,
         }),
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_WS_OFFER_ACK_SENT',
+        details: {'id': offer.id, 'type': 'media_offer_accepted'},
       );
     } else {
       ws.add(
@@ -255,6 +482,11 @@ class LocalWsServer {
           'reason': 'validation_failed',
         }),
       );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_WS_OFFER_ACK_SENT',
+        details: {'id': offer.id, 'type': 'media_offer_rejected'},
+      );
     }
   }
 
@@ -262,6 +494,25 @@ class LocalWsServer {
   ///
   /// Returns true if the peer acknowledged receipt within [_ackTimeout].
   Future<bool> sendMessage(
+    String host,
+    int port,
+    String content,
+    String fromPeerId,
+    String toPeerId, {
+    int? timeoutMs,
+  }) async =>
+      await sendMessageWithAck(
+        host,
+        port,
+        content,
+        fromPeerId,
+        toPeerId,
+        timeoutMs: timeoutMs,
+      ) ==
+      LanSendAck.committed;
+
+  /// Send a message and classify the peer's LAN ack frame.
+  Future<LanSendAck> sendMessageWithAck(
     String host,
     int port,
     String content,
@@ -302,27 +553,45 @@ class LocalWsServer {
       final pooled = _outboundPool[toPeerId];
       final ackStream = pooled?.ackStream ?? ws;
 
-      await ackStream
+      final ackEvent = await ackStream
           .firstWhere((event) {
             if (event is! String) return false;
             try {
               final json = jsonDecode(event) as Map<String, dynamic>;
-              return json['ack'] == true && json['nonce'] == nonce;
+              if (json['nonce'] != nonce) return false;
+              return json['ack'] == true || json['ack'] == false;
             } catch (_) {
               return false;
             }
           })
           .timeout(_remainingBudget(deadline));
+      final ack = _classifyAckFrame(ackEvent, nonce);
 
-      _resetIdleTimer(toPeerId);
+      if (ack == LanSendAck.failed) {
+        _removeFromPool(toPeerId);
+      } else {
+        _resetIdleTimer(toPeerId);
+      }
 
       emitFlowEvent(
         layer: 'FL',
-        event: 'LOCAL_WS_MESSAGE_SENT',
+        event: switch (ack) {
+          LanSendAck.committed => 'LOCAL_WS_ACK_COMMITTED_CLASSIFIED',
+          LanSendAck.legacyAck => 'LOCAL_WS_ACK_LEGACY_CLASSIFIED',
+          LanSendAck.failed => 'LOCAL_WS_ACK_FAILED_CLASSIFIED',
+        },
         details: {'to': toPeerId, 'host': host, 'port': port},
       );
 
-      return true;
+      if (ack != LanSendAck.failed) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_WS_MESSAGE_SENT',
+          details: {'to': toPeerId, 'host': host, 'port': port},
+        );
+      }
+
+      return ack;
     } catch (e) {
       // Connection failed or ack timeout — remove from pool.
       _removeFromPool(toPeerId);
@@ -339,7 +608,7 @@ class LocalWsServer {
         },
       );
 
-      return false;
+      return LanSendAck.failed;
     }
   }
 
@@ -358,6 +627,8 @@ class LocalWsServer {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     try {
       final ws = await _getOrCreateConnection(toPeerId, host, port);
@@ -377,6 +648,8 @@ class LocalWsServer {
         durationMs: durationMs,
         waveform: waveform,
         filename: filename,
+        enc: enc,
+        encScheme: encScheme,
       );
 
       if (result) {

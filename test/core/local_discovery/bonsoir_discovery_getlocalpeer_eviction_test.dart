@@ -13,11 +13,11 @@ import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 /// entry reliably stale at call time without touching production wall-clock use.
 void main() {
   LocalPeer peerDiscoveredAt(String peerId, DateTime at) => LocalPeer(
-        peerId: peerId,
-        host: '192.168.1.42',
-        port: 51234,
-        discoveredAt: at,
-      );
+    peerId: peerId,
+    host: '192.168.1.42',
+    port: 51234,
+    discoveredAt: at,
+  );
 
   group('BonsoirDiscoveryService.getLocalPeer read-time eviction', () {
     test('stale entry is evicted from the live map and returns null', () {
@@ -64,10 +64,7 @@ void main() {
 
     test('fresh entry is returned and retained (negative control)', () {
       final service = BonsoirDiscoveryService();
-      final fresh = peerDiscoveredAt(
-        'peer-fresh',
-        DateTime.now().toUtc(),
-      );
+      final fresh = peerDiscoveredAt('peer-fresh', DateTime.now().toUtc());
       service.debugSeedPeer(fresh);
 
       final got = service.getLocalPeer('peer-fresh');
@@ -76,6 +73,38 @@ void main() {
 
       // Still present — a fresh entry must NOT be evicted.
       expect(service.discoveredPeers.containsKey('peer-fresh'), isTrue);
+    });
+
+    test('transient lost event retains a fresh endpoint until ttl', () async {
+      final service = BonsoirDiscoveryService();
+      final fresh = peerDiscoveredAt('peer-fresh', DateTime.now().toUtc());
+      service.debugSeedPeer(fresh);
+
+      service.debugMarkPeerLost('peer-fresh');
+
+      expect(service.discoveredPeers.containsKey('peer-fresh'), isTrue);
+      expect(service.getLocalPeer('peer-fresh'), same(fresh));
+      expect(
+        await service.resolvePeer(
+          'peer-fresh',
+          timeout: const Duration(milliseconds: 1),
+        ),
+        same(fresh),
+      );
+    });
+
+    test('lost event evicts an already stale endpoint', () {
+      final service = BonsoirDiscoveryService();
+      final stale = peerDiscoveredAt(
+        'peer-stale',
+        DateTime.now().toUtc().subtract(const Duration(seconds: 31)),
+      );
+      service.debugSeedPeer(stale);
+
+      service.debugMarkPeerLost('peer-stale');
+
+      expect(service.discoveredPeers.containsKey('peer-stale'), isFalse);
+      expect(service.getLocalPeer('peer-stale'), isNull);
     });
 
     test('isLocalPeer goes false for a stale entry via the same eviction', () {

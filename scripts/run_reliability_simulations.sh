@@ -21,7 +21,7 @@ default_relay_addresses="${default_rendezvous_address},${default_quic_relay_addr
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run_reliability_simulations.sh [all|1to1|group|intro] [options]
+  ./scripts/run_reliability_simulations.sh [all|1to1|group|intro|move-feature] [options]
 
 Options:
   --list, --dry-run          Validate discovery and print the command plan only.
@@ -56,12 +56,16 @@ EOF
 
 while (($# > 0)); do
   case "$1" in
-    all|1to1|intro)
+    all|1to1|intro|move-feature)
       scope="$1"
       shift
       ;;
     group|groups)
       scope="group"
+      shift
+      ;;
+    move|moves|account-migration|account_migration)
+      scope="move-feature"
       shift
       ;;
     --list|--dry-run)
@@ -122,7 +126,7 @@ awk -F '\t' -v scope="$scope" '
   function selected(category) {
     return scope == "all" || category == scope
   }
-  ($1 == "1to1" || $1 == "group" || $1 == "intro") &&
+  ($1 == "1to1" || $1 == "group" || $1 == "intro" || $1 == "move-feature") &&
   ($2 == "runner" || $2 == "test") &&
   selected($1) {
     print
@@ -153,24 +157,37 @@ while IFS=$'\t' read -r category kind path note; do
   fi
 done <"$selected_file" | sort -u >"$targeted_tests_file"
 
-awk -F '\t' -v include_direct_targets="$include_direct_targets" '
-  NR == FNR {
-    targeted[$0] = 1
-    next
-  }
-  {
-    category = $1
-    kind = $2
-    path = $3
-    if (seen[path]++) {
+if [ -s "$targeted_tests_file" ]; then
+  awk -F '\t' -v include_direct_targets="$include_direct_targets" '
+    NR == FNR {
+      targeted[$0] = 1
       next
     }
-    if (kind == "test" && include_direct_targets != "1" && targeted[path]) {
-      next
+    {
+      category = $1
+      kind = $2
+      path = $3
+      if (seen[path]++) {
+        next
+      }
+      if (kind == "test" && include_direct_targets != "1" && targeted[path]) {
+        next
+      }
+      print kind "\t" path "\t"
     }
-    print kind "\t" path "\t"
-  }
-' "$targeted_tests_file" "$selected_file" >"$raw_plan_file"
+  ' "$targeted_tests_file" "$selected_file" >"$raw_plan_file"
+else
+  awk -F '\t' '
+    {
+      kind = $2
+      path = $3
+      if (seen[path]++) {
+        next
+      }
+      print kind "\t" path "\t"
+    }
+  ' "$selected_file" >"$raw_plan_file"
+fi
 
 group_multi_party_scenarios() {
   if [ ! -s "$group_multi_party_scenarios_file" ]; then

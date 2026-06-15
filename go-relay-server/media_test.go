@@ -126,6 +126,142 @@ func withMediaLimits(t *testing.T, sizeLimit, peerByteCap int64, fn func()) {
 	fn()
 }
 
+func downloadMedia(t *testing.T, env *testEnv, downloader host.Host, blobID string) []byte {
+	t.Helper()
+
+	s, err := downloader.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatalf("open download stream: %v", err)
+	}
+	defer s.Close()
+
+	sendMediaReq(t, s, mediaRequest{Action: "download", ID: blobID})
+	resp := recvMediaResp(t, s)
+	if resp.Status != "OK" {
+		t.Fatalf("download %s: expected OK, got %s: %s", blobID, resp.Status, resp.Error)
+	}
+	downloaded := make([]byte, resp.Size)
+	if _, err := io.ReadFull(s, downloaded); err != nil {
+		t.Fatalf("read downloaded blob: %v", err)
+	}
+	return downloaded
+}
+
+func TestMediaStoreSurvivesRestart(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+	blobData := []byte("durable relay media")
+
+	env.upload(t, env.sender, "restart-blob", recipientStr, "image/jpeg", blobData)
+
+	rebuilt := NewMediaStore(env.media.dataDir)
+	if meta := rebuilt.lookup("restart-blob"); meta == nil {
+		t.Fatal("expected rebuilt media store to load metadata after restart")
+	}
+	env.media = rebuilt
+	env.server.SetStreamHandler(MediaProtocol, func(s network.Stream) {
+		HandleMediaStream(s, rebuilt, env.profile)
+	})
+
+	intruder, err := env.intruder.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, intruder, mediaRequest{Action: "download", ID: "restart-blob"})
+	intruderResp := recvMediaResp(t, intruder)
+	intruder.Close()
+	if intruderResp.Status != "ERROR" || intruderResp.Error != "not authorized" {
+		t.Fatalf("intruder download after rebuild: expected not authorized, got %s: %s", intruderResp.Status, intruderResp.Error)
+	}
+
+	if downloaded := downloadMedia(t, env, env.recipient, "restart-blob"); !bytes.Equal(blobData, downloaded) {
+		t.Fatalf("downloaded data after restart = %q, want %q", downloaded, blobData)
+	}
+}
+
+func TestMediaUploadSameIDIncompleteReplacementKeepsExistingBlob(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+	original := []byte("original complete media")
+
+	env.upload(t, env.sender, "replace-blob", recipientStr, "image/jpeg", original)
+
+	s, err := env.sender.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s, mediaRequest{
+		Action: "upload",
+		ID:     "replace-blob",
+		To:     recipientStr,
+		Size:   int64(len(original) + 64),
+		Mime:   "image/jpeg",
+	})
+	resp := recvMediaResp(t, s)
+	if resp.Status != "READY" {
+		t.Fatalf("replacement upload expected READY, got %s: %s", resp.Status, resp.Error)
+	}
+	if _, err := s.Write([]byte("partial replacement")); err != nil {
+		t.Fatalf("write partial replacement: %v", err)
+	}
+	s.Close()
+
+	waitFor(t, 2*time.Second, func() bool {
+		got, err := os.ReadFile(env.media.blobPath(recipientStr, "replace-blob"))
+		return err == nil && bytes.Equal(got, original)
+	}, "incomplete same-ID replacement should leave original blob bytes")
+
+	if downloaded := downloadMedia(t, env, env.recipient, "replace-blob"); !bytes.Equal(original, downloaded) {
+		t.Fatalf("downloaded replacement data = %q, want original %q", downloaded, original)
+	}
+}
+
+func TestDirectMediaCountCapDoesNotUndercutInboxRetention(t *testing.T) {
+	if maxMediaPerPeer < maxMessagesPerPeer {
+		t.Fatalf("maxMediaPerPeer=%d must be >= maxMessagesPerPeer=%d", maxMediaPerPeer, maxMessagesPerPeer)
+	}
+
+	withMediaLimits(t, 1024, int64(maxMessagesPerPeer*1024), func() {
+		env := setupTestEnv(t)
+		recipientStr := env.recipient.ID().String()
+
+		for i := 0; i < maxMessagesPerPeer; i++ {
+			env.upload(t, env.sender, fmt.Sprintf("direct-window-%03d", i), recipientStr, "image/jpeg", []byte{byte(i)})
+		}
+		if got := len(env.media.listForPeer(recipientStr)); got != maxMessagesPerPeer {
+			t.Fatalf("direct media retained %d blobs, want inbox window %d", got, maxMessagesPerPeer)
+		}
+		if meta := env.media.lookup("direct-window-000"); meta == nil {
+			t.Fatal("oldest media inside direct inbox window should not be count-pruned")
+		}
+	})
+}
+
+func TestMediaStoreIgnoresCorruptSidecarAndKeepsServingValidEntries(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+	validData := []byte("valid durable media")
+
+	env.upload(t, env.sender, "valid-sidecar", recipientStr, "image/jpeg", validData)
+	corruptPath := filepath.Join(env.media.dataDir, recipientStr, "corrupt.enc.json")
+	if err := os.WriteFile(corruptPath, []byte("{not-json"), 0644); err != nil {
+		t.Fatalf("write corrupt sidecar: %v", err)
+	}
+
+	rebuilt := NewMediaStore(env.media.dataDir)
+	if meta := rebuilt.lookup("valid-sidecar"); meta == nil {
+		t.Fatal("valid metadata should load even when another sidecar is corrupt")
+	}
+	env.media = rebuilt
+	env.server.SetStreamHandler(MediaProtocol, func(s network.Stream) {
+		HandleMediaStream(s, rebuilt, env.profile)
+	})
+
+	if downloaded := downloadMedia(t, env, env.recipient, "valid-sidecar"); !bytes.Equal(validData, downloaded) {
+		t.Fatalf("downloaded data = %q, want %q", downloaded, validData)
+	}
+}
+
 // upload opens a stream, uploads a blob, and waits for OK.
 func (env *testEnv) upload(t *testing.T, from host.Host, blobID, toStr, mime string, data []byte) {
 	t.Helper()
@@ -197,7 +333,10 @@ func (env *testEnv) uploadWithAllowedPeers(t *testing.T, from host.Host, blobID,
 
 // TestUploadDownloadAutoDelete verifies the core happy path:
 // sender uploads → recipient downloads → data matches → blob auto-deleted from server.
-func TestUploadDownloadAutoDelete(t *testing.T) {
+func TestDownloadDoesNotDeleteBlob(t *testing.T) {
+	// INV-1: the relay copy is the only copy until the receiver durably
+	// commits. Deletion is acknowledgement-based (explicit media:delete) —
+	// a completed download stream is NOT proof of receipt.
 	env := setupTestEnv(t)
 
 	blobID := "blob-001"
@@ -243,15 +382,14 @@ func TestUploadDownloadAutoDelete(t *testing.T) {
 		t.Fatal("downloaded data does not match uploaded data")
 	}
 
-	// Verify auto-deleted from disk + index
-	waitFor(t, 2*time.Second, func() bool {
-		_, err := os.Stat(blobPath)
-		return os.IsNotExist(err)
-	}, "blob should be auto-deleted from disk after download")
-
-	waitFor(t, 2*time.Second, func() bool {
-		return env.media.lookup(blobID) == nil
-	}, "blob should be removed from index after download")
+	// Blob must survive the download on disk and in the index.
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(blobPath); os.IsNotExist(err) {
+		t.Fatal("blob must remain on disk after download (ack-based deletion)")
+	}
+	if env.media.lookup(blobID) == nil {
+		t.Fatal("blob must remain in index after download (ack-based deletion)")
+	}
 }
 
 // TestMultipleMediaTypes verifies that different MIME types are stored and
@@ -595,22 +733,23 @@ func TestExplicitDelete(t *testing.T) {
 	}
 }
 
-// TestDownloadAfterAutoDeleteReturnsNotFound verifies that a second
-// download attempt after auto-delete returns "not found".
-func TestDownloadAfterAutoDeleteReturnsNotFound(t *testing.T) {
+// TestRedownloadSucceeds is the death-spiral kill-shot: a receiver whose
+// first download was interrupted client-side (timeout, app kill) must be
+// able to download again — the blob lives until explicitly acked.
+func TestRedownloadSucceeds(t *testing.T) {
 	env := setupTestEnv(t)
 	recipientStr := env.recipient.ID().String()
 
 	data := make([]byte, 256)
 	rand.Read(data)
-	env.upload(t, env.sender, "once-only", recipientStr, "image/png", data)
+	env.upload(t, env.sender, "retry-me", recipientStr, "image/png", data)
 
-	// First download — should succeed
+	// First download — succeeds
 	s, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendMediaReq(t, s, mediaRequest{Action: "download", ID: "once-only"})
+	sendMediaReq(t, s, mediaRequest{Action: "download", ID: "retry-me"})
 	resp := recvMediaResp(t, s)
 	if resp.Status != "OK" {
 		t.Fatalf("first download: expected OK, got %s: %s", resp.Status, resp.Error)
@@ -619,22 +758,74 @@ func TestDownloadAfterAutoDeleteReturnsNotFound(t *testing.T) {
 	io.ReadFull(s, buf)
 	s.Close()
 
-	// Wait for auto-delete to complete
-	waitFor(t, 2*time.Second, func() bool {
-		return env.media.lookup("once-only") == nil
-	}, "blob should be auto-deleted after first download")
-
-	// Second download — should fail
+	// Second download — must also succeed with identical bytes
 	s2, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendMediaReq(t, s2, mediaRequest{Action: "download", ID: "once-only"})
+	sendMediaReq(t, s2, mediaRequest{Action: "download", ID: "retry-me"})
+	resp2 := recvMediaResp(t, s2)
+	if resp2.Status != "OK" {
+		t.Fatalf("second download: expected OK, got status=%s error=%s", resp2.Status, resp2.Error)
+	}
+	buf2 := make([]byte, resp2.Size)
+	if _, err := io.ReadFull(s2, buf2); err != nil {
+		t.Fatalf("read blob data on redownload: %v", err)
+	}
+	s2.Close()
+
+	if !bytes.Equal(data, buf2) {
+		t.Fatal("redownloaded data does not match uploaded data")
+	}
+}
+
+// TestDeleteAfterDownloadRemovesBlob pins the new lifecycle: download,
+// receiver acks via explicit delete, then the blob is gone.
+func TestDeleteAfterDownloadRemovesBlob(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+
+	data := make([]byte, 256)
+	rand.Read(data)
+	env.upload(t, env.sender, "ack-cycle", recipientStr, "image/png", data)
+
+	// Download
+	s, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s, mediaRequest{Action: "download", ID: "ack-cycle"})
+	resp := recvMediaResp(t, s)
+	if resp.Status != "OK" {
+		t.Fatalf("download: expected OK, got %s: %s", resp.Status, resp.Error)
+	}
+	buf := make([]byte, resp.Size)
+	io.ReadFull(s, buf)
+	s.Close()
+
+	// Receiver acks with explicit delete after durable commit
+	sDel, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, sDel, mediaRequest{Action: "delete", ID: "ack-cycle"})
+	respDel := recvMediaResp(t, sDel)
+	sDel.Close()
+	if respDel.Status != "OK" {
+		t.Fatalf("delete: expected OK, got %s: %s", respDel.Status, respDel.Error)
+	}
+
+	// Second download — gone
+	s2, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, s2, mediaRequest{Action: "download", ID: "ack-cycle"})
 	resp2 := recvMediaResp(t, s2)
 	s2.Close()
 
 	if resp2.Status != "ERROR" || resp2.Error != "not found" {
-		t.Fatalf("second download: expected 'not found', got status=%s error=%s", resp2.Status, resp2.Error)
+		t.Fatalf("download after ack-delete: expected 'not found', got status=%s error=%s", resp2.Status, resp2.Error)
 	}
 }
 
@@ -820,8 +1011,10 @@ func TestPL006RemovedPeerCannotDownloadPostRemovalGroupMedia(t *testing.T) {
 	}
 }
 
-// TestBackwardCompat verifies that uploads WITHOUT allowedPeers still
-// behave the same (1:1 mode with auto-delete).
+// TestBackwardCompat verifies that uploads WITHOUT allowedPeers (1:1 mode)
+// follow the ack-based lifecycle: the blob survives download until the
+// recipient explicitly deletes it; old clients that never ack are bounded
+// by the TTL sweep and per-peer caps.
 func TestBackwardCompat(t *testing.T) {
 	env := setupTestEnv(t)
 	recipientStr := env.recipient.ID().String()
@@ -846,21 +1039,105 @@ func TestBackwardCompat(t *testing.T) {
 	io.ReadFull(s, buf)
 	s.Close()
 
-	// Should auto-delete (1:1 mode)
-	waitFor(t, 2*time.Second, func() bool {
-		return env.media.lookup("compat-blob") == nil
-	}, "blob should be auto-deleted after 1:1 download")
+	// Blob survives the download (ack-based lifecycle)
+	time.Sleep(100 * time.Millisecond)
+	if env.media.lookup("compat-blob") == nil {
+		t.Fatal("1:1 blob must survive download until explicitly deleted")
+	}
 
-	// Second download should fail
-	s2, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	// Explicit delete still removes it
+	sDel, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendMediaReq(t, s2, mediaRequest{Action: "download", ID: "compat-blob"})
-	resp2 := recvMediaResp(t, s2)
-	s2.Close()
+	sendMediaReq(t, sDel, mediaRequest{Action: "delete", ID: "compat-blob"})
+	respDel := recvMediaResp(t, sDel)
+	sDel.Close()
+	if respDel.Status != "OK" {
+		t.Fatalf("delete: expected OK, got %s: %s", respDel.Status, respDel.Error)
+	}
+	if env.media.lookup("compat-blob") != nil {
+		t.Fatal("blob should be removed after explicit delete")
+	}
+}
 
-	if resp2.Status != "ERROR" || resp2.Error != "not found" {
-		t.Fatalf("expected 'not found' after auto-delete, got status=%s error=%s", resp2.Status, resp2.Error)
+// --- 112 Phase 6 (G7b): relay sidecar at-rest minimization ---
+
+// TestMediaSidecarAtRestOmitsSender pins that the persisted metadata
+// sidecar carries no sender identity: the sender→recipient social graph
+// must not survive at rest for the blob's TTL. Download/delete auth keys
+// on To/AllowedPeers, never on the sender — proven across a store restart.
+func TestMediaSidecarAtRestOmitsSender(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+	blobData := []byte("sidecar minimization payload")
+
+	env.upload(t, env.sender, "sidecar-blob", recipientStr, "application/octet-stream", blobData)
+
+	raw, err := os.ReadFile(env.media.metaPath(recipientStr, "sidecar-blob"))
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	var sidecar map[string]interface{}
+	if err := json.Unmarshal(raw, &sidecar); err != nil {
+		t.Fatalf("decode sidecar: %v", err)
+	}
+	if v, ok := sidecar["from"]; ok && v != "" {
+		t.Fatalf("sidecar persists sender identity at rest: from=%v", v)
+	}
+
+	// Restart the store over the same dataDir and swap it into the
+	// handler: download and ack-delete must still authorize via To.
+	rebuilt := NewMediaStore(env.media.dataDir)
+	env.server.SetStreamHandler(MediaProtocol, func(s network.Stream) {
+		HandleMediaStream(s, rebuilt, env.profile)
+	})
+
+	downloaded := downloadMedia(t, env, env.recipient, "sidecar-blob")
+	if !bytes.Equal(downloaded, blobData) {
+		t.Fatalf("recipient download mismatch after restart")
+	}
+
+	s, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatalf("open delete stream: %v", err)
+	}
+	defer s.Close()
+	sendMediaReq(t, s, mediaRequest{Action: "delete", ID: "sidecar-blob"})
+	resp := recvMediaResp(t, s)
+	if resp.Status != "OK" {
+		t.Fatalf("recipient ack-delete failed after restart: %s %s", resp.Status, resp.Error)
+	}
+}
+
+// TestMediaStoreLoadsLegacySidecarWithFromField pins encoding/json
+// unknown-field tolerance: sidecars written by pre-G7b relays (which
+// persisted `from`) must still load and serve after the upgrade.
+func TestMediaStoreLoadsLegacySidecarWithFromField(t *testing.T) {
+	env := setupTestEnv(t)
+	recipientStr := env.recipient.ID().String()
+	blobData := []byte("legacy sidecar payload")
+
+	env.upload(t, env.sender, "legacy-blob", recipientStr, "image/jpeg", blobData)
+
+	legacy := fmt.Sprintf(
+		`{"id":"legacy-blob","from":"%s","to":"%s","mime":"image/jpeg","size":%d,"created_at":%d}`,
+		env.sender.ID().String(), recipientStr, len(blobData), time.Now().UnixMilli(),
+	)
+	metaPath := env.media.metaPath(recipientStr, "legacy-blob")
+	if err := os.WriteFile(metaPath, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("write legacy sidecar: %v", err)
+	}
+
+	rebuilt := NewMediaStore(env.media.dataDir)
+	if rebuilt.lookup("legacy-blob") == nil {
+		t.Fatal("legacy sidecar containing `from` failed to load")
+	}
+	env.server.SetStreamHandler(MediaProtocol, func(s network.Stream) {
+		HandleMediaStream(s, rebuilt, env.profile)
+	})
+	downloaded := downloadMedia(t, env, env.recipient, "legacy-blob")
+	if !bytes.Equal(downloaded, blobData) {
+		t.Fatalf("legacy blob download mismatch")
 	}
 }

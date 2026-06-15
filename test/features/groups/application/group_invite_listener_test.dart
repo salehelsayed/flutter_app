@@ -7,6 +7,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -749,6 +750,18 @@ void main() {
           createdAt: DateTime.utc(2026, 1, 1),
           createdBy: '12D3KooWAlice',
           myRole: GroupRole.admin,
+        ),
+      );
+      // B3: "already joined" means self is an ACTIVE member — only then is a
+      // fresh invite a true duplicate. (A retained-removed shell, where self is
+      // absent, intentionally stores the re-add invite to allow re-joining.)
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'grp-abc123',
+          peerId: '12D3KooWBob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          joinedAt: DateTime.utc(2026, 1, 1),
         ),
       );
 

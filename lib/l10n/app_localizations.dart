@@ -148,6 +148,18 @@ abstract class AppLocalizations {
   /// **'Restore from recovery phrase'**
   String get onboarding_load_desc;
 
+  /// No description provided for @onboarding_move_from_old_phone.
+  ///
+  /// In en, this message translates to:
+  /// **'Move from old phone'**
+  String get onboarding_move_from_old_phone;
+
+  /// No description provided for @onboarding_move_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'Bring your existing account to this device'**
+  String get onboarding_move_desc;
+
   /// No description provided for @onboarding_privacy_1.
   ///
   /// In en, this message translates to:
@@ -274,6 +286,24 @@ abstract class AppLocalizations {
   /// **'They\'ll be added to your circle'**
   String get qr_scan_subtitle;
 
+  /// No description provided for @account_migration_scan_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan migration QR'**
+  String get account_migration_scan_title;
+
+  /// No description provided for @account_migration_scan_instruction.
+  ///
+  /// In en, this message translates to:
+  /// **'Point your camera at the Move Account QR on your new phone'**
+  String get account_migration_scan_instruction;
+
+  /// No description provided for @account_migration_scan_subtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Only Move Account QR codes are accepted here'**
+  String get account_migration_scan_subtitle;
+
   /// No description provided for @qr_my_code.
   ///
   /// In en, this message translates to:
@@ -315,6 +345,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Paste from Clipboard'**
   String get qr_paste_button;
+
+  /// No description provided for @account_migration_paste_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste migration QR'**
+  String get account_migration_paste_title;
+
+  /// No description provided for @account_migration_paste_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the Move Account QR payload shown on your new phone:'**
+  String get account_migration_paste_hint;
+
+  /// No description provided for @account_migration_paste_button.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste migration QR from Clipboard'**
+  String get account_migration_paste_button;
+
+  /// No description provided for @account_migration_paste_payload_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'kind: account_migration_pairing, version: 1, sessionId: ...'**
+  String get account_migration_paste_payload_hint;
 
   /// No description provided for @posts_title.
   ///
@@ -777,6 +831,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Failed to send voice message.'**
   String get conversation_voice_fail;
+
+  /// No description provided for @conversation_voice_limit_reached.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording reached the 5-minute limit.'**
+  String get conversation_voice_limit_reached;
 
   /// No description provided for @conversation_block.
   ///
@@ -1347,6 +1407,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Shares only an approximate location with direct friends. No live maps, and never strangers.'**
   String get settings_share_nearby_desc;
+
+  /// No description provided for @settings_move_account_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Move account to new phone'**
+  String get settings_move_account_title;
+
+  /// No description provided for @settings_move_account_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan the migration QR shown on your new phone to move this account.'**
+  String get settings_move_account_desc;
+
+  /// No description provided for @settings_move_account_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Start move'**
+  String get settings_move_account_action;
 
   /// No description provided for @settings_recovery_title.
   ///

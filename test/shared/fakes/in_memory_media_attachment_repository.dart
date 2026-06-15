@@ -2,7 +2,8 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 /// In-memory [MediaAttachmentRepository] for integration tests.
-class InMemoryMediaAttachmentRepository implements MediaAttachmentRepository {
+class InMemoryMediaAttachmentRepository
+    implements MediaAttachmentRepository, MediaAttachmentByIdLookup {
   final Map<String, MediaAttachment> _attachments = {};
   void Function(MediaAttachment attachment)? onSaveAttachment;
 
@@ -17,6 +18,11 @@ class InMemoryMediaAttachmentRepository implements MediaAttachmentRepository {
     String messageId,
   ) async {
     return _attachments.values.where((a) => a.messageId == messageId).toList();
+  }
+
+  @override
+  Future<MediaAttachment?> getAttachmentById(String id) async {
+    return _attachments[id];
   }
 
   @override

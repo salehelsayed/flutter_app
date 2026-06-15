@@ -11,10 +11,53 @@ continue_on_failure=0
 start_at=1
 only_selector=""
 
+readonly ONE_TO_ONE_HOST_TESTS=(
+  "test/features/conversation/integration/two_user_message_exchange_test.dart"
+  "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
+  "test/features/conversation/integration/media_attachment_flow_test.dart"
+  "test/features/conversation/integration/media_retry_smoke_test.dart"
+  "test/features/conversation/integration/voice_message_exchange_test.dart"
+  "test/features/conversation/integration/incomplete_upload_recovery_test.dart"
+  "test/features/conversation/integration/send_then_lock_delivery_test.dart"
+  "test/features/conversation/integration/stuck_sending_recovery_test.dart"
+  "test/features/conversation/integration/quote_reply_thread_test.dart"
+  "test/core/database/migrations/077_message_relay_custody_test.dart"
+  "test/core/inbox/inbox_round_trip_test.dart"
+  "test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart"
+  "test/core/services/incoming_message_router_test.dart"
+  "test/core/services/pending_message_retrier_upload_ordering_test.dart"
+  "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart"
+  "test/features/conversation/application/chat_message_listener_test.dart"
+  "test/features/conversation/application/send_chat_message_use_case_test.dart"
+  "test/features/conversation/application/retry_unacked_messages_use_case_test.dart"
+  "test/features/conversation/application/recovered_inbox_chat_disposition_test.dart"
+  "test/features/conversation/application/delivered_status_minting_sites_test.dart"
+  "test/features/conversation/application/delete_message_use_case_test.dart"
+  "test/features/conversation/application/handle_incoming_message_deletion_use_case_test.dart"
+  "test/features/conversation/application/handle_delivery_receipt_use_case_test.dart"
+  "test/features/conversation/application/send_delivery_receipt_use_case_test.dart"
+  "test/features/conversation/application/verify_inbox_custody_use_case_test.dart"
+  "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
+  "test/core/services/p2p_service_impl_test.dart"
+  "test/features/conversation/application/download_media_use_case_test.dart"
+  "test/features/conversation/application/upload_media_use_case_test.dart"
+  "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"
+  "test/core/bridge/go_bridge_client_test.dart"
+  "test/core/bridge/p2p_bridge_client_test.dart"
+  "test/features/conversation/application/media_download_slow_transfer_simulator_test.dart"
+  "test/features/contact_request/application/handle_incoming_message_use_case_test.dart"
+  "test/features/contact_request/application/retry_incomplete_key_exchanges_use_case_test.dart"
+  "test/features/conversation/application/post_restore_stale_key_recovery_test.dart"
+  "test/features/contact_request/application/contact_request_listener_test.dart"
+  "test/features/identity/domain/repositories/identity_repository_impl_test.dart"
+)
+
+readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"
+
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run_host_test_gates.sh [host-all|feature-host-all|core-host-all|performance-host] [options]
+  ./scripts/run_host_test_gates.sh [1to1|host-all|feature-host-all|core-host-all|performance-host|move-feature] [options]
 
 Options:
   --list, --dry-run          Discover host tests and print the command plan only.
@@ -24,15 +67,24 @@ Options:
   -h, --help                 Show this help.
 
 Scopes:
-  host-all                   All test/**/*_test.dart except test/performance/**.
+  1to1                      Focused host-side 1:1 message reliability suites,
+                             including the P0 silent-message-loss inventory.
+  host-all                   All test/**/*_test.dart except test/performance/**,
+                             plus host-side Go bridge reliability contracts.
   feature-host-all           All test/features/**/*_test.dart.
   core-host-all              All test/core/**/*_test.dart.
   performance-host           All test/performance/**/*_test.dart.
+  move-feature               Move Account dedicated host tests plus shared
+                             lifecycle/push/discovery/startup/P2P move guards.
 EOF
 }
 
 while (($# > 0)); do
   case "$1" in
+    1to1|one-to-one|one_to_one)
+      scope="1to1"
+      shift
+      ;;
     host-all|all)
       scope="host-all"
       shift
@@ -47,6 +99,10 @@ while (($# > 0)); do
       ;;
     performance-host|performance)
       scope="performance-host"
+      shift
+      ;;
+    move-feature|move|moves|account-migration|account_migration)
+      scope="move-feature"
       shift
       ;;
     --list|--dry-run)
@@ -92,8 +148,14 @@ failures_file="$(mktemp)"
 trap 'rm -f "$plan_file" "$indexed_plan_file" "$active_plan_file" "$failures_file"' EXIT
 
 case "$scope" in
+  1to1)
+    printf '%s\n' "${ONE_TO_ONE_HOST_TESTS[@]}" | sort -u >"$plan_file"
+    ;;
   host-all)
-    rg --files test -g '*_test.dart' | awk '$0 !~ /^test\/performance\//' | sort >"$plan_file"
+    {
+      rg --files test -g '*_test.dart' | awk '$0 !~ /^test\/performance\//' | sort
+      printf '%s\n' "$GO_BRIDGE_CONNECTED_PEER_TEST"
+    } >"$plan_file"
     ;;
   feature-host-all)
     rg --files test/features -g '*_test.dart' | sort >"$plan_file"
@@ -103,6 +165,17 @@ case "$scope" in
     ;;
   performance-host)
     rg --files test/performance -g '*_test.dart' | sort >"$plan_file"
+    ;;
+  move-feature)
+    {
+      rg --files test/features/account_migration -g '*_test.dart'
+      printf '%s\n' \
+        test/core/lifecycle/handle_app_resumed_export_pause_recovery_test.dart \
+        test/features/push/application/push_registration_post_cutover_test.dart \
+        test/core/local_discovery/bonsoir_discovery_service_contract_test.dart \
+        test/features/identity/application/startup_decision_test.dart \
+        test/core/services/p2p_service_impl_test.dart
+    } | sort -u >"$plan_file"
     ;;
 esac
 
@@ -148,13 +221,25 @@ quote_for_display() {
   printf "'%s'" "${value//\'/\'\\\'\'}"
 }
 
+is_go_bridge_connected_peer_test() {
+  [ "$1" = "$GO_BRIDGE_CONNECTED_PEER_TEST" ]
+}
+
 print_command_for_path() {
   local path="$1"
+  if is_go_bridge_connected_peer_test "$path"; then
+    printf '(cd go-mknoon && go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)'
+    return
+  fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
 }
 
 run_path() {
   local path="$1"
+  if is_go_bridge_connected_peer_test "$path"; then
+    (cd go-mknoon && go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)
+    return
+  fi
   flutter test "$path"
 }
 

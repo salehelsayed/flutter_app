@@ -800,6 +800,9 @@ void main() {
         );
         await pumpFrames(tester, count: 30);
 
+        // B1: a successful accept auto-opens the group conversation.
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+
         expect(p2pService.drainOfflineInboxCallCount, 1);
         expect(groupInviteListener.waitForIdleCallCount, 1);
         expect(bridge.commandLog, contains('group:join'));
@@ -950,8 +953,15 @@ void main() {
     );
 
     testWidgets(
-      'bridgeError accept keeps invite retryable without stale group',
+      'bridgeError accept of an inline invite consumes it and materializes '
+      'the group for background recovery',
       (tester) async {
+        // 106 contract (mirrors GCA-004 at the use-case level): an INLINE
+        // invite carries the full group config + key, so a relay-side
+        // join/drain failure still materializes the group locally and
+        // CONSUMES the invite — background recovery finishes the drain
+        // later. Only key-package-bound invites roll back to retryable
+        // (EK011 companion coverage).
         final invite = makePendingInvite();
         await pendingInviteRepo.savePendingInvite(invite);
         bridge.responses['group:join'] = {
@@ -978,29 +988,22 @@ void main() {
 
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
-          isNotNull,
+          isNull,
         );
-        expect(await groupRepo.getGroup(invite.groupId), isNull);
-        expect(await groupRepo.getLatestKey(invite.groupId), isNull);
-        expect(await groupRepo.getMembers(invite.groupId), isEmpty);
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(await groupRepo.getLatestKey(invite.groupId), isNotNull);
         expect(
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
-          findsOneWidget,
-        );
-        expect(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-          findsOneWidget,
-        );
-        expect(
-          find.text('Invite accepted, but recovery is still catching up'),
           findsNothing,
         );
-        expect(find.text('Failed to accept invite'), findsOneWidget);
-        expect(bridge.commandLog, isNot(contains('group:publish')));
-        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
-
-        final latestMessage = await msgRepo.getLatestMessage(invite.groupId);
-        expect(latestMessage, isNull);
+        // The materialized group is listed with its join-timeline row
+        // (the timeline write is local-first; the relay publish stub fails
+        // and stays best-effort). The transient failure snackbar is not
+        // asserted — it auto-dismisses within the pumped recovery window.
+        expect(find.text('Book Club'), findsOneWidget);
+        expect(bridge.commandLog, contains('group:publish'));
+        // Best-effort join-timeline publish runs for the materialized group.
+        expect(bridge.commandLog, contains('group:publish'));
       },
     );
 
@@ -1104,6 +1107,8 @@ void main() {
         expect(find.text('Invite needs fresh key material'), findsOneWidget);
         expect(bridge.commandLog, contains('group:join'));
         expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
+        // B1 anti-regression: a non-success accept must NOT open a conversation.
+        expect(find.byType(GroupConversationScreen), findsNothing);
       },
     );
 

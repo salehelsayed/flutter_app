@@ -76,6 +76,16 @@ class LetterCard extends StatelessWidget {
       .toList();
   List<MediaAttachment> get _audioMedia =>
       media.where((a) => a.mediaType == 'audio').toList();
+  bool get _showsOutgoingMediaPendingNote =>
+      !isIncoming &&
+      !isDeleted &&
+      status == 'sending' &&
+      media.any(
+        (attachment) =>
+            attachment.mediaType == 'image' ||
+            attachment.mediaType == 'video' ||
+            attachment.mediaType == 'audio',
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -293,6 +303,14 @@ class LetterCard extends StatelessWidget {
                       )
                     else if (media.isNotEmpty)
                       const SizedBox(height: 12),
+                    if (_showsOutgoingMediaPendingNote)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                        child: _buildOutgoingMediaPendingNote(
+                          context,
+                          readableColors,
+                        ),
+                      ),
                     if (onRetryFailedMessage != null ||
                         onRetryFailedMedia != null ||
                         onDeleteFailedMedia != null)
@@ -369,7 +387,7 @@ class LetterCard extends StatelessWidget {
                               color: readableColors.textMuted,
                             ),
                           ),
-                          if (isEdited && l10n != null) ...[
+                          if (isEdited) ...[
                             const SizedBox(width: 6),
                             Text(
                               l10n.conversation_edited_indicator,
@@ -402,6 +420,58 @@ class LetterCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildOutgoingMediaPendingNote(
+    BuildContext context,
+    BackgroundReadableColors readableColors,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    return Semantics(
+      liveRegion: true,
+      label:
+          '${l10n.upload_progress_title}. '
+          '${l10n.post_media_pending_upload_desc}',
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Color(0xFF4ecdc4),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.upload_progress_title,
+                  style: TextStyle(
+                    color: readableColors.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  l10n.post_media_pending_upload_desc,
+                  style: TextStyle(
+                    color: readableColors.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -533,7 +603,11 @@ class LetterCard extends StatelessWidget {
       return Icons.done_all_rounded;
     }
     if (status == 'failed') return Icons.error_outline_rounded;
-    if (status == 'pending') return Icons.schedule_rounded;
+    // 'inboxed' = relay custody awaiting receiver confirmation (doc 115):
+    // non-terminal pending family, never done_all.
+    if (status == 'pending' || status == 'inboxed') {
+      return Icons.schedule_rounded;
+    }
     return Icons.done_rounded; // 'sent', 'sending'
   }
 
@@ -551,7 +625,7 @@ class LetterCard extends StatelessWidget {
           ? const Color(0xFFB42318)
           : const Color.fromRGBO(255, 100, 100, 0.60);
     }
-    if (status == 'pending') {
+    if (status == 'pending' || status == 'inboxed') {
       return readableColors.isLightSurface
           ? const Color(0xFF8A4A00)
           : const Color.fromRGBO(255, 200, 100, 0.50);
@@ -569,7 +643,9 @@ class LetterCard extends StatelessWidget {
     if (status == 'failed') return l10n.message_status_failed;
     if (status == 'sending') return l10n.message_status_sending;
     if (status == 'sent') return l10n.message_status_sent;
-    if (status == 'pending') return l10n.message_status_pending_inbox;
+    if (status == 'pending' || status == 'inboxed') {
+      return l10n.message_status_pending_inbox;
+    }
     return status;
   }
 }

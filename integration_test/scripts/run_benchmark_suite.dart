@@ -20,17 +20,21 @@ import 'dart:io';
 
 const _testpeerBin = 'go-mknoon/bin/testpeer';
 
-// Harness files indexed by scenario letter.
+// Single dispatched benchmark entrypoint (124 Phase 5): one app build, the
+// scenario is selected at runtime via `--dart-define=BENCHMARK=<key>`.
+const _benchmarkHarness = 'integration_test/benchmark_harness.dart';
+
+// BENCHMARK dispatch keys indexed by scenario letter.
 const _singleNodeHarnesses = <String, String>{
-  'B': 'integration_test/benchmark_node_startup_harness.dart',
-  'BR': 'integration_test/benchmark_background_resume_harness.dart',
-  'C': 'integration_test/benchmark_relay_recovery_harness.dart',
-  'F': 'integration_test/benchmark_bridge_crossing_harness.dart',
-  'G': 'integration_test/benchmark_encryption_harness.dart',
-  'I': 'integration_test/benchmark_event_queue_harness.dart',
-  'K': 'integration_test/benchmark_voice_harness.dart',
-  'M': 'integration_test/benchmark_time_to_online_harness.dart',
-  'N': 'integration_test/benchmark_notification_tap_harness.dart',
+  'B': 'NODE_STARTUP',
+  'BR': 'BACKGROUND_RESUME',
+  'C': 'RELAY_RECOVERY',
+  'F': 'BRIDGE_CROSSING',
+  'G': 'ENCRYPTION',
+  'I': 'EVENT_QUEUE',
+  'K': 'VOICE',
+  'M': 'TIME_TO_ONLINE',
+  'N': 'NOTIFICATION_TAP',
 };
 
 const _scriptScenarios = <String, String>{
@@ -39,12 +43,12 @@ const _scriptScenarios = <String, String>{
 };
 
 const _twoNodeHarnesses = <String, String>{
-  'A': 'integration_test/benchmark_1_1_send_harness.dart',
-  'D': 'integration_test/benchmark_inbox_harness.dart',
-  'E': 'integration_test/benchmark_media_harness.dart',
-  'J': 'integration_test/benchmark_connection_reuse_harness.dart',
-  'L': 'integration_test/benchmark_ack_harness.dart',
-  'R': 'integration_test/benchmark_routing_paths_harness.dart',
+  'A': 'ONE_TO_ONE_SEND',
+  'D': 'INBOX',
+  'E': 'MEDIA',
+  'J': 'CONNECTION_REUSE',
+  'L': 'ACK',
+  'R': 'ROUTING_PATHS',
 };
 
 void main(List<String> args) async {
@@ -89,9 +93,9 @@ void main(List<String> args) async {
     print('─── Single-node scenarios: ${singleNodeScenarios.join(', ')} ───\n');
 
     for (final scenario in singleNodeScenarios) {
-      final harness = _singleNodeHarnesses[scenario]!;
-      print('\n▶ Scenario $scenario: $harness');
-      final output = await _runFlutterTest(harness, deviceId);
+      final benchmarkKey = _singleNodeHarnesses[scenario]!;
+      print('\n▶ Scenario $scenario: BENCHMARK=$benchmarkKey');
+      final output = await _runFlutterTest(benchmarkKey, deviceId);
       allBenchmarks.addAll(_extractBenchmarkLines(output));
     }
   }
@@ -215,10 +219,10 @@ void main(List<String> args) async {
 
       // Run two-node harnesses
       for (final scenario in twoNodeScenarios) {
-        final harness = _twoNodeHarnesses[scenario]!;
-        print('\n▶ Scenario $scenario: $harness');
+        final benchmarkKey = _twoNodeHarnesses[scenario]!;
+        print('\n▶ Scenario $scenario: BENCHMARK=$benchmarkKey');
         final output = await _runFlutterTest(
-          harness,
+          benchmarkKey,
           deviceId,
           dartDefines: ['CLI_PEER_FIXTURE=$cliFixturePath'],
         );
@@ -264,7 +268,7 @@ void main(List<String> args) async {
 }
 
 Future<String> _runFlutterTest(
-  String harnessPath,
+  String benchmarkKey,
   String deviceId, {
   List<String> dartDefines = const [],
 }) async {
@@ -272,8 +276,9 @@ Future<String> _runFlutterTest(
     'test',
     '-d',
     deviceId,
+    '--dart-define=BENCHMARK=$benchmarkKey',
     for (final d in dartDefines) '--dart-define=$d',
-    harnessPath,
+    _benchmarkHarness,
   ];
 
   print('  flutter ${args.join(' ')}');

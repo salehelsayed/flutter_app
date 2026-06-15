@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
-import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -19,6 +23,43 @@ import '../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../../shared/fakes/lifecycle_bridge.dart';
 import '../../shared/fakes/test_user.dart';
+import '../local_discovery/fake_local_p2p_service.dart';
+
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
+
+class _ThrowingInboxStagingRepository extends InMemoryInboxStagingRepository {
+  @override
+  Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
+    throw StateError('injected LAN stage failure');
+  }
+}
 
 class _DiscoverMissProbeConnectedP2PService implements P2PService {
   final FakeP2PService _inner;
@@ -93,8 +134,11 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) =>
-      _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
@@ -127,8 +171,7 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -156,6 +199,8 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -548,6 +593,19 @@ void main() {
         bob.setOnline(true);
         network.resetCounters();
 
+        // Age the prior inbox delivery out of the NET-REL-05 low-confidence
+        // window. A recent inbox send would (correctly) fire the concurrent
+        // durable copy and take custody at inbox budget; this test pins the
+        // HIGH-confidence recovery contract: the live path returns without a
+        // restart once the unreachable episode is in the past.
+        final backdatedCreatedAt = DateTime.now()
+            .toUtc()
+            .subtract(kLowConfidenceWindow + const Duration(minutes: 1))
+            .toIso8601String();
+        await alice.messageRepo.saveMessage(
+          offlineMessage.copyWith(createdAt: backdatedCreatedAt),
+        );
+
         final recoveredRelayPath = _DiscoverMissProbeConnectedP2PService(
           alice.p2pService,
         );
@@ -592,8 +650,12 @@ void main() {
     );
 
     test(
-      'relay probe retries one live send before falling back to inbox',
+      'relay probe makes one live attempt; failure falls to durable inbox',
       () async {
+        // Contract update (NET-REL-05): relayProbeSendAttempts == 1 — a
+        // failed post-probe live send is not retried; the sequential inbox
+        // tail takes durable custody instead, so the message is never lost
+        // and the sender is not stalled by repeat live attempts.
         final staleRelayPath = _DiscoverMissProbeConnectedP2PService(
           alice.p2pService,
           failFirstSendAfterProbe: true,
@@ -603,7 +665,7 @@ void main() {
           p2pService: staleRelayPath,
           messageRepo: alice.messageRepo,
           targetPeerId: bob.peerId,
-          text: 'phase4 post-probe retry avoids inbox fallback',
+          text: 'phase4 post-probe failure lands durably in inbox',
           senderPeerId: alice.peerId,
           senderUsername: alice.username,
           bridge: alice.bridge,
@@ -611,24 +673,78 @@ void main() {
         );
         await Future<void>.delayed(Duration.zero);
 
-        final deliveredToBob = await bob.messageRepo.getMessagesForContact(
-          alice.peerId,
-        );
-
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.transport, equals('direct'));
+        expect(message!.transport, equals('inbox'));
         expect(staleRelayPath.probeRelayCallCount, 1);
-        expect(staleRelayPath.sendMessageWithReplyCallCount, 2);
-        expect(network.deliverCallCount, 1);
-        expect(network.storeInInboxCallCount, 0);
         expect(
-          deliveredToBob.where(
-            (msg) =>
-                msg.isIncoming &&
-                msg.text == 'phase4 post-probe retry avoids inbox fallback',
+          staleRelayPath.sendMessageWithReplyCallCount,
+          1,
+          reason: 'single post-probe live attempt (relayProbeSendAttempts=1)',
+        );
+        expect(network.storeInInboxCallCount, 1);
+      },
+    );
+  });
+
+  group('Fault injection: LAN durable staging', () {
+    test(
+      'LAN staging write failure produces rejected commit and falls back to in-memory emit',
+      () async {
+        final bridge = LifecycleBridge();
+        final localP2P = FakeLocalP2PService();
+        final repo = _ThrowingInboxStagingRepository();
+        final service = P2PServiceImpl(
+          bridge: bridge,
+          localP2PService: localP2P,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                fail('staging failures must not replay');
+              },
+        );
+        addTearDown(service.dispose);
+
+        final emitted = <ChatMessage>[];
+        final sub = service.messageStream.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        late LanInboundDecision decision;
+        final events = await _captureFlowEvents(() async {
+          decision = await Future<LanInboundDecision>.sync(
+            () => localP2P.inboundChatCommitHandler!(
+              LocalChatMessage(
+                from: 'remote-peer',
+                to: 'self-peer',
+                content: jsonEncode({
+                  'type': 'chat_message',
+                  'version': '1',
+                  'payload': {
+                    'id': 'msg-lan-stage-fail',
+                    'text': 'stage fail fallback',
+                    'senderPeerId': 'remote-peer',
+                    'senderUsername': 'Alice',
+                    'timestamp': '2026-04-01T00:00:00.000Z',
+                  },
+                }),
+                timestamp: DateTime.utc(2026, 4),
+                isIncoming: true,
+              ),
+              nonce: 'n-stage-fail',
+            ),
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+
+        expect(decision.isRejected, isTrue);
+        expect(decision.reason, 'staging_error');
+        expect(emitted, hasLength(1));
+        expect(emitted.single.transport, 'wifi');
+        expect(
+          events.any(
+            (event) => event['event'] == 'P2P_SERVICE_LAN_STAGE_ERROR',
           ),
-          hasLength(1),
+          isTrue,
         );
       },
     );

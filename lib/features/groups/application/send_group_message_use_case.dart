@@ -50,6 +50,8 @@ _loadGroupSendMembership({
   required GroupMessageRepository msgRepo,
   required String groupId,
   required String senderPeerId,
+  String? creatorPeerId,
+  GroupRole? senderRole,
   DateTime? membershipCutoff,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
@@ -60,6 +62,15 @@ _loadGroupSendMembership({
   final hasJoinedStatusEvidence = inviteStatuses.values.any(
     (status) => status == GroupInviteDeliveryStatus.joined,
   );
+  // The not-yet-joined-invitee exclusion below is only meaningful on a device
+  // that actually tracks invites it issued (the inviter/admin). A joiner has no
+  // pending-invitee state to protect — its roster came from a signed group
+  // config snapshot of confirmed-or-staged members it cannot distinguish — so
+  // it must include every deliverable incumbent rather than silently drop the
+  // ones it never witnessed joining (REG-119b). Keep the admin branch so the
+  // inviter still excludes genuine pending invitees (INV-106).
+  final isInviterTrackerDevice =
+      inviteStatuses.isNotEmpty || senderRole == GroupRole.admin;
   final joinedTimelinePeerIds = hasJoinedStatusEvidence
       ? const <String>{}
       : await _loadMemberJoinedTimelinePeerIds(
@@ -81,6 +92,7 @@ _loadGroupSendMembership({
   }
   final normalizedCutoff = membershipCutoff?.toUtc();
   final normalizedSenderPeerId = senderPeerId.trim();
+  final normalizedCreatorPeerId = creatorPeerId?.trim();
   final recipientPeerIds = members
       .where((member) {
         final peerId = member.peerId.trim();
@@ -88,6 +100,10 @@ _loadGroupSendMembership({
         final hasJoinedTimelineEvidence = joinedTimelinePeerIds.contains(
           peerId,
         );
+        final isGroupCreator =
+            normalizedCreatorPeerId != null &&
+            normalizedCreatorPeerId.isNotEmpty &&
+            peerId == normalizedCreatorPeerId;
         return (normalizedCutoff == null ||
                 !member.joinedAt.toUtc().isAfter(normalizedCutoff)) &&
             hasDeliverableGroupMemberIdentity(member) &&
@@ -95,14 +111,41 @@ _loadGroupSendMembership({
             !_isPersistedNonJoinedInviteStatus(inviteStatus) &&
             !_isMissingInviteStatusInTrackedGroup(
               inviteStatus: inviteStatus,
+              isInviterTrackerDevice: isInviterTrackerDevice,
               hasJoinedInviteEvidence: hasJoinedInviteEvidence,
               hasJoinedTimelineEvidence: hasJoinedTimelineEvidence,
+              isGroupCreator: isGroupCreator,
             );
       })
       .map((member) => member.peerId.trim())
       .toSet()
       .toList();
   return (members: members, recipientPeerIds: recipientPeerIds);
+}
+
+List<String> _durableGroupRecipientPeerIds({
+  required List<String> remoteRecipientPeerIds,
+  required String senderPeerId,
+  bool includeSenderPeerId = false,
+}) {
+  final recipients = <String>[];
+  final seen = <String>{};
+  void addRecipient(String peerId) {
+    final normalized = peerId.trim();
+    if (normalized.isEmpty || seen.contains(normalized)) return;
+    seen.add(normalized);
+    recipients.add(normalized);
+  }
+
+  for (final peerId in remoteRecipientPeerIds) {
+    addRecipient(peerId);
+  }
+
+  if (includeSenderPeerId) {
+    addRecipient(senderPeerId);
+  }
+
+  return recipients;
 }
 
 Future<Set<String>> _loadMemberJoinedTimelinePeerIds({
@@ -165,11 +208,40 @@ bool _isPersistedNonJoinedInviteStatus(GroupInviteDeliveryStatus? status) {
       status == GroupInviteDeliveryStatus.cannotSend;
 }
 
+/// Whether a roster member should be excluded from the recipient set as a
+/// not-yet-joined invitee: in a group where we have joined-evidence (an
+/// invite-attempt `joined` status, or — when the invite repo is absent — a
+/// member-joined timeline entry), a member with no invite status and no
+/// join-timeline entry is treated as still pending and dropped (INV-106, to
+/// avoid sending/notifying invitees who never accepted).
+///
+/// GATE — [isInviterTrackerDevice]: this inference is only valid on a device
+/// that actually tracks invites it issued (it holds invite-attempt rows, or the
+/// sender is an admin). On a joiner there is no pending-invitee state to protect
+/// — its roster came from a signed config snapshot of confirmed-or-staged
+/// members it cannot distinguish — so it must include every deliverable
+/// incumbent, never silently drop one it didn't witness joining (REG-119b).
+///
+/// EXCEPTION — the group creator ([isGroupCreator]) is definitionally a joined
+/// member and is NEVER dropped here. A freshly joined member holds no invite
+/// record and no join-timeline entry for the creator (the creator never emits a
+/// `sys-member_joined` entry), yet its OWN join sets [hasJoinedInviteEvidence];
+/// without this exception the creator was excluded from every send by a joiner,
+/// yielding expectedRecipientCount:0, no relay custody, and a vacuous "sent"
+/// while the message was silently lost if the creator was offline (REG-119).
 bool _isMissingInviteStatusInTrackedGroup({
   required GroupInviteDeliveryStatus? inviteStatus,
+  required bool isInviterTrackerDevice,
   required bool hasJoinedInviteEvidence,
   required bool hasJoinedTimelineEvidence,
+  required bool isGroupCreator,
 }) {
+  if (!isInviterTrackerDevice) {
+    return false;
+  }
+  if (isGroupCreator) {
+    return false;
+  }
   if (inviteStatus == GroupInviteDeliveryStatus.unknown) {
     return true;
   }
@@ -641,6 +713,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   bool emitTimingEvent = true,
+  bool includeSenderPeerIdInDurableRecipients = false,
 }) async {
   final sendStopwatch = Stopwatch()..start();
   final sanitizedText = sanitizeMessageText(text);
@@ -767,6 +840,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     msgRepo: msgRepo,
     groupId: groupId,
     senderPeerId: senderPeerId,
+    creatorPeerId: group.createdBy,
+    senderRole: group.myRole,
     membershipCutoff: membershipCutoff,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );
@@ -892,10 +967,14 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       resolvedSenderDevice?.deviceSigningPublicKey ?? senderPublicKey;
 
   final mediaJson = groupMediaAttachments?.map((a) => a.toJson()).toList();
-  final recipientPeerIds = sendMembership.recipientPeerIds;
+  final recipientPeerIds = _durableGroupRecipientPeerIds(
+    remoteRecipientPeerIds: sendMembership.recipientPeerIds,
+    senderPeerId: senderPeerId,
+    includeSenderPeerId: includeSenderPeerIdInDurableRecipients,
+  );
   final expectedRecipientCount = recipientPeerIds.length;
   final resolvedGroupName = group.name.trim();
-  // 3b. Build wireEnvelope (plaintext publish params for retry — NO senderPrivateKey)
+  // 3b. Build wireEnvelope (plaintext publish params for retry - NO senderPrivateKey)
   final wireEnvelope = jsonEncode({
     'groupId': groupId,
     'text': sanitizedText,
@@ -1028,6 +1107,16 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     final topicPeers =
         _intResultField(reliableResult, 'topicPeerCount') ??
         _intResultField(reliableResult, 'topicPeers');
+    // GAP 2: prefer the post-publish connected-topic-peer count (the Go recount
+    // that captures peers which subscribed during the pre-publish settle window
+    // and were delivered to by floodPublish) as the delivery signal; fall back
+    // to the pre-publish mesh snapshot when the field is absent (older Go
+    // binary) — byte-equivalent to today until the Go half ships.
+    final connectedTopicPeers = _intResultField(
+      reliableResult,
+      'connectedTopicPeerCount',
+    );
+    final effectiveTopicPeers = connectedTopicPeers ?? topicPeers;
     final reliableExpectedRecipientCount =
         _intResultField(reliableResult, 'expectedRecipientCount') ??
         expectedRecipientCount;
@@ -1043,7 +1132,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       reliableOk: reliableOk,
       publishSucceeded: publishSucceeded,
       inboxOk: inboxOk,
-      topicPeers: topicPeers,
+      topicPeers: effectiveTopicPeers,
       expectedRecipientCount: reliableExpectedRecipientCount,
     );
 
@@ -1124,8 +1213,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     final canMarkSent =
         reliableExpectedRecipientCount <= 0 ||
         inboxOk ||
-        (publishSucceeded && (topicPeers ?? 0) > 0);
-    if (!canMarkSent && (topicPeers ?? 0) <= 0) {
+        (publishSucceeded && (effectiveTopicPeers ?? 0) > 0);
+    if (!canMarkSent && (effectiveTopicPeers ?? 0) <= 0) {
       await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
       final failedMessage = prePersistMessage.copyWith(
         status: 'failed',

@@ -24,7 +24,9 @@ import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.
 import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
@@ -67,6 +69,10 @@ import 'package:flutter_app/core/database/migrations/041_group_message_reliabili
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
+import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
+import 'package:flutter_app/core/database/migrations/076_post_media_attachment_crypto_columns.dart';
+import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
 import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
@@ -129,6 +135,7 @@ import 'package:flutter_app/features/introduction/application/resolve_unknown_in
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
+import 'package:flutter_app/core/secure_storage/dev_keychain_wipe.dart'; // TEMP DEV-ONLY — remove
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -138,10 +145,32 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_bundle_transfer.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_local_transfer_runtime.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/account_migration/application/migration_cutover_bridge_cleanup.dart';
+import 'package:flutter_app/features/account_migration/application/migration_cutover_coordinator.dart';
+import 'package:flutter_app/features/account_migration/application/migration_cutover_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/migration_database_active_importer.dart';
+import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
+import 'package:flutter_app/features/account_migration/application/migration_database_snapshot_exporter.dart';
+import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/migration_secure_storage_staging.dart';
+import 'package:flutter_app/features/account_migration/application/migration_segment_crypto.dart';
+import 'package:flutter_app/features/account_migration/application/migration_segmented_transfer_service.dart';
+import 'package:flutter_app/features/account_migration/application/migration_storage_preflight.dart';
+import 'package:flutter_app/features/account_migration/application/migration_transfer_checkpoint_store.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
+import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
+    show sendDeliveryReceipt;
+import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -149,6 +178,8 @@ import 'package:flutter_app/features/conversation/application/recover_stuck_send
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
@@ -166,10 +197,12 @@ import 'package:flutter_app/features/groups/application/group_membership_update_
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
@@ -201,6 +234,7 @@ import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
@@ -211,6 +245,7 @@ import 'package:flutter_app/core/notifications/recent_remote_notification_gate.d
 import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/diagnostics/app_build_info.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
@@ -258,6 +293,10 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   StartupTiming.instance.mark('app_start');
+  // Build-provenance milestone (B6): emit the source revision under test before
+  // anything else, so device/harness logs can be matched to the exact build and
+  // "fixed in tree, broken on device" build-skew is caught by a log grep.
+  emitAppBuildInfo();
   final shareIntentService = ShareIntentService();
   StartupTiming.instance.mark('share_launch_probe_begin');
   final initialShareIntent = await shareIntentService.captureInitialIntent();
@@ -301,6 +340,11 @@ void main() async {
   UserAvatar.setDocumentsDir(appDocDir.path);
   StartupTiming.instance.mark('documents_dir_ready');
 
+  // ⚠️ TEMP DEV-ONLY — one-shot Keychain wipe for a truly fresh install.
+  // Runs before the DB opens so db_encryption_key is cleared first.
+  // DELETE this line + the import + dev_keychain_wipe.dart when done.
+  await wipeKeychainOnce(appDocDir.path);
+
   // Initialize database based on platform
   if (isDesktop) {
     // Desktop platforms need FFI
@@ -314,12 +358,21 @@ void main() async {
       ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
       : null;
   final pushTokenStore = PushTokenStoreImpl(secureKeyStore: secureKeyStore);
+  final accountMigrationAuthorityRepository =
+      SecureKeyStoreAccountMigrationAuthorityRepository(
+        secureKeyStore: secureKeyStore,
+      );
+  final accountMigrationCutoverRepository =
+      SecureKeyStoreMigrationCutoverRepository(secureKeyStore: secureKeyStore);
+  final accountMigrationRuntimeNetworkGate = AccountMigrationRuntimeNetworkGate(
+    authorityRepository: accountMigrationAuthorityRepository,
+  );
 
   // 2. Open encrypted database (handles plaintext→encrypted migration)
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 74,
+    version: currentIdentityDatabaseVersion,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -395,6 +448,9 @@ void main() async {
       await runGroupPendingMembershipMessagesMigration(db);
       await runGroupMessageLastSendAttemptAtMigration(db);
       await runGroupMessageLogicalDeliveryIdMigration(db);
+      await runContactsMlKemKeyUpdatedTsMigration(db);
+      await runPostMediaAttachmentCryptoColumnsMigration(db);
+      await runMessageRelayCustodyMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -614,6 +670,15 @@ void main() async {
       if (oldVersion < 74) {
         await runGroupMessageLogicalDeliveryIdMigration(db);
       }
+      if (oldVersion < 75) {
+        await runContactsMlKemKeyUpdatedTsMigration(db);
+      }
+      if (oldVersion < 76) {
+        await runPostMediaAttachmentCryptoColumnsMigration(db);
+      }
+      if (oldVersion < 77) {
+        await runMessageRelayCustodyMigration(db);
+      }
     },
   );
   StartupTiming.instance.mark('database_ready');
@@ -638,6 +703,43 @@ void main() async {
     secureKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
   );
+  Future<bool> allowsAccountRuntimeNetworkSideEffects(String operation) async {
+    final identity = await repository.loadIdentity();
+    final allowed = await accountMigrationRuntimeNetworkGate
+        .allowsAccountNetworkSideEffects(
+          peerId: identity?.peerId,
+          operation: operation,
+        );
+    if (!allowed) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_RUNTIME_NETWORK_ACTION_BLOCKED',
+        details: {'operation': operation},
+      );
+    }
+    return allowed;
+  }
+
+  Future<T> runAccountRuntimeNetworkAction<T>({
+    required String operation,
+    required T blockedValue,
+    required Future<T> Function() action,
+  }) async {
+    if (!await allowsAccountRuntimeNetworkSideEffects(operation)) {
+      return blockedValue;
+    }
+    return action();
+  }
+
+  Future<void> runAccountRuntimeNetworkVoidAction({
+    required String operation,
+    required Future<void> Function() action,
+  }) async {
+    if (!await allowsAccountRuntimeNetworkSideEffects(operation)) {
+      return;
+    }
+    await action();
+  }
 
   // Create contact repository
   final contactRepository = ContactRepositoryImpl(
@@ -701,6 +803,15 @@ void main() async {
     dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
     dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+    dbLoadInboxCustodyOutgoingMessages:
+        ({required recheckOlderThan, limit = 50}) =>
+            dbLoadInboxCustodyOutgoingMessages(
+              db,
+              recheckOlderThan: recheckOlderThan,
+              limit: limit,
+            ),
+    dbMarkInboxCustodyChecked: (id, {relayExpiresAtMs}) =>
+        dbMarkInboxCustodyChecked(db, id, relayExpiresAtMs: relayExpiresAtMs),
     dbRecoverStuckSendingMessages:
         ({required DateTime olderThan, int limit = 50}) =>
             dbRecoverStuckSendingMessages(
@@ -757,6 +868,16 @@ void main() async {
               reasonCode: reasonCode,
               reasonDetail: reasonDetail,
             ),
+    dbMarkInboxStagingEntryQuarantined:
+        (entryId, {required reasonCode, reasonDetail}) =>
+            dbMarkInboxStagingEntryQuarantined(
+              db,
+              entryId,
+              reasonCode: reasonCode,
+              reasonDetail: reasonDetail,
+            ),
+    dbCountQuarantinedInboxStagingEntries: () =>
+        dbCountQuarantinedInboxStagingEntries(db),
   );
 
   final postRepository = PostRepositoryImpl(
@@ -880,6 +1001,7 @@ void main() async {
   final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
     dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
     dbLoadMediaForMessage: (messageId) => dbLoadMediaForMessage(db, messageId),
+    dbLoadMediaById: (id) => dbLoadMediaById(db, id),
     dbLoadMediaForMessages: (messageIds) =>
         dbLoadMediaForMessages(db, messageIds),
     dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
@@ -1417,107 +1539,157 @@ void main() async {
     discovery: localDiscovery,
     wsServer: localWsServer,
   );
+  final accountMigrationSegmentCrypto = BridgeMigrationSegmentCrypto(
+    bridge: bridge,
+  );
+  final accountMigrationStreamCrypto = BridgeMigrationStreamCrypto(
+    bridge: bridge,
+  );
+  final accountMigrationSecureStorageStaging = MigrationSecureStorageStaging(
+    primaryStore: secureKeyStore,
+    sharedStore: sharedPushKeyStore,
+  );
+  final accountMigrationSizeGate = AccountMigrationSizeGate(
+    estimateMoveSize: AccountMigrationAccountSizeEstimator(
+      databasePath: db.path,
+      documentsRootPath: appDocDir.path,
+    ).call,
+  );
+  final diskSpaceChannel = DiskSpaceChannel();
+  final accountMigrationCutoverCoordinator = MigrationCutoverCoordinator(
+    authorityRepository: accountMigrationAuthorityRepository,
+    cutoverRepository: accountMigrationCutoverRepository,
+  );
+  late final P2PServiceImpl p2pService;
+  final accountMigrationTransferRuntime = AccountMigrationLocalTransferRuntime(
+    discovery: localDiscovery,
+    wsServer: localWsServer,
+    pairingSessionRepository: SecureKeyStoreMigrationPairingSessionRepository(
+      secureKeyStore: secureKeyStore,
+    ),
+    sizeGate: accountMigrationSizeGate,
+    storagePreflight: MigrationStoragePreflight(
+      availableBytesProvider: () =>
+          diskSpaceChannel.getAvailableBytes(appDocDir.path),
+    ),
+    bundleSource: AccountMigrationProductionBundleSource(
+      sourceDb: db,
+      primaryStore: secureKeyStore,
+      sharedStore: sharedPushKeyStore,
+      documentsRootPath: appDocDir.path,
+      exportDirectoryPath: '${appDocDir.path}/account_migration/export',
+      snapshotExporter: const MigrationDatabaseSnapshotExporter(),
+    ).call,
+    streamCrypto: accountMigrationStreamCrypto,
+    bundleReceiver: AccountMigrationProductionBundleReceiver(
+      streamCrypto: accountMigrationStreamCrypto,
+      secureStorageStaging: accountMigrationSecureStorageStaging,
+      databaseImportStaging: MigrationDatabaseImportStaging(
+        secureStorageStaging: accountMigrationSecureStorageStaging,
+      ),
+      activeDatabaseImporter: MigrationDatabaseActiveImporter(
+        activeDatabase: db,
+      ),
+      cutoverCoordinator: accountMigrationCutoverCoordinator,
+      authorityRepository: accountMigrationAuthorityRepository,
+      stagingDirectoryPath: '${appDocDir.path}/account_migration/import',
+      documentsRootPath: appDocDir.path,
+    ),
+    oldPhoneCutoverCoordinator: accountMigrationCutoverCoordinator,
+    oldPhoneLeaseCleanup: buildBridgeMigrationCutoverLeaseCleanup(
+      bridge: bridge,
+      clearLocalStalePushToken: pushTokenStore.clearToken,
+      stopLocalRuntime: () async {
+        await p2pService.stopNode().timeout(const Duration(seconds: 2));
+      },
+    ),
+    transferService: MigrationSegmentedTransferService(
+      crypto: accountMigrationSegmentCrypto,
+      checkpointStore: FileMigrationTransferCheckpointStore(
+        filePath:
+            '${appDocDir.path}/account_migration/transfer_checkpoints.json',
+      ),
+    ),
+  );
+  localWsServer.configureMigrationTransferHandler(
+    accountMigrationTransferRuntime.handleMigrationTransferRequest,
+  );
   late final ChatMessageListener chatMessageListener;
   late final IntroductionListener introductionListener;
 
   // NET-REL-04: session-scoped, aggregate-only transport diagnostics.
   final transportMetrics = TransportMetrics();
 
+  Future<RecoveredInboxReplayOutcome> replayInboxChatMessage(
+    ChatMessage message, {
+    required bool suppressNotification,
+    String? stagedEntryId,
+  }) async {
+    var outcome = await chatMessageListener.processIncomingMessage(
+      message,
+      suppressNotification: suppressNotification,
+      stagedEntryId: stagedEntryId,
+    );
+    if (outcome.state == ChatMessageProcessState.unknownSender) {
+      final ownPeerId = message.to;
+      if (ownPeerId.isNotEmpty) {
+        final resolution = await resolveUnknownInboxSender(
+          introRepo: introductionRepository,
+          contactRepo: contactRepository,
+          ownPeerId: ownPeerId,
+          senderPeerId: message.from,
+        );
+        if (resolution == UnknownInboxSenderResolution.contactRecovered) {
+          outcome = await chatMessageListener.processIncomingMessage(
+            message,
+            suppressNotification: suppressNotification,
+            stagedEntryId: stagedEntryId,
+          );
+        }
+        if (outcome.state == ChatMessageProcessState.unknownSender &&
+            resolution != UnknownInboxSenderResolution.rejected) {
+          return (
+            disposition: RecoveredInboxChatDisposition.retryable,
+            reasonCode: 'unknown_sender_intro_pending',
+            reasonDetail: null,
+          );
+        }
+      }
+    }
+
+    return mapChatReplayOutcomeToDisposition(outcome);
+  }
+
   // Create P2P service (uses the same bridge + local P2P)
-  final p2pService = P2PServiceImpl(
+  p2pService = P2PServiceImpl(
     bridge: bridge,
     localP2PService: localP2PService,
     pushTokenStore: pushTokenStore,
+    accountMigrationNetworkGate:
+        accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     inboxStagingRepository: inboxStagingRepository,
     transportMetrics: transportMetrics,
-    replayRecoveredInboxChatMessage: (message) async {
-      var outcome = await chatMessageListener.processIncomingMessage(
-        message,
-        suppressNotification: true,
-      );
-      if (outcome.state == ChatMessageProcessState.unknownSender) {
-        final ownPeerId = message.to;
-        if (ownPeerId.isNotEmpty) {
-          final resolution = await resolveUnknownInboxSender(
-            introRepo: introductionRepository,
-            contactRepo: contactRepository,
-            ownPeerId: ownPeerId,
-            senderPeerId: message.from,
-          );
-          if (resolution == UnknownInboxSenderResolution.contactRecovered) {
-            outcome = await chatMessageListener.processIncomingMessage(
-              message,
-              suppressNotification: true,
-            );
-          }
-          if (outcome.state == ChatMessageProcessState.unknownSender &&
-              resolution != UnknownInboxSenderResolution.rejected) {
-            return (
-              disposition: RecoveredInboxChatDisposition.retryable,
-              reasonCode: 'unknown_sender_intro_pending',
-              reasonDetail: null,
-            );
-          }
-        }
-      }
-
-      switch (outcome.state) {
-        case ChatMessageProcessState.stored:
-          return (
-            disposition: RecoveredInboxChatDisposition.committed,
-            reasonCode: 'stored',
-            reasonDetail: null,
-          );
-        case ChatMessageProcessState.missingMlKemSecret:
-          return (
-            disposition: RecoveredInboxChatDisposition.retryable,
-            reasonCode: 'missing_mlkem_secret',
-            reasonDetail: outcome.reasonDetail,
-          );
-        case ChatMessageProcessState.error:
-          return (
-            disposition: RecoveredInboxChatDisposition.retryable,
-            reasonCode: 'listener_error',
-            reasonDetail: outcome.reasonDetail,
-          );
-        case ChatMessageProcessState.blockedSender:
-          return (
-            disposition: RecoveredInboxChatDisposition.rejected,
-            reasonCode: 'blocked_sender',
-            reasonDetail: null,
-          );
-        case ChatMessageProcessState.notChatMessage:
-          return (
-            disposition: RecoveredInboxChatDisposition.rejected,
-            reasonCode: 'not_chat_message',
-            reasonDetail: null,
-          );
-        case ChatMessageProcessState.decryptionFailed:
-          return (
-            disposition: RecoveredInboxChatDisposition.rejected,
-            reasonCode: 'decryption_failed',
-            reasonDetail: null,
-          );
-        case ChatMessageProcessState.unknownSender:
-          return (
-            disposition: RecoveredInboxChatDisposition.rejected,
-            reasonCode: 'unknown_sender',
-            reasonDetail: null,
-          );
-        case ChatMessageProcessState.duplicate:
-          return (
-            disposition: RecoveredInboxChatDisposition.rejected,
-            reasonCode: 'duplicate',
-            reasonDetail: null,
-          );
-        case ChatMessageProcessState.editMissingOriginal:
-          return (
-            disposition: RecoveredInboxChatDisposition.rejected,
-            reasonCode: 'edit_missing_original',
-            reasonDetail: null,
-          );
-      }
-    },
+    replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) =>
+        replayInboxChatMessage(
+          message,
+          suppressNotification: true,
+          stagedEntryId: stagedEntryId,
+        ),
+    replayLiveLanChatMessage: (message, {String? stagedEntryId}) =>
+        replayInboxChatMessage(
+          message,
+          suppressNotification: false,
+          stagedEntryId: stagedEntryId,
+        ),
+    // 118: live direct (1:1) messages staged as `direct:<nonce>` replay through
+    // this notify-capable callback (suppressNotification:false), mirroring the
+    // LAN path, so a recipient who is live-but-not-viewing gets a notification.
+    replayLiveDirectChatMessage: (message, {String? stagedEntryId}) =>
+        replayInboxChatMessage(
+          message,
+          suppressNotification: false,
+          stagedEntryId: stagedEntryId,
+        ),
     replayRecoveredInboxIntroductionMessage: (message) async {
       final outcome = await introductionListener.processIncomingMessage(
         message,
@@ -1619,16 +1791,35 @@ void main() async {
           registerPushToken: () => push_registration.registerPushToken(
             p2pService: p2pService,
             pushTokenStore: pushTokenStore,
+            accountMigrationNetworkGate: accountMigrationRuntimeNetworkGate
+                .allowsAccountNetworkSideEffects,
           ),
           tokenRefreshStream: FirebaseMessaging.instance.onTokenRefresh,
         )
       : null;
   final conversationTracker = ActiveConversationTracker();
   final groupConversationTracker = ActiveConversationTracker();
+  // 118 Phase 4: one shared per-conversation tone debounce for BOTH listeners
+  // (direct + group keys are disjoint under normalizeActiveKey).
+  final notificationToneTracker = NotificationToneTracker();
   final appShellController = AppShellController();
   final pendingPostTargetStore = PendingPostTargetStore();
 
   // Create chat message listener
+  // 115 P2: delivery-receipt sender bound to this device's transport.
+  // Receipts confirm durable persist of relay-inbox arrivals back to the
+  // message sender (live send first, inbox fallback inside the use case).
+  Future<void> sendDeliveryReceiptForPeer({
+    required String contactPeerId,
+    required List<String> messageIds,
+  }) {
+    return sendDeliveryReceipt(
+      p2pService: p2pService,
+      targetPeerId: contactPeerId,
+      messageIds: messageIds,
+    );
+  }
+
   chatMessageListener = ChatMessageListener(
     chatMessageStream: messageRouter.chatMessageStream,
     messageRepo: messageRepository,
@@ -1638,12 +1829,22 @@ void main() async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
     },
+    getOwnMlKemSecretKeyRing: () => loadMlKemSecretKeyRing(secureKeyStore),
     mediaAttachmentRepo: mediaAttachmentRepository,
     mediaFileManager: mediaFileManager,
     notificationService: notificationService,
     conversationTracker: conversationTracker,
+    notificationToneTracker: notificationToneTracker,
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+    sendDeliveryReceipt: sendDeliveryReceiptForPeer,
+  );
+
+  // 115 P2: consume incoming receipts — the only place 'inboxed' rows flip
+  // to 'delivered' (G4 site a).
+  final deliveryReceiptListener = DeliveryReceiptListener(
+    receiptStream: messageRouter.deliveryReceiptStream,
+    messageRepo: messageRepository,
   );
 
   // NET-REL-01 P3: bridge inbound local-WiFi media into the attachment
@@ -1662,6 +1863,7 @@ void main() async {
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepository,
         persistMedia: mediaServer.persistMedia,
+        mediaFileManager: mediaFileManager,
       );
     });
   }
@@ -1755,6 +1957,7 @@ void main() async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
     },
+    sendDeliveryReceipt: sendDeliveryReceiptForPeer,
   );
 
   // Create profile update listener
@@ -1778,6 +1981,7 @@ void main() async {
     mediaFileManager: mediaFileManager,
     notificationService: notificationService,
     groupConversationTracker: groupConversationTracker,
+    notificationToneTracker: notificationToneTracker,
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
     reactionRepo: reactionRepository,
@@ -1786,19 +1990,46 @@ void main() async {
     pendingKeyRepairRepo: groupPendingKeyRepairRepository,
     pendingMembershipMessageRepo: groupPendingMembershipMessageRepository,
     requestGroupKeyRepair: emitGroupKeyRepairRequest,
-    recoverFromDispatcherOverflow: (_) async {
+    rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+      // Forward secrecy after a remote member leave/removal the local device
+      // did not author. The listener already verified the local device is the
+      // group creator; rotateAndDistributeGroupKey re-checks the creator/perm
+      // gates and serializes per group, so this is fail-closed.
       final identity = await repository.loadIdentity();
-      await drainGroupOfflineInbox(
+      if (identity == null) return false;
+      final rotated = await rotateAndDistributeGroupKey(
         bridge: bridge,
         groupRepo: groupRepository,
-        msgRepo: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        mediaAttachmentRepo: mediaAttachmentRepository,
-        reactionRepo: reactionRepository,
-        pendingKeyRepairRepo: groupPendingKeyRepairRepository,
-        historyGapRepairRepo: groupHistoryGapRepairRepository,
-        requestGroupKeyRepair: emitGroupKeyRepairRequest,
-        selfPeerId: identity?.peerId,
+        groupId: groupId,
+        selfPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        sendP2PMessage: (peerId, message) async =>
+            p2pService.sendMessage(peerId, message),
+        storeP2PMessageInInbox: (peerId, message) async =>
+            p2pService.storeInInbox(peerId, message),
+      );
+      return rotated != null;
+    },
+    recoverFromDispatcherOverflow: (_) async {
+      await runAccountRuntimeNetworkVoidAction(
+        operation: 'group_dispatcher_overflow_drain',
+        action: () async {
+          final identity = await repository.loadIdentity();
+          await drainGroupOfflineInbox(
+            bridge: bridge,
+            groupRepo: groupRepository,
+            msgRepo: groupMessageRepository,
+            groupMessageListener: groupMessageListener,
+            mediaAttachmentRepo: mediaAttachmentRepository,
+            reactionRepo: reactionRepository,
+            pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+            historyGapRepairRepo: groupHistoryGapRepairRepository,
+            requestGroupKeyRepair: emitGroupKeyRepairRequest,
+            selfPeerId: identity?.peerId,
+          );
+        },
       );
     },
     appendGroupEventLogEntry:
@@ -1956,78 +2187,146 @@ void main() async {
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepository,
     rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
-      final needsGroupRecovery =
-          p2pService.currentState.needsGroupRecovery ?? false;
-      final recoveryMethod = p2pService.lastRecoveryMethod;
-      final reason = needsGroupRecovery
-          ? RejoinReason.nodeRequestedRecovery
-          : recoveryMethod == 'watchdog_restart'
-          ? RejoinReason.watchdogRestart
-          : RejoinReason.inPlaceRecovery;
-      final rejoinResult = await rejoinGroupTopics(
-        bridge: bridge,
-        groupRepo: groupRepository,
-        reason: reason,
-      );
+      return runAccountRuntimeNetworkAction<bool>(
+        operation: 'pending_retrier_group_rejoin',
+        blockedValue: false,
+        action: () async {
+          final needsGroupRecovery =
+              p2pService.currentState.needsGroupRecovery ?? false;
+          final recoveryMethod = p2pService.lastRecoveryMethod;
+          final reason = needsGroupRecovery
+              ? RejoinReason.nodeRequestedRecovery
+              : recoveryMethod == 'watchdog_restart'
+              ? RejoinReason.watchdogRestart
+              : RejoinReason.inPlaceRecovery;
+          final rejoinResult = await rejoinGroupTopics(
+            bridge: bridge,
+            groupRepo: groupRepository,
+            reason: reason,
+          );
+          // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
+          // group dissolved while we were offline converges (and is left)
+          // instead of staying live. AFTER rejoin so active groups re-subscribe
+          // immediately; the cursor-independent probe also recovers a dissolve
+          // the incremental drain already skipped.
+          final reconcileIdentity = await repository.loadIdentity();
+          await reconcileMissedGroupDissolves(
+            bridge: bridge,
+            groupRepo: groupRepository,
+            groupMessageListener: groupMessageListener,
+            selfPeerId: reconcileIdentity?.peerId,
+          );
 
-      return reason == RejoinReason.nodeRequestedRecovery &&
-          rejoinResult.canAcknowledgeGroupRecovery;
-    },
-    acknowledgeGroupRecoveryFn: () => callGroupAcknowledgeRecovery(bridge),
-    drainGroupOfflineInboxFn: () async {
-      final identity = await repository.loadIdentity();
-      return drainGroupOfflineInbox(
-        bridge: bridge,
-        groupRepo: groupRepository,
-        msgRepo: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        mediaAttachmentRepo: mediaAttachmentRepository,
-        reactionRepo: reactionRepository,
-        pendingKeyRepairRepo: groupPendingKeyRepairRepository,
-        historyGapRepairRepo: groupHistoryGapRepairRepository,
-        requestGroupKeyRepair: emitGroupKeyRepairRequest,
-        selfPeerId: identity?.peerId,
+          return reason == RejoinReason.nodeRequestedRecovery &&
+              rejoinResult.canAcknowledgeGroupRecovery;
+        },
       );
     },
-    recoverStuckSendingGroupMessagesFn: () =>
-        recoverStuckSendingGroupMessages(groupMsgRepo: groupMessageRepository),
-    retryIncompleteGroupUploadsFn: () => retryIncompleteGroupUploads(
-      groupRepo: groupRepository,
-      groupMsgRepo: groupMessageRepository,
-      mediaAttachmentRepo: mediaAttachmentRepository,
-      bridge: bridge,
-      p2pService: p2pService,
-      identityRepo: repository,
-      mediaFileManager: mediaFileManager,
-      inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+    acknowledgeGroupRecoveryFn: () => runAccountRuntimeNetworkVoidAction(
+      operation: 'pending_retrier_group_ack_recovery',
+      action: () => callGroupAcknowledgeRecovery(bridge),
     ),
-    retryFailedGroupMessagesFn: () => retryFailedGroupMessages(
-      groupMsgRepo: groupMessageRepository,
-      groupRepo: groupRepository,
-      identityRepo: repository,
-      bridge: bridge,
-      mediaAttachmentRepo: mediaAttachmentRepository,
-      inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
-    ),
-    retryPendingIntroductionDeliveriesFn: () =>
-        retryPendingIntroductionDeliveries(
-          introRepo: introductionRepository,
-          p2pService: p2pService,
+    drainGroupOfflineInboxFn: () async {
+      return runAccountRuntimeNetworkAction<GroupOfflineInboxDrainResult>(
+        operation: 'pending_retrier_group_drain',
+        blockedValue: const GroupOfflineInboxDrainResult(
+          groupCount: 0,
+          errorCount: 0,
         ),
-    retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
-      bridge: bridge,
-      msgRepo: groupMessageRepository,
-      reactionReplayOutboxRepo: groupReactionReplayOutboxRepository,
+        action: () async {
+          final identity = await repository.loadIdentity();
+          return drainGroupOfflineInbox(
+            bridge: bridge,
+            groupRepo: groupRepository,
+            msgRepo: groupMessageRepository,
+            groupMessageListener: groupMessageListener,
+            mediaAttachmentRepo: mediaAttachmentRepository,
+            reactionRepo: reactionRepository,
+            pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+            historyGapRepairRepo: groupHistoryGapRepairRepository,
+            requestGroupKeyRepair: emitGroupKeyRepairRequest,
+            selfPeerId: identity?.peerId,
+          );
+        },
+      );
+    },
+    recoverStuckSendingGroupMessagesFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_group_stuck_recovery',
+      blockedValue: 0,
+      action: () => recoverStuckSendingGroupMessages(
+        groupMsgRepo: groupMessageRepository,
+      ),
     ),
-    recoverStuckSendingMessagesFn: () =>
-        recoverStuckSendingMessages(messageRepo: messageRepository),
-    retryIncompleteUploadsFn: () => retryIncompleteUploads(
-      mediaAttachmentRepo: mediaAttachmentRepository,
-      messageRepo: messageRepository,
-      bridge: bridge,
-      p2pService: p2pService,
-      identityRepo: repository,
-      contactRepo: contactRepository,
+    retryIncompleteGroupUploadsFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_group_upload_retry',
+      blockedValue: 0,
+      action: () => retryIncompleteGroupUploads(
+        groupRepo: groupRepository,
+        groupMsgRepo: groupMessageRepository,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: repository,
+        mediaFileManager: mediaFileManager,
+        inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+      ),
+    ),
+    retryFailedGroupMessagesFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_group_failed_retry',
+      blockedValue: 0,
+      action: () => retryFailedGroupMessages(
+        groupMsgRepo: groupMessageRepository,
+        groupRepo: groupRepository,
+        identityRepo: repository,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+      ),
+    ),
+    retryPendingIntroductionDeliveriesFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_intro_delivery_retry',
+      blockedValue: 0,
+      action: () => retryPendingIntroductionDeliveries(
+        introRepo: introductionRepository,
+        p2pService: p2pService,
+      ),
+    ),
+    retryFailedGroupInboxStoresFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_group_inbox_store_retry',
+      blockedValue: 0,
+      action: () => retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: groupMessageRepository,
+        reactionReplayOutboxRepo: groupReactionReplayOutboxRepository,
+      ),
+    ),
+    verifyInboxCustodyFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_inbox_custody_verify',
+      blockedValue: 0,
+      action: () => verifyInboxCustody(
+        loadInboxCustody: messageRepository.getInboxCustodyOutgoingMessages,
+        storeInInboxDetailed: p2pService.storeInInboxDetailed,
+        markCustodyChecked: messageRepository.markInboxCustodyChecked,
+        messageRepo: messageRepository,
+      ),
+    ),
+    recoverStuckSendingMessagesFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_message_stuck_recovery',
+      blockedValue: 0,
+      action: () => recoverStuckSendingMessages(messageRepo: messageRepository),
+    ),
+    retryIncompleteUploadsFn: () => runAccountRuntimeNetworkAction(
+      operation: 'pending_retrier_upload_retry',
+      blockedValue: 0,
+      action: () => retryIncompleteUploads(
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        messageRepo: messageRepository,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: repository,
+        contactRepo: contactRepository,
+        mediaFileManager: mediaFileManager,
+      ),
     ),
   );
 
@@ -2039,6 +2338,8 @@ void main() async {
     imageProcessor: imageProcessor,
     mediaFileManager: mediaFileManager,
     bridge: bridge,
+    accountMigrationNetworkGate:
+        accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
   );
   final pendingPostDeliveryRetrier = PendingPostDeliveryRetrier(
     p2pService: p2pService,
@@ -2046,10 +2347,14 @@ void main() async {
     contactRepo: contactRepository,
     bridge: bridge,
     beforeRetry: pendingPostMediaUploadRetrier.retryNow,
+    accountMigrationNetworkGate:
+        accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
   );
   final pendingPostFollowOnRetrier = PendingPostFollowOnRetrier(
     p2pService: p2pService,
     postRepo: postRepository,
+    accountMigrationNetworkGate:
+        accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
   );
 
   // Create key exchange retrier
@@ -2058,11 +2363,17 @@ void main() async {
     contactRepo: contactRepository,
     identityRepo: repository,
     bridge: bridge,
+    secureKeyStore: secureKeyStore,
+    accountMigrationNetworkGate:
+        accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
   );
 
   var liveServicesStarted = false;
   Future<void> startLiveServices() async {
     if (liveServicesStarted) {
+      return;
+    }
+    if (!await allowsAccountRuntimeNetworkSideEffects('live_services_start')) {
       return;
     }
     liveServicesStarted = true;
@@ -2085,6 +2396,7 @@ void main() async {
     postPinListener.start();
     reactionListener.start();
     messageDeletionListener.start();
+    deliveryReceiptListener.start();
     profileUpdateListener.start();
     groupMessageListener.start(
       groupMessageStreamController.stream,
@@ -2186,7 +2498,41 @@ void main() async {
       introductionListener: introductionListener,
       shareIntentService: shareIntentService,
       pushRegistrationCoordinator: pushRegistrationCoordinator,
+      accountMigrationRunTransfer:
+          accountMigrationTransferRuntime.runOldPhoneTransfer,
+      accountMigrationSizeGate: accountMigrationSizeGate,
+      accountMigrationStartReceiver:
+          accountMigrationTransferRuntime.startNewPhoneReceiver,
+      accountMigrationStopReceiver:
+          accountMigrationTransferRuntime.stopNewPhoneReceiver,
+      accountMigrationReceiverEvents:
+          accountMigrationTransferRuntime.receiverEvents,
+      accountMigrationRecoverExportPause: () async {
+        if (accountMigrationTransferRuntime.hasActiveExportRun) {
+          return false;
+        }
+        return accountMigrationCutoverCoordinator
+            .restoreActiveAfterExportInterrupted();
+      },
       deferredRuntimeStartup: isShareLaunch ? startLiveServices : null,
+      onAppDetached: () async {
+        // Best-effort graceful teardown on app termination. Stopping the node
+        // lets libp2p close streams and release its relay reservation / QUIC
+        // sockets server-side; closing the DB drops the SQLCipher file lock
+        // cleanly. Together these prevent the next cold start from stalling on
+        // the splash screen (which previously only a phone reboot cleared).
+        // The OS gives us a brief window, so each step is time-bounded.
+        try {
+          await p2pService.stopNode().timeout(const Duration(seconds: 2));
+        } catch (e) {
+          if (kDebugMode) debugPrint('[TEARDOWN] stopNode failed/timeout: $e');
+        }
+        try {
+          await db.close().timeout(const Duration(seconds: 2));
+        } catch (e) {
+          if (kDebugMode) debugPrint('[TEARDOWN] db.close failed/timeout: $e');
+        }
+      },
     ),
   );
   StartupTiming.instance.mark('run_app_called');
@@ -2339,7 +2685,22 @@ class MyApp extends StatefulWidget {
   final IntroductionListener introductionListener;
   final ShareIntentService shareIntentService;
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
+  final AccountMigrationReceiverStartFn? accountMigrationStartReceiver;
+  final AccountMigrationReceiverStopFn? accountMigrationStopReceiver;
+  final AccountMigrationReceiverEvents? accountMigrationReceiverEvents;
+
+  /// Restores active authority on app resume when a Move Account export
+  /// pause is stale (no export run in flight). See handleAppResumed.
+  final Future<bool> Function()? accountMigrationRecoverExportPause;
   final Future<void> Function()? deferredRuntimeStartup;
+
+  /// Best-effort teardown invoked on [AppLifecycleState.detached] (app
+  /// terminating): stops the libp2p node and closes the encrypted DB so the
+  /// next cold start doesn't stall on the splash screen behind a stale
+  /// socket/relay reservation or DB lock.
+  final Future<void> Function()? onAppDetached;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -2400,7 +2761,14 @@ class MyApp extends StatefulWidget {
     required this.introductionListener,
     required this.shareIntentService,
     this.pushRegistrationCoordinator,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
+    this.accountMigrationStartReceiver,
+    this.accountMigrationStopReceiver,
+    this.accountMigrationReceiverEvents,
+    this.accountMigrationRecoverExportPause,
     this.deferredRuntimeStartup,
+    this.onAppDetached,
   });
 
   @override
@@ -2919,6 +3287,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
         initialFilterTab: 'intros',
         transportMetrics: widget.transportMetrics,
+        accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+        accountMigrationSizeGate: widget.accountMigrationSizeGate,
       ),
     );
   }
@@ -2983,13 +3353,21 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final identity = await widget.repository.loadIdentity();
     await prepareNotificationRouteTarget(
       routeTarget: routeTarget,
-      drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+      drainOfflineInbox: () => _runAccountRuntimeNetworkVoidAction(
+        operation: 'push_notification_open_inbox_drain',
+        action: widget.p2pService.drainOfflineInbox,
+      ),
       bridge: widget.bridge,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
+      accountMigrationNetworkGate: AccountMigrationRuntimeNetworkGate(
+        authorityRepository: SecureKeyStoreAccountMigrationAuthorityRepository(
+          secureKeyStore: widget.secureKeyStore,
+        ),
+      ).allowsAccountNetworkSideEffects,
       selfPeerId: identity?.peerId,
     );
   }
@@ -3057,6 +3435,26 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         state == AppLifecycleState.hidden) {
       _onPaused();
     }
+
+    // App is terminating: release the node + DB so the next cold start doesn't
+    // stall on the splash screen behind a stale lock/socket. Intentionally NOT
+    // on 'paused'/'hidden' — those fire on transient backgrounding (app
+    // switcher, biometric prompt) and tearing the node down there would kill
+    // connectivity on every app switch.
+    if (state == AppLifecycleState.detached) {
+      _onDetached();
+    }
+  }
+
+  void _onDetached() {
+    if (kDebugMode) {
+      debugPrint('[LIFECYCLE] detached — running best-effort teardown');
+    }
+    final onAppDetached = widget.onAppDetached;
+    if (onAppDetached != null) {
+      // Fire-and-forget: the teardown itself is internally time-bounded.
+      unawaited(onAppDetached());
+    }
   }
 
   void _onPaused() {
@@ -3110,6 +3508,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
+        recoverInterruptedExportPause:
+            widget.accountMigrationRecoverExportPause,
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,
@@ -3133,6 +3533,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             recoverStuckSendingGroupMessages(
               groupMsgRepo: widget.groupMessageRepository,
             ),
+        accountMigrationNetworkGate: AccountMigrationRuntimeNetworkGate(
+          authorityRepository:
+              SecureKeyStoreAccountMigrationAuthorityRepository(
+                secureKeyStore: widget.secureKeyStore,
+              ),
+        ).allowsAccountNetworkSideEffects,
         retryIncompleteGroupUploadsFn: () => retryIncompleteGroupUploads(
           groupRepo: widget.groupRepository,
           groupMsgRepo: widget.groupMessageRepository,
@@ -3165,6 +3571,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           p2pService: widget.p2pService,
           identityRepo: widget.repository,
           contactRepo: widget.contactRepository,
+          mediaFileManager: widget.mediaFileManager,
         ),
         retryFailedMessagesFn: () => retryFailedMessages(
           messageRepo: widget.messageRepository,
@@ -3177,6 +3584,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryUnackedMessagesFn: () => retryUnackedMessages(
           messageRepo: widget.messageRepository,
           p2pService: widget.p2pService,
+        ),
+        verifyInboxCustodyFn: () => verifyInboxCustody(
+          loadInboxCustody:
+              widget.messageRepository.getInboxCustodyOutgoingMessages,
+          storeInInboxDetailed: widget.p2pService.storeInInboxDetailed,
+          markCustodyChecked: widget.messageRepository.markInboxCustodyChecked,
+          messageRepo: widget.messageRepository,
         ),
         retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
           bridge: widget.bridge,
@@ -3236,8 +3650,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final result = await handleForegroundRemoteMessage(
       data: message.data,
       messageId: message.messageId,
-      drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+      drainOfflineInbox: () => _runAccountRuntimeNetworkVoidAction(
+        operation: 'push_foreground_inbox_drain',
+        action: widget.p2pService.drainOfflineInbox,
+      ),
       drainGroupOfflineInboxForGroup: (groupId) async {
+        if (!await _allowsAccountRuntimeNetworkSideEffects(
+          'push_foreground_group_drain',
+        )) {
+          return;
+        }
         final identity = await widget.repository.loadIdentity();
         return drainGroupOfflineInboxForGroup(
           bridge: widget.bridge,
@@ -3256,6 +3678,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
 
     try {
+      if (result == ForegroundRemoteMessageResult.notificationNeeded &&
+          !await _allowsAccountRuntimeNetworkSideEffects(
+            'push_foreground_notification_display',
+          )) {
+        return;
+      }
       await showForegroundPushFallbackNotificationIfNeeded(
         result: result,
         notificationService: widget.notificationService,
@@ -3277,6 +3705,42 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<bool> _allowsAccountRuntimeNetworkSideEffects(String operation) async {
+    final identity = await widget.repository.loadIdentity();
+    final allowed =
+        await AccountMigrationRuntimeNetworkGate(
+          authorityRepository:
+              SecureKeyStoreAccountMigrationAuthorityRepository(
+                secureKeyStore: widget.secureKeyStore,
+              ),
+        ).allowsAccountNetworkSideEffects(
+          peerId: identity?.peerId,
+          operation: operation,
+        );
+    if (!allowed) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_RUNTIME_NETWORK_ACTION_BLOCKED',
+        details: {'operation': operation},
+      );
+    }
+    return allowed;
+  }
+
+  Future<void> _runAccountRuntimeNetworkVoidAction({
+    required String operation,
+    required Future<void> Function() action,
+  }) async {
+    if (!await _allowsAccountRuntimeNetworkSideEffects(operation)) {
+      return;
+    }
+    await action();
+  }
+
+  Future<void> _handleAccountMigrationReceiverActivated() async {
+    widget.repository.invalidateCache();
   }
 
   @override
@@ -3331,6 +3795,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.contactPresenceSnapshotRepository,
         nearbyLocationService: widget.nearbyLocationService,
         pushRegistrationCoordinator: widget.pushRegistrationCoordinator,
+        accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+        accountMigrationSizeGate: widget.accountMigrationSizeGate,
+        accountMigrationStartReceiver: widget.accountMigrationStartReceiver,
+        accountMigrationStopReceiver: widget.accountMigrationStopReceiver,
+        accountMigrationReceiverEvents: widget.accountMigrationReceiverEvents,
+        onAccountMigrationReceiverActivated:
+            _handleAccountMigrationReceiverActivated,
         clearDeliveredNotifications:
             widget.notificationService.clearDeliveredNotifications,
         onNotificationRouteTarget: _handleNotificationRouteTarget,

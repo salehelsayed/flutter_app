@@ -1,4 +1,5 @@
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 
 import 'fake_p2p_service_integration.dart';
 
@@ -11,6 +12,10 @@ class FakeP2PNetwork {
 
   /// When true, [storeInInbox] always returns false (simulates inbox outage).
   bool inboxDisabled = false;
+
+  /// Optional per-recipient inbox cap. When full, new stores are rejected and
+  /// existing accepted entries are retained.
+  int? maxInboxPerPeer;
 
   /// When set, [deliver] awaits this delay before delivery (for race tests).
   Duration? deliveryDelay;
@@ -42,7 +47,11 @@ class FakeP2PNetwork {
 
   /// Delivers a message from [fromPeerId] to [toPeerId].
   /// Returns true if the target node was found and online.
-  Future<bool> deliver(String fromPeerId, String toPeerId, String content) async {
+  Future<bool> deliver(
+    String fromPeerId,
+    String toPeerId,
+    String content,
+  ) async {
     deliverCallCount++;
 
     if (deliveryDelay != null) {
@@ -93,12 +102,50 @@ class FakeP2PNetwork {
     if (inboxDisabled) return false;
 
     final inbox = _inboxes.putIfAbsent(toPeerId, () => []);
+    final capacity = maxInboxPerPeer;
+    if (capacity != null && inbox.length >= capacity) {
+      return false;
+    }
     inbox.add({
       'from': fromPeerId,
       'message': content,
       'timestamp': DateTime.now().toUtc().millisecondsSinceEpoch,
     });
     return true;
+  }
+
+  InboxStoreOutcome storeInInboxDetailed(
+    String fromPeerId,
+    String toPeerId,
+    String content,
+  ) {
+    storeInInboxCallCount++;
+    if (inboxDisabled) {
+      return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+    }
+
+    final inbox = _inboxes.putIfAbsent(toPeerId, () => []);
+    final capacity = maxInboxPerPeer;
+    if (capacity != null && inbox.length >= capacity) {
+      return InboxStoreOutcome(
+        status: InboxStoreStatus.rejectedFull,
+        errorCode: 'INBOX_FULL',
+        errorMessage: 'INBOX_FULL',
+        storeStatus: 'rejected_full',
+        occupancy: inbox.length,
+        capacity: capacity,
+      );
+    }
+
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    inbox.add({'from': fromPeerId, 'message': content, 'timestamp': nowMs});
+    return InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      expiresAtMs: nowMs + const Duration(days: 7).inMilliseconds,
+      occupancy: inbox.length,
+      capacity: capacity,
+    );
   }
 
   /// Retrieve and clear inbox for a peer.
@@ -119,5 +166,6 @@ class FakeP2PNetwork {
     duplicateOnDeliver = false;
     deliveryDelay = null;
     inboxDisabled = false;
+    maxInboxPerPeer = null;
   }
 }

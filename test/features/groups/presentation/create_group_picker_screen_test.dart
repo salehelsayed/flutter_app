@@ -126,6 +126,23 @@ void main() {
       expect(lastToggled?.peerId, 'peer-alice');
     });
 
+    testWidgets("tapping a contact row's empty region toggles selection", (
+      tester,
+    ) async {
+      // Single contact → the ContactPickerRow finder is unique and there is no
+      // adjacent row beneath it to confuse the tap geometry.
+      await tester.pumpWidget(buildWidget(contacts: [contactAlice]));
+      await pumpFrames(tester);
+
+      final rect = tester.getRect(find.byType(ContactPickerRow));
+      // Tap the bottom padding band of the row — inside the row rect but over
+      // an unpainted region. Fails under deferToChild, passes under opaque.
+      await tester.tapAt(Offset(rect.center.dx, rect.bottom - 3));
+      await pumpFrames(tester);
+
+      expect(lastToggled?.peerId, 'peer-alice');
+    });
+
     testWidgets('GroupNamePanel hidden when no contacts selected', (
       tester,
     ) async {

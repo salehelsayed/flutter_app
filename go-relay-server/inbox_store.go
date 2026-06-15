@@ -3,8 +3,9 @@ package main
 type InboxStoreResult string
 
 const (
-	InboxStoreResultStored    InboxStoreResult = "stored"
-	InboxStoreResultDuplicate InboxStoreResult = "duplicate"
+	InboxStoreResultStored       InboxStoreResult = "stored"
+	InboxStoreResultDuplicate    InboxStoreResult = "duplicate"
+	InboxStoreResultRejectedFull InboxStoreResult = "rejected_full"
 )
 
 // InboxBackend abstracts the storage layer for 1:1 inbox messages.

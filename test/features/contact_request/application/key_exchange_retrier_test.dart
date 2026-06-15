@@ -70,6 +70,40 @@ void main() {
       });
     });
 
+    test('account migration gate blocks scheduled retry work', () {
+      fakeAsync((fake) {
+        var gateCalls = 0;
+        retrier = KeyExchangeRetrier(
+          p2pService: p2pService,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          accountMigrationNetworkGate:
+              ({String? peerId, required String operation}) async {
+                gateCalls++;
+                expect(peerId, 'my-peer');
+                expect(operation, 'key_exchange_retry_online_transition');
+                return false;
+              },
+        );
+        retrier.start();
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/p2p-circuit/addr1'],
+          ),
+        );
+        fake.flushMicrotasks();
+        fake.elapse(const Duration(seconds: 5));
+        fake.flushMicrotasks();
+
+        expect(gateCalls, 1);
+        expect(identityRepo.loadIdentityCallCount, 0);
+      });
+    });
+
     test('does not trigger when already online', () {
       fakeAsync((fake) {
         // Start in online state

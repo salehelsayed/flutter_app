@@ -1,8 +1,7 @@
 /// Simulator Benchmark: Timeout Accuracy (Test H)
 ///
 /// Forces each configured timeout to fire and measures actualMs vs configuredMs.
-/// Run: flutter test integration_test/benchmark_timeout_accuracy_harness.dart -d <DEVICE_ID>
-@Tags(['device'])
+/// Library form: exposes `runTimeoutAccuracyBenchmark` for the shared dispatcher.
 library;
 
 import 'dart:async';
@@ -11,7 +10,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
@@ -76,15 +74,14 @@ class _HangingBridge extends Bridge {
   Future<String> send(String message) => Completer<String>().future;
 }
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runTimeoutAccuracyBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('H-Sim-1: Dart-side timeout accuracy', (tester) async {
+  // H-Sim-1: Dart-side timeout accuracy
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: DART-SIDE TIMEOUTS (H-Sim-1)');
     print('${'═' * 60}\n');
@@ -141,9 +138,10 @@ void main() {
       '[BENCHMARK] sim_dart_timeout_max_deviation_pct = '
       '${maxDeviation.toStringAsFixed(1)}%',
     );
-  });
+  }
 
-  testWidgets('H-Sim-2: Go-side timeout events via push', (tester) async {
+  // H-Sim-2: Go-side timeout events via push
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: GO-SIDE TIMEOUTS (H-Sim-2)');
     print('${'═' * 60}\n');
@@ -240,7 +238,7 @@ void main() {
     );
 
     await receiver.dispose();
-  });
+  }
 }
 
 class _TimeoutResult {

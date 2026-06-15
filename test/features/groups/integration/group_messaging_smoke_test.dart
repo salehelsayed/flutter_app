@@ -2276,8 +2276,14 @@ void main() {
           groupId,
           charlie.peerId,
         );
-        final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-        return bobCharlie == null && charlieGroup == null;
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted), so converge on charlie no longer being an active member
+        // rather than the group vanishing.
+        final charlieSelf = await charlie.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        return bobCharlie == null && charlieSelf == null;
       });
 
       expect(network.getSubscribers(groupId).toSet(), {
@@ -2466,8 +2472,14 @@ void main() {
           groupId,
           charlie.peerId,
         );
-        final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-        return bobCharlie == null && charlieGroup == null;
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted), so converge on charlie no longer being an active member
+        // rather than the group vanishing.
+        final charlieSelf = await charlie.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        return bobCharlie == null && charlieSelf == null;
       });
 
       expect(network.getSubscribers(groupId).toSet(), {
@@ -2668,8 +2680,14 @@ void main() {
           groupId,
           charlie.peerId,
         );
-        final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-        return bobCharlie == null && charlieGroup == null;
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted), so converge on charlie no longer being an active member
+        // rather than the group vanishing.
+        final charlieSelf = await charlie.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        return bobCharlie == null && charlieSelf == null;
       });
       expect(network.getSubscribers(groupId).toSet(), {
         alice.peerId,
@@ -4485,8 +4503,14 @@ void main() {
             groupId,
             charlie.peerId,
           );
-          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-          return aliceCharlie == null && charlieGroup == null;
+          // B3: charlie's group is RETAINED read-only on self-removal (was
+          // deleted), so converge on charlie no longer being an active member
+          // rather than the group vanishing.
+          final charlieSelf = await charlie.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return aliceCharlie == null && charlieSelf == null;
         });
 
         final (removedResult, removedMessage) = await alice
@@ -15524,8 +15548,14 @@ void main() {
               groupId,
               charlie.peerId,
             );
-            final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-            if (bobSeesCharlie == null && charlieGroup == null) {
+            // B3: charlie's group is RETAINED read-only on self-removal (was
+            // deleted), so converge on charlie no longer being an active member
+            // rather than the group vanishing.
+            final charlieSelf = await charlie.groupRepo.getMember(
+              groupId,
+              charlie.peerId,
+            );
+            if (bobSeesCharlie == null && charlieSelf == null) {
               return;
             }
             await pump();

@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -6,10 +7,12 @@ import '../models/media_attachment.dart';
 import 'media_attachment_repository.dart';
 
 /// Implementation of MediaAttachmentRepository using database helper functions.
-class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
+class MediaAttachmentRepositoryImpl
+    implements MediaAttachmentRepository, MediaAttachmentByIdLookup {
   final Future<void> Function(Map<String, Object?> row) dbInsertMediaAttachment;
   final Future<List<Map<String, Object?>>> Function(String messageId)
   dbLoadMediaForMessage;
+  final Future<Map<String, Object?>?> Function(String id) dbLoadMediaById;
   final Future<List<Map<String, Object?>>> Function(List<String> messageIds)
   dbLoadMediaForMessages;
   final Future<void> Function(
@@ -33,6 +36,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   MediaAttachmentRepositoryImpl({
     required this.dbInsertMediaAttachment,
     required this.dbLoadMediaForMessage,
+    required this.dbLoadMediaById,
     required this.dbLoadMediaForMessages,
     required this.dbUpdateMediaLocalPath,
     required this.dbUpdateMediaDownloadStatus,
@@ -57,7 +61,10 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
     );
 
     try {
-      await dbInsertMediaAttachment(await _toStorageRow(attachment));
+      final storageAttachment = await _preserveCompletedLocalPathIfNeeded(
+        attachment,
+      );
+      await dbInsertMediaAttachment(await _toStorageRow(storageAttachment));
 
       emitFlowEvent(
         layer: 'FL',
@@ -84,6 +91,13 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   ) async {
     final rows = await dbLoadMediaForMessage(messageId);
     return _attachmentsFromRows(rows);
+  }
+
+  @override
+  Future<MediaAttachment?> getAttachmentById(String id) async {
+    final row = await dbLoadMediaById(id);
+    if (row == null) return null;
+    return MediaAttachment.fromMap(await _hydrateRow(row));
   }
 
   @override
@@ -235,6 +249,79 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
     await store.write(secureStoreKey, key);
     row['encryption_key_base64'] = secureStoreReferenceForKey(secureStoreKey);
     return row;
+  }
+
+  Future<MediaAttachment> _preserveCompletedLocalPathIfNeeded(
+    MediaAttachment attachment,
+  ) async {
+    final existingRow = await dbLoadMediaById(attachment.id);
+    if (existingRow == null) {
+      return attachment;
+    }
+
+    final existing = MediaAttachment.fromMap(await _hydrateRow(existingRow));
+    if (!_shouldPreserveCompletedLocalPath(
+      existing: existing,
+      incoming: attachment,
+    )) {
+      return attachment;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_REPO_SAVE_PRESERVED_COMPLETED_LOCAL_PATH',
+      details: {
+        'id': attachment.id.length > 8
+            ? attachment.id.substring(0, 8)
+            : attachment.id,
+        'incomingStatus': attachment.downloadStatus,
+      },
+    );
+    return attachment.copyWith(
+      localPath: existing.localPath,
+      downloadStatus: kMediaDownloadStatusDone,
+    );
+  }
+
+  bool _shouldPreserveCompletedLocalPath({
+    required MediaAttachment existing,
+    required MediaAttachment incoming,
+  }) {
+    if (existing.downloadStatus != kMediaDownloadStatusDone ||
+        !_hasLocalPath(existing.localPath)) {
+      return false;
+    }
+
+    if (_nonTerminalMediaStatuses.contains(incoming.downloadStatus)) {
+      return true;
+    }
+
+    if (incoming.downloadStatus == kMediaDownloadStatusDone) {
+      if (!_hasLocalPath(incoming.localPath)) {
+        return true;
+      }
+      return _isTransientLocalPath(incoming.localPath) &&
+          !_isTransientLocalPath(existing.localPath);
+    }
+
+    return false;
+  }
+
+  static const Set<String> _nonTerminalMediaStatuses = {
+    kMediaDownloadStatusPending,
+    kMediaDownloadStatusDownloading,
+    kMediaDownloadStatusUploadPending,
+  };
+
+  bool _hasLocalPath(String? path) => path != null && path.trim().isNotEmpty;
+
+  bool _isTransientLocalPath(String? path) {
+    if (path == null || path.isEmpty) {
+      return false;
+    }
+    final normalized = path.replaceAll('\\', '/');
+    return normalized.startsWith('pending_uploads/') ||
+        normalized.contains('/pending_uploads/');
   }
 
   Future<List<MediaAttachment>> _attachmentsFromRows(

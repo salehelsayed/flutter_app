@@ -199,11 +199,15 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
     final resolvedStatuses = await Future.wait(
       members.map((member) async {
-        final joinedAt = await _loadLatestJoinEvidenceAt(msgRepo, member);
         final removedAt = await msgRepo.getLatestSystemEventTimestampForTarget(
           widget.group.id,
           eventType: 'member_removed',
           targetId: member.peerId,
+        );
+        final joinedAt = await _loadLatestJoinEvidenceAt(
+          msgRepo,
+          member,
+          removedAt: removedAt,
         );
         final attempt = attemptsByPeerId[member.peerId];
         if (joinedAt != null &&
@@ -237,14 +241,27 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   Future<DateTime?> _loadLatestJoinEvidenceAt(
     GroupMessageRepository msgRepo,
-    GroupMember member,
-  ) async {
-    final timestamps = await Future.wait([
-      msgRepo.getLatestSystemEventTimestampForTarget(
-        widget.group.id,
-        eventType: 'member_joined',
-        targetId: member.peerId,
-      ),
+    GroupMember member, {
+    DateTime? removedAt,
+  }) async {
+    // A member_joined receipt FROM THE MEMBER is the only proof of a genuine
+    // join — the admin observes it after the member rejoins and obtains the key.
+    final memberConfirmedAt = await msgRepo
+        .getLatestSystemEventTimestampForTarget(
+          widget.group.id,
+          eventType: 'member_joined',
+          targetId: member.peerId,
+        );
+    // B3.1: admin-authored add events (member_added / members_added) are NOT a
+    // join confirmation by themselves. After a removal, the admin's OWN re-add
+    // must not mark the member "joined" until a real member_joined receipt
+    // arrives (otherwise a re-added member shows "joined" before they actually
+    // rejoin and obtain the new key). Before any removal, the admin add is the
+    // best first-join evidence we have, so it still counts.
+    if (removedAt != null) {
+      return memberConfirmedAt;
+    }
+    final adminAddTimestamps = await Future.wait([
       msgRepo.getLatestSystemEventTimestampForTarget(
         widget.group.id,
         eventType: 'member_added',
@@ -256,7 +273,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         targetId: member.peerId,
       ),
     ]);
-    return _latestTimestamp(timestamps);
+    return _latestTimestamp([memberConfirmedAt, ...adminAddTimestamps]);
   }
 
   DateTime? _latestTimestamp(Iterable<DateTime?> values) {
@@ -482,6 +499,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         throw StateError(AppLocalizations.of(context)!.group_info_no_identity);
       }
 
+      // Sign the dissolve audit with the same device/transport binding the
+      // receiver observes live (Go-stamped), so verifyGroupTransitionAudit on
+      // every member matches signed-vs-observed and applies isDissolved. Without
+      // this the signer omits the binding and receivers reject the dissolve
+      // (device_mismatch/transport_mismatch), leaving the group live for all but
+      // the dissolver. Mirrors the member_removed/members_added sibling flows.
+      final senderBinding = await resolveGroupSenderDeviceBinding(
+        groupRepo: widget.groupRepo,
+        groupId: _group.id,
+        senderPeerId: identity.peerId,
+        preferredDeviceId: _currentSenderDeviceId,
+        preferredTransportPeerId: _currentSenderDeviceId,
+        senderPublicKey: identity.publicKey,
+      );
+
       final (result, _) = await dissolveGroup(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
@@ -491,6 +523,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         actorUsername: identity.username,
         actorPublicKey: identity.publicKey,
         actorPrivateKey: identity.privateKey,
+        actorDeviceId: senderBinding.deviceId,
+        actorTransportPeerId: senderBinding.transportPeerId,
+        actorKeyPackageId: senderBinding.keyPackageId,
       );
 
       switch (result) {

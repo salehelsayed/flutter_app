@@ -119,8 +119,12 @@ class FlutterNotificationService implements NotificationService {
     required String senderUsername,
     required String messageText,
     String? payload,
+    bool silent = false,
   }) async {
-    // One notification per conversation — updates on new messages
+    // One notification per conversation — updates on new messages. The id is
+    // keyed off the conversation (NOT the per-message payload) so a burst
+    // coalesces into a single card; the silent variant reuses the SAME id to
+    // update in place without sounding (118 Phase 3/4).
     final notificationId = contactPeerId.hashCode;
     final resolvedPayload = payload ?? contactPeerId;
 
@@ -128,7 +132,9 @@ class FlutterNotificationService implements NotificationService {
       notificationId,
       senderUsername,
       messageText,
-      mknoonMessagesNotificationDetails,
+      silent
+          ? mknoonMessagesSilentNotificationDetails
+          : mknoonMessagesNotificationDetails,
       payload: resolvedPayload,
     );
 
@@ -141,6 +147,7 @@ class FlutterNotificationService implements NotificationService {
             : contactPeerId,
         'sender': senderUsername,
         'payload': resolvedPayload,
+        'silent': silent,
       },
     );
   }

@@ -160,6 +160,68 @@ void main() {
     });
   });
 
+  group('quarantine markers', () {
+    test(
+      'markQuarantined sets status, increments attempt_count, records reason metadata',
+      () async {
+        await dbInsertInboxStagingEntry(db, makeRow());
+
+        await dbMarkInboxStagingEntryQuarantined(
+          db,
+          'entry-001',
+          reasonCode: 'decryption_failed',
+          reasonDetail: 'message authentication failed',
+        );
+
+        final row = (await db.query(
+          'inbox_staging_entries',
+          where: 'entry_id = ?',
+          whereArgs: ['entry-001'],
+        )).single;
+
+        expect(row['status'], 'quarantined');
+        expect(row['attempt_count'], 1);
+        expect(row['reject_reason_code'], 'decryption_failed');
+        expect(row['reject_reason_detail'], 'message authentication failed');
+        expect(row['last_attempted_at'], isNotNull);
+      },
+    );
+
+    test('getRecoverableEntries excludes quarantined entries', () async {
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-keep'));
+      await dbInsertInboxStagingEntry(
+        db,
+        makeRow(entryId: 'entry-quarantined'),
+      );
+      await dbMarkInboxStagingEntryQuarantined(
+        db,
+        'entry-quarantined',
+        reasonCode: 'decryption_failed',
+      );
+
+      final rows = await dbLoadRecoverableInboxStagingEntries(db, limit: 10);
+      expect(rows.map((row) => row['entry_id']), ['entry-keep']);
+    });
+
+    test('countQuarantinedEntries returns quarantined total', () async {
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-a'));
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-b'));
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-c'));
+      await dbMarkInboxStagingEntryQuarantined(
+        db,
+        'entry-a',
+        reasonCode: 'decryption_failed',
+      );
+      await dbMarkInboxStagingEntryQuarantined(
+        db,
+        'entry-b',
+        reasonCode: 'decryption_failed',
+      );
+
+      expect(await dbCountQuarantinedInboxStagingEntries(db), 2);
+    });
+  });
+
   group('dbDeleteInboxStagingEntry', () {
     test('deletes staged rows after successful replay', () async {
       await dbInsertInboxStagingEntry(db, makeRow());

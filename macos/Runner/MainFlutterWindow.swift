@@ -90,6 +90,8 @@ class GoBridge: NSObject {
       runOnBackground({ BridgeNodeStatus() }, result: result)
     case "rendezvousRegister":
       runOnBackground({ BridgeRendezvousRegister(args ?? "") }, result: result)
+    case "rendezvousUnregister":
+      runOnBackground({ BridgeRendezvousUnregister(args ?? "") }, result: result)
     case "rendezvousDiscover":
       runOnBackground({ BridgeRendezvousDiscover(args ?? "") }, result: result)
     case "relayReconnect":
@@ -114,6 +116,8 @@ class GoBridge: NSObject {
       runOnBackground({ BridgeInboxAck(args ?? "") }, result: result)
     case "inboxRegisterToken":
       runOnBackground({ BridgeInboxRegisterToken(args ?? "") }, result: result)
+    case "inboxUnregisterToken":
+      runOnBackground({ BridgeInboxUnregisterToken(args ?? "") }, result: result)
     case "mediaUpload":
       runOnBackground({ BridgeMediaUpload(args ?? "") }, result: result)
     case "mediaDownload":

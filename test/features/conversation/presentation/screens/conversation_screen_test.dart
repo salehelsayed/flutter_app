@@ -57,6 +57,8 @@ void main() {
     ValueChanged<String>? onRetryFailedMessage,
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
+    Future<void> Function(String messageId, String attachmentId)?
+    onRetryUnavailableMedia,
     ConversationMediaViewerBuilder? mediaViewerBuilder,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
@@ -99,6 +101,7 @@ void main() {
           onRetryFailedMessage: onRetryFailedMessage,
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
+          onRetryUnavailableMedia: onRetryUnavailableMedia,
           mediaViewerBuilder: mediaViewerBuilder,
           backgroundPreference: backgroundPreference,
         ),
@@ -1758,6 +1761,55 @@ void main() {
       },
     );
 
+    testWidgets(
+      'incoming unavailable media retry is wired for direct conversation',
+      (tester) async {
+        String? retriedMessageId;
+        String? retriedAttachmentId;
+        const messageId = 'incoming-unavailable-media';
+        const attachmentId = 'incoming-unavailable-attachment';
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: messageId,
+                isIncoming: true,
+                media: const [
+                  MediaAttachment(
+                    id: attachmentId,
+                    messageId: messageId,
+                    mime: 'image/jpeg',
+                    size: 42,
+                    mediaType: 'image',
+                    downloadStatus: 'failed',
+                    createdAt: '2026-02-09T15:30:00.000Z',
+                  ),
+                ],
+              ),
+            ],
+            initialLoadDone: true,
+            onRetryUnavailableMedia: (messageId, attachmentId) async {
+              retriedMessageId = messageId;
+              retriedAttachmentId = attachmentId;
+            },
+          ),
+        );
+        await pumpFrames(tester);
+
+        final retryButton = find.byKey(
+          const ValueKey('unavailable-media-retry-$messageId-$attachmentId'),
+        );
+        expect(retryButton, findsOneWidget);
+
+        await tester.tap(retryButton);
+        await tester.pump();
+
+        expect(retriedMessageId, messageId);
+        expect(retriedAttachmentId, attachmentId);
+      },
+    );
+
     testWidgets('keeps stable message/audio keys across list updates', (
       tester,
     ) async {
@@ -1981,12 +2033,21 @@ void main() {
     testWidgets(
       'tapping a received image opens the viewer with the image path',
       (tester) async {
+        // MediaGridCell only opens media whose local file actually exists
+        // (media-unavailable policy), so the fixture needs a real file.
+        // Sync I/O only: real async dart:io awaited inside testWidgets'
+        // FakeAsync zone deadlocks under load (10-minute test timeout).
+        final tempDir = Directory.systemTemp.createTempSync('viewer_test_');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final imagePath = '${tempDir.path}/open-me.jpg';
+        File(imagePath).writeAsBytesSync(const [1, 2, 3]);
+
         await tester.pumpWidget(
           buildTestWidget(
             messages: [
               makeMessage(
                 id: 'image-msg',
-                media: [makeImageAttachment(localPath: '/tmp/open-me.jpg')],
+                media: [makeImageAttachment(localPath: imagePath)],
               ),
             ],
             initialLoadDone: true,
@@ -2011,27 +2072,39 @@ void main() {
         await pumpFrames(tester);
 
         await tester.tap(find.byType(MediaGridCell).first);
-        await tester.pumpAndSettle();
+        // Bounded pumps (not pumpAndSettle): AmbientBackground repeats forever.
+        await tester.pump();
+        await pumpFrames(tester);
 
-        expect(find.text('viewer-path:/tmp/open-me.jpg'), findsOneWidget);
+        expect(find.text('viewer-path:$imagePath'), findsOneWidget);
         expect(find.text('viewer-index:0'), findsOneWidget);
-        expect(find.text('viewer-all:/tmp/open-me.jpg'), findsOneWidget);
+        expect(find.text('viewer-all:$imagePath'), findsOneWidget);
       },
     );
 
     testWidgets(
       'tapping a later visual attachment preserves the visual-only index order',
       (tester) async {
+        // MediaGridCell only opens media whose local file actually exists
+        // (media-unavailable policy), so the fixtures need real files.
+        // Sync I/O only: real async dart:io awaited inside testWidgets'
+        // FakeAsync zone deadlocks under load (10-minute test timeout).
+        final tempDir = Directory.systemTemp.createTempSync('viewer_test_');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final visual1 = '${tempDir.path}/visual-1.jpg';
+        final visual2 = '${tempDir.path}/visual-2.mp4';
+        final visual3 = '${tempDir.path}/visual-3.jpg';
+        for (final path in [visual1, visual2, visual3]) {
+          File(path).writeAsBytesSync(const [1, 2, 3]);
+        }
+
         await tester.pumpWidget(
           buildTestWidget(
             messages: [
               makeMessage(
                 id: 'multi-visual-msg',
                 media: [
-                  makeImageAttachment(
-                    id: 'img-1',
-                    localPath: '/tmp/visual-1.jpg',
-                  ),
+                  makeImageAttachment(id: 'img-1', localPath: visual1),
                   MediaAttachment(
                     id: 'aud-1',
                     messageId: '',
@@ -2042,14 +2115,8 @@ void main() {
                     downloadStatus: 'done',
                     createdAt: '2026-02-09T15:30:00.000Z',
                   ),
-                  makeVideoAttachment(
-                    id: 'vid-1',
-                    localPath: '/tmp/visual-2.mp4',
-                  ),
-                  makeImageAttachment(
-                    id: 'img-2',
-                    localPath: '/tmp/visual-3.jpg',
-                  ),
+                  makeVideoAttachment(id: 'vid-1', localPath: visual2),
+                  makeImageAttachment(id: 'img-2', localPath: visual3),
                 ],
               ),
             ],
@@ -2075,14 +2142,14 @@ void main() {
         await pumpFrames(tester);
 
         await tester.tap(find.byType(MediaGridCell).at(2));
-        await tester.pumpAndSettle();
+        // Bounded pumps (not pumpAndSettle): AmbientBackground repeats forever.
+        await tester.pump();
+        await pumpFrames(tester);
 
-        expect(find.text('viewer-path:/tmp/visual-3.jpg'), findsOneWidget);
+        expect(find.text('viewer-path:$visual3'), findsOneWidget);
         expect(find.text('viewer-index:2'), findsOneWidget);
         expect(
-          find.text(
-            'viewer-all:/tmp/visual-1.jpg,/tmp/visual-2.mp4,/tmp/visual-3.jpg',
-          ),
+          find.text('viewer-all:$visual1,$visual2,$visual3'),
           findsOneWidget,
         );
       },

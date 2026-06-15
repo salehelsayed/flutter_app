@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -19,6 +21,7 @@ class KeyExchangeRetrier {
   final ContactRepository contactRepo;
   final IdentityRepository identityRepo;
   final Bridge bridge;
+  final AccountMigrationNetworkGate accountMigrationNetworkGate;
   final KeyExchangeRetryCoordinator _coordinator;
 
   StreamSubscription? _stateSubscription;
@@ -30,6 +33,8 @@ class KeyExchangeRetrier {
     required this.contactRepo,
     required this.identityRepo,
     required this.bridge,
+    SecureKeyStore? secureKeyStore,
+    this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     KeyExchangeRetryCoordinator? coordinator,
   }) : _coordinator =
            coordinator ??
@@ -39,6 +44,7 @@ class KeyExchangeRetrier {
                identityRepo: identityRepo,
                p2pService: p2pService,
                bridge: bridge,
+               secureKeyStore: secureKeyStore,
              ),
            );
 
@@ -69,8 +75,28 @@ class KeyExchangeRetrier {
     return state.isStarted && (state.circuitAddresses as List).isNotEmpty;
   }
 
-  Future<int> retryNow({required String trigger}) {
+  Future<int> retryNow({required String trigger}) async {
+    if (!await _allowsKeyExchangeRetry(trigger)) {
+      return 0;
+    }
     return _coordinator.retryNow(trigger: trigger);
+  }
+
+  Future<bool> _allowsKeyExchangeRetry(String trigger) async {
+    final peerId = p2pService.currentState.peerId;
+    final operation = 'key_exchange_retry_$trigger';
+    final allowed = await accountMigrationNetworkGate(
+      peerId: peerId,
+      operation: operation,
+    );
+    if (!allowed) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'KEY_EXCHANGE_RETRIER_ACCOUNT_MIGRATION_BLOCKED',
+        details: {'operation': operation, if (peerId != null) 'peerId': peerId},
+      );
+    }
+    return allowed;
   }
 
   Future<void> _retryIfNeeded() async {

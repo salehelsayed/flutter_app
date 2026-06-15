@@ -7,6 +7,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
@@ -25,6 +26,7 @@ class PendingPostMediaUploadRetrier {
   final MediaFileManager? mediaFileManager;
   final UploadPostMediaFn? uploadPostMediaFn;
   final Bridge? bridge;
+  final AccountMigrationNetworkGate accountMigrationNetworkGate;
   final Duration retryDebounce;
   final Duration periodicRetryInterval;
 
@@ -43,6 +45,7 @@ class PendingPostMediaUploadRetrier {
     this.mediaFileManager,
     this.uploadPostMediaFn,
     this.bridge,
+    this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.retryDebounce = const Duration(seconds: 5),
     this.periodicRetryInterval = const Duration(minutes: 5),
   });
@@ -98,6 +101,7 @@ class PendingPostMediaUploadRetrier {
         mediaFileManager: mediaFileManager,
         uploadPostMediaFn: uploadPostMediaFn,
         bridge: bridge,
+        accountMigrationNetworkGate: accountMigrationNetworkGate,
       );
       if (retried > 0) {
         emitFlowEvent(
@@ -156,7 +160,18 @@ Future<int> retryPendingPostMediaUploads({
   MediaFileManager? mediaFileManager,
   UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
+  AccountMigrationNetworkGate accountMigrationNetworkGate =
+      allowAccountMigrationNetworkSideEffects,
 }) async {
+  if (!await _allowsPostRetrierNetworkSideEffects(
+    p2pService: p2pService,
+    accountMigrationNetworkGate: accountMigrationNetworkGate,
+    operation: 'pending_post_media_upload_retry',
+    blockedEvent: 'PENDING_POST_MEDIA_UPLOAD_RETRIER_ACCOUNT_MIGRATION_BLOCKED',
+  )) {
+    return 0;
+  }
+
   final pendingPosts = await postRepo.loadPendingMediaUploadPosts();
   var retriedCount = 0;
 
@@ -227,6 +242,27 @@ Future<int> retryPendingPostMediaUploads({
   }
 
   return retriedCount;
+}
+
+Future<bool> _allowsPostRetrierNetworkSideEffects({
+  required P2PService p2pService,
+  required AccountMigrationNetworkGate accountMigrationNetworkGate,
+  required String operation,
+  required String blockedEvent,
+}) async {
+  final peerId = p2pService.currentState.peerId;
+  final allowed = await accountMigrationNetworkGate(
+    peerId: peerId,
+    operation: operation,
+  );
+  if (!allowed) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: blockedEvent,
+      details: {'operation': operation, if (peerId != null) 'peerId': peerId},
+    );
+  }
+  return allowed;
 }
 
 Future<List<CreatedLocalPostRecipient>> _loadRetryRecipients({

@@ -196,6 +196,12 @@ func TestPL014MediaMetadataAndProgressEventsDoNotExposeSecrets(t *testing.T) {
 		"totalBytes": int64(4096),
 		"toPeerId":   "group-pl014-media",
 	}
+	downloadProgressEvent := map[string]interface{}{
+		"id":            "blob-pl014-random-id",
+		"receivedBytes": int64(1024),
+		"totalBytes":    int64(4096),
+		"fromPeerId":    "relay-peer-pl014",
+	}
 	completeEvent := map[string]interface{}{
 		"id":                    "blob-pl014-random-id",
 		"totalBytes":            int64(4096),
@@ -214,12 +220,99 @@ func TestPL014MediaMetadataAndProgressEventsDoNotExposeSecrets(t *testing.T) {
 		"totalBytes": {},
 		"toPeerId":   {},
 	})
+	assertNoForbidden("media download progress event", downloadProgressEvent)
+	assertExactKeys("media download progress event", downloadProgressEvent, map[string]struct{}{
+		"id":            {},
+		"receivedBytes": {},
+		"totalBytes":    {},
+		"fromPeerId":    {},
+	})
 	assertExactKeys("media upload complete event", completeEvent, map[string]struct{}{
 		"id":                    {},
 		"totalBytes":            {},
 		"totalMs":               {},
 		"throughputBytesPerSec": {},
 	})
+}
+
+func TestMediaRelayTelemetryFieldsIdentifyRelayStore(t *testing.T) {
+	fields := relayMediaTelemetryFields(
+		"download",
+		"relay-peer-id-for-telemetry-abcdefgh",
+		"direct",
+	)
+
+	if got := fields["operation"]; got != "download" {
+		t.Fatalf("operation = %v, want download", got)
+	}
+	if got := fields["sourceRole"]; got != "relay_media_store" {
+		t.Fatalf("sourceRole = %v, want relay_media_store", got)
+	}
+	if got := fields["sourcePeerId"]; got != "relay-peer-id-for-telemetry-abcdefgh" {
+		t.Fatalf("sourcePeerId = %v", got)
+	}
+	if got := fields["sourcePeerShort"]; got != "abcdefgh" {
+		t.Fatalf("sourcePeerShort = %v, want abcdefgh", got)
+	}
+	if got := fields["streamTransport"]; got != "direct" {
+		t.Fatalf("streamTransport = %v, want direct", got)
+	}
+	if got := fields["servedByPhone"]; got != false {
+		t.Fatalf("servedByPhone = %v, want false", got)
+	}
+	if got := fields["routedViaRelayStore"]; got != true {
+		t.Fatalf("routedViaRelayStore = %v, want true", got)
+	}
+}
+
+func TestMediaDownloadTriesNextRelayOnNotFound(t *testing.T) {
+	firstRelay := fakePeerID("media-relay-miss")
+	secondRelay := fakePeerID("media-relay-hit")
+	rs := &RelaySelector{relays: []RelayInfo{
+		{ID: firstRelay},
+		{ID: secondRelay},
+	}}
+	n := &Node{}
+
+	var attempts []string
+	result, err := n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo) (MediaDownloadResult, bool, error) {
+		attempts = append(attempts, relay.ID.String())
+		if relay.ID == firstRelay {
+			return MediaDownloadResult{}, true, errors.New("download failed: not found")
+		}
+		return MediaDownloadResult{Mime: "image/jpeg", Size: 4, SourcePeerId: relay.ID.String()}, false, nil
+	})
+	if err != nil {
+		t.Fatalf("mediaDownloadAcrossRelays: %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %d (%v), want first miss then second success", len(attempts), attempts)
+	}
+	if result.SourcePeerId != secondRelay.String() {
+		t.Fatalf("SourcePeerId = %s, want second relay %s", result.SourcePeerId, secondRelay)
+	}
+}
+
+func TestMediaDownloadDoesNotTryNextRelayOnNotAuthorized(t *testing.T) {
+	firstRelay := fakePeerID("media-relay-deny")
+	secondRelay := fakePeerID("media-relay-should-not-run")
+	rs := &RelaySelector{relays: []RelayInfo{
+		{ID: firstRelay},
+		{ID: secondRelay},
+	}}
+	n := &Node{}
+
+	var attempts []string
+	_, err := n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo) (MediaDownloadResult, bool, error) {
+		attempts = append(attempts, relay.ID.String())
+		return MediaDownloadResult{}, false, errors.New("download failed: not authorized")
+	})
+	if err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("err = %v, want not authorized", err)
+	}
+	if len(attempts) != 1 || attempts[0] != firstRelay.String() {
+		t.Fatalf("attempts = %v, want only first relay", attempts)
+	}
 }
 
 // --- §5: Idle timeout reader tests ---
@@ -381,6 +474,88 @@ func TestIdleTimeoutReader_StalledDownloadFails(t *testing.T) {
 	}
 }
 
+func TestDownloadProgressEventsEmitted(t *testing.T) {
+	outputPath := t.TempDir() + "/progress-download.bin"
+	total := int64(1024 * 1024) // 1 MiB -> multiple 256KiB-cadence emissions
+	data := make([]byte, total)
+
+	type tick struct{ received, totalBytes int64 }
+	var ticks []tick
+	written, err := copyMediaDownloadToFile(
+		outputPath,
+		bytes.NewReader(data),
+		total,
+		time.Second,
+		func(receivedBytes, totalBytes int64) {
+			ticks = append(ticks, tick{receivedBytes, totalBytes})
+		},
+	)
+	if err != nil {
+		t.Fatalf("copyMediaDownloadToFile: %v", err)
+	}
+	if written != total {
+		t.Fatalf("written = %d, want %d", written, total)
+	}
+	if len(ticks) < 2 {
+		t.Fatalf("progress ticks = %d, want >= 2 (256KiB cadence over 1MiB)", len(ticks))
+	}
+	var prev int64 = -1
+	for i, tk := range ticks {
+		if tk.totalBytes != total {
+			t.Fatalf("tick %d: totalBytes = %d, want %d", i, tk.totalBytes, total)
+		}
+		if tk.received < prev {
+			t.Fatalf("tick %d: receivedBytes %d not monotonic (prev %d)", i, tk.received, prev)
+		}
+		prev = tk.received
+	}
+	if ticks[len(ticks)-1].received != total {
+		t.Fatalf("final tick receivedBytes = %d, want %d", ticks[len(ticks)-1].received, total)
+	}
+}
+
+func TestSlowSteadyDownloadOutlivesWallClock(t *testing.T) {
+	// A slow-but-moving transfer whose TOTAL duration exceeds any fixed
+	// wall clock must succeed: stall detection (idle gaps) is the failure
+	// authority, and each progress tick re-arms the stream deadline in
+	// mediaDownloadFromStream. Chunks arrive every 150ms against a 400ms
+	// idle budget; total duration (~450ms+) exceeds the simulated 250ms
+	// wall clock that the old fixed deadline would have enforced.
+	outputPath := t.TempDir() + "/slow-steady-download.bin"
+	total := int64(4096)
+	sr := &slowSteadyReader{
+		remaining: int(total),
+		chunkSize: 1024,
+		interval:  150 * time.Millisecond,
+		first:     true,
+	}
+
+	var ticks int
+	start := time.Now()
+	written, err := copyMediaDownloadToFile(
+		outputPath,
+		sr,
+		total,
+		400*time.Millisecond,
+		func(receivedBytes, totalBytes int64) {
+			ticks++
+		},
+	)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("slow steady download must succeed: %v", err)
+	}
+	if written != total {
+		t.Fatalf("written = %d, want %d", written, total)
+	}
+	if elapsed < 250*time.Millisecond {
+		t.Fatalf("transfer finished in %v — too fast to prove it outlives a 250ms wall clock", elapsed)
+	}
+	if ticks < 2 {
+		t.Fatalf("progress ticks = %d, want >= 2 (each tick re-arms the stream deadline)", ticks)
+	}
+}
+
 func TestPL013MediaDownloadRemovesPartialOutputOnIncompleteTransfer(t *testing.T) {
 	outputPath := t.TempDir() + "/pl013-partial-download.bin"
 
@@ -389,6 +564,7 @@ func TestPL013MediaDownloadRemovesPartialOutputOnIncompleteTransfer(t *testing.T
 		bytes.NewReader([]byte{1, 2, 3}),
 		8,
 		time.Second,
+		nil,
 	)
 	if err == nil {
 		t.Fatal("expected incomplete download error")
@@ -408,6 +584,7 @@ func TestPL013MediaDownloadRemovesPartialOutputOnIncompleteTransfer(t *testing.T
 		bytes.NewReader([]byte{4, 5, 6, 7}),
 		4,
 		time.Second,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("retry copy failed: %v", err)

@@ -14,6 +14,9 @@ import 'package:flutter_app/features/settings/application/image_quality_preferen
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -130,6 +133,8 @@ class OrbitWired extends StatefulWidget {
   final VoidCallback? debugOnHeaderBuild;
   final VoidCallback? debugOnListBuild;
   final TransportMetrics? transportMetrics;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
 
   const OrbitWired({
     super.key,
@@ -174,6 +179,8 @@ class OrbitWired extends StatefulWidget {
     this.debugOnHeaderBuild,
     this.debugOnListBuild,
     this.transportMetrics,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
   });
 
   @override
@@ -279,7 +286,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       displayedFriends: List<OrbitFriend>.unmodifiable(displayedFriends),
       groups: List<OrbitGroup>.unmodifiable(groups),
       mergedItems: List<OrbitItem>.unmodifiable(mergedItems),
-      activeCount: _activeFriends.length,
+      activeCount: _activeFriends.length + _activeGroups.length,
       archivedCount: _archivedFriends.length + _archivedGroups.length,
       introCount: _introsCount,
       pendingGroupInviteCount: _pendingGroupInvites.length,
@@ -1092,6 +1099,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       switch (result) {
         case AcceptPendingGroupInviteResult.success:
           _showSnackBar('Joined ${group?.name ?? invite.groupName}');
+          if (group != null && mounted) {
+            _openGroupConversationFromModel(group);
+          }
           break;
         case AcceptPendingGroupInviteResult.notFound:
           _showSnackBar('Invite no longer available');
@@ -1185,11 +1195,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
 
     var outcome = await attempt();
-    for (var retry = 0;
-        outcome.$1 == AcceptPendingGroupInviteResult.bridgeError &&
-            outcome.$2 == null &&
-            retry < _acceptRecoveryRetryCount;
-        retry++) {
+    for (
+      var retry = 0;
+      outcome.$1 == AcceptPendingGroupInviteResult.bridgeError &&
+          outcome.$2 == null &&
+          retry < _acceptRecoveryRetryCount;
+      retry++
+    ) {
       if (await inviteListener.pendingInviteRepo.getPendingInvite(
             invite.groupId,
           ) ==
@@ -1732,7 +1744,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     Navigator.of(context)
         .push(
           buildConversationSlideUpRoute(
-            builder: (_) => QRScannerWired(
+            builder: (scannerContext) => QRScannerWired(
               bridge: widget.bridge,
               contactRepository: widget.contactRepo,
               contactRequestRepository: widget.contactRequestRepo,
@@ -1767,6 +1779,33 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               postsPrivacySettingsRepository:
                   widget.postsPrivacySettingsRepository,
               transportMetrics: widget.transportMetrics,
+              accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+              accountMigrationSizeGate: widget.accountMigrationSizeGate,
+              onMigrationQrScanned: (qrData) async {
+                emitFlowEvent(
+                  layer: 'FL',
+                  event: 'ORBIT_FL_MIGRATION_QR_DISPATCH',
+                  details: {
+                    'hasTransferRunner':
+                        widget.accountMigrationRunTransfer != null,
+                  },
+                );
+                if (!scannerContext.mounted) return;
+                await Navigator.of(scannerContext).pushReplacement<void, void>(
+                  buildConversationSlideUpRoute(
+                    builder: (_) => AccountMigrationJourneyWired.oldPhone(
+                      secureKeyStore: widget.secureKeyStore,
+                      identityRepository: widget.identityRepo,
+                      runTransfer: widget.accountMigrationRunTransfer,
+                      sizeGate: widget.accountMigrationSizeGate,
+                      initialScannedQr: qrData,
+                      backgroundPreference:
+                          widget.appShellController?.backgroundPreference ??
+                          BackgroundPreference.defaultBackground,
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         )
@@ -1962,6 +2001,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _onGroupTap(OrbitGroup group) {
+    _openGroupConversationFromModel(group.group);
+  }
+
+  // Opens GroupConversationWired for a fully-committed GroupModel using the
+  // exact arg set _onGroupTap uses, so an auto-opened chat (e.g. right after
+  // accepting an invite) is configured identically to a manually-tapped one.
+  void _openGroupConversationFromModel(GroupModel group) {
     final groupRepository = widget.groupRepository;
     final groupMessageRepository = widget.groupMessageRepository;
     final groupMessageListener = widget.groupMessageListener;
@@ -1975,7 +2021,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
-              group: group.group,
+              group: group,
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
               groupMessageListener: groupMessageListener,
@@ -2003,8 +2049,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ),
         )
         .then((_) {
-          _markGroupChanged(group.group.id);
-          unawaited(_refreshOrbitGroup(group.group.id));
+          _markGroupChanged(group.id);
+          unawaited(_refreshOrbitGroup(group.id));
         });
   }
 

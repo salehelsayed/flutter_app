@@ -400,6 +400,76 @@ func TestClassifyStreamTransport_MixedConns_UsesStreamOwnConn(t *testing.T) {
 	}
 }
 
+// TestHandleIncomingMessage_DirectAckContract_AttachesConfirmNonce pins the
+// Go->Dart wire contract that doc 118's live-direct notification path depends on
+// (plan 120 phase G5). Go attaches the "confirmNonce" string key to the
+// "message:received" event for an incoming direct chat_message when
+// EnableDeferredDirectAck is true (the default). Dart's ChatMessage.fromJson
+// reads that exact key (lib/features/p2p/domain/models/chat_message.dart) to
+// drive the deferred-ack->notify path. This guard fails if Go renames/drops the
+// key, changes the type=="chat_message" gate, or flips the default-true flag.
+// The shared wire key is "confirmNonce" and the event is "message:received".
+func TestHandleIncomingMessage_DirectAckContract_AttachesConfirmNonce(t *testing.T) {
+	// Default-flag guard: a flip of the default to false silently bypasses the
+	// whole deferred-ack contract on real devices (feature_flags.go).
+	if !DefaultFeatureFlags().EnableDeferredDirectAck {
+		t.Fatal("DefaultFeatureFlags().EnableDeferredDirectAck must default to true; flipping it bypasses the confirmNonce contract Dart relies on")
+	}
+
+	// Positive case: deferred ack enabled (default) => message:received carries
+	// a non-empty "confirmNonce" string. Use a plain collector (no confirm) and
+	// a short timeout; we assert on the event emitted BEFORE the confirm wait.
+	collector := &testEventCollector{}
+	n := newDeferredAckTestNode(t, collector, 50*time.Millisecond)
+
+	stream := newStubTransportStream(
+		t,
+		chatEnvelopeForTest(t, "msg-contract"),
+		generatePeerIDStr(t),
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+
+	n.handleIncomingMessage(stream)
+
+	data := waitForCollectedEvent(t, collector, "message:received", time.Second)
+	raw, present := data["confirmNonce"]
+	if !present {
+		t.Fatalf("expected message:received to carry exactly the \"confirmNonce\" key (the Go->Dart wire contract); event data: %v", data)
+	}
+	nonce, ok := raw.(string)
+	if !ok {
+		t.Fatalf("expected confirmNonce to be a string, got %T", raw)
+	}
+	if nonce == "" {
+		// Intentionally NOT asserting the UUID value — only non-emptiness — so
+		// the guard stays deterministic / non-flaky.
+		t.Fatal("expected confirmNonce to be a non-empty string")
+	}
+
+	// Negative control: with EnableDeferredDirectAck=false the same
+	// chat_message emits message:received with NO confirmNonce key. This pins
+	// the gate (the flag), not merely the presence of the key.
+	negCollector := &testEventCollector{}
+	negNode := newDeferredAckTestNode(t, negCollector, 50*time.Millisecond)
+	flags := DefaultFeatureFlags()
+	flags.EnableDeferredDirectAck = false
+	negNode.featureFlags = &flags
+
+	negStream := newStubTransportStream(
+		t,
+		chatEnvelopeForTest(t, "msg-contract-disabled"),
+		generatePeerIDStr(t),
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+
+	negNode.handleIncomingMessage(negStream)
+
+	negData := waitForCollectedEvent(t, negCollector, "message:received", time.Second)
+	if _, exists := negData["confirmNonce"]; exists {
+		t.Fatalf("expected NO confirmNonce key when EnableDeferredDirectAck=false, but it was present: %v", negData["confirmNonce"])
+	}
+}
+
 func TestHandleIncomingMessage_DeferredDirectAck_IgnoresDuplicateConfirm(t *testing.T) {
 	cb := &directConfirmCallback{confirmResults: []bool{true, false}}
 	n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)

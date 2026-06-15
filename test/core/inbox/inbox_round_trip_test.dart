@@ -418,6 +418,66 @@ void main() {
       },
     );
 
+    // 115 Phase 2.6 — the whole-receipt contract: relay-inbox custody is
+    // pending ('inboxed') until the receiver durably persists and the
+    // delivery receipt round-trips back to flip the sender to 'delivered'.
+    test(
+      "sender row transitions 'inboxed' → 'delivered' only after receiver drains the relay inbox and the receipt round-trips",
+      () async {
+        final aliceR = TestUser.create(
+          peerId: 'alice-receipts',
+          username: 'AliceR',
+          network: network,
+          withDeliveryReceipts: true,
+        );
+        final bobR = TestUser.create(
+          peerId: 'bob-receipts',
+          username: 'BobR',
+          network: network,
+          withDeliveryReceipts: true,
+        );
+        aliceR.addContact(bobR);
+        bobR.addContact(aliceR);
+        aliceR.start();
+        bobR.start();
+
+        bobR.setOnline(false);
+        final (result, msg) = await aliceR.sendMessage(
+          'bob-receipts',
+          'custody then receipt',
+        );
+        expect(result, SendChatMessageResult.success);
+        expect(msg!.status, 'inboxed');
+        expect(
+          (await aliceR.messageRepo.getMessage(msg.id))!.status,
+          'inboxed',
+          reason: 'no receipt yet — custody is not delivery',
+        );
+
+        bobR.setOnline(true);
+        final drained = await bobR.drainOfflineInbox();
+        expect(drained, 1);
+        // Let bob persist + send the receipt and alice apply it.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final bobRow = await bobR.messageRepo.getMessagesForContact(
+          'alice-receipts',
+        );
+        expect(bobRow.single.text, 'custody then receipt');
+
+        final settled = await aliceR.messageRepo.getMessage(msg.id);
+        expect(
+          settled!.status,
+          'delivered',
+          reason: 'the receipt round-trip flips inboxed → delivered',
+        );
+        expect(settled.wireEnvelope, isNull);
+
+        aliceR.dispose();
+        bobR.dispose();
+      },
+    );
+
     test('duplicate inbox message is rejected by listener', () async {
       bob.setOnline(false);
 

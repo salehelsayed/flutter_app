@@ -611,19 +611,94 @@ void main() {
     expect(updated!.mlKemPublicKey, equals('senderMlKemPub'));
   });
 
-  test('alreadyContact: contact already has a key, no overwrite', () async {
+  test(
+    'updates existing contact ML-KEM key when signed payload carries a '
+    'different key',
+    () async {
+      // P0-B: a restored peer re-announces a NEW key via the signed
+      // contact_request envelope; the receiver must rotate, not ignore.
+      contactRepo._contacts[_senderPeerId] = ContactModel(
+        peerId: _senderPeerId,
+        publicKey: 'senderPublicKey',
+        rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+        username: 'Alice',
+        signature: 'sig',
+        scannedAt: '2026-01-01T00:00:00.000Z',
+        mlKemPublicKey: 'existingKey',
+      );
+
+      final payload = _validPayload();
+      payload['mlkem'] = 'rotatedKey';
+      final message = _makeChatMessage(_contactRequestMessage(payload));
+
+      final (result, request, peerId) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+      );
+
+      expect(result, equals(HandleMessageResult.contactKeyUpdated));
+      expect(request, isNull);
+      expect(peerId, equals(_senderPeerId));
+
+      final updated = await contactRepo.getContact(_senderPeerId);
+      expect(updated!.mlKemPublicKey, equals('rotatedKey'));
+      expect(updated.mlKemKeyUpdatedTs, equals(payload['ts']));
+    },
+  );
+
+  test(
+    'ignores key change when payload ts is not newer than last key update',
+    () async {
+      // Anti-rollback: a replayed OLD signed contact_request must not roll
+      // the contact back to a stale key.
+      contactRepo._contacts[_senderPeerId] = ContactModel(
+        peerId: _senderPeerId,
+        publicKey: 'senderPublicKey',
+        rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+        username: 'Alice',
+        signature: 'sig',
+        scannedAt: '2026-01-01T00:00:00.000Z',
+        mlKemPublicKey: 'currentKey',
+        mlKemKeyUpdatedTs: '2026-06-01T00:00:00.000Z',
+      );
+
+      final payload = _validPayload();
+      payload['mlkem'] = 'staleReplayedKey';
+      payload['ts'] = '2026-05-01T00:00:00.000Z';
+      final message = _makeChatMessage(_contactRequestMessage(payload));
+
+      final (result, _, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+      );
+
+      expect(result, equals(HandleMessageResult.alreadyContact));
+      final contact = await contactRepo.getContact(_senderPeerId);
+      expect(contact!.mlKemPublicKey, equals('currentKey'));
+      expect(contact.mlKemKeyUpdatedTs, equals('2026-06-01T00:00:00.000Z'));
+    },
+  );
+
+  test('keeps existing key when payload key is identical', () async {
     contactRepo._contacts[_senderPeerId] = ContactModel(
       peerId: _senderPeerId,
       publicKey: 'senderPublicKey',
       rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
       username: 'Alice',
       signature: 'sig',
-      scannedAt: DateTime.now().toIso8601String(),
+      scannedAt: '2026-01-01T00:00:00.000Z',
       mlKemPublicKey: 'existingKey',
+      mlKemKeyUpdatedTs: '2026-02-01T00:00:00.000Z',
     );
 
     final payload = _validPayload();
-    payload['mlkem'] = 'newKey';
+    payload['mlkem'] = 'existingKey';
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
     final (result, _, _) = await handleIncomingMessage(
@@ -635,10 +710,9 @@ void main() {
     );
 
     expect(result, equals(HandleMessageResult.alreadyContact));
-
-    // Key unchanged
     final contact = await contactRepo.getContact(_senderPeerId);
     expect(contact!.mlKemPublicKey, equals('existingKey'));
+    expect(contact.mlKemKeyUpdatedTs, equals('2026-02-01T00:00:00.000Z'));
   });
 
   test('alreadyContact: payload has no mlkem field, no update', () async {

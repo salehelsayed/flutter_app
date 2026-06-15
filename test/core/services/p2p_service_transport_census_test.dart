@@ -172,6 +172,8 @@ class _CensusFakeP2PService implements P2PService, ReadinessProofRecorder {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
   @override
   bool get hasPendingResumeStarted => false;

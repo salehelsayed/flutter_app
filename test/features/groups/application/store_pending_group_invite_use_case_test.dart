@@ -11,6 +11,7 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_consumpti
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package_tombstone.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -825,6 +826,20 @@ void main() {
           myRole: GroupRole.member,
         ),
       );
+      // B3: self is still an ACTIVE member of the existing group → a fresh
+      // invite for it is a genuine duplicate and must short-circuit (only the
+      // retained-removed shell, where self is absent, falls through to store).
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'grp-abc123',
+          peerId: 'myPeerId',
+          username: 'Me',
+          role: MemberRole.writer,
+          publicKey: 'myPubKey64',
+          mlKemPublicKey: 'myMlKem64',
+          joinedAt: DateTime.utc(2026, 3, 2),
+        ),
+      );
 
       final (result, invite) = await storeIncomingPendingGroupInvite(
         message: makeMessage(),
@@ -839,6 +854,46 @@ void main() {
       expect(invite, isNull);
       expect(pendingInviteRepo.count, 0);
     });
+
+    test(
+      'retained keyless shell (self not a member) STORES the pending invite, '
+      'not duplicateGroup',
+      () async {
+        // B3: a previously-removed member RETAINS the group read-only (self
+        // removed from members, keys cleared). A fresh re-add invite must be
+        // stored as pending so the accept/materialize path can re-join — it
+        // must NOT be dropped as a duplicate just because the group ROW exists.
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-abc123',
+            name: 'Retained Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-abc123',
+            createdAt: DateTime.utc(2026, 3, 2),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+          ),
+        );
+        // self ('myPeerId') is intentionally NOT a member → retained-removed
+        // shell uniquely distinguishable from a still-joined duplicate.
+
+        final (result, invite) = await storeIncomingPendingGroupInvite(
+          message: makeMessage(),
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: 'myPeerId',
+        );
+
+        expect(result, StorePendingGroupInviteResult.storedPending);
+        expect(invite, isNotNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+      },
+    );
 
     test('returns unknownSender when contact is missing', () async {
       contactRepo.seed([]);

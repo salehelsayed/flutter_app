@@ -1,0 +1,29 @@
+# Non-code corpus inputs
+*.md
+*.mdx
+*.txt
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.svg
+*.html
+*.yml
+*.yaml
+
+# Generated or vendored implementation detail
+go-mknoon/third_party/
+go-mknoon/.gocache/
+go-mknoon/bin/
+go-mknoon/testdata/
+
+# Generated Flutter/local artifacts if they appear through symlinks
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+coverage/
+
+# Generated Flutter localization output; use the full graph for l10n internals.
+lib/l10n/app_localizations*.dart

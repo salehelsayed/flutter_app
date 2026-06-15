@@ -3,6 +3,9 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 
 class FakeAudioRecorderService implements AudioRecorderService {
+  @override
+  void Function(AudioRecording? recording)? onAutoStopped;
+
   bool _isRecording = false;
   bool _startInProgress = false;
   bool _stopRequestedWhileStarting = false;
@@ -102,6 +105,14 @@ class FakeAudioRecorderService implements AudioRecorderService {
       deletedPaths.add(_currentOutputPath!);
     }
     _currentOutputPath = null;
+  }
+
+  /// Simulates the production max-duration auto-stop: stops the active
+  /// recording and notifies [onAutoStopped] with the result.
+  Future<void> triggerAutoStop() async {
+    if (!_isRecording) return;
+    final recording = await stop();
+    onAutoStopped?.call(recording);
   }
 
   /// Manually emit a duration update for testing.

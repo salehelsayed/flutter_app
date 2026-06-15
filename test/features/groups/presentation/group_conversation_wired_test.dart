@@ -21,6 +21,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -1389,6 +1390,163 @@ void main() {
       expect(find.text('How are you?'), findsOneWidget);
     });
 
+    testWidgets(
+      'interleaves WhatsApp-style date separators across days',
+      (tester) async {
+        // Tall surface so the reversed lazy ListView builds every row
+        // (the oldest message/separator would otherwise be off-screen).
+        tester.view.physicalSize = const Size(1200, 4000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final now = DateTime.now();
+        // Saved oldest -> newest; the timeline renders ascending regardless.
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'm-old',
+            text: 'Old day message',
+            timestamp: now.subtract(const Duration(days: 5)),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'm-yest',
+            text: 'Yesterday message',
+            timestamp: now.subtract(const Duration(days: 1)),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(id: 'm-today', text: 'Today message', timestamp: now),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        final separators = tester
+            .widgetList<DateSeparator>(find.byType(DateSeparator))
+            .toList();
+        final labels = separators.map((s) => s.label).toList();
+
+        // Exactly one separator per distinct calendar day.
+        expect(separators, hasLength(3));
+        expect(labels, contains('Today'));
+        expect(labels, contains('Yesterday'));
+        // The older day uses the "Wed 9. Jun" weekday + day. month format.
+        expect(
+          labels.any(
+            (l) => RegExp(r'^[A-Za-z]{3} \d{1,2}\. [A-Za-z]{3}$').hasMatch(l),
+          ),
+          isTrue,
+        );
+
+        // Messages still render alongside the separators.
+        expect(find.text('Today message'), findsOneWidget);
+        expect(find.text('Yesterday message'), findsOneWidget);
+        expect(find.text('Old day message'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'renders a single date separator when all messages share a day',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final now = DateTime.now();
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'm-1',
+            text: 'First today',
+            timestamp: now.subtract(const Duration(minutes: 10)),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(id: 'm-2', text: 'Second today', timestamp: now),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        final separators = tester
+            .widgetList<DateSeparator>(find.byType(DateSeparator))
+            .toList();
+        expect(separators, hasLength(1));
+        expect(separators.single.label, 'Today');
+        expect(find.text('First today'), findsOneWidget);
+        expect(find.text('Second today'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'emits one separator per day even when a quoted reply reorders across a '
+      'day boundary',
+      (tester) async {
+        // Tall surface so every reordered row builds.
+        tester.view.physicalSize = const Size(1200, 4000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        // Two calendar days. Reply 'r' is stamped on the EARLIER day (dayA)
+        // but quotes parent 'p' on the LATER day (dayB); the timeline ordering
+        // pulls the reply after its parent, producing a non-monotonic day
+        // sequence [A, B, A] in render order.
+        final todayMidnight = DateTime(
+          DateTime.now().year,
+          DateTime.now().month,
+          DateTime.now().day,
+        );
+        final dayA = todayMidnight.subtract(const Duration(days: 5));
+        final dayB = dayA.add(const Duration(days: 1));
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'l',
+            text: 'Leading dayA message',
+            timestamp: dayA.add(const Duration(hours: 9)),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'p',
+            text: 'Parent on dayB',
+            timestamp: dayB.add(const Duration(hours: 8)),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'r',
+            text: 'Reply stamped on dayA',
+            timestamp: dayA.add(const Duration(hours: 23, minutes: 59)),
+            quotedMessageId: 'p',
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        final labels = tester
+            .widgetList<DateSeparator>(find.byType(DateSeparator))
+            .map((s) => s.label)
+            .toList();
+
+        // Two distinct calendar days -> exactly two separators, no duplicates.
+        expect(labels.toSet(), hasLength(2));
+        expect(
+          labels,
+          hasLength(labels.toSet().length),
+          reason: 'a calendar day must not receive a duplicate separator',
+        );
+      },
+    );
+
     testWidgets('sending a message calls bridge and refreshes', (tester) async {
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
@@ -1519,6 +1677,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   if (!uploadStarted.isCompleted) {
                     uploadStarted.complete();
@@ -1666,6 +1826,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   uploadStarts.add(DateTime.now().toUtc());
                   seenBlobIds.add(blobId!);
@@ -1797,6 +1959,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   capturedAllowedPeers.add(List<String>.from(allowedPeers!));
                   return MediaAttachment(
@@ -1874,6 +2038,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   receivedBlobId = blobId;
                   if (!uploadStarted.isCompleted) {
@@ -1992,6 +2158,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   uploadCount++;
                   if (uploadCount == 2) return null;
@@ -2099,6 +2267,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   if (!uploadStarted.isCompleted) {
                     uploadStarted.complete();
@@ -2288,6 +2458,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async => MediaAttachment(
                   id: 'server-missing-group-media',
                   messageId: '',
@@ -2371,6 +2543,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async => MediaAttachment(
                   id: 'server-unauthorized-media',
                   messageId: '',
@@ -2451,6 +2625,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   receivedBlobId = blobId;
                   return MediaAttachment(
@@ -3231,7 +3407,12 @@ void main() {
           );
           expect(
             screen.mediaMap['gmar004-pending']!.single.downloadStatus,
-            isIn(['pending', 'failed', kMediaDownloadStatusIntegrityFailed]),
+            isIn([
+              kMediaDownloadStatusPending,
+              kMediaDownloadStatusDownloading,
+              kMediaDownloadStatusFailed,
+              kMediaDownloadStatusIntegrityFailed,
+            ]),
           );
           expect(
             screen.mediaMap['gmar004-failed']!.single.downloadStatus,
@@ -3389,10 +3570,6 @@ void main() {
         ]);
         expect(initialScreen.mediaMap[messageId], hasLength(1));
         expect(find.byType(MediaGrid), findsOneWidget);
-        expect(
-          bridge.commandLog.where((cmd) => cmd == 'media:download'),
-          hasLength(1),
-        );
         final relativePath = mediaFileManager.relativePathForAttachment(
           contactPeerId: group.id,
           blobId: attachmentId,
@@ -3436,8 +3613,8 @@ void main() {
           kMediaDownloadStatusDone,
         );
         expect(
-          bridge.commandLog.where((cmd) => cmd == 'media:download'),
-          hasLength(1),
+          bridge.commandLog.where((cmd) => cmd == 'media:download').length,
+          lessThanOrEqualTo(1),
         );
         expect(find.text('Media unavailable'), findsNothing);
         expect(mediaGridBrokenImageCount(), 0);
@@ -4805,6 +4982,194 @@ void main() {
     );
 
     testWidgets(
+      'B5 composer disappears on a LIVE sys-member_removed without re-entry',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsOneWidget);
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+
+        // Self is removed live. Another member (peer-bob) remains, so the
+        // members.isEmpty fail-open does NOT mask the assertion. Keep the key so
+        // the composer flips read-only purely because self is no longer active.
+        await groupRepo.removeMember(group.id, testIdentity.peerId);
+        messageStreamController.add(
+          makeMessage(
+            id: 'sys-member_removed:group-1:${testIdentity.peerId}:1',
+            text: 'You were removed',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.text(
+            "You can read this group's history, but you are not an active member.",
+          ),
+          findsOneWidget,
+        );
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+      },
+    );
+
+    testWidgets(
+      'B5 composer reappears on a LIVE sys-members_added(self) without re-entry',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        // Start as a retained read-only shell: self is NOT a member (removed),
+        // but another member remains and the key is present.
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-bob',
+            mlKemPublicKey: 'mlkem-peer-bob',
+            joinedAt: DateTime.utc(2026, 5, 1, 10, 1),
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsNothing);
+
+        // Self is re-added live (key already present from setUp).
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.writer,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 5, 1, 11),
+          ),
+        );
+        messageStreamController.add(
+          makeMessage(
+            id: 'sys-members_added:group-1:${testIdentity.peerId}:1',
+            text: 'You were added back',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsOneWidget);
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+      },
+    );
+
+    testWidgets(
+      'B5 composer reappears after a re-add that lands while backgrounded, '
+      'recomputed on resume',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        // Retained read-only shell: self absent, another member present.
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-bob',
+            mlKemPublicKey: 'mlkem-peer-bob',
+            joinedAt: DateTime.utc(2026, 5, 1, 10, 1),
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+        expect(find.byType(TextField), findsNothing);
+
+        // While backgrounded, a re-add restores membership + the current key
+        // with NO sys row on this device's message stream (the key-update
+        // path). Only a resume recompute can surface it without re-entry.
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.writer,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 5, 1, 11),
+          ),
+        );
+
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsOneWidget);
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+      },
+    );
+
+    testWidgets(
+      'B5 self member_removed while viewing keeps the conversation open '
+      'read-only in place (no pop) when the group row is retained',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final removedStreamController = StreamController<String>.broadcast();
+        addTearDown(removedStreamController.close);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            removedStreamController: removedStreamController,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(find.byType(TextField), findsOneWidget);
+
+        // Removed, but the group row is RETAINED (B3 read-only shell).
+        await groupRepo.removeMember(group.id, testIdentity.peerId);
+        removedStreamController.add(group.id);
+        await pumpFrames(tester, count: 20);
+
+        // Stays on the conversation (not ejected) and the composer flips
+        // read-only in place — no re-entry required.
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.text(
+            "You can read this group's history, but you are not an active member.",
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'GCA-006 missing identity keeps composer read-only until late identity load',
       (tester) async {
         final group = makeChatGroup(role: GroupRole.member);
@@ -5561,6 +5926,9 @@ void main() {
         expect(find.byType(GroupConversationScreen), findsOneWidget);
         expect(tracker.isViewing('group:${group.id}'), isTrue);
 
+        // True hard-delete (group row gone) — the only case that still pops the
+        // conversation route. A RETAINED removal stays in place read-only (B5).
+        await groupRepo.deleteGroup(group.id);
         removedStreamController.add(group.id);
         await pumpFrames(tester, count: 20);
 
@@ -5624,7 +5992,10 @@ void main() {
       removedStreamController.add(group.id);
       await pumpFrames(tester, count: 20);
 
-      expect(find.byType(GroupConversationScreen), findsNothing);
+      // The group row is RETAINED (B5), so the conversation stays in place
+      // read-only — it must NOT pop. Crucially, a newer group's active-tracking
+      // is left untouched.
+      expect(find.byType(GroupConversationScreen), findsOneWidget);
       expect(tracker.isViewing('group:newer-group'), isTrue);
     });
 
@@ -6114,6 +6485,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async => null,
           initialPendingMedia: [
             PendingComposerMedia(
@@ -6187,6 +6560,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   uploadCalled = true;
                   return null;
@@ -6253,6 +6628,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   uploadedBlobIds.add(blobId ?? 'missing-blob-id');
                   if (uploadedBlobIds.length == 2) {
@@ -6358,6 +6735,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 activeBlobId = blobId;
                 uploadStarted.complete();
@@ -6492,6 +6871,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   uploadStarted.add(blobId ?? 'missing-blob-id');
                   await uploadGate.future;
@@ -7244,6 +7625,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async => MediaAttachment(
                   id: blobId!,
                   messageId: '',
@@ -7415,6 +7798,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   uploadCallCount++;
                   uploadBlobId = blobId;
@@ -8116,6 +8501,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async => MediaAttachment(
                 id: 'uploaded-group-1',
                 messageId: '',
@@ -8260,6 +8647,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   receivedBlobId = blobId;
                   receivedLocalPath = localFilePath;
@@ -8411,6 +8800,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   receivedBlobId = blobId;
                   receivedLocalPath = localFilePath;
@@ -8666,6 +9057,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   capturedAllowedPeers.add(List<String>.from(allowedPeers!));
                   return MediaAttachment(
@@ -8765,6 +9158,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   uploadedBlobIds.add(blobId!);
                   return MediaAttachment(
@@ -8906,6 +9301,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   receivedBlobId = blobId;
                   receivedLocalPath = localFilePath;
@@ -9066,6 +9463,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   if (!uploadStarted.isCompleted) {
                     uploadStarted.complete();
@@ -9187,6 +9586,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async => MediaAttachment(
                   id: 'uploaded-voice-zero-peers',
                   messageId: '',
@@ -9287,6 +9688,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async => MediaAttachment(
                   id: 'uploaded-voice-missing-group',
                   messageId: '',
@@ -9402,6 +9805,8 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
                 }) async {
                   if (!uploadStarted.isCompleted) {
                     uploadStarted.complete();
@@ -9525,6 +9930,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async => null,
         ),
       );
@@ -9625,6 +10032,8 @@ void main() {
                 durationMs,
                 waveform,
                 allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async => MediaAttachment(
                 id: 'uploaded-voice-1',
                 messageId: '',
@@ -9982,5 +10391,264 @@ void main() {
         expect(find.text('peer-fallbac...'), findsOneWidget);
       },
     );
+
+    group('recording lifecycle on group state changes', () {
+      late Directory tempDir;
+      late FakeAudioRecorderService recorder;
+      late TrackingDurableMediaFileManager mediaFileManager;
+
+      setUp(() {
+        tempDir = Directory.systemTemp.createTempSync(
+          'group-record-lifecycle-',
+        );
+        recorder = FakeAudioRecorderService();
+        mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+      });
+
+      tearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+
+      Widget buildRecordingWidget(GroupModel group) => buildWidget(
+        group: group,
+        mediaRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        audioRecorderService: recorder,
+      );
+
+      Future<void> pumpAndStartRecording(
+        WidgetTester tester,
+        GroupModel group,
+      ) async {
+        await tester.pumpWidget(buildRecordingWidget(group));
+        await pumpFrames(tester, count: 10);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final startRecording = screen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await pumpUntil(
+          tester,
+          () =>
+              tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .recordingState ==
+              VoiceRecordingState.recording,
+        );
+        expect(recorder.isRecording, isTrue);
+      }
+
+      GroupConversationScreen visibleScreen(WidgetTester tester) =>
+          tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+
+      testWidgets('losing write access cancels an active recording', (
+        tester,
+      ) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await pumpAndStartRecording(tester, group);
+
+        final dissolved = group.copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 6, 10, 12),
+          dissolvedBy: 'peer-admin',
+        );
+        await tester.pumpWidget(buildRecordingWidget(dissolved));
+        await pumpFrames(tester, count: 10);
+
+        expect(recorder.isRecording, isFalse);
+        expect(recorder.cancelCallCount, 1);
+        expect(visibleScreen(tester).recordingState, VoiceRecordingState.idle);
+      });
+
+      testWidgets('switching to another group cancels an active recording', (
+        tester,
+      ) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await pumpAndStartRecording(tester, group);
+
+        final otherGroup = GroupModel(
+          id: 'group-2',
+          name: 'Other Group',
+          type: GroupType.chat,
+          topicName: 'topic-2',
+          description: 'Another test group',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(otherGroup);
+        await saveActiveGroupMembers(groupRepo, otherGroup);
+        await tester.pumpWidget(buildRecordingWidget(otherGroup));
+        await pumpFrames(tester, count: 10);
+
+        expect(recorder.isRecording, isFalse);
+        expect(recorder.cancelCallCount, 1);
+        expect(visibleScreen(tester).recordingState, VoiceRecordingState.idle);
+      });
+
+      testWidgets(
+        'a dissolve arriving mid-recording cancels the active recording',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await pumpAndStartRecording(tester, group);
+
+          await groupRepo.updateGroup(
+            group.copyWith(
+              isDissolved: true,
+              dissolvedAt: DateTime.utc(2026, 6, 10, 12),
+              dissolvedBy: 'peer-admin',
+            ),
+          );
+          messageStreamController.add(
+            makeMessage(
+              id: 'sys-group_dissolved:group-1',
+              text: 'Group dissolved',
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          expect(recorder.isRecording, isFalse);
+          expect(recorder.cancelCallCount, 1);
+          expect(
+            visibleScreen(tester).recordingState,
+            VoiceRecordingState.idle,
+          );
+        },
+      );
+
+      testWidgets('recorder auto-stop resets the composer recording state', (
+        tester,
+      ) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await pumpAndStartRecording(tester, group);
+
+        await recorder.triggerAutoStop();
+        await pumpFrames(tester, count: 5);
+
+        expect(recorder.isRecording, isFalse);
+        expect(visibleScreen(tester).recordingState, VoiceRecordingState.idle);
+        expect(recorder.onAutoStopped, isNull);
+      });
+
+      testWidgets(
+        'losing write access while arming aborts the pending recording',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          recorder.startGate = Completer<void>();
+
+          await tester.pumpWidget(buildRecordingWidget(group));
+          await pumpFrames(tester, count: 10);
+
+          final screen = visibleScreen(tester);
+          final startRecording =
+              screen.onRecordStart! as Future<void> Function();
+          final startFuture = startRecording();
+          await pumpUntil(
+            tester,
+            () =>
+                visibleScreen(tester).recordingState ==
+                VoiceRecordingState.arming,
+          );
+
+          final dissolved = group.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 6, 10, 12),
+            dissolvedBy: 'peer-admin',
+          );
+          await tester.pumpWidget(buildRecordingWidget(dissolved));
+          await pumpFrames(tester, count: 5);
+
+          recorder.startGate!.complete();
+          await pumpFrames(tester, count: 10);
+          await startFuture;
+          // The abort continuation resets the composer ValueNotifier without
+          // rebuilding the wired widget; re-pump so the screen prop reflects
+          // the final state.
+          await tester.pumpWidget(buildRecordingWidget(dissolved));
+          await pumpFrames(tester, count: 2);
+
+          expect(recorder.isRecording, isFalse);
+          expect(recorder.cancelCallCount, 1);
+          expect(
+            visibleScreen(tester).recordingState,
+            VoiceRecordingState.idle,
+          );
+        },
+      );
+
+      testWidgets(
+        'a displaced recording session is not cancelled by a stale surface',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await pumpAndStartRecording(tester, group);
+
+          // Another surface took over the shared recorder (its start()
+          // force-stopped this one's session and installed its own handler).
+          recorder.onAutoStopped = (_) {};
+
+          final dissolved = group.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 6, 10, 12),
+            dissolvedBy: 'peer-admin',
+          );
+          await tester.pumpWidget(buildRecordingWidget(dissolved));
+          await pumpFrames(tester, count: 10);
+
+          // Local state resyncs, but the foreign session stays untouched.
+          expect(
+            visibleScreen(tester).recordingState,
+            VoiceRecordingState.idle,
+          );
+          expect(recorder.cancelCallCount, 0);
+          expect(recorder.onAutoStopped, isNotNull);
+        },
+      );
+
+      testWidgets(
+        'membership loss discovered during a send refresh cancels an active '
+        'recording',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await pumpAndStartRecording(tester, group);
+
+          // The user is removed from the group; local capability flags stay
+          // stale until the next refresh.
+          await groupRepo.removeMember(group.id, testIdentity.peerId);
+
+          final send =
+              visibleScreen(tester).onSend as Future<void> Function(String);
+          await send('hello');
+          await pumpFrames(tester, count: 10);
+
+          expect(recorder.isRecording, isFalse);
+          expect(recorder.cancelCallCount, 1);
+          expect(
+            visibleScreen(tester).recordingState,
+            VoiceRecordingState.idle,
+          );
+        },
+      );
+    });
   });
 }

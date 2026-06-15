@@ -4,29 +4,17 @@
 /// using the real MethodChannel and Go native library.
 /// Collects BRIDGE_CALL_TIMING events from FLOW log for accurate measurement.
 /// Run: flutter test integration_test/benchmark_bridge_crossing_harness.dart -d <DEVICE_ID>
-@Tags(['device'])
 library;
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 
 import 'benchmark_helpers.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  }
-
-  testWidgets('F-Sim-1: 1000 round-trip bridge calls', (tester) async {
+Future<void> runBridgeCrossingBenchmark(WidgetTester tester) async {
     print('\n${'═' * 60}');
     print('  BENCHMARK: BRIDGE CROSSING (F-Sim-1)');
     print('${'═' * 60}\n');
@@ -114,5 +102,4 @@ void main() {
     );
 
     bridge.dispose();
-  });
 }

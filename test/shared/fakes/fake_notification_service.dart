@@ -20,6 +20,7 @@ class FakeNotificationService implements NotificationService {
     required String senderUsername,
     required String messageText,
     String? payload,
+    bool silent = false,
   }) async {
     shown.add(
       FakeNotification(
@@ -27,6 +28,7 @@ class FakeNotificationService implements NotificationService {
         senderUsername: senderUsername,
         messageText: messageText,
         payload: payload ?? contactPeerId,
+        silent: silent,
       ),
     );
   }
@@ -67,12 +69,14 @@ class FakeNotification {
   final String senderUsername;
   final String messageText;
   final String payload;
+  final bool silent;
 
   const FakeNotification({
     required this.contactPeerId,
     required this.senderUsername,
     required this.messageText,
     required this.payload,
+    this.silent = false,
   });
 }
 

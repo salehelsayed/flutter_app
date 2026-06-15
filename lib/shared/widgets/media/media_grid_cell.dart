@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
@@ -17,6 +19,7 @@ class MediaGridCell extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onRetryUnavailableMedia;
   final bool requireVerifiedContentHash;
+  final VideoThumbnailResolver? videoThumbnailResolver;
 
   const MediaGridCell({
     super.key,
@@ -27,6 +30,7 @@ class MediaGridCell extends StatelessWidget {
     this.onTap,
     this.onRetryUnavailableMedia,
     this.requireVerifiedContentHash = false,
+    this.videoThumbnailResolver,
   });
 
   @override
@@ -51,11 +55,19 @@ class MediaGridCell extends StatelessWidget {
 
   bool get _showsGifBadge => attachment.isAnimated && _isDisplayableDoneMedia;
 
+  bool get _hasExistingLocalFile {
+    final localPath = attachment.localPath;
+    return localPath != null && File(localPath).existsSync();
+  }
+
   bool get _isDisplayableDoneMedia {
+    if (!_hasExistingLocalFile) {
+      return false;
+    }
     if (requireVerifiedContentHash) {
       return GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(attachment);
     }
-    return attachment.downloadStatus == 'done' && attachment.localPath != null;
+    return attachment.downloadStatus == 'done';
   }
 
   bool get _canOpen => onTap != null && _isDisplayableDoneMedia;
@@ -78,12 +90,26 @@ class MediaGridCell extends StatelessWidget {
         attachment,
         requireVerifiedContentHash: requireVerifiedContentHash,
       ) ||
-      !_hasAllowedDescriptor ||
-      !_hasAllowedSize ||
+      // 117 Session 2: the group MIME allow-list + size policy are a
+      // verified-group rendering gate, NOT a 1:1 concern. For 1:1
+      // (requireVerifiedContentHash == false) availability is determined by
+      // file presence + downloadStatus + isUnavailableMedia, so present,
+      // done 1:1 media with a real-but-non-allowlisted mime (e.g. the video
+      // re-encode-fallback containers) still renders and opens. This render
+      // gate was never the 1:1 safety boundary: a 1:1 sender controls the mime
+      // and could always forge an allow-listed value. 1:1 integrity is
+      // enforced at download/promotion (content-hash + plaintext size + AEAD
+      // auth-tag in decryptAndPromoteStagedDirectBlob), and rendering is
+      // decode-only (Image.file / just_audio), never an OS file-handler — so
+      // dropping this gate for 1:1 cannot render or execute a dangerous file.
+      (requireVerifiedContentHash &&
+          (!_hasAllowedDescriptor || !_hasAllowedSize)) ||
       !_hasRequiredGroupMetadata;
 
   bool get _canShowVideoOverlay =>
-      attachment.mediaType == 'video' && !_showsUnavailableMedia;
+      attachment.mediaType == 'video' &&
+      _isDisplayableDoneMedia &&
+      !_showsUnavailableMedia;
 
   bool get _canRetryUnavailableMedia =>
       onRetryUnavailableMedia != null &&
@@ -94,8 +120,16 @@ class MediaGridCell extends StatelessWidget {
     final isVideo = attachment.mediaType == 'video';
     final isDone = attachment.downloadStatus == 'done';
     final hasPath = attachment.localPath != null;
+    if (attachment.downloadStatus == kMediaDownloadStatusUploadPending) {
+      return _buildUploadPendingPlaceholder(context);
+    }
+
     if (_showsUnavailableMedia) {
       return _buildUnavailablePlaceholder(context);
+    }
+
+    if ((isImage || isVideo) && !isDone) {
+      return _buildLoadingPlaceholder();
     }
 
     if ((isImage || isVideo) && isDone && hasPath) {
@@ -110,7 +144,8 @@ class MediaGridCell extends StatelessWidget {
         placeholder: isVideo
             ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
             : _buildLoadingPlaceholder(),
-        error: _buildUnavailablePlaceholder(context),
+        error: Builder(builder: _buildUnavailablePlaceholder),
+        videoThumbnailResolver: videoThumbnailResolver,
       );
     }
 
@@ -121,6 +156,56 @@ class MediaGridCell extends StatelessWidget {
 
     // Pending or downloading
     return _buildLoadingPlaceholder();
+  }
+
+  Widget _buildUploadPendingPlaceholder(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      color: const Color.fromRGBO(255, 255, 255, 0.04),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF4ecdc4),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                l10n.upload_progress_title,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color.fromRGBO(255, 255, 255, 0.78),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                l10n.post_media_pending_upload_desc,
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color.fromRGBO(255, 255, 255, 0.58),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildLoadingPlaceholder() {

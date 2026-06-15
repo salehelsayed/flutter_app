@@ -1,0 +1,268 @@
+{
+  "full": {
+    "graph": "graphify-out/graph.json",
+    "nodes": 97179,
+    "edges": 168478,
+    "communities": 4160,
+    "source_files": 5118,
+    "avg_edges_per_node": 1.7337,
+    "avg_nodes_per_community": 23.36,
+    "app_owned_nodes": 41680,
+    "app_owned_ratio": 0.4289,
+    "noise_nodes": 21820,
+    "noise_ratio": 0.2245,
+    "unknown_source_nodes": 1727,
+    "unknown_source_ratio": 0.0178,
+    "top_hub_noise_count": 5,
+    "top_hub_noise_ratio": 0.5,
+    "top_source_dirs": [
+      [
+        "Test-Flight-Improv",
+        28177
+      ],
+      [
+        "lib",
+        17861
+      ],
+      [
+        "test",
+        12813
+      ],
+      [
+        "ios/Pods",
+        12019
+      ],
+      [
+        "macos/Pods",
+        7703
+      ],
+      [
+        "integration_test",
+        5644
+      ],
+      [
+        "go-mknoon",
+        4306
+      ],
+      [
+        "go-relay-server",
+        815
+      ],
+      [
+        "UI-21-POST",
+        799
+      ],
+      [
+        "UI-TestFlight-1",
+        723
+      ],
+      [
+        "Network-Arch",
+        681
+      ],
+      [
+        "translations",
+        381
+      ]
+    ],
+    "top_hubs": [
+      {
+        "id": "ios_pods_sqlcipher_sqlite3_c_sqlcipher_sqlite3",
+        "label": "sqlite3.c",
+        "degree": 4359,
+        "source_file": "ios/Pods/SQLCipher/sqlite3.c",
+        "noise": true
+      },
+      {
+        "id": "macos_pods_sqlcipher_sqlite3_c_sqlcipher_sqlite3",
+        "label": "sqlite3.c",
+        "degree": 4359,
+        "source_file": "macos/Pods/SQLCipher/sqlite3.c",
+        "noise": true
+      },
+      {
+        "id": "integration_test_group_multi_party_device_real_harness",
+        "label": "_",
+        "degree": 1955,
+        "source_file": "integration_test/group_multi_party_device_real_harness.dart",
+        "noise": true
+      },
+      {
+        "id": "ios_pods_sqlcipher_sqlite3_c_sqlite_private",
+        "label": "SQLITE_PRIVATE",
+        "degree": 1036,
+        "source_file": "ios/Pods/SQLCipher/sqlite3.c",
+        "noise": true
+      },
+      {
+        "id": "macos_pods_sqlcipher_sqlite3_c_sqlite_private",
+        "label": "SQLITE_PRIVATE",
+        "degree": 1036,
+        "source_file": "macos/Pods/SQLCipher/sqlite3.c",
+        "noise": true
+      },
+      {
+        "id": "package_flutter_test_flutter_test_dart",
+        "label": "package:flutter_test/flutter_test.dart",
+        "degree": 889,
+        "source_file": "",
+        "noise": false
+      },
+      {
+        "id": "scripts_group_multi_party_device_criteria",
+        "label": "group_multi_party_device_criteria.dart",
+        "degree": 671,
+        "source_file": "integration_test/scripts/group_multi_party_device_criteria.dart",
+        "noise": false
+      },
+      {
+        "id": "l10n_app_localizations",
+        "label": "app_localizations.dart",
+        "degree": 628,
+        "source_file": "lib/l10n/app_localizations.dart",
+        "noise": false
+      },
+      {
+        "id": "l10n_app_localizations_ar",
+        "label": "app_localizations_ar.dart",
+        "degree": 610,
+        "source_file": "lib/l10n/app_localizations_ar.dart",
+        "noise": false
+      },
+      {
+        "id": "l10n_app_localizations_de",
+        "label": "app_localizations_de.dart",
+        "degree": 610,
+        "source_file": "lib/l10n/app_localizations_de.dart",
+        "noise": false
+      }
+    ]
+  },
+  "architecture": {
+    "graph": "graphify-arch/graphify-out/graph.json",
+    "nodes": 38243,
+    "edges": 59915,
+    "communities": 830,
+    "source_files": 1917,
+    "avg_edges_per_node": 1.5667,
+    "avg_nodes_per_community": 46.08,
+    "app_owned_nodes": 36819,
+    "app_owned_ratio": 0.9628,
+    "noise_nodes": 0,
+    "noise_ratio": 0.0,
+    "unknown_source_nodes": 1424,
+    "unknown_source_ratio": 0.0372,
+    "top_hub_noise_count": 0,
+    "top_hub_noise_ratio": 0.0,
+    "top_source_dirs": [
+      [
+        "lib",
+        15353
+      ],
+      [
+        "test",
+        12752
+      ],
+      [
+        "integration_test",
+        5606
+      ],
+      [
+        "go-mknoon",
+        2109
+      ],
+      [
+        "go-relay-server",
+        763
+      ],
+      [
+        "scripts",
+        180
+      ],
+      [
+        "ios/NotificationService",
+        56
+      ]
+    ],
+    "top_hubs": [
+      {
+        "id": "integration_test_group_multi_party_device_real_harness",
+        "label": "group_multi_party_device_real_harness.dart",
+        "degree": 1922,
+        "source_file": "integration_test/group_multi_party_device_real_harness.dart",
+        "noise": false
+      },
+      {
+        "id": "package_flutter_test_flutter_test_dart",
+        "label": "package:flutter_test/flutter_test.dart",
+        "degree": 889,
+        "source_file": "",
+        "noise": false
+      },
+      {
+        "id": "scripts_group_multi_party_device_criteria",
+        "label": "group_multi_party_device_criteria.dart",
+        "degree": 665,
+        "source_file": "integration_test/scripts/group_multi_party_device_criteria.dart",
+        "noise": false
+      },
+      {
+        "id": "lib_main",
+        "label": "main.dart",
+        "degree": 505,
+        "source_file": "lib/main.dart",
+        "noise": false
+      },
+      {
+        "id": "integration_group_multi_party_device_criteria_test",
+        "label": "group_multi_party_device_criteria_test.dart",
+        "degree": 398,
+        "source_file": "test/integration/group_multi_party_device_criteria_test.dart",
+        "noise": false
+      },
+      {
+        "id": "package_flutter_material_dart",
+        "label": "package:flutter/material.dart",
+        "degree": 390,
+        "source_file": "",
+        "noise": false
+      },
+      {
+        "id": "dart_convert",
+        "label": "dart:convert",
+        "degree": 386,
+        "source_file": "",
+        "noise": false
+      },
+      {
+        "id": "screens_feed_wired",
+        "label": "feed_wired.dart",
+        "degree": 354,
+        "source_file": "lib/features/feed/presentation/screens/feed_wired.dart",
+        "noise": false
+      },
+      {
+        "id": "screens_group_conversation_wired",
+        "label": "group_conversation_wired.dart",
+        "degree": 336,
+        "source_file": "lib/features/groups/presentation/screens/group_conversation_wired.dart",
+        "noise": false
+      },
+      {
+        "id": "screens_conversation_wired",
+        "label": "conversation_wired.dart",
+        "degree": 322,
+        "source_file": "lib/features/conversation/presentation/screens/conversation_wired.dart",
+        "noise": false
+      }
+    ]
+  },
+  "deltas": {
+    "nodes": -0.6065,
+    "edges": -0.6444,
+    "communities": -0.8005,
+    "app_owned_ratio": 1.2448,
+    "noise_ratio": -1.0,
+    "top_hub_noise_ratio": -1.0
+  }
+}

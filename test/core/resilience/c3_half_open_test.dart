@@ -158,6 +158,8 @@ class _HalfOpenP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -283,6 +285,8 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -425,7 +429,7 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
-      expect(msg!.status, 'delivered');
+      expect(msg!.status, 'inboxed'); // 115 P1: custody, not delivery
       expect(msg.transport, 'inbox');
 
       // Inbox has the message for Bob to drain

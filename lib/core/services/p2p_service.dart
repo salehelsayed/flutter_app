@@ -2,6 +2,7 @@ import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
 import '../../features/p2p/domain/models/send_message_result.dart';
+import '../local_discovery/lan_ack.dart';
 import '../local_discovery/local_discovery_service.dart';
 
 /// Result of a relay probe attempt.
@@ -33,6 +34,17 @@ abstract interface class ReadinessProofRecorder {
     required String source,
     required String trigger,
     String? sendPath,
+  });
+}
+
+/// Optional capability for local LAN senders that can distinguish a durable
+/// committed receiver ack from a legacy parse-time ack.
+abstract interface class DurableLanSender {
+  Future<LanSendAck> sendLocalMessageDurable(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
   });
 }
 
@@ -206,6 +218,10 @@ abstract class P2PService {
 
   /// Send a media file to a local peer via WiFi HTTP PUT.
   /// Returns true if uploaded and SHA-256 verified by receiver.
+  ///
+  /// When [enc] is true (112 Phase 4), [filePath] is an encrypted blob
+  /// artifact: the offer is enc-flagged with [encScheme] so the receiver
+  /// stages the ciphertext for deferred decrypt instead of promoting it.
   Future<bool> sendLocalMedia({
     required String peerId,
     required String filePath,
@@ -215,6 +231,8 @@ abstract class P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc,
+    String? encScheme,
   });
 
   /// The last recovery method used ('in_place', 'watchdog_restart', or null).

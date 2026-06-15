@@ -44,6 +44,7 @@ class _NotificationOpenHarnessAppState
   static const _groupWeekend = 'grp-weekend';
   static const _groupPending = 'grp-pending';
   static const _groupMissing = 'grp-missing';
+  static const _groupTrip = 'grp-trip';
 
   final List<String> _events = <String>[];
   final InMemoryGroupRepository _groupRepo = InMemoryGroupRepository();
@@ -58,6 +59,7 @@ class _NotificationOpenHarnessAppState
   final Map<String, List<String>> _pendingGroupMessages =
       <String, List<String>>{
         _groupWeekend: <String>['Alice: brunch at 10?'],
+        _groupTrip: <String>['Charlie: flights booked!'],
       };
   final Map<String, List<String>> _visibleGroupMessages =
       <String, List<String>>{};
@@ -92,6 +94,26 @@ class _NotificationOpenHarnessAppState
     await _groupRepo.saveMember(
       GroupMember(
         groupId: _groupWeekend,
+        peerId: _localPeerId,
+        username: 'Self',
+        role: MemberRole.writer,
+        joinedAt: now.add(const Duration(minutes: 1)),
+      ),
+    );
+    await _groupRepo.saveGroup(
+      GroupModel(
+        id: _groupTrip,
+        name: 'Road Trip',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$_groupTrip',
+        createdAt: now,
+        createdBy: _peerAlice,
+        myRole: GroupRole.member,
+      ),
+    );
+    await _groupRepo.saveMember(
+      GroupMember(
+        groupId: _groupTrip,
         peerId: _localPeerId,
         username: 'Self',
         role: MemberRole.writer,
@@ -297,6 +319,20 @@ class _NotificationOpenHarnessAppState
     );
   }
 
+  Future<void> _simulateWarmTripGroupMessageTap() async {
+    await routeAppRootRemoteNotificationOpen(
+      data: const <String, dynamic>{
+        'type': 'group_message',
+        'groupId': _groupTrip,
+        'messageId': 'msg-trip-1',
+      },
+      onBeforeOpen: _clearDeliveredNotifications,
+      onBeforeRouteTarget: _prepare,
+      onRouteTarget: _route,
+      onMissingRouteTarget: _missingRouteTarget,
+    );
+  }
+
   Future<void> _simulateWarmMissingGroupMessageTap() async {
     await routeAppRootRemoteNotificationOpen(
       data: const <String, dynamic>{
@@ -381,6 +417,12 @@ class _NotificationOpenHarnessAppState
           key: const Key('warm-pending-group-message-button'),
           onPressed: _simulateWarmPendingGroupMessageTap,
           child: const Text('Simulate Warm Pending Group Message Tap'),
+        ),
+        const SizedBox(height: 8),
+        ElevatedButton(
+          key: const Key('warm-trip-group-message-button'),
+          onPressed: _simulateWarmTripGroupMessageTap,
+          child: const Text('Simulate Warm Trip Group Message Tap'),
         ),
         const SizedBox(height: 8),
         ElevatedButton(
@@ -1138,6 +1180,45 @@ void main() {
           'clear > prepare:group:grp-missing|message:msg-missing-1 > '
           'drain:group:grp-missing > resolve-drain > '
           'suppress-missing-group:grp-missing',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'stacked group message taps route each notification to its own group without misrouting',
+    (tester) async {
+      await tester.pumpWidget(const _NotificationOpenHarnessApp());
+
+      // Tap the first (Weekend Crew) group notification.
+      await tester.tap(find.byKey(const Key('warm-group-message-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('group-screen')), findsOneWidget);
+      expect(find.text('Group: grp-weekend'), findsOneWidget);
+      expect(find.text('Group: grp-trip'), findsNothing);
+      expect(find.text('Alice: brunch at 10?'), findsOneWidget);
+      expect(find.text('Charlie: flights booked!'), findsNothing);
+
+      // Return home, then tap the SECOND (Road Trip) stacked notification.
+      await tester.tap(find.byKey(const Key('group-back-home-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home-title')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('warm-trip-group-message-button')));
+      await tester.pumpAndSettle();
+
+      // The second tap must land on grp-trip, NOT carry over grp-weekend.
+      expect(find.byKey(const Key('group-screen')), findsOneWidget);
+      expect(find.text('Group: grp-trip'), findsOneWidget);
+      expect(find.text('Group: grp-weekend'), findsNothing);
+      expect(find.text('Charlie: flights booked!'), findsOneWidget);
+      expect(find.text('Alice: brunch at 10?'), findsNothing);
+      expect(
+        find.textContaining(
+          'clear > prepare:group:grp-trip|message:msg-trip-1 > '
+          'drain:group:grp-trip > route:group:grp-trip|message:msg-trip-1',
         ),
         findsOneWidget,
       );

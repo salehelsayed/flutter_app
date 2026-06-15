@@ -60,18 +60,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
-
-class _FakeSecureKeyStore implements SecureKeyStore {
-  final Map<String, String> _store = {};
-  @override
-  Future<String?> read(String key) async => _store[key];
-  @override
-  Future<void> write(String key, String value) async => _store[key] = value;
-  @override
-  Future<void> delete(String key) async => _store.remove(key);
-  @override
-  Future<bool> containsKey(String key) async => _store.containsKey(key);
-}
+import '_support/fake_secure_key_store.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -87,7 +76,7 @@ void main() {
     print('========================================\n');
 
     // 1. Open real encrypted DB
-    final secureKeyStore = _FakeSecureKeyStore();
+    final secureKeyStore = FakeSecureKeyStore();
     final dbName =
         'conversation_bridge_test_${DateTime.now().millisecondsSinceEpoch}.db';
     final db = await openEncryptedDatabase(

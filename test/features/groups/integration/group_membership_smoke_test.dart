@@ -2195,9 +2195,13 @@ void main() {
         // Bob's groupRemovedStream should have emitted the groupId
         expect(removedGroupIds, contains(groupId));
 
-        // Bob's groupRepo should have no group (leaveGroup deletes it)
+        // B3: Bob's group is now RETAINED read-only on self-removal (was
+        // deleted). Bob is no longer an active member, but the group row and
+        // the remaining members (admin + charlie) persist from the snapshot.
         final bobGroup = await bob.groupRepo.getGroup(groupId);
-        expect(bobGroup, isNull);
+        expect(bobGroup, isNotNull);
+        expect(await bob.groupRepo.getMember(groupId, bob.peerId), isNull);
+        expect(await bob.groupRepo.getMember(groupId, admin.peerId), isNotNull);
 
         // Bob's bridge.commandLog should contain 'group:leave'
         expect(bob.bridge.commandLog, contains('group:leave'));
@@ -2266,16 +2270,26 @@ void main() {
         memberUsername: charlie.username,
         removedAt: removedAt,
       );
+      // B3: charlie's group is RETAINED read-only on self-removal (was
+      // deleted), so converge on charlie no longer being an active member.
       await waitUntil(
-        () async => await charlie.groupRepo.getGroup(groupId) == null,
+        () async =>
+            await charlie.groupRepo.getMember(groupId, charlie.peerId) == null,
         maxTicks: 40,
       );
 
       expect(removedGroupIds, contains(groupId));
       expect(charlie.bridge.commandLog, contains('group:leave'));
       expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
-      expect(await charlie.groupRepo.getGroup(groupId), isNull);
-      expect(await charlie.groupRepo.getMembers(groupId), isEmpty);
+      // B3: the group row is retained; charlie is removed but the remaining
+      // members (alice + bob) persist from the authoritative snapshot.
+      expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+      expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
+      expect(
+        (await charlie.groupRepo.getMembers(groupId))
+            .map((member) => member.peerId),
+        unorderedEquals([alice.peerId, bob.peerId]),
+      );
       expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
 
       charlie.bridge.commandLog.clear();
@@ -3013,12 +3027,17 @@ void main() {
           memberPeerId: charlie.peerId,
           memberUsername: charlie.username,
         );
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted), so converge on charlie no longer being an active member.
         await waitUntil(
-          () async => await charlie.groupRepo.getGroup(groupId) == null,
+          () async =>
+              await charlie.groupRepo.getMember(groupId, charlie.peerId) ==
+              null,
         );
 
         expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
 
         admin.dispose();
         bob.dispose();
@@ -3320,7 +3339,10 @@ void main() {
         await expectCanonicalState(bob);
         await expectCanonicalState(charlie);
 
-        expect(await diana.groupRepo.getGroup(groupId), isNull);
+        // B3: diana's group is RETAINED read-only on self-removal (was
+        // deleted); diana is no longer an active member but the group persists.
+        expect(await diana.groupRepo.getGroup(groupId), isNotNull);
+        expect(await diana.groupRepo.getMember(groupId, diana.peerId), isNull);
         expect(network.isSubscribed(groupId, diana.peerId), isFalse);
 
         admin.dispose();
@@ -3458,7 +3480,10 @@ void main() {
         await expectConverged(admin);
         await expectConverged(bob);
         await expectConverged(charlie);
-        expect(await diana.groupRepo.getGroup(groupId), isNull);
+        // B3: diana's group is RETAINED read-only on self-removal (was
+        // deleted); diana is no longer an active member but the group persists.
+        expect(await diana.groupRepo.getGroup(groupId), isNotNull);
+        expect(await diana.groupRepo.getMember(groupId, diana.peerId), isNull);
         expect(network.isSubscribed(groupId, diana.peerId), isFalse);
       },
     );
@@ -3635,7 +3660,13 @@ void main() {
           expect(await memberIds(bob, groupId), expected);
           expect(await memberIds(dana, groupId), expected);
           expect(await memberIds(observer, groupId), expected);
-          expect(await charlie.groupRepo.getGroup(groupId), isNull);
+          // B3: charlie's group is RETAINED read-only on self-removal (was
+          // deleted); charlie is no longer an active member but it persists.
+          expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+          expect(
+            await charlie.groupRepo.getMember(groupId, charlie.peerId),
+            isNull,
+          );
           expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
           expect(latestSyncedMembers(observer.bridge, groupId), expected);
         }
@@ -3744,7 +3775,10 @@ void main() {
 
         await expectRemovalWinner(admin);
         await expectRemovalWinner(bob);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); charlie is no longer an active member but it persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
         admin.dispose();
@@ -4000,7 +4034,10 @@ void main() {
         await expectConverged(bob);
         await expectConverged(diana);
         await expectConverged(observer);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); charlie is no longer an active member but it persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
       },
     );
@@ -4047,10 +4084,25 @@ void main() {
         text: 'Should not send',
       );
 
-      expect(result, group_send.SendGroupMessageResult.groupNotFound);
+      // B3: bob's group is now RETAINED read-only on self-removal (was
+      // deleted), so a post-removal send is rejected as unauthorized (sender no
+      // longer a configured member) rather than groupNotFound — the removed
+      // member still CANNOT send.
+      expect(result, group_send.SendGroupMessageResult.unauthorized);
       expect(message, isNull);
-      expect(await bob.groupRepo.getGroup(groupId), isNull);
-      expect(await bob.msgRepo.getMessageCount(groupId), 0);
+      expect(await bob.groupRepo.getGroup(groupId), isNotNull);
+      expect(await bob.groupRepo.getMember(groupId, bob.peerId), isNull);
+      // The only retained row is the visible removal timeline message; the
+      // rejected send produced no stored message.
+      final bobStored = await bob.loadGroupMessages(groupId);
+      expect(
+        bobStored.where((entry) => entry.text == 'Should not send'),
+        isEmpty,
+      );
+      expect(
+        bobStored.map((entry) => entry.text),
+        ['Admin removed Bob'],
+      );
       expect(
         bob.bridge.commandLog.where((command) => command == 'group:publish'),
         isEmpty,
@@ -4172,8 +4224,13 @@ void main() {
             groupId,
             charlie.peerId,
           );
-          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-          return bobMember == null && charlieGroup == null;
+          // B3: charlie's group is RETAINED read-only on self-removal (was
+          // deleted), so converge on charlie no longer being an active member.
+          final charlieSelf = await charlie.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return bobMember == null && charlieSelf == null;
         }, maxTicks: 40);
 
         alice.bridge.responses['group:generateNextKey'] = {
@@ -4221,7 +4278,10 @@ void main() {
 
         await expectRemainingMemberState(alice);
         await expectRemainingMemberState(bob);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
@@ -4389,8 +4449,13 @@ void main() {
             groupId,
             charlie.peerId,
           );
-          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-          return bobMember == null && charlieGroup == null;
+          // B3: charlie's group is RETAINED read-only on self-removal (was
+          // deleted), so converge on charlie no longer being an active member.
+          final charlieSelf = await charlie.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return bobMember == null && charlieSelf == null;
         }, maxTicks: 40);
 
         alice.bridge.responses['group:generateNextKey'] = {
@@ -4438,7 +4503,10 @@ void main() {
 
         await expectRemainingMemberState(alice);
         await expectRemainingMemberState(bob);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
@@ -4756,7 +4824,10 @@ void main() {
           selfPeerId: charlie.peerId,
         );
 
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         final charlieLatestKey = await charlie.groupRepo.getLatestKey(groupId);
         expect(
           charlieLatestKey?.keyGeneration ?? 0,
@@ -5045,7 +5116,10 @@ void main() {
           selfPeerId: charlie.peerId,
         );
 
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         final charlieLatestKey = await charlie.groupRepo.getLatestKey(groupId);
         expect(
           charlieLatestKey?.keyGeneration ?? 0,
@@ -6857,7 +6931,10 @@ void main() {
           groupMessageListener: charlie.groupMessageListener,
           selfPeerId: charlie.peerId,
         );
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(
           (await charlie.loadGroupMessages(
             groupId,
@@ -7471,12 +7548,20 @@ void main() {
             groupId,
             charlie.peerId,
           );
-          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-          return bobMember == null && charlieGroup == null;
+          // B3: charlie's group is RETAINED read-only on self-removal (was
+          // deleted), so converge on charlie no longer being an active member.
+          final charlieSelf = await charlie.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return bobMember == null && charlieSelf == null;
         }, maxTicks: 40);
 
         expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
         expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
 
@@ -7484,7 +7569,10 @@ void main() {
         charlie.start();
         await pump();
 
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
@@ -7742,8 +7830,13 @@ void main() {
             groupId,
             charlie.peerId,
           );
-          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-          return bobMember == null && charlieGroup == null;
+          // B3: charlie's group is RETAINED read-only on self-removal (was
+          // deleted), so converge on charlie no longer being an active member.
+          final charlieSelf = await charlie.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return bobMember == null && charlieSelf == null;
         }, maxTicks: 40);
 
         await expectLater(
@@ -7827,7 +7920,10 @@ void main() {
 
         await expectRemainingMemberState(alice);
         await expectRemainingMemberState(bob);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
@@ -8345,8 +8441,13 @@ void main() {
           groupId,
           charlie.peerId,
         );
-        final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-        return bobMember == null && charlieGroup == null;
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted), so converge on charlie no longer being an active member.
+        final charlieSelf = await charlie.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        return bobMember == null && charlieSelf == null;
       }, maxTicks: 40);
 
       alice.bridge.responses['group:generateNextKey'] = {
@@ -8392,7 +8493,10 @@ void main() {
 
       await expectRemainingMemberState(alice);
       await expectRemainingMemberState(bob);
-      expect(await charlie.groupRepo.getGroup(groupId), isNull);
+      // B3: charlie's group is RETAINED read-only on self-removal (was
+      // deleted); self is no longer an active member but the group persists.
+      expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+      expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
       expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
       expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
       expect(
@@ -9640,8 +9744,13 @@ void main() {
               groupId,
               charlie.peerId,
             );
-            final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-            return bobMember == null && charlieGroup == null;
+            // B3: charlie's group is RETAINED read-only on self-removal (was
+            // deleted), so converge on charlie no longer being an active member.
+            final charlieSelf = await charlie.groupRepo.getMember(
+              groupId,
+              charlie.peerId,
+            );
+            return bobMember == null && charlieSelf == null;
           }, maxTicks: 40);
 
           await alice.addMember(
@@ -11004,11 +11113,15 @@ void main() {
         await waitUntil(() async {
           return await bob.groupRepo.getMember(groupId, charlie.peerId) ==
                   null &&
-              await charlie.groupRepo.getGroup(groupId) == null &&
+              // B3 retain: converge on self no longer an active member, not group gone.
+              await charlie.groupRepo.getMember(groupId, charlie.peerId) == null &&
               !network.isSubscribed(groupId, charlie.deviceId);
         }, maxTicks: 40);
         expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
 
         await bob.groupRepo.saveMember(
           staleBobCharlie.copyWith(joinedAt: baseAt),
@@ -12809,7 +12922,13 @@ void main() {
         charliePhone.subscribeToGroup(groupId);
         expect(await phonePendingRepo.getPendingInvite(groupId), isNull);
         expect(await tabletPendingRepo.getPendingInvite(groupId), isNotNull);
-        expect(await charlieTablet.groupRepo.getGroup(groupId), isNull);
+        // B3: the not-yet-readded tablet retains the group read-only (self not
+        // an active member) instead of hard-deleting it.
+        expect(await charlieTablet.groupRepo.getGroup(groupId), isNotNull);
+        expect(
+          await charlieTablet.groupRepo.getMember(groupId, charliePeerId),
+          isNull,
+        );
         expect(network.isSubscribed(groupId, charliePhone.deviceId), isTrue);
         expect(network.isSubscribed(groupId, charlieTablet.deviceId), isFalse);
 
@@ -12852,7 +12971,13 @@ void main() {
           return phoneTexts.contains(aliceAfterPhoneAccept) &&
               phoneTexts.contains(bobAfterPhoneAccept);
         }, maxTicks: 40);
-        expect(await charlieTablet.loadGroupMessages(groupId), isEmpty);
+        // B3: the retained-but-not-yet-readded tablet holds only the removal
+        // notice, never A/B's post-removal content.
+        final tabletPreReaddTexts = (await charlieTablet.loadGroupMessages(
+          groupId,
+        )).map((message) => message.text).toSet();
+        expect(tabletPreReaddTexts, isNot(contains(aliceAfterPhoneAccept)));
+        expect(tabletPreReaddTexts, isNot(contains(bobAfterPhoneAccept)));
 
         charlieTablet.bridge.responses['group:inboxRetrieveCursor'] = {
           'ok': true,
@@ -14155,8 +14280,13 @@ void main() {
           groupId,
           charlie.peerId,
         );
-        final charlieGroup = await charlie.groupRepo.getGroup(groupId);
-        return bobMember == null && charlieGroup == null;
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted), so converge on charlie no longer being an active member.
+        final charlieSelf = await charlie.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        return bobMember == null && charlieSelf == null;
       }, maxTicks: 40);
 
       alice.bridge.responses['group:generateNextKey'] = {
@@ -14242,7 +14372,10 @@ void main() {
 
       await expectRemainingMemberState(alice);
       await expectRemainingMemberState(bob);
-      expect(await charlie.groupRepo.getGroup(groupId), isNull);
+      // B3: charlie's group is RETAINED read-only on self-removal (was
+      // deleted); self is no longer an active member but the group persists.
+      expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+      expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
       expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
 
       final (aliceSendResult, aliceMessage) = await alice
@@ -16370,7 +16503,10 @@ void main() {
         );
         await pump();
 
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: charlie's group is RETAINED read-only on self-removal (was
+        // deleted); self is no longer an active member but the group persists.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
         await admin.sendGroupMessage(groupId: groupId, text: 'While removed');
@@ -16661,6 +16797,221 @@ void main() {
 
         alice.dispose();
         bob.dispose();
+      },
+    );
+
+    // B4 (receiver-side end-to-end invariant — proves Option A from the
+    // RECEIVER's seat): a dissolve published LIVE must converge an online
+    // member to isDissolved. The receiver verifies the signed group_dissolved
+    // audit's actor binding against the binding the network stamps on the live
+    // envelope (senderDeviceId/transportPeerId). When the dissolver signs the
+    // audit WITHOUT that binding (the pre-Option-A legacy caller, modeled here
+    // by signActorBinding:false), the receiver sees observed-present vs
+    // signed-absent and rejects with device_mismatch — _handleGroupDissolved
+    // never runs and the member stays LIVE (the B4 field bug). With the
+    // binding signed (Option A applied, signActorBinding:true) the live
+    // delivery verifies and the member converges. This is the genuine
+    // RED→GREEN at the receiver, keyed on the SENDER binding (Option A).
+    //
+    // EMPIRICALLY ESTABLISHED (see agent report): for group_dissolved the
+    // Option-B `_allowsSnapshotBackedSystemSender` clause is NOT reachable as a
+    // convergence mechanism — the dissolve system payload carries no
+    // `groupConfig`, so every snapshot-backed reconciliation helper
+    // (_canBootstrapSnapshotBackedSenderDevice /
+    // _canAcceptLegacySnapshotBackedAccountSender) short-circuits to false.
+    // Removing that clause changes NO dissolve outcome (the full integration
+    // suite stays green without it, and a binding-less LIVE dissolve fails with
+    // device_mismatch either way). Option B therefore has no genuine RED test
+    // to author; this receiver-side test is the faithful B4 convergence proof.
+    test(
+      'B4 live dissolve converges an online member only when the dissolver '
+      'signs the actor binding (Option A receiver-side)',
+      () async {
+        const groupId = 'grp-b4-live-dissolve';
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-b4-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-b4-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        Future<void> saveKey(GroupTestUser user, {required int epoch}) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: 'group-key-epoch-$epoch',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+        }
+
+        await alice.createGroup(groupId: groupId, name: 'Temporary Group');
+        await saveKey(alice, epoch: 1);
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveKey(bob, epoch: 1);
+
+        final aliceSnapshot = await bob.groupRepo.getMember(
+          groupId,
+          alice.peerId,
+        );
+        expect(aliceSnapshot, isNotNull);
+        expect(aliceSnapshot!.role, MemberRole.admin);
+
+        // Both online: bob is a LIVE receiver of the dissolve fan-out, where the
+        // network stamps the dissolver's senderDeviceId (the observed binding).
+        alice.start();
+        bob.start();
+
+        // Option A applied: the dissolver signs the actor device/transport
+        // binding, so the receiver's observed binding matches the signed one.
+        final (result, dissolvedGroup) = await alice.dissolveGroupViaBridge(
+          groupId: groupId,
+          signActorBinding: true,
+        );
+        expect(result, group_dissolve.DissolveGroupResult.success);
+        expect(dissolvedGroup, isNotNull);
+        expect(dissolvedGroup!.isDissolved, isTrue);
+
+        // Let the live delivery reach bob's listener and reconcile.
+        await waitUntil(() async {
+          final group = await bob.groupRepo.getGroup(groupId);
+          return group?.isDissolved == true;
+        }, maxTicks: 80);
+
+        // RED without Option A (signActorBinding:false → binding-less audit):
+        // bob rejects the live dissolve with device_mismatch and stays live.
+        // GREEN with Option A: bob converges to dissolved.
+        final bobGroup = await bob.groupRepo.getGroup(groupId);
+        expect(bobGroup, isNotNull);
+        expect(
+          bobGroup!.isDissolved,
+          isTrue,
+          reason:
+              'online member must converge to dissolved when the dissolver '
+              'signs the actor binding (Option A); a binding-less dissolve is '
+              'rejected device_mismatch and leaves the member live (B4 bug)',
+        );
+
+        // And the dissolved state truly closes bob's group: a follow-up send is
+        // refused with groupDissolved and no message is produced.
+        final (sendResult, sendMessage) = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'after dissolve',
+        );
+        expect(sendResult, group_send.SendGroupMessageResult.groupDissolved);
+        expect(sendMessage, isNull);
+
+        alice.dispose();
+        bob.dispose();
+      },
+    );
+
+    test(
+      'B6 full lifecycle: create → invite two → remove one → dissolve converges '
+      'the remaining online member and blocks post-dissolve sends',
+      () async {
+        // The integrated lifecycle in one linear test (the field scenario):
+        // create, invite Bob + Charlie, remove Bob, then dissolve. The remaining
+        // online member (Charlie) must converge to dissolved via the live
+        // fan-out (Option A binding + the terminal pre-hash relaxation handle
+        // any state-hash drift from the removal), and a post-dissolve send must
+        // be refused.
+        const groupId = 'grp-b6-lifecycle';
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-b6-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-b6-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-b6-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> saveKey(GroupTestUser user, {required int epoch}) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: 'group-key-epoch-$epoch',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+        }
+
+        // create → invite both
+        await alice.createGroup(groupId: groupId, name: 'Lifecycle Group');
+        await saveKey(alice, epoch: 1);
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveKey(bob, epoch: 1);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveKey(charlie, epoch: 1);
+
+        expect(
+          (await alice.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId).toSet(),
+          {alice.peerId, bob.peerId, charlie.peerId},
+        );
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId),
+            isNotNull);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        // remove Bob — the remaining online member (Charlie) drops him live.
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          memberUsername: 'Bob',
+        );
+        await waitUntil(() async {
+          final members = await charlie.groupRepo.getMembers(groupId);
+          return members.every((member) => member.peerId != bob.peerId);
+        }, maxTicks: 80);
+
+        // dissolve (Option A: actor binding signed by default).
+        final (result, dissolvedGroup) = await alice.dissolveGroupViaBridge(
+          groupId: groupId,
+        );
+        expect(result, group_dissolve.DissolveGroupResult.success);
+        expect(dissolvedGroup, isNotNull);
+        expect(dissolvedGroup!.isDissolved, isTrue);
+
+        // Charlie (still an online member) converges to dissolved.
+        await waitUntil(() async {
+          final group = await charlie.groupRepo.getGroup(groupId);
+          return group?.isDissolved == true;
+        }, maxTicks: 80);
+        expect((await charlie.groupRepo.getGroup(groupId))!.isDissolved, isTrue);
+
+        // And the dissolved state closes Charlie's group: a follow-up send is
+        // refused with groupDissolved.
+        final (charlieSend, charlieMessage) =
+            await charlie.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'after dissolve',
+        );
+        expect(charlieSend, group_send.SendGroupMessageResult.groupDissolved);
+        expect(charlieMessage, isNull);
       },
     );
 

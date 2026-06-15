@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -517,6 +518,70 @@ func TestRelayInboxStoreRetrieve(t *testing.T) {
 	}
 	if len(msgs2) != 0 {
 		t.Errorf("expected 0 messages on second retrieve, got %d", len(msgs2))
+	}
+}
+
+func TestInboxStoreFull_TypedRejectionAgainstLocalRelay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+
+	relay := startLocalRelayWithInboxCapacity(t, 3)
+	nodeA, peerIdA := startNodeWithRelays(t, []string{relay.addr()}, nil, nil)
+	nodeB, peerIdB := startNodeWithRelays(t, []string{relay.addr()}, nil, nil)
+
+	for i := 1; i <= 3; i++ {
+		outcome, err := nodeA.InboxStoreDetailed(
+			peerIdB,
+			fmt.Sprintf("accepted %d", i),
+			0,
+		)
+		if err != nil {
+			t.Fatalf("InboxStoreDetailed accepted %d: %v", i, err)
+		}
+		if outcome.StoreStatus != "stored" {
+			t.Fatalf("accepted %d storeStatus=%q, want stored", i, outcome.StoreStatus)
+		}
+		if outcome.Occupancy != i {
+			t.Fatalf("accepted %d occupancy=%d, want %d", i, outcome.Occupancy, i)
+		}
+		if outcome.Capacity != 3 {
+			t.Fatalf("accepted %d capacity=%d, want 3", i, outcome.Capacity)
+		}
+	}
+
+	outcome, err := nodeA.InboxStoreDetailed(peerIdB, "overflow", 0)
+	if !errors.Is(err, node.ErrInboxFull) {
+		t.Fatalf("overflow err=%v, want ErrInboxFull", err)
+	}
+	if outcome.ErrorCode != "INBOX_FULL" {
+		t.Fatalf("overflow errorCode=%q, want INBOX_FULL", outcome.ErrorCode)
+	}
+	if outcome.StoreStatus != "rejected_full" {
+		t.Fatalf("overflow storeStatus=%q, want rejected_full", outcome.StoreStatus)
+	}
+	if outcome.Occupancy != 3 {
+		t.Fatalf("overflow occupancy=%d, want 3", outcome.Occupancy)
+	}
+	if outcome.Capacity != 3 {
+		t.Fatalf("overflow capacity=%d, want 3", outcome.Capacity)
+	}
+
+	msgs, err := nodeB.InboxRetrieve()
+	if err != nil {
+		t.Fatalf("InboxRetrieve: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("retrieved %d messages, want 3", len(msgs))
+	}
+	for i, msg := range msgs {
+		want := fmt.Sprintf("accepted %d", i+1)
+		if msg.From != peerIdA {
+			t.Fatalf("message %d from=%s, want %s", i+1, msg.From, peerIdA)
+		}
+		if msg.Message != want {
+			t.Fatalf("message %d content=%q, want %q", i+1, msg.Message, want)
+		}
 	}
 }
 

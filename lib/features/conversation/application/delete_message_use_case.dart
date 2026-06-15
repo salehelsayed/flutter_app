@@ -46,6 +46,40 @@ Future<int> deleteMessageForMe({
   return count;
 }
 
+class _DeletionWireEnvelopeEncryptFailed implements Exception {
+  const _DeletionWireEnvelopeEncryptFailed(this.errorCode);
+
+  final Object? errorCode;
+}
+
+Future<String> buildDeletionWireEnvelope({
+  required Bridge bridge,
+  required ConversationMessage originalMessage,
+  required String deletedAt,
+  required String recipientMlKemPublicKey,
+}) async {
+  final payload = MessageDeletionPayload(
+    messageId: originalMessage.id,
+    senderPeerId: originalMessage.senderPeerId,
+    timestamp: deletedAt,
+  );
+  final innerJson = payload.toInnerJson();
+  final encryptResult = await callEncryptMessage(
+    bridge: bridge,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
+    plaintext: innerJson,
+  );
+  if (encryptResult['ok'] != true) {
+    throw _DeletionWireEnvelopeEncryptFailed(encryptResult['errorCode']);
+  }
+  return MessageDeletionPayload.buildEncryptedEnvelope(
+    senderPeerId: originalMessage.senderPeerId,
+    kem: encryptResult['kem'] as String,
+    ciphertext: encryptResult['ciphertext'] as String,
+    nonce: encryptResult['nonce'] as String,
+  );
+}
+
 Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   required P2PService p2pService,
   required MessageRepository messageRepo,
@@ -86,9 +120,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     },
   );
 
+  // 'inboxed' rows hold a durable relay copy the receiver will drain —
+  // delete-for-everyone must stay available for them (doc 115 P1).
   if (originalMessage.isIncoming ||
       originalMessage.isDeleted ||
-      originalMessage.status != 'delivered') {
+      (originalMessage.status != 'delivered' &&
+          originalMessage.status != 'inboxed')) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_DELETE_FOR_EVERYONE_INVALID',
@@ -131,38 +168,26 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   }
 
   final deletedAt = DateTime.now().toUtc().toIso8601String();
-  final payload = MessageDeletionPayload(
-    messageId: originalMessage.id,
-    senderPeerId: originalMessage.senderPeerId,
-    timestamp: deletedAt,
-  );
 
   String jsonString;
   try {
-    final innerJson = payload.toInnerJson();
-    final encryptResult = await callEncryptMessage(
+    jsonString = await buildDeletionWireEnvelope(
       bridge: bridge,
+      originalMessage: originalMessage,
+      deletedAt: deletedAt,
       recipientMlKemPublicKey: recipientKey,
-      plaintext: innerJson,
     );
-    if (encryptResult['ok'] != true) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPT_FAILED',
-        details: {'errorCode': encryptResult['errorCode']},
-      );
-      emitDeleteTiming(
-        outcome: 'encrypt_failed',
-        details: {'errorCode': encryptResult['errorCode']},
-      );
-      return (SendChatMessageResult.sendFailed, null);
-    }
-    jsonString = MessageDeletionPayload.buildEncryptedEnvelope(
-      senderPeerId: originalMessage.senderPeerId,
-      kem: encryptResult['kem'] as String,
-      ciphertext: encryptResult['ciphertext'] as String,
-      nonce: encryptResult['nonce'] as String,
+  } on _DeletionWireEnvelopeEncryptFailed catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPT_FAILED',
+      details: {'errorCode': e.errorCode},
     );
+    emitDeleteTiming(
+      outcome: 'encrypt_failed',
+      details: {'errorCode': e.errorCode},
+    );
+    return (SendChatMessageResult.sendFailed, null);
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
@@ -334,14 +359,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       jsonString,
     );
     if (storedInInbox) {
-      final deliveredTombstone = normalizeOutgoingDeleteTombstoneVisibility(
+      // Inbox acceptance is custody, not delivery (doc 115 D-3): the
+      // tombstone stays 'inboxed' + VISIBLE with the envelope retained until
+      // a deletion delivery receipt confirms the receiver applied it.
+      final inboxedTombstone = normalizeOutgoingDeleteTombstoneVisibility(
         pendingTombstone.copyWith(
-          status: 'delivered',
+          status: 'inboxed',
           transport: 'inbox',
-          wireEnvelope: null,
+          wireEnvelope: jsonString,
         ),
       );
-      await messageRepo.saveMessage(deliveredTombstone);
+      await messageRepo.saveMessage(inboxedTombstone);
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_DELETE_FOR_EVERYONE_SUCCESS',
@@ -349,9 +377,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       );
       emitDeleteTiming(
         outcome: 'success',
-        details: {'status': 'delivered', 'via': 'inbox'},
+        details: {'status': 'inboxed', 'via': 'inbox'},
       );
-      return (SendChatMessageResult.success, deliveredTombstone);
+      return (SendChatMessageResult.success, inboxedTombstone);
     }
   } catch (e) {
     emitFlowEvent(
@@ -561,11 +589,13 @@ Future<ConversationMessage> _persistOutgoingDeleteResult({
       jsonString,
     );
     if (storedInInbox) {
+      // Custody, not delivery (doc 115 D-3): tombstone stays visible-pending
+      // with the envelope retained until the deletion receipt arrives.
       return normalizeOutgoingDeleteTombstoneVisibility(
         tombstone.copyWith(
-          status: 'delivered',
+          status: 'inboxed',
           transport: 'inbox',
-          wireEnvelope: null,
+          wireEnvelope: jsonString,
         ),
       );
     }

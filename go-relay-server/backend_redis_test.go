@@ -444,6 +444,81 @@ func TestRedisInboxBackend_RetrievePendingRequiresExplicitAckAcrossClients(t *te
 	}
 }
 
+func TestRedisInboxBackend_StoreRejectsNewWhenFull(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	backend := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", 2)
+
+	requireRedisInboxStoreResult(t, backend, "peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   "msg-0",
+		Timestamp: time.Now().UnixMilli(),
+	}, InboxStoreResultStored)
+	requireRedisInboxStoreResult(t, backend, "peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   "msg-1",
+		Timestamp: time.Now().UnixMilli(),
+	}, InboxStoreResultStored)
+	requireRedisInboxStoreResult(t, backend, "peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   "overflow-msg",
+		Timestamp: time.Now().UnixMilli(),
+	}, InboxStoreResultRejectedFull)
+
+	messages, hasMore := backend.RetrievePending("peer-recipient", 10)
+	if hasMore || len(messages) != 2 {
+		t.Fatalf("pending after overflow = %d hasMore=%v, want 2/false", len(messages), hasMore)
+	}
+	if messages[0].Message != "msg-0" || messages[1].Message != "msg-1" {
+		t.Fatalf("oldest accepted messages not retained: %#v", messages)
+	}
+}
+
+func TestRedisInboxBackend_ExpiredMessageIdReStorableAfterTTLCutoff(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	backend := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", 10)
+	expired := inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-redis-expired-restorable","text":"hello"}`,
+		Timestamp: time.Now().Add(-8 * 24 * time.Hour).UnixMilli(),
+	}
+	fresh := expired
+	fresh.Timestamp = time.Now().UnixMilli()
+
+	requireRedisInboxStoreResult(t, backend, "peer-recipient", expired, InboxStoreResultStored)
+	requireRedisInboxStoreResult(t, backend, "peer-recipient", fresh, InboxStoreResultStored)
+	if count := backend.Count("peer-recipient"); count != 1 {
+		t.Fatalf("expected expired entry to be pruned and fresh re-store retained, got %d", count)
+	}
+}
+
+func TestRedisInboxBackend_AckedEntryMessageIdReStorable(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	backend := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", 10)
+	entry := inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-redis-acked-restorable","text":"hello"}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	requireRedisInboxStoreResult(t, backend, "peer-recipient", entry, InboxStoreResultStored)
+	messages, _ := backend.RetrievePending("peer-recipient", 10)
+	if len(messages) != 1 {
+		t.Fatalf("pending count = %d, want 1", len(messages))
+	}
+	acked, err := backend.Ack("peer-recipient", []string{messages[0].ID})
+	if err != nil {
+		t.Fatalf("Ack() error: %v", err)
+	}
+	if acked != 1 {
+		t.Fatalf("Ack() removed = %d, want 1", acked)
+	}
+
+	requireRedisInboxStoreResult(t, backend, "peer-recipient", entry, InboxStoreResultStored)
+}
+
 func TestRedisPushTokenBackend_SurvivesAcrossClients(t *testing.T) {
 	server := miniredis.RunT(t)
 
@@ -464,6 +539,8 @@ func TestRedisPushTokenBackend_SurvivesAcrossClients(t *testing.T) {
 	}
 
 	backendB.UnregisterToken("peer-1")
+	backendB.UnregisterToken("peer-1")
+	backendB.UnregisterToken("missing-peer")
 	if backendA.LookupToken("peer-1") != nil {
 		t.Fatal("expected token to be removed across clients")
 	}

@@ -153,6 +153,17 @@ class PushRegistrationCoordinator {
           );
           _scheduleRetry(result: result, trigger: trigger);
           return;
+        case RegisterPushTokenResult.accountMigrationBlocked:
+          logPushDiagnostic(
+            'registration_account_migration_blocked',
+            details: {'trigger': trigger},
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_REGISTER_COORDINATOR_ACCOUNT_MIGRATION_BLOCKED',
+            details: {'trigger': trigger},
+          );
+          return;
       }
     } catch (e) {
       logPushDiagnostic(

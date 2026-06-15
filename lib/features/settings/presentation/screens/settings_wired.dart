@@ -17,6 +17,9 @@ import 'package:flutter_app/features/settings/application/image_quality_preferen
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -28,6 +31,7 @@ import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
+import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_introduction_debug_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
 import 'settings_screen.dart';
@@ -47,6 +51,9 @@ class SettingsWired extends StatefulWidget {
   final IntroductionRepository? introductionRepository;
   final NearbyLocationService? nearbyLocationService;
   final TransportMetrics? transportMetrics;
+  final WidgetBuilder? moveAccountRouteBuilder;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
   final bool showNavigationBar;
 
   const SettingsWired({
@@ -62,6 +69,9 @@ class SettingsWired extends StatefulWidget {
     this.introductionRepository,
     this.nearbyLocationService,
     this.transportMetrics,
+    this.moveAccountRouteBuilder,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
     this.showNavigationBar = true,
   });
 
@@ -484,6 +494,31 @@ class _SettingsWiredState extends State<SettingsWired> {
     Navigator.of(context).pop();
   }
 
+  void _onMoveAccountToNewPhone() {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'SETTINGS_FL_MOVE_ACCOUNT_NAVIGATE',
+      details: {
+        'hasTransferRunner': widget.accountMigrationRunTransfer != null,
+      },
+    );
+
+    Navigator.of(context).push(
+      buildSettingsSlideUpRoute<void>(
+        builder:
+            widget.moveAccountRouteBuilder ??
+            (_) => AccountMigrationJourneyWired.oldPhone(
+              secureKeyStore: widget.secureKeyStore,
+              identityRepository: widget.identityRepo,
+              runTransfer: widget.accountMigrationRunTransfer,
+              sizeGate: widget.accountMigrationSizeGate,
+              backgroundPreference: _currentBackgroundPreference,
+            ),
+        settings: const RouteSettings(name: 'account-migration-old-phone'),
+      ),
+    );
+  }
+
   /// Builds the debug-only settings section. Only rendered in [kDebugMode].
   ///
   /// Composes the introduction debug card and the transport diagnostics card
@@ -521,7 +556,10 @@ class _SettingsWiredState extends State<SettingsWired> {
       return null;
     }
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: cards);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: cards,
+    );
   }
 
   @override
@@ -560,6 +598,9 @@ class _SettingsWiredState extends State<SettingsWired> {
         onVideoQualityChanged: _onVideoQualityChanged,
         isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
         onNearbySharingChanged: _onNearbySharingChanged,
+        onMoveAccountToNewPhone: identity == null
+            ? null
+            : _onMoveAccountToNewPhone,
         debugSection: _buildDebugSection(),
         onSwitchView: _onSwitchView,
         activeTab: widget.appShellController.activeTab,

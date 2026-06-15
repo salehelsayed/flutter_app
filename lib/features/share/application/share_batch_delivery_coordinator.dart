@@ -280,35 +280,35 @@ class DefaultShareBatchDeliveryCoordinator
     for (final media in processedMedia) {
       final mime = _mimeFromPath(media.file.path);
       final attachmentId = _shareBatchUuid.v4();
-      final fileSize = File(media.file.path).lengthSync();
-      final isLocalSuccess =
-          p2pService.isLocalPeer(resolvedContact.peerId) &&
+      // LAN best-effort first, but the relay upload below ALWAYS runs
+      // (composer semantics): it is the durable recovery copy AND the
+      // source of the attachment's encryption metadata. The old
+      // LAN-success `continue` skipped uploadMedia entirely, building a
+      // metadata-free attachment the G5 send gate now rejects (112 Phase
+      // 2.4). Phase 4: encrypt once — the LAN leg streams the SAME
+      // ciphertext artifact the relay upload consumes, never the raw
+      // shared file.
+      EncryptedMediaArtifact? preparedArtifact;
+      if (p2pService.isLocalPeer(resolvedContact.peerId)) {
+        try {
+          preparedArtifact = await prepareEncryptedMediaArtifact(
+            bridge: bridge,
+            localFilePath: media.file.path,
+          );
           await p2pService.sendLocalMedia(
             peerId: resolvedContact.peerId,
-            filePath: media.file.path,
-            mime: mime,
+            filePath: preparedArtifact.encryptedPath,
+            mime: kOpaqueMediaTransportMime,
             mediaId: attachmentId,
             fromPeerId: identity.peerId,
             durationMs: media.durationMs,
+            enc: true,
+            encScheme: preparedArtifact.scheme,
           );
-
-      if (isLocalSuccess) {
-        attachments.add(
-          MediaAttachment(
-            id: attachmentId,
-            messageId: '',
-            mime: mime,
-            size: fileSize,
-            mediaType: MediaAttachment.mediaTypeFromMime(mime),
-            width: media.width,
-            height: media.height,
-            durationMs: media.durationMs,
-            localPath: media.file.path,
-            downloadStatus: 'done',
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-          ),
-        );
-        continue;
+        } catch (_) {
+          // Fail closed on the LAN leg — never stream the raw shared file.
+          preparedArtifact = null;
+        }
       }
 
       final uploaded = await uploadMedia(
@@ -321,6 +321,7 @@ class DefaultShareBatchDeliveryCoordinator
         height: media.height,
         durationMs: media.durationMs,
         blobId: attachmentId,
+        preparedArtifact: preparedArtifact,
       );
       if (uploaded == null) {
         return ShareBatchTargetResult(

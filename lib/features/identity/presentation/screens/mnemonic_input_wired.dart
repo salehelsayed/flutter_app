@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
 import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_screen.dart';
@@ -10,6 +12,8 @@ class MnemonicInputWired extends StatelessWidget {
   final Future<Map<String, dynamic>> Function(String mnemonic) callIdentityRestore;
   final Future<Map<String, dynamic>> Function() callMlKemKeygen;
   final VoidCallback onNavigateToMain;
+  final SecureKeyStore? secureKeyStore;
+  final ContactRepository? contactRepo;
 
   const MnemonicInputWired({
     super.key,
@@ -17,6 +21,8 @@ class MnemonicInputWired extends StatelessWidget {
     required this.callIdentityRestore,
     required this.callMlKemKeygen,
     required this.onNavigateToMain,
+    this.secureKeyStore,
+    this.contactRepo,
   });
 
   @override
@@ -38,6 +44,8 @@ class MnemonicInputWired extends StatelessWidget {
       callRestore: callIdentityRestore,
       callMlKemKeygen: callMlKemKeygen,
       repo: repository,
+      secureKeyStore: secureKeyStore,
+      contactRepo: contactRepo,
     );
 
     if (!context.mounted) return;

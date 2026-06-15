@@ -25,6 +25,7 @@ import 'package:flutter_app/features/groups/application/add_group_member_use_cas
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
@@ -269,6 +270,7 @@ const _rolesByScenario = <String, List<String>>{
   'pl002': <String>['alice', 'bob', 'charlie'],
   'pl012': <String>['alice', 'bob', 'charlie'],
   'private_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
+  'private_media_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
   'private_removed_reaction_rejected': <String>['alice', 'bob', 'charlie'],
   'private_removed_old_key_publish_rejected': <String>[
     'alice',
@@ -284,6 +286,11 @@ const _rolesByScenario = <String, List<String>>{
   'private_abc_create': <String>['alice', 'bob', 'charlie'],
   'private_full_mesh_online': <String>['alice', 'bob', 'charlie'],
   'private_relay_only_delivery': <String>['alice', 'bob', 'charlie'],
+  'private_stale_roster_recipient_omission': <String>[
+    'alice',
+    'bob',
+    'charlie',
+  ],
   'private_partition_readd_heal': <String>['alice', 'bob', 'charlie'],
   'private_relay_reconnect_group_recovery': <String>['alice', 'bob', 'charlie'],
   'private_peer_disconnect_not_removal': <String>['alice', 'bob', 'charlie'],
@@ -333,6 +340,7 @@ const _rolesByScenario = <String, List<String>>{
   ],
   'private_timeline_truth': <String>['alice', 'bob', 'charlie'],
   'private_non_friend_member_delivery': <String>['alice', 'bob', 'dana'],
+  'private_online_dissolve_convergence': <String>['alice', 'bob', 'charlie'],
   'private_admin_role_transfer_delivery': <String>['alice', 'bob', 'charlie'],
   'private_admin_metadata_intro_photo_convergence': <String>[
     'alice',
@@ -345,6 +353,7 @@ const _rolesByScenario = <String, List<String>>{
     'charlie',
     'dana',
   ],
+  'private_override_removal_nonconvergence': <String>['alice', 'bob', 'charlie'],
   _regressionAdminPermissionsScenario: <String>[
     'alice',
     'bob',
@@ -376,6 +385,7 @@ const _rolesByScenario = <String, List<String>>{
   'gm012': <String>['alice', 'bob', 'charlie'],
   'gm013': <String>['alice', 'bob', 'charlie'],
   'gm014': <String>['alice', 'bob', 'charlie'],
+  'private_voluntary_leave_convergence': <String>['alice', 'bob', 'charlie'],
   'gm015': <String>['alice', 'bob', 'charlie'],
   'gm016': <String>['alice', 'bob', 'charlie'],
   'gm017': <String>['alice', 'bob', 'charlie'],
@@ -1341,7 +1351,7 @@ Future<Map<String, dynamic>> _sendProofMessage({
   final actualExpectedRecipientCount =
       _intFromBridgeValue(reliableResponse?['expectedRecipientCount']) ??
       _intFromBridgeValue(publishResponse?['expectedRecipientCount']);
-  final recipientPeerIds = _actualDurableRecipientPeerIdsForMessage(
+  final durableRecipientPeerIds = _tryActualDurableRecipientPeerIdsForMessage(
     stack: stack,
     messageId: result.$2?.id ?? messageId,
   );
@@ -1387,8 +1397,8 @@ Future<Map<String, dynamic>> _sendProofMessage({
     'keyEpoch': result.$2?.keyGeneration ?? await _keyEpoch(stack, groupId),
     if (quotedMessageId != null && quotedMessageId.isNotEmpty)
       'quotedMessageId': quotedMessageId,
-    'recipientPeerIds': recipientPeerIds,
-    'actualDurablePayloadProof': true,
+    'recipientPeerIds': durableRecipientPeerIds ?? const <String>[],
+    'actualDurablePayloadProof': durableRecipientPeerIds != null,
     'topicPeers': ?actualTopicPeers,
     'expectedRecipientCount': ?actualExpectedRecipientCount,
     if (reliableResponse?['deliveryMode'] != null)
@@ -2189,7 +2199,7 @@ Future<Map<String, dynamic>> _sendGo002InboxFailureProofMessage({
   return sent;
 }
 
-List<String> _actualDurableRecipientPeerIdsForMessage({
+List<String>? _tryActualDurableRecipientPeerIdsForMessage({
   required GroupMultiDeviceTestStack stack,
   required String messageId,
 }) {
@@ -2231,6 +2241,20 @@ List<String> _actualDurableRecipientPeerIdsForMessage({
     return _stringListFromBridgeValue(
       reliableExchange.response['recipientPeerIds'],
     );
+  }
+  return null;
+}
+
+List<String> _actualDurableRecipientPeerIdsForMessage({
+  required GroupMultiDeviceTestStack stack,
+  required String messageId,
+}) {
+  final recipientPeerIds = _tryActualDurableRecipientPeerIdsForMessage(
+    stack: stack,
+    messageId: messageId,
+  );
+  if (recipientPeerIds != null) {
+    return recipientPeerIds;
   }
   throw StateError('Missing actual group:inboxStore payload for $messageId');
 }
@@ -3695,6 +3719,230 @@ Future<void> _writeVerdict({
   stdout.writeln(jsonEncode(verdict));
 }
 
+String _staleRosterCharlieText() =>
+    'B-02 charlie stale-roster send (bob omitted) $_runId';
+
+// B-02 seam helper: corrupts charlie's LOCAL group roster just before send by
+// deleting bob's member row. groupRepo.removeMember(...) is a local-only DB
+// delete (no broadcast), so this simulates a corrupted/lagged local roster on
+// the sender. sendGroupMessage derives BOTH the floodPublish member set and the
+// relay durable recipientPeerIds from groupRepo.getMembers(groupId), so omitting
+// bob here drops bob from live fanout AND relay custody.
+Future<Map<String, dynamic>> _corruptCharlieLocalRosterOmittingBob({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String bobPeerId,
+}) async {
+  final beforeMembers = await _memberPeerIds(stack, groupId);
+  await stack.groupRepo.removeMember(groupId, bobPeerId);
+  final afterMembers = await _memberPeerIds(stack, groupId);
+  return <String, dynamic>{
+    'bobInRosterBeforeCorruption': beforeMembers.contains(bobPeerId),
+    'bobInRosterAfterCorruption': afterMembers.contains(bobPeerId),
+    'rosterMemberCountAfter': afterMembers.length,
+  };
+}
+
+// B-02 proof struct. bobMessageReceived=true is REQUIRED by the evaluator; on
+// HEAD bob does NOT receive, so this is the FAILING (red-by-design) assertion.
+Map<String, dynamic> _staleRosterProof({
+  required String proofRole,
+  required String bobPeerId,
+  required bool bobOmittedFromCharlieRoster,
+  required bool bobMessageReceived,
+  required Map<String, dynamic>? charliesSentProof,
+}) {
+  final recipientPeerIds =
+      (charliesSentProof?['recipientPeerIds'] as List?)
+          ?.whereType<String>()
+          .toList(growable: false) ??
+      const <String>[];
+  return <String, dynamic>{
+    'rowId': 'B-02',
+    'scenario': 'private_stale_roster_recipient_omission',
+    'proofRole': proofRole,
+    'bobPeerId': bobPeerId,
+    // Sender (charlie) corrupted its local roster so bob was dropped.
+    'bobOmittedFromCharlieRoster': bobOmittedFromCharlieRoster,
+    'bobInRelayRecipientPeerIds': recipientPeerIds.contains(bobPeerId),
+    // CORRECT behavior: bob must still eventually receive. This is RED today.
+    'bobMessageReceived': bobMessageReceived,
+  };
+}
+
+// charlie is the SENDER. It joins the group, corrupts its OWN local roster to
+// omit bob, then sends. alice creates the group (control witness).
+Future<void> _runStaleRosterCharlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('${_role}_group_joined'), 'ok');
+
+  // Wait for the group to converge so the corruption is a deliberate stale
+  // roster, not a not-yet-synced one.
+  await waitForSharedSignal(_signalName('alice_group_joined'));
+  await waitForSharedSignal(_signalName('bob_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final corruption = await _corruptCharlieLocalRosterOmittingBob(
+    stack: stack,
+    groupId: groupId,
+    bobPeerId: bobPeerId,
+  );
+
+  final sent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'charlieStaleRoster',
+    text: _staleRosterCharlieText(),
+  );
+  writeSharedJson(_signalName('charlie_stale_roster_sent.json'), sent);
+
+  final bobOmitted = corruption['bobInRosterAfterCorruption'] == false;
+  // Read bob's self-reported reception (bob writes it after waiting/timeout).
+  final bobReport = await waitForSharedJson(
+    _signalName('bob_stale_roster_report.json'),
+  );
+  final bobReceived = bobReport['bobMessageReceived'] == true;
+
+  final proof = _staleRosterProof(
+    proofRole: 'charlie',
+    bobPeerId: bobPeerId,
+    bobOmittedFromCharlieRoster: bobOmitted,
+    bobMessageReceived: bobReceived,
+    charliesSentProof: sent,
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[sent],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{'staleRosterRecipientOmissionProof': proof},
+  );
+}
+
+// alice creates the group and is a CONTROL witness: alice's roster is intact.
+Future<void> _runStaleRosterAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'B-02 Stale Roster Private ABC',
+  );
+  writeSharedJson(_signalName('group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+
+  await waitForSharedSignal(_signalName('bob_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
+  writeSharedText(_signalName('${_role}_group_joined'), 'ok');
+
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final charlieSent = await waitForSharedJson(
+    _signalName('charlie_stale_roster_sent.json'),
+  );
+  final bobReport = await waitForSharedJson(
+    _signalName('bob_stale_roster_report.json'),
+  );
+  final bobReceived = bobReport['bobMessageReceived'] == true;
+
+  final proof = _staleRosterProof(
+    proofRole: 'alice',
+    bobPeerId: bobPeerId,
+    bobOmittedFromCharlieRoster: true,
+    bobMessageReceived: bobReceived,
+    charliesSentProof: charlieSent,
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{'staleRosterRecipientOmissionProof': proof},
+  );
+}
+
+// bob is the OMITTED member. Correct behavior: bob still eventually receives
+// charlie's message. On HEAD this times out (bob dropped from fanout + relay
+// custody). We catch the timeout so a verdict is still written, then the
+// evaluator turns bobMessageReceived=false into the documented RED failure.
+Future<void> _runStaleRosterBob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('${_role}_group_joined'), 'ok');
+
+  final charlieSent = await waitForSharedJson(
+    _signalName('charlie_stale_roster_sent.json'),
+  );
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  final bobPeerId = stack.identity.peerId;
+
+  Map<String, dynamic>? received;
+  var bobReceived = false;
+  try {
+    received = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'charlieStaleRoster',
+      text: charlieSent['text'] as String,
+      senderPeerId: charliePeerId,
+      timeout: const Duration(seconds: 90),
+    );
+    bobReceived = received['persistedCount'] == 1;
+  } on TimeoutException catch (error) {
+    stdout.writeln(
+      '[GMP][bob] B-02 stale-roster: did NOT receive charlie message '
+      '(expected RED on HEAD): $error',
+    );
+  }
+
+  final report = <String, dynamic>{
+    'bobPeerId': bobPeerId,
+    'bobMessageReceived': bobReceived,
+  };
+  writeSharedJson(_signalName('bob_stale_roster_report.json'), report);
+
+  final proof = _staleRosterProof(
+    proofRole: 'bob',
+    bobPeerId: bobPeerId,
+    bobOmittedFromCharlieRoster: true,
+    bobMessageReceived: bobReceived,
+    charliesSentProof: charlieSent,
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: received == null
+        ? const <Map<String, dynamic>>[]
+        : <Map<String, dynamic>>[received],
+    extra: <String, dynamic>{'staleRosterRecipientOmissionProof': proof},
+  );
+}
+
 String _sv001DanaText() => 'SV-001 Dana never-member publish $_runId';
 
 Future<Map<String, dynamic>> _sv001NoDanaMessageProof({
@@ -3736,6 +3984,12 @@ Future<void> _runSv001Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final sent = await _sendProofMessage(
@@ -4582,6 +4836,55 @@ Map<String, dynamic> _up001MembershipConfigSyncProof({
   };
 }
 
+MediaAttachment _l01ImageAttachment({required String messageId}) {
+  final now = DateTime.now().toUtc().toIso8601String();
+  return MediaAttachment(
+    id: 'l01-image-$_runId',
+    messageId: messageId,
+    mime: 'image/jpeg',
+    size: 12345,
+    mediaType: 'image',
+    width: 1280,
+    height: 720,
+    localPath: '/tmp/l01-image.jpg',
+    downloadStatus: 'done',
+    contentHash:
+        'l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l0',
+    encryptionKeyBase64: 'key-l01-image',
+    encryptionNonce: 'nonce-l01-image',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+    createdAt: now,
+  );
+}
+
+Map<String, dynamic> _l01MediaReactionRoundtripProof({
+  required String targetMessageId,
+  required int targetMediaCount,
+  required Map<String, dynamic> reaction,
+  required Map<String, dynamic> observation,
+  required bool aliceObservedSignal,
+  required bool charlieObservedSignal,
+}) {
+  return <String, dynamic>{
+    'rowId': 'L-01',
+    'scenario': 'private_media_reaction_roundtrip',
+    'activeRoles': const <String>['alice', 'bob', 'charlie'],
+    'targetMessageId': targetMessageId,
+    'targetIsMedia': targetMediaCount >= 1,
+    'targetMediaCount': targetMediaCount,
+    'reactorRole': 'bob',
+    'reactionEmoji': reaction['emoji'],
+    'reactionOutcome': reaction['outcome'],
+    'reactionAccepted': reaction['accepted'] == true,
+    'observedByRole': _role,
+    'receivedViaGroupReactionStream': observation['streamReceived'] == true,
+    'appliedOnceToTarget': observation['appliedOnceToTarget'] == true,
+    'persistedReactionCount': observation['persistedReactionCount'],
+    'aliceObservedSignal': aliceObservedSignal,
+    'charlieObservedSignal': charlieObservedSignal,
+  };
+}
+
 Map<String, dynamic> _pl009ReactionRoundtripProof({
   required String targetMessageId,
   required Map<String, dynamic> reaction,
@@ -4647,6 +4950,95 @@ Map<String, dynamic> _pl011ReaddReactionProof({
     'bobObservedSignal': bobObservedSignal,
     'finalEpoch': finalEpoch,
   };
+}
+
+Future<void> _runL01MediaReactionAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  await waitForSharedSignal(_signalName('bob_l01_invite_listener_ready'));
+  await waitForSharedSignal(_signalName('charlie_l01_invite_listener_ready'));
+
+  final (groupId, createProof) = await _createMl001PrivateAbcGroup(
+    stack: stack,
+    identities: identities,
+  );
+  await waitForSharedSignal(_signalName('bob_l01_invite_accepted'));
+  await waitForSharedSignal(_signalName('charlie_l01_invite_accepted'));
+  await _waitForTimelineTexts(
+    stack: stack,
+    groupId: groupId,
+    texts: const <String>[
+      'GM Bob joined the group',
+      'GM Charlie joined the group',
+    ],
+  );
+
+  final targetMessageId =
+      'gmp_${_runId}_${_scenario}_aliceMediaReactionTarget_$_role';
+  final target = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceMediaReactionTarget',
+    text: 'L-01 Alice media reaction target $_runId',
+    mediaAttachments: <MediaAttachment>[
+      _l01ImageAttachment(messageId: targetMessageId),
+    ],
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceMediaReactionTarget.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceMediaReactionTarget.json'),
+  );
+
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final messageId = target['messageId'] as String;
+  final reactionChangeFuture = stack.groupListener.groupReactionChangeStream
+      .firstWhere(
+        (change) =>
+            change.messageId == messageId && change.senderPeerId == bobPeerId,
+      );
+  writeSharedText(_signalName('alice_l01_reaction_receiver_ready'), 'ok');
+
+  final bobReaction = await waitForSharedJson(
+    _signalName('bob_reaction_bobOnAliceMediaTarget.json'),
+  );
+  final observation = await _waitForReactionChangeAndStorage(
+    stack: stack,
+    changeFuture: reactionChangeFuture,
+    key: 'bobOnAliceMediaTarget',
+    messageId: messageId,
+    reactorPeerId: bobPeerId,
+    emoji: bobReaction['emoji'] as String,
+  );
+  writeSharedText(_signalName('alice_observed_bobOnAliceMediaTarget'), 'ok');
+  await waitForSharedSignal(
+    _signalName('charlie_observed_bobOnAliceMediaTarget'),
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[target],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'ml001CreateInviteProof': _ml001AliceProof(
+        createProof: createProof,
+        bobAcceptedSignal: true,
+        charlieAcceptedSignal: true,
+        readableJoinTimelineObserved: true,
+      ),
+      'l01MediaReactionRoundtripProof': _l01MediaReactionRoundtripProof(
+        targetMessageId: messageId,
+        targetMediaCount: (target['mediaAttachmentCount'] as int?) ?? 0,
+        reaction: bobReaction,
+        observation: observation,
+        aliceObservedSignal: true,
+        charlieObservedSignal: true,
+      ),
+    },
+  );
 }
 
 Future<void> _runPl009ReactionAlice(
@@ -4728,6 +5120,150 @@ Future<void> _runPl009ReactionAlice(
       ),
     },
   );
+}
+
+Future<void> _runL01MediaReactionInvitee(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = GroupInviteListener(
+    groupInviteStream: stack.messageRouter.groupInviteStream,
+    groupRepo: stack.groupRepo,
+    pendingInviteRepo: pendingInviteRepo,
+    contactRepo: stack.contactRepo,
+    bridge: stack.bridge,
+    getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
+    getOwnPeerId: () async => stack.identity.peerId,
+    getOwnDeviceId: () async => stack.p2pService.currentState.peerId,
+    getOwnTransportPeerId: () async => stack.p2pService.currentState.peerId,
+    getOwnMlKemPublicKey: () async => stack.identity.mlKemPublicKey,
+    msgRepo: stack.groupMsgRepo,
+  );
+  inviteListener.start();
+  try {
+    writeSharedText(_signalName('${_role}_l01_invite_listener_ready'), 'ok');
+    final invite = await _waitForMl001PendingInvite(
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final (acceptResult, acceptedGroup) = await acceptPendingGroupInvite(
+      pendingInviteRepo: pendingInviteRepo,
+      groupRepo: stack.groupRepo,
+      contactRepo: stack.contactRepo,
+      msgRepo: stack.groupMsgRepo,
+      bridge: stack.bridge,
+      groupId: invite.groupId,
+      groupMessageListener: stack.groupListener,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      ownDeviceId: stack.p2pService.currentState.peerId,
+      ownTransportPeerId: stack.p2pService.currentState.peerId,
+      ownMlKemPublicKey: stack.identity.mlKemPublicKey,
+    );
+    expect(acceptResult, AcceptPendingGroupInviteResult.success);
+    expect(acceptedGroup, isNotNull);
+    writeSharedText(_signalName('${_role}_l01_invite_accepted'), 'ok');
+
+    final target = await waitForSharedJson(
+      _signalName('alice_sent_aliceMediaReactionTarget.json'),
+    );
+    final received = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: invite.groupId,
+      key: 'aliceMediaReactionTarget',
+      text: target['text'] as String,
+      senderPeerId: identities['alice']!['peerId'] as String,
+    );
+    if (((received['mediaAttachmentCount'] as int?) ?? 0) < 1) {
+      throw StateError(
+        '$_role did not receive the L-01 media attachment on the reaction target',
+      );
+    }
+    final messageId = target['messageId'] as String;
+    final bobPeerId = identities['bob']!['peerId'] as String;
+
+    Map<String, dynamic> bobReaction;
+    Map<String, dynamic> observation;
+    if (_role == 'bob') {
+      await waitForSharedSignal(
+        _signalName('alice_l01_reaction_receiver_ready'),
+      );
+      await waitForSharedSignal(
+        _signalName('charlie_l01_reaction_receiver_ready'),
+      );
+      bobReaction = await _sendProofReaction(
+        stack: stack,
+        groupId: invite.groupId,
+        messageId: messageId,
+        key: 'bobOnAliceMediaTarget',
+        emoji: '🔥',
+      );
+      observation = await _reactionStorageProof(
+        stack: stack,
+        key: 'bobOnAliceMediaTarget',
+        messageId: messageId,
+        reactorPeerId: stack.identity.peerId,
+        emoji: bobReaction['emoji'] as String,
+        streamReceived: false,
+      );
+      await waitForSharedSignal(
+        _signalName('alice_observed_bobOnAliceMediaTarget'),
+      );
+      await waitForSharedSignal(
+        _signalName('charlie_observed_bobOnAliceMediaTarget'),
+      );
+    } else {
+      final reactionChangeFuture = stack.groupListener.groupReactionChangeStream
+          .firstWhere(
+            (change) =>
+                change.messageId == messageId &&
+                change.senderPeerId == bobPeerId,
+          );
+      writeSharedText(
+        _signalName('charlie_l01_reaction_receiver_ready'),
+        'ok',
+      );
+      bobReaction = await waitForSharedJson(
+        _signalName('bob_reaction_bobOnAliceMediaTarget.json'),
+      );
+      observation = await _waitForReactionChangeAndStorage(
+        stack: stack,
+        changeFuture: reactionChangeFuture,
+        key: 'bobOnAliceMediaTarget',
+        messageId: messageId,
+        reactorPeerId: bobPeerId,
+        emoji: bobReaction['emoji'] as String,
+      );
+      writeSharedText(
+        _signalName('charlie_observed_bobOnAliceMediaTarget'),
+        'ok',
+      );
+      await waitForSharedSignal(
+        _signalName('alice_observed_bobOnAliceMediaTarget'),
+      );
+    }
+
+    await _writeVerdict(
+      stack: stack,
+      groupId: invite.groupId,
+      sentMessages: const <Map<String, dynamic>>[],
+      receivedMessages: <Map<String, dynamic>>[received],
+      extra: <String, dynamic>{
+        'l01MediaReactionRoundtripProof': _l01MediaReactionRoundtripProof(
+          targetMessageId: messageId,
+          targetMediaCount: (received['mediaAttachmentCount'] as int?) ?? 0,
+          reaction: bobReaction,
+          observation: observation,
+          aliceObservedSignal: true,
+          charlieObservedSignal: true,
+        ),
+      },
+    );
+  } finally {
+    inviteListener.dispose();
+  }
 }
 
 Future<void> _runPl009ReactionInvitee(
@@ -9136,6 +9672,119 @@ Future<Map<String, dynamic>> _regrantPromptGroupAvatarForMembers({
   };
 }
 
+// I-01 dissolve driver. Unlike removeGroupMember, dissolveGroup is
+// SELF-CONTAINED: it signs the group_dissolved transition, publishes it over
+// GossipSub, stores the durable relay replay, persists isDissolved=true and
+// calls callGroupLeave internally. The harness only resolves the admin device
+// binding (the B4 fix: signed actorDeviceId/transportPeerId/keyPackageId must be
+// non-null or receivers reject with device/transport mismatch) and invokes it.
+Future<(DissolveGroupResult, GroupModel?)> _dissolveGroupViaUseCase({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  DateTime? dissolvedAt,
+}) async {
+  final senderBinding = await resolveGroupSenderDeviceBinding(
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    senderPeerId: stack.identity.peerId,
+    preferredDeviceId: stack.p2pService.currentState.peerId,
+    preferredTransportPeerId: stack.p2pService.currentState.peerId,
+    senderPublicKey: stack.identity.publicKey,
+  );
+  return dissolveGroup(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    msgRepo: stack.groupMsgRepo,
+    groupId: groupId,
+    actorPeerId: stack.identity.peerId,
+    actorUsername: stack.identity.username,
+    actorPublicKey: stack.identity.publicKey,
+    actorPrivateKey: stack.identity.privateKey,
+    actorDeviceId: senderBinding.deviceId,
+    actorTransportPeerId: senderBinding.transportPeerId,
+    actorKeyPackageId: senderBinding.keyPackageId,
+    dissolvedAt: dissolvedAt,
+  );
+}
+
+// Receiver-side wait: drives the group toward isDissolved==true while
+// periodically draining the offline inbox (in case the live publish was missed).
+Future<bool> _waitForGroupDissolved({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  Duration timeout = const Duration(seconds: 120),
+}) async {
+  var nextDrainAt = DateTime.fromMillisecondsSinceEpoch(0);
+  Future<bool> isDissolved() async {
+    final group = await stack.groupRepo.getGroup(groupId);
+    return group?.isDissolved ?? false;
+  }
+
+  try {
+    await waitForCondition(() async {
+      if (await isDissolved()) {
+        return true;
+      }
+      if (DateTime.now().isAfter(nextDrainAt)) {
+        nextDrainAt = DateTime.now().add(const Duration(seconds: 2));
+        try {
+          await drainGroupOfflineInboxForGroup(
+            bridge: stack.bridge,
+            groupRepo: stack.groupRepo,
+            msgRepo: stack.groupMsgRepo,
+            groupId: groupId,
+            groupMessageListener: stack.groupListener,
+            selfPeerId: stack.identity.peerId,
+          );
+        } catch (error) {
+          stdout.writeln(
+            '[GMP][$_role] drain while waiting for dissolve failed: $error',
+          );
+        }
+      }
+      return isDissolved();
+    }, timeout: timeout);
+  } on TimeoutException {
+    return false;
+  }
+  return true;
+}
+
+// After dissolve, the receiver renders a terminal "X dissolved the group"
+// timeline row (buildGroupDissolvedTimelineMessage). Match the rendered text
+// (or the raw __sys payload if a row stores it verbatim).
+Future<bool> _hasDissolveTimelineRow({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+}) async {
+  final texts = await _timelineTexts(stack: stack, groupId: groupId);
+  return texts.any(
+    (text) =>
+        text.contains('dissolved the group') ||
+        text.contains('group_dissolved'),
+  );
+}
+
+Map<String, dynamic> _i01DissolveConvergenceProof({
+  required String role,
+  required bool groupDissolvedLocally,
+  bool dissolveResultSuccess = false,
+  bool actorBindingSigned = false,
+  bool readOnlyAfterDissolve = false,
+  bool dissolveTimelineRowPresent = false,
+}) {
+  return <String, dynamic>{
+    'rowId': 'I-01',
+    'scenario': 'private_online_dissolve_convergence',
+    'proofRole': role,
+    'groupDissolvedLocally': groupDissolvedLocally,
+    'dissolveResultSuccess': dissolveResultSuccess,
+    'actorBindingSigned': actorBindingSigned,
+    'readOnlyAfterDissolve': readOnlyAfterDissolve,
+    'dissolveTimelineRowPresent': dissolveTimelineRowPresent,
+  };
+}
+
 Future<Map<String, dynamic>> _prepareMemberRemovedSystemPayload({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
@@ -9716,6 +10365,26 @@ List<String> _ge002PostRemovalKeys() => List<String>.generate(10, (index) {
   return 'aliceGe002PostRemoval$ordinal';
 });
 
+bool _remainingPairLiveTopicProof(Map<String, dynamic> sent) {
+  return sent['deliveryMode'] == 'live_only' &&
+      sent['actualTopicPeerProof'] == true &&
+      sent['topicPeers'] == 1 &&
+      sent['inboxStored'] != true;
+}
+
+bool _remainingPairSendExcludedRemovedPeer({
+  required Map<String, dynamic> sent,
+  required String remainingPeerId,
+}) {
+  final recipients = (sent['recipientPeerIds'] as List<dynamic>? ?? const [])
+      .map((value) => value.toString())
+      .toList(growable: false);
+  if (recipients.isNotEmpty) {
+    return recipients.length == 1 && recipients.single == remainingPeerId;
+  }
+  return _remainingPairLiveTopicProof(sent);
+}
+
 Future<void> _runGe002Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -9761,11 +10430,14 @@ Future<void> _runGe002Alice(
   }
 
   final everyPostRemovalExcludedCharlie = sentMessages.every((sent) {
-    final recipients = (sent['recipientPeerIds'] as List<dynamic>? ?? const [])
-        .map((value) => value.toString())
-        .toList(growable: false);
-    return recipients.length == 1 && recipients.single == bobPeerId;
+    return _remainingPairSendExcludedRemovedPeer(
+      sent: sent,
+      remainingPeerId: bobPeerId,
+    );
   });
+  final actualLiveTopicPeerProof = sentMessages.every(
+    _remainingPairLiveTopicProof,
+  );
 
   await _writeVerdict(
     stack: stack,
@@ -9780,6 +10452,7 @@ Future<void> _runGe002Alice(
         'actualDurablePayloadProof': sentMessages.every(
           (sent) => sent['actualDurablePayloadProof'] == true,
         ),
+        'actualLiveTopicPeerProof': actualLiveTopicPeerProof,
         'postRemovalMessageCount': sentMessages.length,
         'postRemovalMessageKeys': keys,
         'everyPostRemovalExcludedCharlie': everyPostRemovalExcludedCharlie,
@@ -9994,11 +10667,14 @@ Future<void> _runGe003Bob(
   }
 
   final everyPostRemovalExcludedCharlie = sentMessages.every((sent) {
-    final recipients = (sent['recipientPeerIds'] as List<dynamic>? ?? const [])
-        .map((value) => value.toString())
-        .toList(growable: false);
-    return recipients.length == 1 && recipients.single == alicePeerId;
+    return _remainingPairSendExcludedRemovedPeer(
+      sent: sent,
+      remainingPeerId: alicePeerId,
+    );
   });
+  final actualLiveTopicPeerProof = sentMessages.every(
+    _remainingPairLiveTopicProof,
+  );
 
   await _writeVerdict(
     stack: stack,
@@ -10010,6 +10686,7 @@ Future<void> _runGe003Bob(
         'actualDurablePayloadProof': sentMessages.every(
           (sent) => sent['actualDurablePayloadProof'] == true,
         ),
+        'actualLiveTopicPeerProof': actualLiveTopicPeerProof,
         'postRemovalMessageCount': sentMessages.length,
         'postRemovalMessageKeys': keys,
         'everyPostRemovalExcludedCharlie': everyPostRemovalExcludedCharlie,
@@ -10081,6 +10758,16 @@ List<String> _ge004ReceivedKeysForRole(String role) => _ge004PostReaddKeyByRole
     .map((entry) => entry.value)
     .toList(growable: false);
 
+bool _allReaddedMembersLiveTopicProof(Map<String, dynamic> sent) {
+  final topicPeers = sent['topicPeers'];
+  return sent['deliveryMode'] == 'live_only' &&
+      sent['actualTopicPeerProof'] == true &&
+      topicPeers is int &&
+      topicPeers >= 2 &&
+      sent['inboxStored'] != true &&
+      sent['publishSucceeded'] == true;
+}
+
 Map<String, dynamic> _ge004ReaddExchangeProof({
   required String role,
   required String sentKey,
@@ -10101,6 +10788,9 @@ Map<String, dynamic> _ge004ReaddExchangeProof({
     'memberListIncludesAll': finalMemberPeerIds.length == 3,
     'actualDurablePayloadProof': sentMessages.every(
       (sent) => sent['actualDurablePayloadProof'] == true,
+    ),
+    'actualLiveTopicPeerProof': sentMessages.every(
+      _allReaddedMembersLiveTopicProof,
     ),
     'postReaddSentCount': sentMessages.length,
     'postReaddReceivedCount': receivedMessages.length,
@@ -10579,6 +11269,11 @@ bool _sentKeyStartsWith(Map<String, dynamic> sent, String prefix) {
   return (sent['key'] as String? ?? '').startsWith(prefix);
 }
 
+bool _ge005LiveTopicProof(Map<String, dynamic> sent) {
+  return _remainingPairLiveTopicProof(sent) ||
+      _allReaddedMembersLiveTopicProof(sent);
+}
+
 Map<String, dynamic> _ge005RemoveReaddLoopProof({
   required List<Map<String, dynamic>> sentMessages,
   required List<Map<String, dynamic>> receivedMessages,
@@ -10619,6 +11314,8 @@ Map<String, dynamic> _ge005RemoveReaddLoopProof({
     'actualDurablePayloadProof': sentMessages.every(
       (sent) => sent['actualDurablePayloadProof'] == true,
     ),
+    'actualLiveTopicPeerProof':
+        sentMessages.isNotEmpty && sentMessages.every(_ge005LiveTopicProof),
     'removedWindowExcludedCharlie': removedWindowSentMessages.every((sent) {
       final recipients =
           (sent['recipientPeerIds'] as List<dynamic>? ?? const [])
@@ -11020,6 +11717,12 @@ Future<void> _runGe006Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_old_state_persisted.json'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await waitForSharedSignal(_signalName('charlie_offline_before_removal'));
   await Future<void>.delayed(const Duration(seconds: 5));
 
@@ -11457,6 +12160,12 @@ Future<void> _runGe007Alice(
 
   await waitForSharedSignal(_signalName('charlie_group_joined'));
   await waitForSharedSignal(_signalName('bob_old_state_persisted.json'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await waitForSharedSignal(_signalName('bob_offline_before_mutation'));
   await Future<void>.delayed(const Duration(seconds: 5));
 
@@ -12286,6 +12995,12 @@ Future<void> _runGe009Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   writeSharedText(_signalName('ge009_all_joined'), 'ok');
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -12845,6 +13560,12 @@ Future<void> _runGe010Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   writeSharedText(_signalName('ge010_all_joined'), 'ok');
 
   final bobLeft = await waitForSharedJson(
@@ -13030,6 +13751,12 @@ Future<void> _runGo002Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
 
   final sent = await _sendGo002InboxFailureProofMessage(
     stack: stack,
@@ -13156,6 +13883,12 @@ Future<void> _runGe011Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   writeSharedText(_signalName('ge011_all_joined'), 'ok');
 
   final bobReady = await waitForSharedJson(
@@ -15799,6 +16532,476 @@ Future<bool> _ml016MembersConverged({
   return members.contains(identities['alice']!['peerId'] as String) &&
       members.contains(identities['bob']!['peerId'] as String) &&
       members.contains(identities['dana']!['peerId'] as String);
+}
+
+Map<String, dynamic> _voluntaryLeaveConvergenceProof({
+  required String role,
+  required bool charlieExcludedFromRoster,
+  required bool leaveTimelineRendered,
+  required bool keyEpochAdvanced,
+  required bool leaveWasSilent,
+  required bool groupHardDeletedLocally,
+  // True on the leaver (charlie) when the departing writer could not rotate
+  // (best-effort leave). The remaining creator (alice) re-keys on receipt, so
+  // forward secrecy is proven by alice/bob's keyEpochAdvanced, not charlie's.
+  bool rotationDeferred = false,
+  int? initialKeyEpoch,
+  int? finalKeyEpoch,
+  String? leaveTimelineText,
+}) {
+  return <String, dynamic>{
+    'rowId': 'H-01',
+    'scenario': 'private_voluntary_leave_convergence',
+    'proofRole': role,
+    'charlieExcludedFromRoster': charlieExcludedFromRoster,
+    'leaveTimelineRendered': leaveTimelineRendered,
+    'keyEpochAdvanced': keyEpochAdvanced,
+    'rotationDeferred': rotationDeferred,
+    'leaveWasSilent': leaveWasSilent,
+    'groupHardDeletedLocally': groupHardDeletedLocally,
+    'initialKeyEpoch': ?initialKeyEpoch,
+    'finalKeyEpoch': ?finalKeyEpoch,
+    'leaveTimelineText': ?leaveTimelineText,
+  };
+}
+
+Future<Map<String, dynamic>?> _latestVoluntaryLeaveTimelineEvent({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String leaverPeerId,
+}) async {
+  // The voluntary-leave system message is a 'member_removed' transition whose
+  // actor == subject (the leaver signs their own departure), so
+  // buildMemberRemovedTimelineText renders 'X left the group'. Its id prefix is
+  // 'sys-member_removed:<groupId>:<leaverPeerId>:'.
+  final messages = await stack.groupMsgRepo.getMessagesPage(groupId, limit: 200);
+  final idPrefix = 'sys-member_removed:$groupId:$leaverPeerId:';
+  final leaveEvents = messages
+      .where((message) => message.id.startsWith(idPrefix))
+      .toList(growable: false);
+  if (leaveEvents.isEmpty) return null;
+  leaveEvents.sort((left, right) => left.timestamp.compareTo(right.timestamp));
+  final latest = leaveEvents.last;
+  return <String, dynamic>{
+    'messageId': latest.id,
+    'text': latest.text,
+    'eventAt': latest.timestamp.toUtc().toIso8601String(),
+  };
+}
+
+Future<Map<String, dynamic>> _waitForVoluntaryLeaveTimeline({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String leaverPeerId,
+  Duration timeout = const Duration(seconds: 120),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  var nextDrainAt = DateTime.fromMillisecondsSinceEpoch(0);
+  Map<String, dynamic>? lastSeenLeaveRow;
+  while (DateTime.now().isBefore(deadline)) {
+    if (DateTime.now().isAfter(nextDrainAt)) {
+      nextDrainAt = DateTime.now().add(const Duration(seconds: 2));
+      try {
+        await drainGroupOfflineInboxForGroup(
+          bridge: stack.bridge,
+          groupRepo: stack.groupRepo,
+          msgRepo: stack.groupMsgRepo,
+          groupId: groupId,
+          groupMessageListener: stack.groupListener,
+          selfPeerId: stack.identity.peerId,
+        );
+      } catch (error) {
+        stdout.writeln(
+          '[GMP][$_role] drain while waiting for leave timeline failed: $error',
+        );
+      }
+    }
+    final event = await _latestVoluntaryLeaveTimelineEvent(
+      stack: stack,
+      groupId: groupId,
+      leaverPeerId: leaverPeerId,
+    );
+    if (event != null) {
+      lastSeenLeaveRow = event;
+      if ((event['text'] as String).contains('left the group')) {
+        return event;
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  // Return the last leave row we saw (text may differ on the receiver render
+  // path) so the per-role proof can record it; the evaluator decides pass/fail
+  // and scopes the strict 'left the group' text check to the leaver (charlie).
+  if (lastSeenLeaveRow != null) {
+    return lastSeenLeaveRow;
+  }
+  throw TimeoutException(
+    '$_role timed out waiting for voluntary-leave timeline for $leaverPeerId',
+  );
+}
+
+Future<void> _runVoluntaryLeaveConvergenceAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'H-01 Voluntary Leave Convergence',
+  );
+  final groupId = (fixture['group'] as Map)['id'] as String;
+
+  // Charlie leaves as the plain writer he is in the field repro — no test-only
+  // co-admin/rotateKeys promotion. Voluntary leave is now best-effort about
+  // rotation: the writer broadcasts member_removed and leaves without rotating,
+  // and alice (the remaining creator) re-keys on receipt, preserving forward
+  // secrecy. Publishing the unmodified fixture imports charlie as a writer.
+  final seededGroup = await stack.groupRepo.getGroup(groupId);
+  final seededKey = await stack.groupRepo.getLatestKey(groupId);
+  final seededMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedJson(
+    _signalName('group_fixture.json'),
+    buildGroupFixture(
+      group: seededGroup!,
+      keyInfo: seededKey!,
+      members: seededMembers,
+    ),
+  );
+
+  await waitForSharedSignal(_signalName('bob_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  final initialKeyEpoch = await _keyEpoch(stack, groupId);
+
+  // Charlie leaves voluntarily; alice converges on the departure.
+  await waitForSharedSignal(_signalName('charlie_voluntary_leave_broadcast'));
+  await _waitForMemberExclusion(
+    stack: stack,
+    groupId: groupId,
+    removedPeerId: charliePeerId,
+  );
+  final leaveEvent = await _waitForVoluntaryLeaveTimeline(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: charliePeerId,
+  );
+  // The remaining creator re-keys on receiving charlie's departure; wait for
+  // the new epoch to land (the leaver no longer pre-rotates) before sampling so
+  // keyEpochAdvanced is deterministic — mirrors the barrier the rest of the
+  // suite uses. The drain inside this wait drives the creator's own re-key.
+  await _waitForKeyEpoch(
+    stack: stack,
+    groupId: groupId,
+    keyEpoch: initialKeyEpoch + 1,
+  );
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalKeyEpoch = await _keyEpoch(stack, groupId);
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'h01VoluntaryLeaveConvergenceProof': _voluntaryLeaveConvergenceProof(
+        role: 'alice',
+        charlieExcludedFromRoster: !memberPeerIds.contains(charliePeerId),
+        // Convergence signal: charlie's departure materialized as a
+        // member_removed timeline row on this receiver. Exact text ("left the
+        // group") is render-path-dependent and is asserted only on the leaver.
+        leaveTimelineRendered: leaveEvent['messageId'] != null,
+        keyEpochAdvanced: finalKeyEpoch > initialKeyEpoch,
+        leaveWasSilent: true,
+        groupHardDeletedLocally: false,
+        initialKeyEpoch: initialKeyEpoch,
+        finalKeyEpoch: finalKeyEpoch,
+        leaveTimelineText: leaveEvent['text'] as String,
+      ),
+    },
+  );
+}
+
+Future<void> _runVoluntaryLeaveConvergenceBob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('bob_group_joined'), 'ok');
+
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  final initialKeyEpoch = await _keyEpoch(stack, groupId);
+
+  await waitForSharedSignal(_signalName('charlie_voluntary_leave_broadcast'));
+  await _waitForMemberExclusion(
+    stack: stack,
+    groupId: groupId,
+    removedPeerId: charliePeerId,
+  );
+  final leaveEvent = await _waitForVoluntaryLeaveTimeline(
+    stack: stack,
+    groupId: groupId,
+    leaverPeerId: charliePeerId,
+  );
+  // Bob converges to the creator's re-keyed epoch via the distributed
+  // key:update. Wait for it before sampling so keyEpochAdvanced is
+  // deterministic — the leaver no longer pre-rotates, so this is the only path
+  // to the new epoch. The drain inside this wait applies the incoming key.
+  await _waitForKeyEpoch(
+    stack: stack,
+    groupId: groupId,
+    keyEpoch: initialKeyEpoch + 1,
+  );
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final finalKeyEpoch = await _keyEpoch(stack, groupId);
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'h01VoluntaryLeaveConvergenceProof': _voluntaryLeaveConvergenceProof(
+        role: 'bob',
+        charlieExcludedFromRoster: !memberPeerIds.contains(charliePeerId),
+        // Convergence signal: charlie's departure materialized as a
+        // member_removed timeline row on this receiver. Exact text ("left the
+        // group") is render-path-dependent and is asserted only on the leaver.
+        leaveTimelineRendered: leaveEvent['messageId'] != null,
+        keyEpochAdvanced: finalKeyEpoch > initialKeyEpoch,
+        leaveWasSilent: true,
+        groupHardDeletedLocally: false,
+        initialKeyEpoch: initialKeyEpoch,
+        finalKeyEpoch: finalKeyEpoch,
+        leaveTimelineText: leaveEvent['text'] as String,
+      ),
+    },
+  );
+}
+
+Future<void> _runVoluntaryLeaveConvergenceCharlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('charlie_group_joined'), 'ok');
+
+  // No test-only self-promotion: charlie leaves as the real writer he imported.
+  // Voluntary leave is best-effort about rotation — the writer broadcasts
+  // member_removed and leaves without rotating (the leaver lacks rotateKeys and
+  // is not the creator), and alice re-keys on receipt. This proves the real
+  // writer-leave behavior instead of masking it behind a co-admin workaround.
+
+  // Let alice observe both joins and settle the initial epoch before leaving.
+  await Future<void>.delayed(const Duration(seconds: 10));
+
+  final group = await stack.groupRepo.getGroup(groupId);
+  if (group == null) {
+    throw StateError('H-01 charlie missing group before voluntary leave');
+  }
+  final broadcastResult = await broadcastVoluntaryLeaveAndRotateKey(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    group: group,
+    identityRepo: stack.identityRepo,
+    msgRepo: stack.groupMsgRepo,
+    sendP2PMessage: (peerId, message) async {
+      return stack.p2pService.sendMessage(peerId, message);
+    },
+  );
+  if (!broadcastResult.didBroadcast) {
+    throw StateError(
+      'H-01 charlie voluntary-leave broadcast skipped: '
+      '${broadcastResult.skipReason?.name}',
+    );
+  }
+
+  // Local cleanup: charlie hard-deletes the group (getGroup == null).
+  await leaveGroup(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+  );
+  writeSharedText(_signalName('charlie_voluntary_leave_broadcast'), 'ok');
+
+  final groupHardDeletedLocally =
+      await stack.groupRepo.getGroup(groupId) == null;
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'h01VoluntaryLeaveConvergenceProof': _voluntaryLeaveConvergenceProof(
+        role: 'charlie',
+        charlieExcludedFromRoster: true,
+        leaveTimelineRendered: true,
+        // The departing writer cannot rotate; the leave is best-effort and the
+        // remaining creator (alice) re-keys. Charlie proves the deferral; alice
+        // and bob prove the epoch actually advanced.
+        keyEpochAdvanced: broadcastResult.rotatedKey != null,
+        rotationDeferred: broadcastResult.rotationDeferred,
+        leaveWasSilent: true,
+        groupHardDeletedLocally: groupHardDeletedLocally,
+      ),
+    },
+  );
+}
+
+Future<void> _runI01Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'I-01 Online Dissolve Convergence',
+  );
+  writeSharedJson(_signalName('i01_group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+
+  // All three online: wait for both joiners before dissolving.
+  await waitForSharedSignal(_signalName('bob_i01_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_i01_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+
+  // Resolve binding BEFORE dissolve so we can prove it was non-null (B4).
+  final senderBinding = await resolveGroupSenderDeviceBinding(
+    groupRepo: stack.groupRepo,
+    groupId: groupId,
+    senderPeerId: stack.identity.peerId,
+    preferredDeviceId: stack.p2pService.currentState.peerId,
+    preferredTransportPeerId: stack.p2pService.currentState.peerId,
+    senderPublicKey: stack.identity.publicKey,
+  );
+  final actorBindingSigned =
+      (senderBinding.deviceId?.isNotEmpty ?? false) &&
+      (senderBinding.transportPeerId?.isNotEmpty ?? false);
+
+  final (result, _) = await _dissolveGroupViaUseCase(
+    stack: stack,
+    groupId: groupId,
+  );
+
+  // Signal receivers that the dissolve has been published.
+  writeSharedText(_signalName('alice_i01_dissolved'), 'ok');
+
+  final group = await stack.groupRepo.getGroup(groupId);
+  final groupDissolvedLocally = group?.isDissolved ?? false;
+
+  // Wait for both receivers to confirm convergence before writing the verdict.
+  await waitForSharedSignal(_signalName('bob_i01_dissolve_converged'));
+  await waitForSharedSignal(_signalName('charlie_i01_dissolve_converged'));
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'i01DissolveConvergenceProof': _i01DissolveConvergenceProof(
+        role: 'alice',
+        groupDissolvedLocally: groupDissolvedLocally,
+        dissolveResultSuccess: result == DissolveGroupResult.success,
+        actorBindingSigned: actorBindingSigned,
+        readOnlyAfterDissolve: groupDissolvedLocally,
+        dissolveTimelineRowPresent: await _hasDissolveTimelineRow(
+          stack: stack,
+          groupId: groupId,
+        ),
+      ),
+    },
+  );
+}
+
+Future<void> _runI01Bob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(
+    _signalName('i01_group_fixture.json'),
+  );
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('bob_i01_group_joined'), 'ok');
+
+  await waitForSharedSignal(_signalName('alice_i01_dissolved'));
+  final converged = await _waitForGroupDissolved(
+    stack: stack,
+    groupId: groupId,
+  );
+  writeSharedText(_signalName('bob_i01_dissolve_converged'), 'ok');
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'i01DissolveConvergenceProof': _i01DissolveConvergenceProof(
+        role: 'bob',
+        groupDissolvedLocally: converged,
+        readOnlyAfterDissolve: converged,
+        dissolveTimelineRowPresent: await _hasDissolveTimelineRow(
+          stack: stack,
+          groupId: groupId,
+        ),
+      ),
+    },
+  );
+}
+
+Future<void> _runI01Charlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(
+    _signalName('i01_group_fixture.json'),
+  );
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('charlie_i01_group_joined'), 'ok');
+
+  await waitForSharedSignal(_signalName('alice_i01_dissolved'));
+  final converged = await _waitForGroupDissolved(
+    stack: stack,
+    groupId: groupId,
+  );
+  writeSharedText(_signalName('charlie_i01_dissolve_converged'), 'ok');
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'i01DissolveConvergenceProof': _i01DissolveConvergenceProof(
+        role: 'charlie',
+        groupDissolvedLocally: converged,
+        readOnlyAfterDissolve: converged,
+        dissolveTimelineRowPresent: await _hasDissolveTimelineRow(
+          stack: stack,
+          groupId: groupId,
+        ),
+      ),
+    },
+  );
 }
 
 Future<void> _runMl016Alice(
@@ -24394,6 +25597,212 @@ Future<void> _runGm003Dana(
   );
 }
 
+// C07 private_override_removal_nonconvergence: bob is a WRITER granted a
+// removeMembers permission override. bob removes charlie. The SENDER-side gate
+// honors the override (bob removes charlie LOCALLY + publishes member_removed),
+// but the RECEIVER-side gate for member_removed (sender != removed) is ADMIN-ONLY
+// and ignores the override, so alice (admin) and charlie (target) REJECT it.
+// Result: roster DIVERGENCE. Override-grant pattern mirrors _runGm025Alice.
+Future<void> _runC07OverrideRemovalAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+
+  await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'C07 Override Removal Group',
+  );
+  final createdGroup = (await stack.groupRepo.getAllGroups()).first;
+  final groupId = createdGroup.id;
+
+  // Grant bob (a WRITER) the removeMembers override, then publish the fixture so
+  // the joiners (including bob) carry the override.
+  final bobMember = await stack.groupRepo.getMember(groupId, bobPeerId);
+  await stack.groupRepo.saveMember(
+    bobMember!.copyWith(
+      permissions: const GroupMemberPermissions(removeMembers: true),
+    ),
+  );
+  final initialGroup = await stack.groupRepo.getGroup(groupId);
+  final initialKey = await stack.groupRepo.getLatestKey(groupId);
+  final initialMembers = await stack.groupRepo.getMembers(groupId);
+  writeSharedJson(
+    _signalName('group_fixture.json'),
+    buildGroupFixture(
+      group: initialGroup!,
+      keyInfo: initialKey!,
+      members: initialMembers,
+    ),
+  );
+
+  await waitForSharedSignal(_signalName('bob_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
+
+  // Wait for bob (override-writer) to remove charlie and publish member_removed.
+  await waitForSharedSignal(_signalName('bob_override_removed_charlie'));
+  // Give alice time to receive + (correctly) REJECT bob's member_removed.
+  await Future<void>.delayed(const Duration(seconds: 15));
+  await _drainC07OfflineInbox(stack: stack, groupId: groupId);
+
+  final aliceMembers = await _memberPeerIds(stack, groupId);
+  final aliceStillSeesCharlie = aliceMembers.contains(charliePeerId);
+  final aliceStillSeesBob = aliceMembers.contains(bobPeerId);
+  final aliceKeyEpoch = await _keyEpoch(stack, groupId);
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'c07OverrideRemovalNonconvergenceProof': <String, dynamic>{
+        'rowId': 'C07',
+        'scenario': 'private_override_removal_nonconvergence',
+        'proofRole': 'alice',
+        'grantedBobRemoveOverride': true,
+        'removedPeerId': charliePeerId,
+        'removerPeerId': bobPeerId,
+        'rejectedWriterRemoval': aliceStillSeesCharlie,
+        'stillSeesRemovedMember': aliceStillSeesCharlie,
+        'stillSeesRemover': aliceStillSeesBob,
+        'aliceKeyEpoch': aliceKeyEpoch,
+      },
+    },
+  );
+}
+
+Future<void> _runC07OverrideRemovalBob(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await _importGm004JoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  writeSharedText(_signalName('bob_group_joined'), 'ok');
+
+  // Confirm bob carries the removeMembers override delivered via the fixture.
+  // Defensive: if fixture serialization dropped permissions_json, re-grant it
+  // locally so the sender-side gate honors bob's writer removal (else
+  // removeGroupMember would throw 'Only admins can remove members ...').
+  final selfMember = await stack.groupRepo.getMember(
+    groupId,
+    stack.identity.peerId,
+  );
+  if (selfMember != null &&
+      !selfMember.permissions.allows(
+        GroupMemberPermission.removeMembers,
+        selfMember.role,
+      )) {
+    await stack.groupRepo.saveMember(
+      selfMember.copyWith(
+        permissions: const GroupMemberPermissions(removeMembers: true),
+      ),
+    );
+  }
+  final effectiveSelf = await stack.groupRepo.getMember(
+    groupId,
+    stack.identity.peerId,
+  );
+  final bobHasOverride =
+      effectiveSelf != null &&
+      effectiveSelf.permissions.allows(
+        GroupMemberPermission.removeMembers,
+        effectiveSelf.role,
+      );
+  final bobIsWriter = effectiveSelf?.role == MemberRole.writer;
+
+  // bob (override-writer) removes charlie: sender gate honors the override, so
+  // this succeeds LOCALLY and publishes member_removed. Reuses the existing
+  // _removeCharlieAndPublish driver, which acts as stack.identity (bob).
+  await _removeCharlieAndPublish(
+    stack: stack,
+    groupId: groupId,
+    charlieIdentity: identities['charlie']!,
+  );
+  writeSharedText(_signalName('bob_override_removed_charlie'), 'ok');
+
+  await Future<void>.delayed(const Duration(seconds: 10));
+  final bobMembers = await _memberPeerIds(stack, groupId);
+  final bobExcludesCharlie = !bobMembers.contains(charliePeerId);
+  final bobKeyEpoch = await _keyEpoch(stack, groupId);
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'c07OverrideRemovalNonconvergenceProof': <String, dynamic>{
+        'rowId': 'C07',
+        'scenario': 'private_override_removal_nonconvergence',
+        'proofRole': 'bob',
+        'bobIsWriter': bobIsWriter,
+        'bobHasRemoveOverride': bobHasOverride,
+        'removedPeerId': charliePeerId,
+        'localRemovalApplied': bobExcludesCharlie,
+        'excludesRemovedMemberLocally': bobExcludesCharlie,
+        'bobKeyEpoch': bobKeyEpoch,
+      },
+    },
+  );
+}
+
+Future<void> _runC07OverrideRemovalCharlie(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await _importGm004JoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('charlie_group_joined'), 'ok');
+
+  await waitForSharedSignal(_signalName('bob_override_removed_charlie'));
+  // Give charlie time to receive + (correctly) REJECT bob's member_removed.
+  await Future<void>.delayed(const Duration(seconds: 15));
+  await _drainC07OfflineInbox(stack: stack, groupId: groupId);
+
+  final selfStillMember =
+      await stack.groupRepo.getMember(groupId, stack.identity.peerId) != null;
+  final groupPresentAfterRemoval =
+      await stack.groupRepo.getGroup(groupId) != null;
+  final charlieKeyEpoch = await _keyEpoch(stack, groupId);
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'c07OverrideRemovalNonconvergenceProof': <String, dynamic>{
+        'rowId': 'C07',
+        'scenario': 'private_override_removal_nonconvergence',
+        'proofRole': 'charlie',
+        'removedPeerId': stack.identity.peerId,
+        'rejectedWriterRemoval': selfStillMember,
+        'selfStillMember': selfStillMember,
+        'groupPresentAfterRemoval': groupPresentAfterRemoval,
+        'charlieKeyEpoch': charlieKeyEpoch,
+      },
+    },
+  );
+}
+
 Future<void> _runGm004Alice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -24410,6 +25819,12 @@ Future<void> _runGm004Alice(
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
   await Future<void>.delayed(const Duration(seconds: 5));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
 
   await _removeCharlieAndPublish(
     stack: stack,
@@ -28364,6 +29779,12 @@ Future<void> _runGe014Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   await _removeCharlieAndPublish(
@@ -39714,6 +41135,27 @@ Future<bool> _hasMember({
   return await stack.groupRepo.getMember(groupId, peerId) != null;
 }
 
+// C07: forces alice/charlie to process bob's published member_removed so the
+// admin-only receiver gate actually runs and REJECTS the writer removal before
+// the verdict is written. Modeled on the inner drain of _waitForGm025CurrentCharlie.
+Future<void> _drainC07OfflineInbox({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+}) async {
+  try {
+    await drainGroupOfflineInboxForGroup(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      msgRepo: stack.groupMsgRepo,
+      groupId: groupId,
+      groupMessageListener: stack.groupListener,
+      selfPeerId: stack.identity.peerId,
+    );
+  } catch (error) {
+    stdout.writeln('[GMP][$_role] C07 offline inbox drain failed: $error');
+  }
+}
+
 Future<void> _waitForGm025CurrentCharlie({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
@@ -42160,6 +43602,12 @@ Future<void> _runGe020Alice(
 
   await waitForSharedSignal(_signalName('bob_ge020_group_joined'));
   await waitForSharedSignal(_signalName('charlie_ge020_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -42757,6 +44205,12 @@ Future<void> _runGe021Alice(
 
   await waitForSharedSignal(_signalName('bob_ge021_group_joined'));
   await waitForSharedSignal(_signalName('charlie_ge021_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -43258,6 +44712,12 @@ Future<void> _runGe023Alice(
 
   await waitForSharedSignal(_signalName('bob_ge023_group_joined'));
   await waitForSharedSignal(_signalName('charlie_ge023_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -46649,6 +48109,15 @@ Future<void> _runScenarioRole() async {
       return;
     }
 
+    if (_scenario == 'private_media_reaction_roundtrip') {
+      if (_role == 'alice') {
+        await _runL01MediaReactionAlice(stack, identities);
+      } else {
+        await _runL01MediaReactionInvitee(stack, identities);
+      }
+      return;
+    }
+
     if (_scenario == 'private_removed_reaction_rejected') {
       if (_role == 'alice') {
         await _runPl010RemovedReactionAlice(stack, identities);
@@ -46765,6 +48234,17 @@ Future<void> _runScenarioRole() async {
           pendingInviteRepo: ml003DanaPendingInviteRepo,
           inviteListener: ml003DanaInviteListener,
         );
+      }
+      return;
+    }
+
+    if (_scenario == 'private_override_removal_nonconvergence') {
+      if (_role == 'alice') {
+        await _runC07OverrideRemovalAlice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runC07OverrideRemovalBob(stack, identities);
+      } else {
+        await _runC07OverrideRemovalCharlie(stack, identities);
       }
       return;
     }
@@ -47028,6 +48508,17 @@ Future<void> _runScenarioRole() async {
       return;
     }
 
+    if (_scenario == 'private_stale_roster_recipient_omission') {
+      if (_role == 'alice') {
+        await _runStaleRosterAlice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runStaleRosterBob(stack, identities);
+      } else {
+        await _runStaleRosterCharlie(stack, identities);
+      }
+      return;
+    }
+
     if (_scenario == 'private_non_friend_member_delivery') {
       if (_role == 'alice') {
         await _runMl016Alice(stack, identities);
@@ -47035,6 +48526,17 @@ Future<void> _runScenarioRole() async {
         await _runMl016Bob(stack, identities);
       } else {
         await _runMl016Dana(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_online_dissolve_convergence') {
+      if (_role == 'alice') {
+        await _runI01Alice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runI01Bob(stack, identities);
+      } else {
+        await _runI01Charlie(stack, identities);
       }
       return;
     }
@@ -47129,6 +48631,17 @@ Future<void> _runScenarioRole() async {
         await _runMl019Bob(stack, identities);
       } else {
         await _runMl019Charlie(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_voluntary_leave_convergence') {
+      if (_role == 'alice') {
+        await _runVoluntaryLeaveConvergenceAlice(stack, identities);
+      } else if (_role == 'bob') {
+        await _runVoluntaryLeaveConvergenceBob(stack, identities);
+      } else {
+        await _runVoluntaryLeaveConvergenceCharlie(stack, identities);
       }
       return;
     }

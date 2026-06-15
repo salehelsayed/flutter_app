@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -23,11 +24,19 @@ class VoluntaryLeaveBroadcastResult {
   final GroupKeyInfo? rotatedKey;
   final VoluntaryLeaveBroadcastSkipReason? skipReason;
 
+  /// True when the member left but could NOT rotate the group key because the
+  /// leaver lacks the `rotateKeys` permission and/or is not the group creator.
+  /// The departure still broadcasts and completes (best-effort rotation); the
+  /// group owes a re-key, which a remaining admin performs on receiving the
+  /// `member_removed` — mirroring admin-removal's remover-driven rotation.
+  final bool rotationDeferred;
+
   const VoluntaryLeaveBroadcastResult({
     required this.didBroadcast,
     required this.remainingPeerIds,
     this.rotatedKey,
     this.skipReason,
+    this.rotationDeferred = false,
   });
 
   static const skipped = VoluntaryLeaveBroadcastResult(
@@ -47,9 +56,6 @@ class VoluntaryLeaveBroadcastResult {
     skipReason: VoluntaryLeaveBroadcastSkipReason.memberNotFound,
   );
 }
-
-const voluntaryLeaveRotationFailedMessage =
-    'Failed to rotate group key before leaving';
 
 /// Broadcasts the local member's voluntary leave and rotates future group
 /// traffic away from the departing member before local cleanup deletes state.
@@ -182,6 +188,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
   }
 
   GroupKeyInfo? rotatedKey;
+  var rotationDeferred = false;
   if (remainingMembers.isNotEmpty) {
     rotatedKey = await rotateAndDistributeGroupKey(
       bridge: bridge,
@@ -195,8 +202,23 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
       storeP2PMessageInInbox: storeP2PMessageInInbox,
     );
 
-    if (rotatedKey == null) {
-      throw StateError(voluntaryLeaveRotationFailedMessage);
+    // Best-effort rotation: a privileged leaver (creator/admin) rotates here
+    // exactly as before. A plain member fails the rotation gates and gets a
+    // null result — do NOT abort the leave. Record the deferral so the caller
+    // proceeds to leaveGroup(); a remaining admin re-keys on receiving the
+    // member_removed, preserving forward secrecy without forcing the departing
+    // member to hold rotateKeys/creator status.
+    rotationDeferred = rotatedKey == null;
+    if (rotationDeferred) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_VOLUNTARY_LEAVE_ROTATION_DEFERRED',
+        details: {
+          'groupId': group.id.length > 8
+              ? group.id.substring(0, 8)
+              : group.id,
+        },
+      );
     }
   }
 
@@ -205,5 +227,6 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
     remainingPeerIds: remainingPeerIds,
     rotatedKey: rotatedKey,
     skipReason: null,
+    rotationDeferred: rotationDeferred,
   );
 }

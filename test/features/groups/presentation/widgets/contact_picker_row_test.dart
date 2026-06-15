@@ -85,5 +85,46 @@ void main() {
       await tester.tap(find.text('Alice'));
       expect(called, isTrue);
     });
+
+    testWidgets(
+        'onTap fires when an empty (non-name) region of the row is tapped',
+        (tester) async {
+      var called = false;
+      // A short username leaves genuine transparent space in the row, and a
+      // bounded width with the row at its NATURAL (~52px) height makes the
+      // vertical padding band a real unpainted region — NOT the full 800x600
+      // surface (which would make almost any tap land on a painted child and
+      // mask the bug).
+      final shortNameContact = makeContact(peerId: 'p-bo', username: 'Bo');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 300,
+                child: ContactPickerRow(
+                  contact: shortNameContact,
+                  onTap: () => called = true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final rect = tester.getRect(find.byType(ContactPickerRow));
+      // Inside the row rect but over the bottom vertical-padding band, where
+      // no avatar/name/icon is painted. Fails under deferToChild (the default),
+      // passes once the GestureDetector uses HitTestBehavior.opaque.
+      await tester.tapAt(Offset(rect.center.dx, rect.bottom - 3));
+      await tester.pump();
+
+      expect(
+        called,
+        isTrue,
+        reason: 'the whole row should be tappable, not only painted children',
+      );
+    });
   });
 }

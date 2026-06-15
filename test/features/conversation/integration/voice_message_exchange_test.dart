@@ -38,6 +38,11 @@ void main() {
       durationMs: durationMs,
       downloadStatus: 'done',
       createdAt: DateTime.now().toUtc().toIso8601String(),
+      contentHash:
+          'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      encryptionKeyBase64: 'test-blob-key-base64',
+      encryptionNonce: 'test-blob-nonce',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     );
   }
 
@@ -264,10 +269,11 @@ void main() {
         [attachment],
       );
 
-      // Falls back to inbox storage — delivered by product rule
+      // Falls back to inbox storage — custody, not delivery (115 P1): the
+      // row stays 'inboxed' until a delivery receipt confirms the drain.
       expect(result, SendChatMessageResult.success);
       expect(msg, isNotNull);
-      expect(msg!.status, 'delivered');
+      expect(msg!.status, 'inboxed');
 
       // Peer comes online and drains inbox
       offlineUser.setOnline(true);

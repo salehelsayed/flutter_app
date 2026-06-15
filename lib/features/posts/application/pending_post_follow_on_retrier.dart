@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
 import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_app/features/posts/domain/repositories/post_repository.d
 class PendingPostFollowOnRetrier {
   final P2PService p2pService;
   final PostRepository postRepo;
+  final AccountMigrationNetworkGate accountMigrationNetworkGate;
   final Duration retryDebounce;
   final Duration periodicRetryInterval;
 
@@ -21,6 +23,7 @@ class PendingPostFollowOnRetrier {
   PendingPostFollowOnRetrier({
     required this.p2pService,
     required this.postRepo,
+    this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.retryDebounce = const Duration(seconds: 5),
     this.periodicRetryInterval = const Duration(minutes: 5),
   });
@@ -85,6 +88,7 @@ class PendingPostFollowOnRetrier {
       final retried = await retryPendingPostFollowOns(
         postRepo: postRepo,
         p2pService: p2pService,
+        accountMigrationNetworkGate: accountMigrationNetworkGate,
       );
       if (retried > 0) {
         emitFlowEvent(
@@ -120,7 +124,17 @@ class PendingPostFollowOnRetrier {
 Future<int> retryPendingPostFollowOns({
   required PostRepository postRepo,
   required P2PService p2pService,
+  AccountMigrationNetworkGate accountMigrationNetworkGate =
+      allowAccountMigrationNetworkSideEffects,
 }) async {
+  if (!await _allowsPostFollowOnNetworkSideEffects(
+    p2pService: p2pService,
+    accountMigrationNetworkGate: accountMigrationNetworkGate,
+    operation: 'pending_post_follow_on_retry',
+  )) {
+    return 0;
+  }
+
   final jobs = await postRepo.loadRetryableFollowOnOutboxJobs();
   var retriedCount = 0;
 
@@ -149,4 +163,24 @@ Future<int> retryPendingPostFollowOns({
   }
 
   return retriedCount;
+}
+
+Future<bool> _allowsPostFollowOnNetworkSideEffects({
+  required P2PService p2pService,
+  required AccountMigrationNetworkGate accountMigrationNetworkGate,
+  required String operation,
+}) async {
+  final peerId = p2pService.currentState.peerId;
+  final allowed = await accountMigrationNetworkGate(
+    peerId: peerId,
+    operation: operation,
+  );
+  if (!allowed) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_POST_FOLLOW_ON_RETRIER_ACCOUNT_MIGRATION_BLOCKED',
+      details: {'operation': operation, if (peerId != null) 'peerId': peerId},
+    );
+  }
+  return allowed;
 }

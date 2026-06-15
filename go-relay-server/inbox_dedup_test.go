@@ -240,6 +240,51 @@ func TestInboxStoreDedup_MalformedJsonFallsThrough(t *testing.T) {
 	}
 }
 
+func TestMemoryInbox_ExpiredEntryMessageIdReStorableAfterPrune(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+
+	expired := inboxMessage{
+		From:      "sender-peer",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-expired-restorable","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+		Timestamp: time.Now().Add(-8 * 24 * time.Hour).UnixMilli(),
+	}
+	fresh := expired
+	fresh.Timestamp = time.Now().UnixMilli()
+
+	requireInboxStoreResult(t, inbox, "recipient-peer", expired, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", fresh, InboxStoreResultStored)
+	if count := inbox.Count("recipient-peer"); count != 1 {
+		t.Fatalf("expected expired entry to be pruned and fresh re-store retained, got %d", count)
+	}
+}
+
+func TestMemoryInbox_AckedEntryMessageIdReStorable(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+
+	entry := inboxMessage{
+		From:      "sender-peer",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-acked-restorable","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	requireInboxStoreResult(t, inbox, "recipient-peer", entry, InboxStoreResultStored)
+	pending, _ := inbox.RetrievePendingWithMeta("recipient-peer", 10)
+	if len(pending) != 1 {
+		t.Fatalf("pending count = %d, want 1", len(pending))
+	}
+	removed, err := inbox.Ack("recipient-peer", []string{pending[0].ID})
+	if err != nil {
+		t.Fatalf("Ack() error: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("Ack() removed = %d, want 1", removed)
+	}
+
+	requireInboxStoreResult(t, inbox, "recipient-peer", entry, InboxStoreResultStored)
+}
+
 // pushRecorder tracks push notification sends for testing.
 type pushRecorder struct {
 	count int64

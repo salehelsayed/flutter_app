@@ -24,4 +24,15 @@ abstract class InboxStagingRepository {
     required String reasonCode,
     String? reasonDetail,
   });
+
+  /// Terminal keep-state: the entry is excluded from replay but its
+  /// envelope is preserved (INV-1: never destroy content after custody
+  /// transfer).
+  Future<void> markQuarantined(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  });
+
+  Future<int> countQuarantinedEntries();
 }

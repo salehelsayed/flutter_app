@@ -41,9 +41,13 @@ Future<Database> openEncryptedDatabase({
   final isNewKey = key == null;
   if (isNewKey) {
     key = _generateRandomKey();
-    if (kDebugMode) print('[EAR] DB encryption key: GENERATED NEW (256-bit random)');
+    if (kDebugMode) {
+      print('[EAR] DB encryption key: GENERATED NEW (256-bit random)');
+    }
   } else {
-    if (kDebugMode) print('[EAR] DB encryption key: LOADED FROM SECURE STORAGE');
+    if (kDebugMode) {
+      print('[EAR] DB encryption key: LOADED FROM SECURE STORAGE');
+    }
   }
 
   // 2. Resolve full path
@@ -79,6 +83,19 @@ Future<Database> openEncryptedDatabase({
     fullPath,
     version: version,
     password: key,
+    onConfigure: (db) async {
+      // Fail fast instead of hanging forever if the DB file is momentarily
+      // locked (e.g. a prior connection/process hasn't released it yet).
+      // Without this, a stale lock blocks the open/first query and the app
+      // sits on the splash screen indefinitely; with it, the query returns
+      // SQLITE_BUSY after the timeout so startup can surface an error/retry.
+      // Set in onConfigure so migrations (onUpgrade) inherit it too.
+      //
+      // NOTE: must use rawQuery, not execute — `PRAGMA busy_timeout = N`
+      // returns the new value, and Android's execSQL rejects value-returning
+      // statements ("Queries can be performed using ... query or rawQuery").
+      await db.rawQuery('PRAGMA busy_timeout = 5000');
+    },
     onCreate: onCreate,
     onUpgrade: onUpgrade,
   );
@@ -92,7 +109,9 @@ Future<Database> openEncryptedDatabase({
     if (kDebugMode) print('[EAR] SQLCipher version: $cipherVersion');
     if (kDebugMode) print('[EAR] DATABASE IS ENCRYPTED');
   } catch (e) {
-    if (kDebugMode) print('[EAR] WARNING: Could not verify cipher_version — $e');
+    if (kDebugMode) {
+      print('[EAR] WARNING: Could not verify cipher_version — $e');
+    }
   }
 
   emitFlowEvent(
@@ -123,7 +142,7 @@ Future<void> _encryptExistingDatabase(String fullPath, String key) async {
     );
 
     // Export all data to the encrypted database
-    await plaintextDb.execute("SELECT sqlcipher_export('encrypted')");
+    await plaintextDb.rawQuery("SELECT sqlcipher_export('encrypted')");
 
     // Detach
     await plaintextDb.execute('DETACH DATABASE encrypted');
@@ -142,10 +161,8 @@ Future<void> _encryptExistingDatabase(String fullPath, String key) async {
   // Since sqflite doesn't expose rename, we re-export
   final tempDb = await openDatabase(encryptedPath, password: key);
   try {
-    await tempDb.execute(
-      "ATTACH DATABASE '$fullPath' AS newdb KEY '$key'",
-    );
-    await tempDb.execute("SELECT sqlcipher_export('newdb')");
+    await tempDb.execute("ATTACH DATABASE '$fullPath' AS newdb KEY '$key'");
+    await tempDb.rawQuery("SELECT sqlcipher_export('newdb')");
     await tempDb.execute('DETACH DATABASE newdb');
   } finally {
     await tempDb.close();

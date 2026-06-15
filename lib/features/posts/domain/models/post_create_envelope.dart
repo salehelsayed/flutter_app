@@ -4,6 +4,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart'
+    show PostMediaCryptoEntry;
 
 class PostCreateEnvelope {
   static const Duration _maxFutureClockSkew = Duration(minutes: 5);
@@ -27,6 +29,14 @@ class PostCreateEnvelope {
   final double? nearbySenderAccuracyM;
   final List<String> recipientPeerIds;
 
+  /// Per-attachment blob crypto entries keyed by mediaId (doc 113 G2).
+  ///
+  /// KC-P3: serialized ONLY in [toInnerJson] (the ML-KEM v2 inner payload),
+  /// structurally absent from the v1 plaintext [toJson]; parsed ONLY by
+  /// [fromEncryptedJson] — a v1 plaintext post_create carrying `media_keys`
+  /// yields `mediaKeys == null`.
+  final Map<String, PostMediaCryptoEntry>? mediaKeys;
+
   const PostCreateEnvelope({
     required this.eventId,
     required this.createdAt,
@@ -46,6 +56,7 @@ class PostCreateEnvelope {
     this.nearbySenderCapturedAt,
     this.nearbySenderAccuracyM,
     this.recipientPeerIds = const <String>[],
+    this.mediaKeys,
   });
 
   factory PostCreateEnvelope.fromPost(PostModel post) {
@@ -68,7 +79,31 @@ class PostCreateEnvelope {
       nearbySenderCapturedAt: post.nearbySenderCapturedAt,
       nearbySenderAccuracyM: post.nearbySenderAccuracyM,
       recipientPeerIds: const <String>[],
+      mediaKeys: _deriveMediaKeysFromAttachments(post.media),
     );
+  }
+
+  /// Entries only for rows that actually carry key material — a pre-flip
+  /// plaintext-uploaded post yields null and keeps today's v1 fallback (G3).
+  static Map<String, PostMediaCryptoEntry>? _deriveMediaKeysFromAttachments(
+    List<PostMediaAttachmentModel> media,
+  ) {
+    final entries = <String, PostMediaCryptoEntry>{};
+    for (final attachment in media) {
+      final keyBase64 = attachment.encryptionKeyBase64;
+      final nonce = attachment.encryptionNonce;
+      if (keyBase64 == null || nonce == null) {
+        continue;
+      }
+      entries[attachment.mediaId] = PostMediaCryptoEntry(
+        keyBase64: keyBase64,
+        nonce: nonce,
+        blobId: attachment.blobId,
+        scheme: attachment.encryptionScheme,
+        contentHash: attachment.contentHash,
+      );
+    }
+    return entries.isEmpty ? null : entries;
   }
 
   static PostCreateEnvelope? fromJson(String jsonString) {
@@ -228,7 +263,7 @@ class PostCreateEnvelope {
     final payloadJson =
         jsonDecode(decryptResult['plaintext'] as String)
             as Map<String, dynamic>;
-    return fromJson(
+    final parsed = fromJson(
       jsonEncode({
         'type': 'post_create',
         'version': '1',
@@ -237,6 +272,62 @@ class PostCreateEnvelope {
         'sender_peer_id': envelope['sender_peer_id'],
         'payload': payloadJson,
       }),
+    );
+    if (parsed == null) {
+      return null;
+    }
+    // KC-P3 receive side: media_keys is extracted from the DECRYPTED inner
+    // payload only — never via the shared fromJson re-wrap, which also
+    // parses v1 plaintext wire envelopes (a v1 sender shipping keys has
+    // already leaked them; the receiver must not legitimize that path).
+    final mediaKeys = _parseMediaKeys(payloadJson['media_keys']);
+    if (mediaKeys == null) {
+      return parsed;
+    }
+    return parsed._withMediaKeys(mediaKeys);
+  }
+
+  static Map<String, PostMediaCryptoEntry>? _parseMediaKeys(Object? raw) {
+    if (raw is! Map<String, dynamic>) {
+      return null;
+    }
+    final entries = <String, PostMediaCryptoEntry>{};
+    for (final entry in raw.entries) {
+      final value = entry.value;
+      if (value is! Map<String, dynamic>) {
+        continue;
+      }
+      final parsed = PostMediaCryptoEntry.fromJson(value);
+      if (parsed != null) {
+        entries[entry.key] = parsed;
+      }
+    }
+    return entries.isEmpty ? null : entries;
+  }
+
+  PostCreateEnvelope _withMediaKeys(
+    Map<String, PostMediaCryptoEntry> mediaKeys,
+  ) {
+    return PostCreateEnvelope(
+      eventId: eventId,
+      createdAt: createdAt,
+      senderPeerId: senderPeerId,
+      postId: postId,
+      authorPeerId: authorPeerId,
+      authorUsername: authorUsername,
+      text: text,
+      mediaKind: mediaKind,
+      media: media,
+      audience: audience,
+      expiresAt: expiresAt,
+      keepAvailable: keepAvailable,
+      nearbyDistanceM: nearbyDistanceM,
+      nearbySenderLatE3: nearbySenderLatE3,
+      nearbySenderLngE3: nearbySenderLngE3,
+      nearbySenderCapturedAt: nearbySenderCapturedAt,
+      nearbySenderAccuracyM: nearbySenderAccuracyM,
+      recipientPeerIds: recipientPeerIds,
+      mediaKeys: mediaKeys,
     );
   }
 
@@ -319,6 +410,13 @@ class PostCreateEnvelope {
         'selected_peer_ids': selectedPeerIds,
       if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
         'recipient_peer_ids': recipientPeerIds,
+      // KC-P3: media_keys rides ONLY this ML-KEM-encrypted inner payload —
+      // it must never be added to the v1 plaintext toJson above.
+      if (mediaKeys != null && mediaKeys!.isNotEmpty)
+        'media_keys': <String, Object?>{
+          for (final entry in mediaKeys!.entries)
+            entry.key: entry.value.toJson(),
+        },
       if (hasNearbyContext)
         'nearby_context': <String, Object?>{
           'distance_m': nearbyDistanceM ?? this.nearbyDistanceM,

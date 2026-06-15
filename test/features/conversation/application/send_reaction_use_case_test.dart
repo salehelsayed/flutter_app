@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -171,6 +173,22 @@ void main() {
         expect(p2pService.storeInInboxCallCount, 1);
         expect(reactionRepo.saveReactionCallCount, 0);
         expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      },
+    );
+
+    // 116 P1.2 PIN (green-on-arrival): reactions never enter the failed-
+    // message retry pipeline — sendReaction takes no MessageRepository and a
+    // failed reaction writes no messages row, so the edit-retry fidelity
+    // contracts (EF-1..EF-4) have no reaction leg. This source pin fails if
+    // anyone ever threads a MessageRepository into this use case.
+    test(
+      'reaction failure never writes a failed messages row (retry-pipeline non-involvement)',
+      () {
+        final source = File(
+          'lib/features/conversation/application/send_reaction_use_case.dart',
+        ).readAsStringSync();
+        expect(source, isNot(contains('MessageRepository')));
+        expect(source, isNot(contains('saveMessage')));
       },
     );
   });

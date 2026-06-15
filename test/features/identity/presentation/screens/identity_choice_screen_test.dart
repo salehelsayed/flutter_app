@@ -34,13 +34,24 @@ void main() {
       expect(find.byType(BrandHeader), findsOneWidget);
     });
 
-    testWidgets('renders two ChoiceCards', (tester) async {
+    testWidgets('renders the primary card and the compact move button', (
+      tester,
+    ) async {
       await tester.pumpWidget(
-        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+        wrap(
+          IdentityChoiceScreen(
+            onNewHere: () {},
+            onLoadMyKey: () {},
+            onMoveFromOldPhone: () {},
+          ),
+        ),
       );
       await pumpPastAnimations(tester);
       expect(find.text("I'm new here"), findsOneWidget);
-      expect(find.text('Load my key'), findsOneWidget);
+      expect(find.text('Move from old phone'), findsOneWidget);
+      // "Load my key" is intentionally hidden from onboarding; Move Account
+      // is the supported path for bringing an existing identity over.
+      expect(find.text('Load my key'), findsNothing);
     });
 
     testWidgets('renders "I\'m new here" card text', (tester) async {
@@ -52,13 +63,32 @@ void main() {
       expect(find.text('Generate a fresh identity'), findsOneWidget);
     });
 
-    testWidgets('renders "Load my key" card text', (tester) async {
+    testWidgets('does not render the "Load my key" entry', (tester) async {
       await tester.pumpWidget(
         wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
       );
       await pumpPastAnimations(tester);
-      expect(find.text('Load my key'), findsOneWidget);
-      expect(find.text('Restore from recovery phrase'), findsOneWidget);
+      expect(find.text('Load my key'), findsNothing);
+      expect(find.text('Restore from recovery phrase'), findsNothing);
+    });
+
+    testWidgets('renders "Move from old phone" card text', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          IdentityChoiceScreen(
+            onNewHere: () {},
+            onLoadMyKey: () {},
+            onMoveFromOldPhone: () {},
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+      expect(find.text('Move from old phone'), findsOneWidget);
+      // The compact button drops the description row by design.
+      expect(
+        find.text('Bring your existing account to this device'),
+        findsNothing,
+      );
     });
 
     testWidgets('renders privacy footer with lock icon', (tester) async {
@@ -113,12 +143,12 @@ void main() {
       final newHereOpacity = tester.widget<Opacity>(
         find.byKey(const ValueKey("choice-card-opacity-I'm new here")),
       );
-      final loadKeyOpacity = tester.widget<Opacity>(
-        find.byKey(const ValueKey('choice-card-opacity-Load my key')),
+      final moveOpacity = tester.widget<Opacity>(
+        find.byKey(const ValueKey('choice-card-opacity-Move from old phone')),
       );
 
       expect(newHereOpacity.opacity, 0.5);
-      expect(loadKeyOpacity.opacity, 0.5);
+      expect(moveOpacity.opacity, 0.5);
     });
 
     testWidgets('disabled choice cards ignore taps', (tester) async {

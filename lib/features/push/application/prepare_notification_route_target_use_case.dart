@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -22,12 +23,21 @@ Future<void> prepareNotificationRouteTarget({
   GroupMessageListener? groupMessageListener,
   required MediaAttachmentRepository mediaAttachmentRepository,
   required ReactionRepository? reactionRepository,
+  AccountMigrationNetworkGate accountMigrationNetworkGate =
+      allowAccountMigrationNetworkSideEffects,
   String? selfPeerId,
 }) async {
   final result = await prepareNotificationOpen(
     routeTarget: routeTarget,
     drainOfflineInbox: drainOfflineInbox,
     drainGroupOfflineInboxForGroup: (groupId) async {
+      final allowed = await accountMigrationNetworkGate(
+        peerId: selfPeerId,
+        operation: 'push_notification_open_group_drain',
+      );
+      if (!allowed) {
+        return;
+      }
       final groupRepo = groupRepository;
       final groupMsgRepo = groupMessageRepository;
       if (groupRepo == null || groupMsgRepo == null) {

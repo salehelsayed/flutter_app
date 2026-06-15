@@ -460,7 +460,7 @@ void main() {
     );
 
     testWidgets(
-      'persistent nav keeps bottom chrome and scrolled content above the bar',
+      'persistent nav inlines the search trigger with the bar and keeps content above it',
       (tester) async {
         suppressOverflowErrors();
         suppressNavAssetErrors();
@@ -488,18 +488,23 @@ void main() {
         await tester.pump(const Duration(milliseconds: 600));
 
         final navRect = tester.getRect(find.byType(FeedNavigationBar));
-        final closeRect = tester.getRect(find.byType(OrbitCloseButton));
         final searchRect = tester.getRect(find.byType(OrbitSearchTrigger));
         final lastGroupRect = tester.getRect(find.text('Group 15'));
 
-        expect(closeRect.bottom, lessThanOrEqualTo(navRect.top));
-        expect(searchRect.bottom, lessThanOrEqualTo(closeRect.top));
+        // The redundant X close button is removed in persistent mode — the
+        // Feed tab is the way back.
+        expect(find.byType(OrbitCloseButton), findsNothing);
+        // The search trigger sits inline with the Feed/Orbit bar (same level),
+        // to its right rather than floating above it.
+        expect(searchRect.left, greaterThanOrEqualTo(navRect.right));
+        expect((searchRect.center.dy - navRect.center.dy).abs(), lessThan(2));
+        // Scrolled content stays above the nav bar.
         expect(lastGroupRect.bottom, lessThanOrEqualTo(navRect.top));
       },
     );
 
     testWidgets(
-      'search dock lifts above the persistent nav and leaves the close button clear',
+      'search dock lifts above the persistent nav',
       (tester) async {
         suppressOverflowErrors();
         suppressNavAssetErrors();
@@ -519,10 +524,10 @@ void main() {
 
         final navRect = tester.getRect(find.byType(FeedNavigationBar));
         final searchDockRect = tester.getRect(find.byType(OrbitSearchDock));
-        final closeRect = tester.getRect(find.byType(OrbitCloseButton));
 
+        // No close button in persistent mode; the dock simply clears the nav.
+        expect(find.byType(OrbitCloseButton), findsNothing);
         expect(searchDockRect.bottom, lessThanOrEqualTo(navRect.top));
-        expect(closeRect.bottom, lessThanOrEqualTo(searchDockRect.top));
       },
     );
   });

@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -20,6 +21,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
 
 // -- Fakes --
 
@@ -307,15 +309,16 @@ class _FakeDecryptBridge implements Bridge {
   Map<String, dynamic> decryptResponse;
   bool throwOnDecrypt;
   int decryptCallCount = 0;
+  final List<Map<String, dynamic>> requests = [];
 
-  _FakeDecryptBridge({
-    Map<String, dynamic>? decryptResponse,
-    this.throwOnDecrypt = false,
-  }) : decryptResponse = decryptResponse ?? {'ok': true, 'plaintext': '{}'};
+  _FakeDecryptBridge({Map<String, dynamic>? decryptResponse})
+    : decryptResponse = decryptResponse ?? {'ok': true, 'plaintext': '{}'},
+      throwOnDecrypt = false;
 
   @override
   Future<String> send(String message) async {
     final req = jsonDecode(message) as Map<String, dynamic>;
+    requests.add(req);
     if (req['cmd'] == 'message.decrypt') {
       decryptCallCount++;
       if (throwOnDecrypt) {
@@ -370,7 +373,13 @@ class _FakeMediaFileManager extends MediaFileManager {
   Future<void> deleteMediaForContact(String contactPeerId) async {}
 
   @override
-  Future<void> deleteFile(String localPath) async {}
+  Future<void> deleteFile(
+    String localPath, {
+    String caller = 'MediaFileManager.deleteFile',
+    String reason = 'media_file_delete',
+    String? storedPath,
+    Map<String, Object?> details = const {},
+  }) async {}
 }
 
 class _ThrowingBridge implements Bridge {
@@ -537,6 +546,11 @@ void main() {
     ChatMessageListener createListener({
       Bridge? bridge,
       Future<String?> Function()? getOwnMlKemSecretKey,
+      Future<void> Function({
+        required String contactPeerId,
+        required List<String> messageIds,
+      })?
+      sendDeliveryReceipt,
     }) {
       return ChatMessageListener(
         chatMessageStream: const Stream<ChatMessage>.empty(),
@@ -545,6 +559,7 @@ void main() {
         bridge: bridge,
         getOwnMlKemSecretKey: getOwnMlKemSecretKey,
         downloadProfilePictureFn: _noopDownloadProfilePicture,
+        sendDeliveryReceipt: sendDeliveryReceipt,
       );
     }
 
@@ -578,6 +593,95 @@ void main() {
         );
 
         expect(outcome.state, ChatMessageProcessState.missingMlKemSecret);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+
+    test(
+      'maps decryptionDeferred result to decryptionDeferred state',
+      () async {
+        const senderPeerId = 'sender-peer-v2-deferred';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        final bridge = _FakeDecryptBridge(
+          decryptResponse: {
+            'ok': false,
+            'errorCode': 'BRIDGE_TIMEOUT',
+            'errorMessage': 'Bridge call timed out after 10s',
+          },
+        );
+        final listener = createListener(
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => 'own-secret-key',
+        );
+
+        final outcome = await listener.processIncomingMessage(
+          _makeV2EncryptedChatMessage(from: senderPeerId),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.decryptionDeferred);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+
+    test(
+      'passes staged entry id to receipt-origin handling for LAN replay',
+      () async {
+        const senderPeerId = 'sender-peer-lan-replay';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        final receipts = <List<String>>[];
+        final listener = createListener(
+          sendDeliveryReceipt:
+              ({required contactPeerId, required messageIds}) async {
+                expect(contactPeerId, senderPeerId);
+                receipts.add(List<String>.from(messageIds));
+              },
+        );
+
+        final relayOutcome = await listener.processIncomingMessage(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-relay-receipt',
+          ).copyWith(transport: 'inbox'),
+        );
+
+        expect(relayOutcome.state, ChatMessageProcessState.stored);
+        expect(receipts, [
+          ['msg-relay-receipt'],
+        ]);
+        receipts.clear();
+
+        final lanOutcome = await listener.processIncomingMessage(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-lan-no-receipt',
+          ).copyWith(transport: 'inbox'),
+          stagedEntryId: 'lan:n1',
+        );
+
+        expect(lanOutcome.state, ChatMessageProcessState.stored);
+        expect(receipts, isEmpty);
+      },
+    );
+
+    test(
+      'migration-blocked account rejects direct chat before persistence',
+      () async {
+        const senderPeerId = 'sender-peer-migrated-out';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        final listener = ChatMessageListener(
+          chatMessageStream: const Stream<ChatMessage>.empty(),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          accountMigrationNetworkGate: ({peerId, required operation}) async =>
+              false,
+          downloadProfilePictureFn: _noopDownloadProfilePicture,
+        );
+
+        final outcome = await listener.processIncomingMessage(
+          _makeChatMessage(from: senderPeerId, id: 'msg-migrated-out-001'),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.accountMigrationBlocked);
         expect(messageRepo.saved, isEmpty);
       },
     );
@@ -726,6 +830,62 @@ void main() {
       );
     });
 
+    test('confirms ignored edit direct chat nonce with ok=true', () async {
+      const senderPeerId = 'sender-peer-confirm-ignored-edit';
+      const messageId = 'msg-confirm-ignored-edit';
+      const editedAt = '2026-04-01T10:00:00.000Z';
+      contactRepo.seedContact(_makeContact(senderPeerId));
+      await messageRepo.saveMessage(
+        const ConversationMessage(
+          id: messageId,
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'Already edited',
+          timestamp: '2026-04-01T09:59:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-04-01T09:59:00.000Z',
+          editedAt: editedAt,
+        ),
+      );
+      final bridge = _FakeBridge();
+      final listener = createListener(bridge: bridge);
+      final editPayload = jsonEncode({
+        'type': 'chat_message',
+        'version': '1',
+        'payload': {
+          'id': messageId,
+          'text': 'Already edited',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': '2026-04-01T09:59:00.000Z',
+          'action': 'edit',
+          'editedAt': editedAt,
+        },
+      });
+
+      final outcome = await listener.processIncomingMessage(
+        ChatMessage(
+          from: senderPeerId,
+          to: '',
+          content: editPayload,
+          timestamp: '2026-04-01T10:00:01.000Z',
+          isIncoming: true,
+          confirmNonce: 'nonce-ignored-edit',
+        ),
+      );
+
+      expect(outcome.state, ChatMessageProcessState.ignoredEdit);
+      final confirmRequests = bridge.requests
+          .where((request) => request['cmd'] == 'message:confirm')
+          .toList();
+      expect(confirmRequests, hasLength(1));
+      expect(
+        confirmRequests.single['payload'],
+        equals({'nonce': 'nonce-ignored-edit', 'ok': true}),
+      );
+    });
+
     test('confirms blocked sender nonce with ok=true', () async {
       const senderPeerId = 'sender-peer-confirm-blocked';
       contactRepo.seedContact(
@@ -779,6 +939,72 @@ void main() {
         );
       },
     );
+
+    test('confirms direct nonce ok=false for decryptionDeferred', () async {
+      const senderPeerId = 'sender-peer-confirm-deferred';
+      contactRepo.seedContact(_makeContact(senderPeerId));
+      final bridge = _FakeDecryptBridge(
+        decryptResponse: {
+          'ok': false,
+          'errorCode': 'BRIDGE_TIMEOUT',
+          'errorMessage': 'Bridge call timed out after 10s',
+        },
+      );
+      final listener = createListener(
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => 'own-secret-key',
+      );
+
+      final outcome = await listener.processIncomingMessage(
+        _makeV2EncryptedChatMessage(
+          from: senderPeerId,
+          confirmNonce: 'nonce-deferred',
+        ),
+      );
+
+      expect(outcome.state, ChatMessageProcessState.decryptionDeferred);
+      final confirmRequests = bridge.requests
+          .where((request) => request['cmd'] == 'message:confirm')
+          .toList();
+      expect(confirmRequests, hasLength(1));
+      expect(
+        confirmRequests.single['payload'],
+        equals({'nonce': 'nonce-deferred', 'ok': false}),
+      );
+    });
+
+    test('confirms direct nonce ok=false for decryptionFailed', () async {
+      const senderPeerId = 'sender-peer-confirm-failed';
+      contactRepo.seedContact(_makeContact(senderPeerId));
+      final bridge = _FakeDecryptBridge(
+        decryptResponse: {
+          'ok': false,
+          'errorCode': 'INTERNAL_ERROR',
+          'errorMessage': 'message authentication failed',
+        },
+      );
+      final listener = createListener(
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => 'own-secret-key',
+      );
+
+      final outcome = await listener.processIncomingMessage(
+        _makeV2EncryptedChatMessage(
+          from: senderPeerId,
+          confirmNonce: 'nonce-failed',
+        ),
+      );
+
+      expect(outcome.state, ChatMessageProcessState.decryptionFailed);
+      final confirmRequests = bridge.requests
+          .where((request) => request['cmd'] == 'message:confirm')
+          .toList();
+      expect(confirmRequests, hasLength(1));
+      expect(
+        confirmRequests.single['payload'],
+        equals({'nonce': 'nonce-failed', 'ok': false}),
+      );
+    });
   });
 
   group('ChatMessageListener auto-download', () {
@@ -1390,6 +1616,7 @@ void main() {
       Bridge? bridge,
       Future<String?> Function()? getOwnMlKemSecretKey,
       RecentRemoteNotificationGate? notificationGate,
+      NotificationToneTracker? notificationToneTracker,
       Duration backgroundNotificationDuplicateGuardDelay = Duration.zero,
     }) {
       return ChatMessageListener(
@@ -1400,6 +1627,7 @@ void main() {
         getOwnMlKemSecretKey: getOwnMlKemSecretKey,
         notificationService: notificationService,
         conversationTracker: tracker,
+        notificationToneTracker: notificationToneTracker,
         getAppLifecycleState: () => lifecycleState,
         remoteNotificationGate: notificationGate ?? remoteNotificationGate,
         backgroundNotificationDuplicateGuardDelay:
@@ -1434,6 +1662,94 @@ void main() {
         expect(notificationService.shown.first.senderUsername, 'Bob');
         expect(notificationService.shown.first.messageText, 'Hey there!');
         expect(notificationService.shown.first.contactPeerId, senderPeerId);
+
+        listener.dispose();
+      },
+    );
+
+    // 120 G4 — locks `toneTracker: notificationToneTracker` at
+    // chat_message_listener.dart:571. Removing that arg makes both messages
+    // audible, which this guard catches.
+    test(
+      'toneTracker is wired: two direct messages, same conversation, in-window → first audible, second silent',
+      () async {
+        final senderPeerId = 'sender-notif-tone-wired';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Bob'));
+
+        // Single fixed clock so both messages fall inside the 30s window.
+        final fixedNow = DateTime.utc(2026, 6, 13, 12, 0, 0);
+        final toneTracker = NotificationToneTracker(
+          clock: () => fixedNow,
+          window: const Duration(seconds: 30),
+        );
+
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.paused,
+          notificationToneTracker: toneTracker,
+        );
+        listener.start();
+
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-tone-wired-1',
+            text: 'First',
+            senderUsername: 'Bob',
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 150));
+
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-tone-wired-2',
+            text: 'Second',
+            senderUsername: 'Bob',
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 150));
+
+        expect(notificationService.shown, hasLength(2));
+        expect(notificationService.shown[0].silent, isFalse);
+        expect(notificationService.shown[1].silent, isTrue);
+
+        listener.dispose();
+      },
+    );
+
+    // 120 G4 — locks the live-wins mark closure at
+    // chat_message_listener.dart:582-588. Removing it means a live direct
+    // notification no longer writes a dedup marker, so a late FCM isolate for
+    // the same message double-alerts. This guard catches the missing mark.
+    test(
+      'markRecentRemoteNotificationAnnouncement is wired: a live direct notification marks the gate',
+      () async {
+        final senderPeerId = 'sender-notif-mark-wired';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Bob'));
+
+        final spyGate = SpyRecentRemoteNotificationGate();
+        addTearDown(spyGate.clear);
+
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.paused,
+          notificationGate: spyGate,
+        );
+        listener.start();
+
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-mark-wired-1',
+            text: 'Live direct',
+            senderUsername: 'Bob',
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 150));
+
+        expect(notificationService.shown, hasLength(1));
+        expect(spyGate.markCalls, hasLength(1));
+        expect(spyGate.markCalls.single.payload, senderPeerId);
+        expect(spyGate.markCalls.single.messageId, 'msg-mark-wired-1');
 
         listener.dispose();
       },

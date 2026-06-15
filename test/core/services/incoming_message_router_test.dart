@@ -114,6 +114,8 @@ class FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -193,22 +195,32 @@ void main() {
       },
     );
 
-    test('ignores legacy delivery_receipt messages', () async {
-      final contactRequests = <ChatMessage>[];
-      final chatMessages = <ChatMessage>[];
-      final unknowns = <ChatMessage>[];
+    // 115 P2.1 — REWRITTEN from 'ignores legacy delivery_receipt messages':
+    // the type-name drop made cross-device delivery receipts impossible and
+    // left relay-inbox custody permanently unconfirmable (doc 115 G-C).
+    test(
+      "routes 'delivery_receipt' envelopes to deliveryReceiptStream instead of dropping them",
+      () async {
+        final contactRequests = <ChatMessage>[];
+        final chatMessages = <ChatMessage>[];
+        final unknowns = <ChatMessage>[];
+        final receipts = <ChatMessage>[];
 
-      router.contactRequestStream.listen(contactRequests.add);
-      router.chatMessageStream.listen(chatMessages.add);
-      router.unknownMessageStream.listen(unknowns.add);
+        router.contactRequestStream.listen(contactRequests.add);
+        router.chatMessageStream.listen(chatMessages.add);
+        router.unknownMessageStream.listen(unknowns.add);
+        router.deliveryReceiptStream.listen(receipts.add);
 
-      p2pService.inject(_makeMessage('delivery_receipt'));
-      await Future.delayed(const Duration(milliseconds: 50));
+        p2pService.inject(_makeMessage('delivery_receipt'));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(contactRequests, isEmpty);
-      expect(chatMessages, isEmpty);
-      expect(unknowns, isEmpty);
-    });
+        expect(receipts, hasLength(1));
+        expect(receipts.single.content, contains('"type":"delivery_receipt"'));
+        expect(contactRequests, isEmpty);
+        expect(chatMessages, isEmpty);
+        expect(unknowns, isEmpty);
+      },
+    );
 
     test('routes unknown types to unknownMessageStream', () async {
       final received = router.unknownMessageStream.first;

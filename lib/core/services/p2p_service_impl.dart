@@ -8,12 +8,15 @@ import '../bridge/p2p_bridge_client.dart';
 import '../debug/transport_metrics.dart';
 import '../inbox/inbox_staging_entry.dart';
 import '../inbox/inbox_staging_repository.dart';
+import 'inbox_store_outcome.dart';
+import '../local_discovery/lan_ack.dart';
 import '../local_discovery/local_discovery_service.dart';
 import '../local_discovery/local_p2p_service.dart';
 import '../utils/key_conversion.dart';
 import '../utils/chat_console_logger.dart';
 import '../utils/flow_event_emitter.dart';
 import '../utils/push_diagnostics_logger.dart';
+import '../../features/account_migration/application/account_migration_runtime_network_gate.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/discovered_peer.dart';
@@ -21,7 +24,17 @@ import '../../features/p2p/domain/models/send_message_result.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../../features/push/domain/push_token_store.dart';
 
-enum RecoveredInboxChatDisposition { committed, retryable, rejected }
+enum RecoveredInboxChatDisposition {
+  committed,
+  retryable,
+  rejected,
+  quarantined,
+}
+
+/// Replay attempts allowed before a retryable staged entry is quarantined
+/// instead of looping forever. Quarantine keeps the envelope (INV-1) but
+/// excludes it from further replay.
+const maxInboxReplayAttempts = 10;
 
 typedef RecoveredInboxReplayOutcome = ({
   RecoveredInboxChatDisposition disposition,
@@ -30,7 +43,10 @@ typedef RecoveredInboxReplayOutcome = ({
 });
 
 typedef ReplayRecoveredInboxChatMessage =
-    Future<RecoveredInboxReplayOutcome> Function(ChatMessage message);
+    Future<RecoveredInboxReplayOutcome> Function(
+      ChatMessage message, {
+      String? stagedEntryId,
+    });
 
 typedef ReplayRecoveredInboxIntroductionMessage =
     Future<RecoveredInboxReplayOutcome> Function(ChatMessage message);
@@ -46,12 +62,23 @@ class _LearnedTransport {
 
 /// Implementation of P2PService backed by the Go native bridge.
 class P2PServiceImpl
-    implements P2PService, ReadinessProofRecorder, P2PFullInboxDrain {
+    implements
+        P2PService,
+        DetailedInboxStore,
+        ReadinessProofRecorder,
+        P2PFullInboxDrain,
+        DurableLanSender {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
+  final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final InboxStagingRepository _inboxStagingRepository;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxChatMessage;
+  final ReplayRecoveredInboxChatMessage? _replayLiveLanChatMessage;
+  // 118: a freshly-staged-and-immediately-replayed LIVE direct (1:1) message
+  // routes here (suppressNotification:false), NOT through the suppressing
+  // recovery callback. Wired hard (non-null) in production — see main.dart.
+  final ReplayRecoveredInboxChatMessage? _replayLiveDirectChatMessage;
   final ReplayRecoveredInboxIntroductionMessage?
   _replayRecoveredInboxIntroductionMessage;
   final TransportMetrics? _transportMetrics;
@@ -194,16 +221,23 @@ class P2PServiceImpl
     required Bridge bridge,
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
+    AccountMigrationNetworkGate accountMigrationNetworkGate =
+        allowAccountMigrationNetworkSideEffects,
     required InboxStagingRepository inboxStagingRepository,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxChatMessage,
+    ReplayRecoveredInboxChatMessage? replayLiveLanChatMessage,
+    ReplayRecoveredInboxChatMessage? replayLiveDirectChatMessage,
     ReplayRecoveredInboxIntroductionMessage?
     replayRecoveredInboxIntroductionMessage,
     TransportMetrics? transportMetrics,
   }) : _bridge = bridge,
        _localP2P = localP2PService,
        _pushTokenStore = pushTokenStore,
+       _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _inboxStagingRepository = inboxStagingRepository,
        _replayRecoveredInboxChatMessage = replayRecoveredInboxChatMessage,
+       _replayLiveLanChatMessage = replayLiveLanChatMessage,
+       _replayLiveDirectChatMessage = replayLiveDirectChatMessage,
        _replayRecoveredInboxIntroductionMessage =
            replayRecoveredInboxIntroductionMessage,
        _transportMetrics = transportMetrics {
@@ -223,7 +257,7 @@ class P2PServiceImpl
           'transport': transport,
         },
       );
-      _handleMessageReceived(msg.copyWith(transport: transport));
+      unawaited(_handleMessageReceived(msg.copyWith(transport: transport)));
     };
     _bridge.onPeerConnected = _handlePeerConnected;
     _bridge.onPeerDisconnected = _handlePeerDisconnected;
@@ -236,6 +270,8 @@ class P2PServiceImpl
     _transportDiagnosticSub = transportDiagnosticEventStream.listen(
       _handleTransportDiagnosticEvent,
     );
+
+    _localP2P?.configureInboundChatCommitHandler(_commitInboundLanChatMessage);
 
     // Merge local WiFi messages into the unified message stream
     _localMessageSub = _localP2P?.localMessageStream.listen((localMsg) {
@@ -252,14 +288,16 @@ class P2PServiceImpl
           'transport': 'wifi',
         },
       );
-      _handleMessageReceived(
-        ChatMessage(
-          from: localMsg.from,
-          to: localMsg.to,
-          content: localMsg.content,
-          timestamp: localMsg.timestamp.toIso8601String(),
-          isIncoming: localMsg.isIncoming,
-          transport: 'wifi',
+      unawaited(
+        _handleMessageReceived(
+          ChatMessage(
+            from: localMsg.from,
+            to: localMsg.to,
+            content: localMsg.content,
+            timestamp: localMsg.timestamp.toIso8601String(),
+            isIncoming: localMsg.isIncoming,
+            transport: 'wifi',
+          ),
         ),
       );
     });
@@ -303,8 +341,34 @@ class P2PServiceImpl
   Stream<LocalMediaReady> get incomingLocalMediaStream =>
       _incomingLocalMediaController.stream;
 
+  Future<bool> _allowsAccountNetworkSideEffects(
+    String operation, {
+    String? peerId,
+  }) async {
+    final effectivePeerId = peerId ?? _currentState.peerId;
+    final allowed = await _accountMigrationNetworkGate(
+      peerId: effectivePeerId,
+      operation: operation,
+    );
+    if (!allowed) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_ACCOUNT_MIGRATION_NETWORK_BLOCKED',
+        details: {'operation': operation, 'peerId': ?effectivePeerId},
+      );
+    }
+    return allowed;
+  }
+
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async {
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_start_node',
+      peerId: peerId,
+    )) {
+      return false;
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_START_NODE_BEGIN',
@@ -332,6 +396,13 @@ class P2PServiceImpl
 
   @override
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_start_node_core',
+      peerId: peerId,
+    )) {
+      return false;
+    }
+
     if (_isStarting) {
       if (kDebugMode) {
         debugPrint('[START] startNodeCore() skipped — already starting');
@@ -449,6 +520,9 @@ class P2PServiceImpl
   @override
   Future<void> warmBackground() async {
     if (!_currentState.isStarted) return;
+    if (!await _allowsAccountNetworkSideEffects('p2p_warm_background')) {
+      return;
+    }
 
     if (kDebugMode) {
       debugPrint(
@@ -692,6 +766,42 @@ class P2PServiceImpl
     );
   }
 
+  InboxStagingEntry? _stagingEntryFromLanMessage(
+    LocalChatMessage message, {
+    required String nonce,
+    String? messageType,
+  }) {
+    final ownerPeerId = message.to.isNotEmpty
+        ? message.to
+        : (_currentState.peerId ?? '');
+    if (nonce.isEmpty ||
+        ownerPeerId.isEmpty ||
+        message.from.isEmpty ||
+        message.content.isEmpty) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_LAN_STAGE_SKIP_MALFORMED',
+        details: {
+          'hasNonce': nonce.isNotEmpty,
+          'hasOwner': ownerPeerId.isNotEmpty,
+          'hasFrom': message.from.isNotEmpty,
+          'hasEnvelope': message.content.isNotEmpty,
+        },
+      );
+      return null;
+    }
+
+    return InboxStagingEntry(
+      entryId: 'lan:$nonce',
+      ownerPeerId: ownerPeerId,
+      senderPeerId: message.from,
+      messageType: messageType ?? _messageTypeFromEnvelope(message.content),
+      relayTimestamp: message.timestamp.toUtc().toIso8601String(),
+      envelope: message.content,
+      stagedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
   bool _shouldDurablyStageDeferredDirectChat(
     ChatMessage message, {
     required String? envelopeType,
@@ -720,8 +830,13 @@ class P2PServiceImpl
     required InboxStagingEntry entry,
   }) async {
     final repo = _inboxStagingRepository;
-    final replayRecoveredInboxChatMessage = _replayRecoveredInboxChatMessage;
-    if (replayRecoveredInboxChatMessage == null) {
+    // 118: a LIVE direct message routes through the notify-capable callback,
+    // never the suppressing recovery callback. Deliberately NO `?? recovery`
+    // fallback (unlike the LAN path) — if the live-direct callback is somehow
+    // absent we emit the un-staged, notify-capable stream message rather than
+    // silently re-suppressing via the recovery callback.
+    final replayLiveDirectChatMessage = _replayLiveDirectChatMessage;
+    if (replayLiveDirectChatMessage == null) {
       _emitIncomingMessage(message);
       return;
     }
@@ -770,7 +885,10 @@ class P2PServiceImpl
 
     final replayMessage = _messageWithoutConfirmNonce(message);
     try {
-      final outcome = await replayRecoveredInboxChatMessage(replayMessage);
+      final outcome = await replayLiveDirectChatMessage(
+        replayMessage,
+        stagedEntryId: entry.entryId,
+      );
       await _applyRecoveredInboxOutcome(
         repo: repo,
         entry: entry,
@@ -778,6 +896,7 @@ class P2PServiceImpl
         committedEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_COMMITTED',
         retryableEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_RETRYABLE',
         rejectedEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_REJECTED',
+        quarantinedEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_QUARANTINED',
       );
     } catch (e) {
       await repo.markRetryable(
@@ -788,6 +907,51 @@ class P2PServiceImpl
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_DIRECT_STAGED_CHAT_EXCEPTION',
+        details: {
+          'entryId': entry.entryId.length > 8
+              ? entry.entryId.substring(0, 8)
+              : entry.entryId,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
+  Future<void> _replayDurablyStagedLanChat(
+    ChatMessage message, {
+    required InboxStagingEntry entry,
+  }) async {
+    final repo = _inboxStagingRepository;
+    final replayLanChatMessage =
+        _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
+    if (replayLanChatMessage == null) {
+      _emitIncomingMessage(message);
+      return;
+    }
+
+    try {
+      final outcome = await replayLanChatMessage(
+        message,
+        stagedEntryId: entry.entryId,
+      );
+      await _applyRecoveredInboxOutcome(
+        repo: repo,
+        entry: entry,
+        outcome: outcome,
+        committedEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_COMMITTED',
+        retryableEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_RETRYABLE',
+        rejectedEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_REJECTED',
+        quarantinedEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_QUARANTINED',
+      );
+    } catch (e) {
+      await repo.markRetryable(
+        entry.entryId,
+        reasonCode: 'processing_error',
+        reasonDetail: e.toString(),
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_LAN_STAGED_CHAT_EXCEPTION',
         details: {
           'entryId': entry.entryId.length > 8
               ? entry.entryId.substring(0, 8)
@@ -818,11 +982,28 @@ class P2PServiceImpl
       final entryStopwatch = Stopwatch()..start();
       final message = entry.toChatMessage();
       try {
-        final replayRecoveredInboxChatMessage =
-            _replayRecoveredInboxChatMessage;
-        if (entry.messageType == 'chat_message' &&
-            replayRecoveredInboxChatMessage != null) {
-          final outcome = await replayRecoveredInboxChatMessage(message);
+        // 118 Phase 1B: keep retried `direct:`/`lan:` entries notify-capable on
+        // the recovery sweep. The sweep is otherwise prefix-blind, so a
+        // once-live message that fell to `retryable` and is later swept would
+        // be silently re-suppressed through the recovery callback. Route by
+        // entry-id prefix, falling back to the recovery callback only when the
+        // matching live callback is absent. A genuine relay-inbox-recovered
+        // entry (no `direct:`/`lan:` prefix) keeps the suppressing callback.
+        final ReplayRecoveredInboxChatMessage? chatReplay;
+        if (entry.entryId.startsWith('direct:')) {
+          chatReplay =
+              _replayLiveDirectChatMessage ?? _replayRecoveredInboxChatMessage;
+        } else if (entry.entryId.startsWith('lan:')) {
+          chatReplay =
+              _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
+        } else {
+          chatReplay = _replayRecoveredInboxChatMessage;
+        }
+        if (entry.messageType == 'chat_message' && chatReplay != null) {
+          final outcome = await chatReplay(
+            message,
+            stagedEntryId: entry.entryId,
+          );
           if (await _applyRecoveredInboxOutcome(
             repo: repo,
             entry: entry,
@@ -830,6 +1011,7 @@ class P2PServiceImpl
             committedEvent: 'P2P_SERVICE_INBOX_STAGED_CHAT_COMMITTED',
             retryableEvent: 'P2P_SERVICE_INBOX_STAGED_CHAT_RETRYABLE',
             rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_CHAT_REJECTED',
+            quarantinedEvent: 'P2P_SERVICE_INBOX_STAGED_CHAT_QUARANTINED',
           )) {
             replayed++;
             entryStopwatch.stop();
@@ -861,6 +1043,7 @@ class P2PServiceImpl
             committedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_COMMITTED',
             retryableEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_RETRYABLE',
             rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_REJECTED',
+            quarantinedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_QUARANTINED',
           )) {
             replayed++;
             entryStopwatch.stop();
@@ -878,7 +1061,10 @@ class P2PServiceImpl
           continue;
         }
 
-        _handleMessageReceived(message);
+        final forwarded = await _handleMessageReceived(message);
+        if (!forwarded) {
+          continue;
+        }
         await repo.deleteEntry(entry.entryId);
         replayed++;
 
@@ -925,6 +1111,37 @@ class P2PServiceImpl
     return replayed;
   }
 
+  Future<void> _quarantineRecoveredInboxEntry({
+    required InboxStagingRepository repo,
+    required InboxStagingEntry entry,
+    required String quarantinedEvent,
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    await repo.markQuarantined(
+      entry.entryId,
+      reasonCode: reasonCode,
+      reasonDetail: reasonDetail,
+    );
+    final entryIdShort = entry.entryId.length > 8
+        ? entry.entryId.substring(0, 8)
+        : entry.entryId;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'INBOX_STAGING_QUARANTINED',
+      details: {
+        'entryId': entryIdShort,
+        'reasonCode': reasonCode,
+        'attemptCount': entry.attemptCount + 1,
+      },
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: quarantinedEvent,
+      details: {'entryId': entryIdShort, 'reasonCode': reasonCode},
+    );
+  }
+
   Future<bool> _applyRecoveredInboxOutcome({
     required InboxStagingRepository repo,
     required InboxStagingEntry entry,
@@ -932,6 +1149,7 @@ class P2PServiceImpl
     required String committedEvent,
     required String retryableEvent,
     required String rejectedEvent,
+    required String quarantinedEvent,
   }) async {
     switch (outcome.disposition) {
       case RecoveredInboxChatDisposition.committed:
@@ -948,6 +1166,17 @@ class P2PServiceImpl
         );
         return true;
       case RecoveredInboxChatDisposition.retryable:
+        if (entry.attemptCount >= maxInboxReplayAttempts) {
+          await _quarantineRecoveredInboxEntry(
+            repo: repo,
+            entry: entry,
+            quarantinedEvent: quarantinedEvent,
+            reasonCode: 'attempt_cap_exceeded',
+            reasonDetail:
+                'still ${outcome.reasonCode} after ${entry.attemptCount} attempts',
+          );
+          return false;
+        }
         await repo.markRetryable(
           entry.entryId,
           reasonCode: outcome.reasonCode,
@@ -979,6 +1208,15 @@ class P2PServiceImpl
                 : entry.entryId,
             'reasonCode': outcome.reasonCode,
           },
+        );
+        return false;
+      case RecoveredInboxChatDisposition.quarantined:
+        await _quarantineRecoveredInboxEntry(
+          repo: repo,
+          entry: entry,
+          quarantinedEvent: quarantinedEvent,
+          reasonCode: outcome.reasonCode,
+          reasonDetail: outcome.reasonDetail,
         );
         return false;
     }
@@ -1088,6 +1326,26 @@ class P2PServiceImpl
     }
 
     final ackableEntryIds = await repo.stageEntries(entries);
+    // Re-check the migration gate at the ACK boundary: a drain that passed
+    // the entry gate before a Move Account export pause landed must not
+    // ACK-delete relay entries afterwards — the relay copy is the only one
+    // the new phone can ever receive. Staged-but-unacked entries are
+    // deduplicated on a later drain, so skipping the ACK is safe.
+    if (ackableEntryIds.isNotEmpty &&
+        !await _allowsAccountNetworkSideEffects('p2p_inbox_ack_after_stage')) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_ACK_SKIPPED_GATED',
+        details: {'requested': ackableEntryIds.length},
+      );
+      return (
+        replayed: 0,
+        staged: ackableEntryIds.length,
+        hasMore: false,
+        retrieveSucceeded: true,
+        failureReason: null,
+      );
+    }
     if (ackableEntryIds.isNotEmpty) {
       try {
         final ackResponse = await callP2PInboxAck(
@@ -1145,6 +1403,19 @@ class P2PServiceImpl
 
     try {
       for (var page = 1; page < maxInboxPages; page++) {
+        // The continuation runs unawaited in the background, so re-check the
+        // migration gate per page: a Move Account export pause must stop the
+        // drain mid-backlog, not only at the next top-level entry point.
+        if (!await _allowsAccountNetworkSideEffects(
+          'p2p_drain_offline_inbox_page',
+        )) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_GATED',
+            details: {'page': page + 1, 'staged': staged},
+          );
+          break;
+        }
         final result = await _retrievePendingInboxPage(toPeerId: toPeerId);
         replayed += result.replayed;
         staged += result.staged;
@@ -1184,9 +1455,7 @@ class P2PServiceImpl
     }
   }
 
-  Future<void> _drainOfflineInboxDurably({
-    bool waitForAllPages = false,
-  }) async {
+  Future<void> _drainOfflineInboxDurably({bool waitForAllPages = false}) async {
     try {
       final toPeerId = _currentState.peerId ?? '';
       final replayedExisting = await _replayStagedInboxEntries();
@@ -1315,6 +1584,10 @@ class P2PServiceImpl
 
   @override
   Future<bool> sendMessage(String peerId, String message) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_send_message')) {
+      return false;
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_SEND_MESSAGE_BEGIN',
@@ -1381,6 +1654,12 @@ class P2PServiceImpl
     String message, {
     int? timeoutMs,
   }) async {
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_send_message_with_reply',
+    )) {
+      return const SendMessageResult(sent: false);
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_BEGIN',
@@ -1441,6 +1720,10 @@ class P2PServiceImpl
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_discover_peer')) {
+      return null;
+    }
+
     final details = <String, dynamic>{'peerId': peerId};
     if (timeoutMs != null) {
       details['timeoutMs'] = timeoutMs;
@@ -1499,6 +1782,10 @@ class P2PServiceImpl
     List<String>? addresses,
     int? timeoutMs,
   }) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_dial_peer')) {
+      return false;
+    }
+
     final details = <String, dynamic>{
       'peerId': peerId,
       'hasAddresses': addresses != null,
@@ -1619,8 +1906,7 @@ class P2PServiceImpl
     }
 
     _readinessProofWindowSequence += 1;
-    _activeReadinessProofWindowId =
-        'readiness_${_readinessProofWindowSequence}';
+    _activeReadinessProofWindowId = 'readiness_$_readinessProofWindowSequence';
     _activeReadinessPhase = phase;
     _activeReadinessProofWindowStartedAt = startedAt ?? DateTime.now();
     _sendProofAttemptStartedAt = _activeReadinessProofWindowStartedAt;
@@ -1711,7 +1997,7 @@ class P2PServiceImpl
           'phase': phase,
           'totalMs': totalMs,
           'source': source,
-          if (sendPath != null) 'sendPath': sendPath,
+          'sendPath': ?sendPath,
           'trigger': trigger,
         },
       );
@@ -1771,8 +2057,8 @@ class P2PServiceImpl
         'success': success,
         'proofSource': proofSource,
         'elapsedMs': elapsedMs,
-        if (trigger != null) 'trigger': trigger,
-        if (sendPath != null) 'sendPath': sendPath,
+        'trigger': ?trigger,
+        'sendPath': ?sendPath,
         if (!success && failureReason != null) 'failureReason': failureReason,
       },
     );
@@ -1968,6 +2254,13 @@ class P2PServiceImpl
       return;
     }
 
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_readiness_send_probe',
+      peerId: peerId,
+    )) {
+      return;
+    }
+
     _proactiveSendProofAttemptedInWindow = true;
     _proactiveSendProofInFlight = true;
     _sendProofAttemptStartedAt ??= DateTime.now();
@@ -2027,6 +2320,10 @@ class P2PServiceImpl
   }
 
   Future<void> _attemptRelayRecovery({required String recoverySource}) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_relay_recovery')) {
+      return;
+    }
+
     _beginRecoveryInstrumentation(recoverySource);
 
     emitFlowEvent(
@@ -2111,8 +2408,7 @@ class P2PServiceImpl
             'relayWarmMs': relayWarmMs,
             'reserveRpcMs': reserveRpcMs,
             'relayWarmParallelism': relayWarmParallelism,
-            if (foregroundRecoveryPath != null)
-              'foregroundRecoveryPath': foregroundRecoveryPath,
+            'foregroundRecoveryPath': ?foregroundRecoveryPath,
             'foregroundRelayDialTimeoutMs': foregroundRelayDialTimeoutMs,
             'autorelayRetryCadenceMs': autorelayRetryCadenceMs,
             'circuitAddressWaitMs': circuitAddressWaitMs,
@@ -2405,6 +2701,9 @@ class P2PServiceImpl
       }
       return;
     }
+    if (!await _allowsAccountNetworkSideEffects('p2p_health_check')) {
+      return;
+    }
     _isHealthChecking = true;
     final hcStart = DateTime.now();
     if (kDebugMode) debugPrint('[HEALTH] _performHealthCheck() starting...');
@@ -2629,8 +2928,104 @@ class P2PServiceImpl
     }
   }
 
+  Future<LanInboundDecision> _commitInboundLanChatMessage(
+    LocalChatMessage localMsg, {
+    required String? nonce,
+  }) async {
+    _transportMetrics?.recordTransport('wifi');
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MSG_RECEIVED_TRANSPORT',
+      details: {
+        'from': localMsg.from.length > 10
+            ? localMsg.from.substring(0, 10)
+            : localMsg.from,
+        'transport': 'wifi',
+      },
+    );
+
+    String? envelopeType;
+    try {
+      final decoded = jsonDecode(localMsg.content);
+      if (decoded is Map<String, dynamic>) {
+        envelopeType = decoded['type']?.toString();
+      }
+    } catch (_) {
+      envelopeType = null;
+    }
+
+    final message = ChatMessage(
+      from: localMsg.from,
+      to: localMsg.to,
+      content: localMsg.content,
+      timestamp: localMsg.timestamp.toUtc().toIso8601String(),
+      isIncoming: localMsg.isIncoming,
+      transport: 'wifi',
+    );
+
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_inbound_message',
+      peerId: localMsg.to.trim().isEmpty ? null : localMsg.to,
+    )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_INBOUND_EVENT_BLOCKED',
+        details: {
+          'operation': 'p2p_inbound_message',
+          'family': 'direct_chat',
+          'from': localMsg.from.length > 10
+              ? localMsg.from.substring(0, 10)
+              : localMsg.from,
+          'envelopeType': ?envelopeType,
+        },
+      );
+      return LanInboundDecision.rejected('account_migration_blocked');
+    }
+
+    final safeNonce = nonce?.trim();
+    final replayLanChatMessage =
+        _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
+    if (envelopeType != 'chat_message' ||
+        replayLanChatMessage == null ||
+        safeNonce == null ||
+        safeNonce.isEmpty) {
+      _emitIncomingMessage(message);
+      return const LanInboundDecision.accepted();
+    }
+
+    final entry = _stagingEntryFromLanMessage(
+      localMsg,
+      nonce: safeNonce,
+      messageType: envelopeType,
+    );
+    if (entry == null) {
+      _emitIncomingMessage(message);
+      return const LanInboundDecision.accepted();
+    }
+
+    try {
+      await _inboxStagingRepository.stageEntries([entry]);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_LAN_STAGE_ERROR',
+        details: {
+          'entryId': entry.entryId.length > 8
+              ? entry.entryId.substring(0, 8)
+              : entry.entryId,
+          'error': e.toString(),
+        },
+      );
+      _emitIncomingMessage(message);
+      return LanInboundDecision.rejected('staging_error');
+    }
+
+    unawaited(_replayDurablyStagedLanChat(message, entry: entry));
+    return const LanInboundDecision.committed();
+  }
+
   /// Handle incoming chat message from bridge event.
-  void _handleMessageReceived(ChatMessage message) {
+  Future<bool> _handleMessageReceived(ChatMessage message) async {
     String? envelopeType;
     try {
       final decoded = jsonDecode(message.content);
@@ -2639,6 +3034,24 @@ class P2PServiceImpl
       }
     } catch (_) {
       envelopeType = null;
+    }
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_inbound_message',
+      peerId: message.to.trim().isEmpty ? null : message.to,
+    )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_INBOUND_EVENT_BLOCKED',
+        details: {
+          'operation': 'p2p_inbound_message',
+          'family': 'direct_chat',
+          'from': message.from.length > 10
+              ? message.from.substring(0, 10)
+              : message.from,
+          'envelopeType': ?envelopeType,
+        },
+      );
+      return false;
     }
     emitFlowEvent(
       layer: 'FL',
@@ -2671,11 +3084,12 @@ class P2PServiceImpl
       );
       if (entry != null) {
         unawaited(_processDurablyStagedDirectChat(message, entry: entry));
-        return;
+        return true;
       }
     }
 
     _emitIncomingMessage(message);
+    return true;
   }
 
   /// Handle peer connected event from bridge.
@@ -2994,6 +3408,24 @@ class P2PServiceImpl
     String message, {
     int? timeoutMs,
   }) async {
+    final outcome = await storeInInboxDetailed(
+      toPeerId,
+      message,
+      timeoutMs: timeoutMs,
+    );
+    return outcome.accepted;
+  }
+
+  @override
+  Future<InboxStoreOutcome> storeInInboxDetailed(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_store_inbox')) {
+      return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_INBOX_STORE_BEGIN',
@@ -3007,27 +3439,39 @@ class P2PServiceImpl
         message: message,
         timeoutMs: timeoutMs,
       );
-      final ok = response['ok'] == true;
+      final outcome = InboxStoreOutcome.fromBridgeResponse(response);
       emitFlowEvent(
         layer: 'FL',
-        event: ok
+        event: outcome.accepted
             ? 'P2P_SERVICE_INBOX_STORE_SUCCESS'
             : 'P2P_SERVICE_INBOX_STORE_ERROR',
-        details: {'toPeerId': toPeerId},
+        details: {
+          'toPeerId': toPeerId,
+          'status': outcome.status.name,
+          if (outcome.errorCode != null) 'errorCode': outcome.errorCode,
+          if (outcome.expiresAtMs != null) 'expiresAtMs': outcome.expiresAtMs,
+        },
       );
-      return ok;
+      return outcome;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_STORE_EXCEPTION',
         details: {'error': e.toString()},
       );
-      return false;
+      return InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorMessage: e.toString(),
+      );
     }
   }
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_retrieve_inbox')) {
+      return const [];
+    }
+
     final details = <String, dynamic>{};
     if (timeoutMs != null) {
       details['timeoutMs'] = timeoutMs;
@@ -3094,6 +3538,10 @@ class P2PServiceImpl
 
   @override
   Future<bool> registerPushToken(String token, String platform) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_register_push_token')) {
+      return false;
+    }
+
     logPushDiagnostic(
       'bridge_register_push_token_begin',
       details: {'platform': platform, 'token': summarizePushToken(token)},
@@ -3153,6 +3601,10 @@ class P2PServiceImpl
 
   @override
   Future<void> performImmediateHealthCheck() async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_immediate_health_check')) {
+      return;
+    }
+
     if (kDebugMode) debugPrint('[HEALTH] performImmediateHealthCheck() called');
     emitFlowEvent(
       layer: 'FL',
@@ -3208,6 +3660,9 @@ class P2PServiceImpl
   @override
   Future<void> drainOfflineInbox() async {
     if (!_currentState.isStarted) return;
+    if (!await _allowsAccountNetworkSideEffects('p2p_drain_offline_inbox')) {
+      return;
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -3220,6 +3675,11 @@ class P2PServiceImpl
   @override
   Future<void> drainOfflineInboxFully() async {
     if (!_currentState.isStarted) return;
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_drain_offline_inbox_full',
+    )) {
+      return;
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -3231,6 +3691,10 @@ class P2PServiceImpl
 
   @override
   Future<RelayProbeResult> probeRelay(String peerId) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_probe_relay')) {
+      return RelayProbeResult.error;
+    }
+
     try {
       final result = await callP2PRelayProbe(_bridge, peerId: peerId);
       if (result['ok'] == true) return RelayProbeResult.connected;
@@ -3288,9 +3752,36 @@ class P2PServiceImpl
     String peerId, {
     required Duration timeout,
   }) async {
+    if (!await _allowsAccountNetworkSideEffects('p2p_discover_local_peer')) {
+      return false;
+    }
+
     final localP2P = _localP2P;
     if (localP2P == null) return false;
     return localP2P.discoverLocalPeer(peerId, timeout: timeout);
+  }
+
+  @override
+  Future<LanSendAck> sendLocalMessageDurable(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_send_local_message',
+      peerId: fromPeerId,
+    )) {
+      return LanSendAck.failed;
+    }
+
+    if (_localP2P == null) return LanSendAck.failed;
+    return _localP2P.sendMessageDetailed(
+      peerId,
+      message,
+      fromPeerId,
+      timeoutMs: timeoutMs,
+    );
   }
 
   @override
@@ -3299,15 +3790,14 @@ class P2PServiceImpl
     String message,
     String fromPeerId, {
     int? timeoutMs,
-  }) async {
-    if (_localP2P == null) return false;
-    return _localP2P.sendMessage(
-      peerId,
-      message,
-      fromPeerId,
-      timeoutMs: timeoutMs,
-    );
-  }
+  }) async =>
+      await sendLocalMessageDurable(
+        peerId,
+        message,
+        fromPeerId,
+        timeoutMs: timeoutMs,
+      ) ==
+      LanSendAck.committed;
 
   @override
   Future<bool> sendLocalMedia({
@@ -3319,7 +3809,16 @@ class P2PServiceImpl
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_send_local_media',
+      peerId: fromPeerId,
+    )) {
+      return false;
+    }
+
     if (_localP2P == null) return false;
     return _localP2P.sendMedia(
       peerId: peerId,
@@ -3330,6 +3829,8 @@ class P2PServiceImpl
       durationMs: durationMs,
       waveform: waveform,
       filename: filename,
+      enc: enc,
+      encScheme: encScheme,
     );
   }
 

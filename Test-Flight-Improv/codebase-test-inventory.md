@@ -1,17 +1,23 @@
 # Codebase Test Inventory by Feature
 
 Generated 2026-05-02. Sweep of all `*_test.dart`, `integration_test/*.dart`, `*_test.go` across the repo.
+Updated 2026-06-07 for Move Account MIG-011 host-side journey, scanner-copy, settings-copy, wake-lock, and migrated-out UX presentation tests.
+Updated 2026-06-10 for the Move Account local segmented transfer timeout slice: typed `localTransferTimedOut` classification across all migration `_postJson` commands, `_postJson` phase attribution and payload-scaled budgets, source/receiver transfer telemetry, receiver completion/proof stage diagnostics, migration segment decrypt telemetry, new-phone receiver progress events mounting the wake lock during receive/import, and the local-transfer-timeout reliability simulator. Also backfilled the previously missing `account_migration_local_transfer_runtime_test.dart`, `account_migration_bundle_transfer_test.dart`, and MIG-012 durability simulator rows.
+Updated 2026-06-10 for Move Account broad-gate capture: `$run-flutter-host-gates move-feature` covers all 40 dedicated account-migration host files plus shared lifecycle, push, local-discovery, startup, and P2P move guards; `$run-flutter-reliability-sims move-feature/all` covers the two Move Account simulator regressions plus the SQLCipher concrete-target integration companion.
+Updated 2026-06-11 for Move Account protocol v2 (entry-streamed bundle, scale plan Phase 2): session chunked-AEAD stream crypto + ledger store + entry stream source tests, v2 chunk/status/resume/cleanup receiver coverage in the bundle transfer suite, v2-ported chained E2E with resume and 100 MB bounded-memory variants, v2 storage-preflight amplification, the v2-rewritten P0-7 scale benchmark harness, and Go `migration.session/chunk` bridge crypto tests with interop vectors.
+Updated 2026-06-12 for 111 P0 silent 1:1 message-loss gate capture: `$run-flutter-host-gates 1to1` covers the Dart host inventory files alongside the historical 1:1 smoke files; `$run-flutter-reliability-sims 1to1/all` remains the simulator/E2E 1:1 surface because the 111 inventory did not add a new `integration_test` simulator file.
 
 ## Summary
-- Dart unit/widget tests (`test/**`): **683**
-- Flutter integration tests/harnesses (`integration_test/**`): **78**
+- Dart unit/widget tests (`test/**`): **708**
+- Flutter integration tests/harnesses (`integration_test/**`): **79**
 - Go (`go-mknoon/**`) tests: **80** (includes 27 vendored `third_party/go-libp2p-pubsub/*_test.go`)
 - Go (`go-relay-server/**`) tests: **13**
-- **Total**: **854**
+- **Total**: **880**
 
 ## Feature index
 
 App features (`test/features/<feature>/`):
+- [account_migration](#account_migration) — 40 tests
 - [contact_request](#contact_request) — 19 tests
 - [contacts](#contacts) — 9 tests
 - [conversation](#conversation) — 78 tests
@@ -23,7 +29,7 @@ App features (`test/features/<feature>/`):
 - [orbit](#orbit) — 22 tests
 - [p2p](#p2p) — 10 tests
 - [posts](#posts) — 92 tests (multi-phase: improvement, phase1–phase5)
-- [push](#push) — 16 tests
+- [push](#push) — 17 tests
 - [qr_code](#qr_code) — 7 tests
 - [settings](#settings) — 17 tests
 - [share](#share) — 6 tests
@@ -36,9 +42,85 @@ Cross-cutting:
 - [Performance & benchmarks](#performance) — 23 tests (`test/performance/**`)
 - [Security](#security) — 1 test (`test/security/**`)
 - [Unit (analyzer / path utils)](#unit-bucket) — 2 tests (`test/unit/**`)
-- [Flutter on-device integration & harnesses](#flutter-integration) — 78 files (`integration_test/**`)
+- [Flutter on-device integration & harnesses](#flutter-integration) — 79 files (`integration_test/**`)
 - [Go P2P node (`go-mknoon`)](#go-mknoon) — 80 tests
 - [Go relay server (`go-relay-server`)](#go-relay-server) — 13 tests
+
+---
+
+<a id="account_migration"></a>
+## account_migration
+**Where it lives in the app**: `lib/features/account_migration/` (device-local migration authority, QR pairing/session boundary, secure-storage migration helpers, SQLCipher DB migration primitives, app-owned file manifest/preflight helpers, and host-side migration presentation).
+**Test count**: Dart unit/widget 40 files / 226 declared tests | Integration 3 files | Go 0
+
+### Application
+- `account_migration_authority_repository_test.dart` — Device-local authority persistence outside the migrated DB.
+- `account_migration_import_precondition_test.dart` — New-phone import preconditions around active identity/authority state.
+- `account_migration_post_import_behavior_test.dart` — Post-move behavior from imported state: group rejoin uses migrated key material/generation, offline-inbox drain opens with the migrated cursor, imported 1:1+group media resolve locally with zero media:download.
+- `account_migration_end_to_end_test.dart` — Chained host E2E of the shipped composition (protocol v2 entry-streamed): production bundle source (real ffi DB + real files, VACUUM INTO snapshot, streamed entries) → runOldPhoneTransfer chunk loop over real in-process LocalWsServer HTTP → production receiver chunk decrypt/ledger/staged+active import → cutover proofs; asserts byte-identical files, imported rows, quiesce-before-snapshot ordering, authority migratedOut/active, relay-free audits, receiver event payloads, v2 complete stage telemetry (ledgerCheck → secureStaging → stagedDbOpen → importFiles → authorityRecord), P2-11 budget rebasing (complete/old-block-proof scale with staged-DB validation bytes, chunks stay payload-scaled), interrupted-transfer resume from the receiver ledger (P2-7), and a generated 100 MB account moving with RSS delta < 150 MB (P2-10). Fakes only the SQLCipher adapter/opener and the stream crypto (FakeBridge-backed or KEM-sized XOR).
+- `migration_transfer_keep_alive_test.dart` — Hold-counted platform keep-alive (Android dataSync foreground service / iOS background task via `mknoon/migration_keepalive`): single start across overlapping holders, stop on last release, MissingPlugin degradation to silent no-op, start/stop failure tolerance.
+- `migration_qr_payload_use_case_test.dart` — Migration QR build/parse, ML-KEM ephemeral key persistence, expiry, skew, malformed timestamp, kind/version rejection.
+- `migration_pairing_session_repository_test.dart` — SecureKeyStore-backed durable single-use session consumption across repository recreation.
+- `migration_export_authorization_test.dart` — Export authorization binding to consumed session ID plus exact new-phone ephemeral public key; transcript-only confirmation code derivation.
+- `migration_secure_storage_registry_test.dart` — Fixed primary/shared secure-storage registry policies, shared access-group group mirrors, deterministic registry merge.
+- `migration_secure_storage_reference_collector_test.dart` — DB-discovered primary `secure:` group/media references plus committed shared group mirror naming.
+- `migration_secure_storage_staging_test.dart` — Session-scoped staging keys, critical-secret promotion validation, sentinel ordering, promoted-key rollback journal.
+- `migration_secure_storage_cleanup_test.dart` — Registry-driven account erase/reset, success cleanup, cancellation cleanup, and failed-import cleanup across primary/shared stores.
+- `migration_secure_storage_source_audit_test.dart` — Fixed app-owned secure-store literals must remain registry-classified.
+- `migration_database_schema_inventory_test.dart` — Durable table/column inventory and schema-version-74 field hashing.
+- `migration_database_manifest_test.dart` — Manifest serialization, version compatibility, schema hash, DB checksum, and SQLCipher metadata policy.
+- `migration_database_snapshot_exporter_test.dart` — SQLCipher export adapter ordering, exported checksum/schema verification, and failed export rejection.
+- `migration_database_import_staging_test.dart` — Staged DB open with staged DB key, checksum/schema/integrity verification, and active-key preservation.
+- `migration_database_import_validator_test.dart` — Imported identity null-secret columns plus required staged DB/identity/ML-KEM secret readiness.
+- `migration_database_import_cleanup_test.dart` — Staged DB artifact and SQLite sidecar cleanup with MIG-003 failed-import cleanup integration.
+- `migration_file_manifest_builder_test.dart` — App-owned file manifest generation across chat media, post media, avatars, group avatars, pending uploads, thumbnails, path healing, checksums, and transient-file classification.
+- `migration_file_manifest_validator_test.dart` — Required-file validation, encrypted chat-media secure-key metadata checks, post-media DB crypto checks, and non-critical thumbnail handling.
+- `migration_storage_preflight_test.dart` — Required/optional/staging byte accounting and fail-closed storage-capacity preflight results.
+- `migration_file_import_cleanup_test.dart` — Session-scoped staged file cleanup without deleting active app-owned media.
+- `migration_group_manifest_builder_test.dart` — Group migration manifest capture for retained keys, pending drafts, device rosters, moved-account active-device policy, sender/receipt/welcome metadata, pending key repairs, pending membership messages, welcome tombstones, inbox cursors, preview mirror names, and no raw key/private-material serialization.
+- `migration_group_manifest_validator_test.dart` — Group migration validation for resolved primary key bytes, shared mirror byte matching, pending draft primary-only validation, retained-window boundaries, missing moved-account active devices, duplicate active moved-account devices, pending repair/cursor loss, malformed durable group state rows, and preview readiness.
+- `migration_transfer_manifest_test.dart` — Migration-specific segmented transfer manifest validation, version compatibility, segment ordering, and no local-path fallback.
+- `migration_segment_crypto_test.dart` — Per-segment encryption/decryption through the message crypto bridge with associated-data binding, no whole-file blob helper dependency, and migration segment decrypt telemetry (`ACCOUNT_MIGRATION_SEGMENT_DECRYPT_START/DONE/FAILED` bracketing the generic `MLKEM_FL_BRIDGE_DECRYPT_*` events, bridge-timeout/rejection/checksum reason taxonomy).
+- `account_migration_local_transfer_runtime_test.dart` — Local QR-route transfer runtime: pairing, exporter gap, bundle-source exception classification, manifest/segment/pre-encrypted happy paths, cutover proof exchange, transcript mismatch, plus typed local-transfer timeout classification (`localTransferTimedOut` for transcript/manifest/both segment paths/complete/old-block-proof), `_postJson` phase attribution (connect/closeAwaitResponse/responseBodyDrain), payload-scaled command budgets, 34-segment monotonic sender progress telemetry, and receiver request/manifest/segment/complete accept-reject telemetry with timing and verified counts.
+- `account_migration_bundle_transfer_test.dart` — Production bundle source/receiver (protocol v2): entry-streamed bundle assembly with no whole-file reads (P2-3 guarded reader), secure-value/media blocking, chunk accept with out-of-order typed rejects + idempotent duplicates + tamper rejection (P2-4), ledger-check complete with typed missing-entry count (P2-5), rename-not-copy finalization with no staging residue (P2-6), receiver-restart resume from the file-backed ledger, changed-manifest carry-over of byte-identical entries, legacy v1 manifests failing closed typed `senderTooOld`, cutover finalization, and receiver completion/proof stage telemetry with sanitized catch diagnostics.
+- `migration_transfer_checkpoint_store_test.dart` — Durable verified-progress checkpoints (v1 segments) plus the protocol v2 `FileMigrationTransferLedgerStore` successor: per-entry verified offsets/verified set persisted across reload for (entry, offset) resume.
+- `migration_stream_crypto_test.dart` — Protocol v2 session chunked AEAD contract over the bridge: one `migration.session.encap` per attempt, per-chunk `migration.chunk.encrypt/decrypt` with real canonical-JSON AAD, unique counter nonces, tampered/reordered/replayed/truncated chunk rejection, and the P2-9 injectable chunk-work executor seam (default `Isolate.run`).
+- `migration_entry_stream_source_test.dart` — Entry-streamed v2 bundle source: per-entry manifest descriptors (size/sha/chunk geometry), bounded one-chunk-in-flight streams, and a fake IO layer proving whole-file reads are forbidden.
+- `migration_segmented_transfer_service_test.dart` — Segmented account-bundle transfer service, verified resume, checksum/nonce validation, route separation, and relay/cloud fallback rejection.
+- `migration_cutover_coordinator_test.dart` — Durable old-block/new-active cutover ordering plus rendezvous/push inbox lease cleanup orchestration.
+- `account_migration_runtime_network_gate_test.dart` — Migrated-out runtime network gate semantics for active, missing legacy, failed, mismatched, and non-active authority states.
+- `migration_pending_work_manifest_builder_test.dart` — Row-driven pending-work ownership manifest across 1:1, media, posts, introductions, and group pending work with new-phone-only resume policy.
+- `migration_pending_work_manifest_validator_test.dart` — Blocking unsafe pending work, missing payload/file context, unsupported pending paths, terminal retry contradictions, and sensitive-material leakage.
+
+### Integration
+- `integration_test/migration_database_sqlcipher_capability_test.dart` — Plugin-registered macOS SQLCipher `sqlcipher_export` capability probe.
+- `integration_test/account_migration_group_media_durability_simulator_test.dart` — MIG-012 group-media durability and relay-free bundleability simulator proof.
+- `integration_test/account_migration_local_transfer_timeout_simulator_test.dart` — Local segmented transfer timeout simulator: 34-segment near-budget success with monotonic segment progress telemetry and over-budget typed `localTransferTimedOut` failure with full `POST_FAILED` phase diagnostics (no `bundleSourceFailed` mislabel).
+
+### Broad Gate Capture
+- `$run-flutter-host-gates move-feature` captures all 40 dedicated account-migration host files plus shared move guards in `test/core/lifecycle/handle_app_resumed_export_pause_recovery_test.dart`, `test/core/local_discovery/bonsoir_discovery_service_contract_test.dart`, `test/core/services/p2p_service_impl_test.dart`, `test/features/identity/application/startup_decision_test.dart`, and `test/features/push/application/push_registration_post_cutover_test.dart`.
+- `$run-flutter-host-gates feature-host-all`, `core-host-all`, and `host-all` also capture those files through their broad directory scopes.
+- `$run-flutter-reliability-sims move-feature/all` captures `account_migration_group_media_durability_simulator_test.dart`, `account_migration_local_transfer_timeout_simulator_test.dart`, and the SQLCipher capability test as a Move Account concrete-target integration companion. The SQLCipher row is not a group-messaging proof, and Android-to-iOS SQLCipher migration remains a known gap outside the same-device probe.
+
+### Domain
+- `account_migration_authority_state_test.dart` — Canonical migration authority states and startup gating semantics.
+- `domain/models/migration_qr_payload_test.dart` — Migration QR payload kind/version roundtrip, contact-payload rejection, and QR secret exclusion.
+
+### Presentation
+- `account_migration_blocked_screen_test.dart` — Migrated-out blocked UX, normal-UI exclusion, and explicit erase confirmation/callback.
+- `account_migration_journey_screen_test.dart` — New-phone QR states, old-phone migration QR scan/authorization/confirmation, migration-specific scanner copy, contact-QR rejection, progress-stage copy, foreground wake-lock behavior, typed local-transfer timeout copy with enriched `ACCOUNT_MIGRATION_TRANSFER_FAILED` details (`failureCode`/`sessionId`/`stage`), catch-all regression guard, and new-phone `receivingSegment`/`importingBundle` receiver progress stages mounting the wake lock before `importVerified`.
+
+### Notes
+- MIG-002 host coverage proves the QR pairing security boundary and scanner side-effect fence only.
+- MIG-003 host coverage proves secure-storage registry/staging/cleanup and push-token clear/regenerate policy with fake stores.
+- MIG-004 host/macOS coverage proves the SQLCipher database snapshot/manifest/import-staging slice and real plugin-registered export capability. Full bundle exporter/importer consumption, media/file transfer, group/NSE continuity, cutover, migrated-out runtime gates, full migration UI, real iOS Keychain lifecycle proof, and final device acceptance remain later-session scope.
+- MIG-005 host coverage proves app-owned file manifest/preflight and staged file cleanup primitives. Actual bundle transfer, import rendering, old-phone quiescing, migrated-out runtime gates, and final device acceptance remain later-session scope.
+- MIG-006 host coverage proves group migration manifest/validator primitives for retained group keys, primary-only pending drafts, shared-access-group mirror matching, group member device rosters, moved-account single-active-device policy, sender/receipt/welcome metadata, pending key repairs, pending membership messages, welcome key-package tombstones, group inbox cursors, and raw-key/private-material exclusion. The MD-004 command-12 timeout was fixed with an explicit same-account durable-recipient opt-in used only by the multi-device harness, and targeted command-12 simulator reruns now pass. Full transfer/import, final migrated-device rendering/decryption, real iOS Keychain/NSE lifecycle behavior, and a full release-grade group reliability simulator sweep remain later-session scope.
+- MIG-007 host coverage proves the migration-specific segmented transfer seam, including manifest validation, segment crypto, checkpoint/resume state, and route separation from chat media. Full bundle exporter/importer wiring, paired physical iOS transfer, and final release acceptance remain later-session scope.
+- MIG-008 host/Go coverage proves durable cutover ordering and server lease-cleanup primitives. Full migrated-out runtime fanout, UI, physical paired iOS journey, and final acceptance remain later-session scope.
+- MIG-009 host coverage proves migrated-out runtime network gates for app startup/resume, P2P, push, inbox drain, group recovery, and delayed retriers. User-facing migrated-out UX and final physical-device acceptance remain later-session scope.
+- MIG-010 host coverage proves the pending-work ownership manifest/validator for covered committed row surfaces and unsafe-row policy. Full exporter/importer consumption, actual new-phone queue resume after commit, pending-work UI, and final acceptance remain later-session scope.
+- MIG-011 host coverage proves first-launch/settings entry points, host-side new/old-phone migration presentation, migration-specific scanner copy, progress-stage copy, foreground wake-lock acquisition/release, and migrated-out erase UX. Full exporter/importer transfer, physical paired iOS journey, camera/local-network permission proof, iOS lifecycle proof, final device acceptance, and MIG-006 release evidence remain later-session scope.
 
 ---
 
@@ -160,6 +242,19 @@ Cross-cutting:
 - `quote_reply_thread_test.dart` — Quote-reply threading.
 - `send_then_lock_delivery_test.dart` — Lifecycle: send → lock → delivery.
 - `stuck_sending_recovery_test.dart` — Recovery from SENDING state.
+
+### Broad Gate Capture
+- `$run-flutter-host-gates 1to1` captures the 111 P0 Dart conversation files:
+  `handle_incoming_chat_message_use_case_test.dart`,
+  `chat_message_listener_test.dart`,
+  `recovered_inbox_chat_disposition_test.dart`,
+  `download_media_use_case_test.dart`,
+  `media_download_slow_transfer_simulator_test.dart`, and
+  `post_restore_stale_key_recovery_test.dart`, plus the historical 1:1
+  integration-smoke files listed above.
+- `$run-flutter-reliability-sims 1to1/all` captures the device/simulator 1:1
+  entrypoints for message, media, voice, routing, push, notification-open,
+  cold-start, and transport fallback coverage.
 
 ### Presentation — screens
 - `conversation_screen_test.dart` — Pure screen render.
@@ -543,7 +638,7 @@ Cross-cutting:
 <a id="push"></a>
 ## push
 **Where it lives in the app**: `lib/features/push/` (FCM/APNs integration + local notifications).
-**Test count**: Dart unit/widget 16 | Integration 0 | Go 0
+**Test count**: Dart unit/widget 17 | Integration 0 | Go 0
 
 ### Application
 - `register_push_token_use_case_test.dart` / `request_push_permission_use_case_test.dart` — Permission + token.
@@ -552,6 +647,7 @@ Cross-cutting:
 - `prepare_notification_open_use_case_test.dart` — Pre-open hooks.
 - `show_notification_use_case_test.dart` / `notification_body_for_message_test.dart` — Notification body composition.
 - `push_decrypt_preview_test.dart` / `push_preview_telemetry_gate_test.dart` — Decrypted preview + telemetry gate.
+- `infrastructure/push_token_store_impl_test.dart` — Device-bound push token/platform secure-store keys, clear/regenerate behavior, invalid partial-token cleanup.
 - `chat_and_group_push_open_flow_test.dart` — Open flow for chat + group pushes.
 - `intro_notification_orbit_route_test.dart` — Intro push routes to orbit.
 - `resolve_group_notification_route_target_use_case_test.dart` — Resolves group notification route.
@@ -581,7 +677,7 @@ Cross-cutting:
 - `widgets/scan_overlay_test.dart` — Scan overlay UI.
 
 ### Notes
-- Coverage is thin but proportional to feature surface.
+- `handle_scanned_qr_use_case_test.dart` and `qr_scanner_wired_test.dart` now include MIG-002 regressions proving migration QR payloads are classified before contact parsing/contact-add/contact-request/profile-picture side effects.
 
 ---
 

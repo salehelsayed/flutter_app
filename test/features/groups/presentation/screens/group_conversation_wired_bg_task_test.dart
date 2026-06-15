@@ -453,6 +453,8 @@ void main() {
                 List<double>? waveform,
                 List<String>? allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 operationLog.add('uploadMediaFn');
                 return _uploadedMedia(
@@ -521,6 +523,8 @@ void main() {
               List<double>? waveform,
               List<String>? allowedPeers,
               String? blobId,
+              bool deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async => null,
       );
 
@@ -563,6 +567,8 @@ void main() {
               List<double>? waveform,
               List<String>? allowedPeers,
               String? blobId,
+              bool deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async {
               throw Exception('upload failed');
             },
@@ -707,6 +713,8 @@ void main() {
                 List<double>? waveform,
                 List<String>? allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 if (!uploadStarted.isCompleted) {
                   uploadStarted.complete();
@@ -801,6 +809,8 @@ void main() {
               List<double>? waveform,
               List<String>? allowedPeers,
               String? blobId,
+              bool deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async {
               operationLog.add('uploadMediaFn');
               return _uploadedMedia(
@@ -910,6 +920,8 @@ void main() {
                 List<double>? waveform,
                 List<String>? allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 operationLog.add('uploadMediaFn');
                 return _uploadedMedia(
@@ -995,6 +1007,8 @@ void main() {
                 List<double>? waveform,
                 List<String>? allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 operationLog.add('uploadMediaFn');
                 return _uploadedMedia(
@@ -1459,6 +1473,8 @@ void main() {
                 List<double>? waveform,
                 List<String>? allowedPeers,
                 String? blobId,
+                bool deleteSourceWhenDone = false,
+                preparedArtifact,
               }) async {
                 operationLog.add('uploadMediaFn');
                 uploadedBlobId = blobId;
@@ -1585,6 +1601,8 @@ void main() {
               List<double>? waveform,
               List<String>? allowedPeers,
               String? blobId,
+              bool deleteSourceWhenDone = false,
+              preparedArtifact,
             }) async {
               operationLog.add('uploadMediaFn');
               return _uploadedMedia(

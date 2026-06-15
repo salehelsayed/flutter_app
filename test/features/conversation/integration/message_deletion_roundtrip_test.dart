@@ -90,8 +90,16 @@ void main() {
         expect(deleteResult, SendChatMessageResult.success);
         expect(deleteMessage, isNotNull);
 
+        // 115 P1 (D-3): the tombstone rode inbox CUSTODY ('inboxed') — it
+        // stays VISIBLE on the sender until a deletion delivery receipt
+        // (115 P2) confirms the receiver applied it. Pre-115 the bare store
+        // minted 'delivered' and hid it immediately — the original bug class.
         final aliceConversation = await alice.loadConversationWith(bob.peerId);
-        expect(aliceConversation, isEmpty);
+        expect(aliceConversation, hasLength(1));
+        expect(aliceConversation.single.id, sentMessage.id);
+        expect(aliceConversation.single.status, 'inboxed');
+        expect(aliceConversation.single.isDeleted, isTrue);
+        expect(aliceConversation.single.isHidden, isFalse);
 
         bob.setOnline(true);
         final drained = await bob.drainOfflineInbox();

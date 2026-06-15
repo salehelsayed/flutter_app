@@ -2,8 +2,7 @@
 ///
 /// Measures latency from Go event emission to Dart callback delivery,
 /// under both idle and loaded conditions.
-/// Run: flutter test integration_test/benchmark_event_queue_harness.dart -d <DEVICE_ID>
-@Tags(['device'])
+/// Run via the shared benchmark dispatcher.
 library;
 
 import 'dart:async';
@@ -11,20 +10,18 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'benchmark_helpers.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runEventQueueBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('I-Sim-1: Idle event delivery latency', (tester) async {
+  // I-Sim-1: Idle event delivery latency
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: EVENT QUEUE — IDLE (I-Sim-1)');
     print('${'═' * 60}\n');
@@ -71,9 +68,10 @@ void main() {
         reason: 'Idle event delivery should be < 500ms');
 
     await node.dispose();
-  });
+  }
 
-  testWidgets('I-Sim-2: Loaded event delivery', (tester) async {
+  // I-Sim-2: Loaded event delivery
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: EVENT QUEUE — LOADED (I-Sim-2)');
     print('${'═' * 60}\n');
@@ -113,5 +111,5 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 500));
 
     await node.dispose();
-  });
+  }
 }

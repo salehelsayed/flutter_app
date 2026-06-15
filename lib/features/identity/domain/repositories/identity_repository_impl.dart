@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -28,6 +29,11 @@ class IdentityRepositoryImpl implements IdentityRepository {
        _dbUpsertIdentityRow = dbUpsertIdentityRow,
        _secureKeyStore = secureKeyStore,
        _pushSharedKeyStore = pushSharedKeyStore;
+
+  void invalidateCache() {
+    _cachedIdentity = null;
+    _hasCachedIdentity = false;
+  }
 
   @override
   Future<IdentityModel?> loadIdentity() async {
@@ -128,6 +134,15 @@ class IdentityRepositoryImpl implements IdentityRepository {
     await _secureKeyStore.write(_kPrivateKey, identity.privateKey);
     await _secureKeyStore.write(_kMnemonic12, identity.mnemonic12);
     if (identity.mlKemSecretKey != null) {
+      // P0-B: before overwriting with a DIFFERENT secret, preserve the old
+      // one on the ring so already-in-flight traffic encrypted to the old
+      // public key stays decryptable on this device.
+      final previousSecret = await _secureKeyStore.read(_kMlKemSecretKey);
+      if (previousSecret != null &&
+          previousSecret.isNotEmpty &&
+          previousSecret != identity.mlKemSecretKey) {
+        await pushMlKemSecretKeyRing(_secureKeyStore, previousSecret);
+      }
       await _secureKeyStore.write(_kMlKemSecretKey, identity.mlKemSecretKey!);
     }
     await _mirrorMlKemSecretForPush(identity.mlKemSecretKey);

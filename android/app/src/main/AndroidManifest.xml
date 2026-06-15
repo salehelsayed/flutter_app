@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <application
         android:label="MKnoon"
         android:name="${applicationName}"
@@ -79,6 +81,13 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+        <!-- Keeps the app process alive while a Move Account transfer is in
+             flight; started/stopped via the mknoon/migration_keepalive
+             method channel. -->
+        <service
+            android:name=".MigrationKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

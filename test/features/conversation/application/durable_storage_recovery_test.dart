@@ -14,6 +14,9 @@ import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import 'helpers/fake_upload_media_fn.dart';
 
+const _testContentHash =
+    'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
 MediaAttachment _pendingAtt({
   String id = 'att-00001',
   String messageId = 'msg-00001',
@@ -67,6 +70,10 @@ MediaAttachment _doneAttachment(
     localPath: '/tmp/recording.m4a',
     downloadStatus: 'done',
     createdAt: DateTime.now().toUtc().toIso8601String(),
+    contentHash: _testContentHash,
+    encryptionKeyBase64: 'test-blob-key-base64',
+    encryptionNonce: 'test-blob-nonce',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
   );
 }
 

@@ -66,6 +66,10 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "verifyPayload" -> runOnBackground({ GoMknoon.verifyPayload(args ?: "") }, result)
             "encryptContactRequest" -> runOnBackground({ GoMknoon.encryptContactRequest(args ?: "") }, result)
             "decryptContactRequest" -> runOnBackground({ GoMknoon.decryptContactRequest(args ?: "") }, result)
+            "migrationSessionEncap" -> runOnBackground({ GoMknoon.migrationSessionEncap(args ?: "") }, result)
+            "migrationSessionDecap" -> runOnBackground({ GoMknoon.migrationSessionDecap(args ?: "") }, result)
+            "migrationChunkEncrypt" -> runOnBackground({ GoMknoon.migrationChunkEncrypt(args ?: "") }, result)
+            "migrationChunkDecrypt" -> runOnBackground({ GoMknoon.migrationChunkDecrypt(args ?: "") }, result)
 
             // Node lifecycle
             "startNode" -> runOnBackground({ GoMknoon.startNode(args ?: "") }, result)
@@ -74,6 +78,7 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
 
             // Rendezvous
             "rendezvousRegister" -> runOnBackground({ GoMknoon.rendezvousRegister(args ?: "") }, result)
+            "rendezvousUnregister" -> runOnBackground({ GoMknoon.rendezvousUnregister(args ?: "") }, result)
             "rendezvousDiscover" -> runOnBackground({ GoMknoon.rendezvousDiscover(args ?: "") }, result)
 
             // Relay
@@ -92,6 +97,7 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "inboxRetrievePending" -> runOnBackground({ GoMknoon.inboxRetrievePendingWithParams(args ?: "") }, result)
             "inboxAck" -> runOnBackground({ GoMknoon.inboxAck(args ?: "") }, result)
             "inboxRegisterToken" -> runOnBackground({ GoMknoon.inboxRegisterToken(args ?: "") }, result)
+            "inboxUnregisterToken" -> runOnBackground({ GoMknoon.inboxUnregisterToken(args ?: "") }, result)
 
             // Media
             "mediaUpload" -> runOnBackground({ GoMknoon.mediaUpload(args ?: "") }, result)

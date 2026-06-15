@@ -8,6 +8,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
@@ -417,6 +418,89 @@ void main() {
       expect(deliveries, hasLength(1));
       expect(deliveries.single.deliveryStatus, 'failed');
       expect(deliveries.single.lastError, 'repost_encryption_unavailable');
+    },
+  );
+
+  test(
+    'executePostPass with null innerPayloadJson and encrypted attachments fails closed instead of rebuilding without media_keys',
+    () async {
+      final bridge = PassthroughCryptoBridge();
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final aliceService = FakeP2PService(
+        peerId: 'peer-alice',
+        network: network,
+      );
+      addTearDown(aliceService.dispose);
+
+      // Legacy/imported pass row that pre-dates innerPayloadJson.
+      const pass = PostPassModel(
+        passId: 'pass-keydrop-1',
+        eventId: 'evt-pass-keydrop-1',
+        postId: 'post-pass-keydrop',
+        senderPeerId: 'peer-alice',
+        passerPeerId: 'peer-alice',
+        passerUsername: 'Alice',
+        passedAt: '2026-03-15T10:00:02.000Z',
+        createdAt: '2026-03-15T10:00:02.000Z',
+        isIncoming: false,
+      );
+      final snapshotPost = _post(
+        id: 'post-pass-keydrop',
+        deliveryStatus: 'available',
+        isIncoming: true,
+      ).copyWith(
+        authorPeerId: 'peer-bob',
+        authorUsername: 'Bob',
+        mediaKind: 'image',
+        media: const <PostMediaAttachmentModel>[
+          PostMediaAttachmentModel(
+            mediaId: 'media-1',
+            postId: 'post-pass-keydrop',
+            blobId: 'blob-enc-1',
+            kind: 'image',
+            mime: 'image/jpeg',
+            sizeBytes: 2048,
+            createdAt: '2026-03-15T10:00:00.000Z',
+            encryptionKeyBase64: 'row-key-b64',
+            encryptionNonce: 'row-nonce-b64',
+            isEncrypted: true,
+          ),
+        ],
+      );
+
+      final (result, deliveredPass) =
+          await PostDeliveryRunner(
+            p2pService: aliceService,
+            postRepo: posts,
+            bridge: bridge,
+          ).executePostPass(
+            pass: pass,
+            snapshotPost: snapshotPost,
+            resolvedRecipients: const <CreatedLocalPostRecipient>[
+              CreatedLocalPostRecipient(
+                contact: ContactModel(
+                  peerId: 'peer-bob',
+                  publicKey: 'pk-peer-bob',
+                  rendezvous: '/dns4/example.invalid/tcp/443',
+                  username: 'Bob',
+                  signature: 'sig-peer-bob',
+                  scannedAt: '2026-03-15T10:00:00.000Z',
+                  mlKemPublicKey: 'mlkem-peer-bob',
+                ),
+              ),
+            ],
+          );
+
+      // Recipients must NOT receive encrypted blobIds with no keys.
+      expect(result, SendPostResult.sendFailed);
+      expect(deliveredPass.deliveryStatus, 'failed');
+      expect(network.deliverCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+      final deliveries = await posts.getPostPassRecipientDeliveries(
+        pass.passId,
+      );
+      expect(deliveries.single.deliveryStatus, 'failed');
+      expect(deliveries.single.lastError, 'repost_payload_missing');
     },
   );
 

@@ -75,6 +75,41 @@ Future<List<Map<String, Object?>>> dbLoadMediaForMessage(
   }
 }
 
+/// Loads a single media attachment by blob/attachment ID.
+Future<Map<String, Object?>?> dbLoadMediaById(Database db, String id) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_LOAD_BY_ID_START',
+    details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+  );
+
+  try {
+    final results = await db.query(
+      'media_attachments',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: results.isEmpty
+          ? 'MEDIA_DB_LOAD_BY_ID_NOT_FOUND'
+          : 'MEDIA_DB_LOAD_BY_ID_FOUND',
+      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+    );
+
+    return results.isEmpty ? null : results.first;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_LOAD_BY_ID_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Loads all media attachments for multiple messages in a single query.
 Future<List<Map<String, Object?>>> dbLoadMediaForMessages(
   Database db,

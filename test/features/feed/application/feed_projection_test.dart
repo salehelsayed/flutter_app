@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -684,60 +685,82 @@ void main() {
       );
     });
 
-    test('loadGroupFeedSnapshot blocks tampered done group media', () async {
-      await groupRepo.saveGroup(
-        _group(
-          id: 'group-1',
-          name: 'Alpha',
-          createdAt: DateTime.utc(2026, 2, 1),
-        ),
-      );
-      await groupMessageRepo.saveMessage(
-        _groupMessage(
-          id: 'gm-1',
+    test(
+      'loadGroupFeedSnapshot preserves relay-hash done group media plaintext',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        await groupRepo.saveGroup(
+          _group(
+            id: 'group-1',
+            name: 'Alpha',
+            createdAt: DateTime.utc(2026, 2, 1),
+          ),
+        );
+        await groupMessageRepo.saveMessage(
+          _groupMessage(
+            id: 'gm-1',
+            groupId: 'group-1',
+            senderPeerId: 'peer-B',
+            text: 'Tampered photo',
+            timestamp: DateTime.utc(2026, 2, 1, 11, 0),
+          ),
+        );
+        const relativePath = 'media/groups/snap-relay-hash.jpg';
+        final absolutePath = await mediaFileManager.resolveStoredPath(
+          relativePath,
+        );
+        final file = File(absolutePath)..createSync(recursive: true);
+        file.writeAsBytesSync(utf8.encode('plaintext snapshot bytes'));
+        final relayBlobHash = sha256
+            .convert(utf8.encode('encrypted snapshot relay bytes'))
+            .toString();
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-snap-relay-hash',
+            messageId: 'gm-1',
+            mime: 'image/jpeg',
+            size: file.lengthSync(),
+            mediaType: 'image',
+            localPath: relativePath,
+            downloadStatus: 'done',
+            contentHash: relayBlobHash,
+            encryptionKeyBase64: 'media-key',
+            encryptionNonce: 'media-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-02-01T11:00:00Z',
+          ),
+        );
+
+        final snapshot = await loadGroupFeedSnapshot(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMessageRepo,
           groupId: 'group-1',
-          senderPeerId: 'peer-B',
-          text: 'Tampered photo',
-          timestamp: DateTime.utc(2026, 2, 1, 11, 0),
-        ),
-      );
-      const relativePath = 'media/groups/snap-tampered.jpg';
-      final absolutePath = await mediaFileManager.resolveStoredPath(
-        relativePath,
-      );
-      final file = File(absolutePath)..createSync(recursive: true);
-      file.writeAsBytesSync(utf8.encode('tampered snapshot bytes'));
-      final expectedHash = sha256
-          .convert(utf8.encode('original snapshot bytes'))
-          .toString();
-      await mediaAttachmentRepo.saveAttachment(
-        MediaAttachment(
-          id: 'att-snap-tampered',
-          messageId: 'gm-1',
-          mime: 'image/jpeg',
-          size: file.lengthSync(),
-          mediaType: 'image',
-          localPath: relativePath,
-          downloadStatus: 'done',
-          contentHash: expectedHash,
-          createdAt: '2026-02-01T11:00:00Z',
-        ),
-      );
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
 
-      final snapshot = await loadGroupFeedSnapshot(
-        groupRepo: groupRepo,
-        groupMsgRepo: groupMessageRepo,
-        groupId: 'group-1',
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        mediaFileManager: mediaFileManager,
-      );
-
-      final attachment = snapshot!.messages.single.media.single;
-      expect(attachment.id, 'att-snap-tampered');
-      expect(attachment.downloadStatus, kMediaDownloadStatusIntegrityFailed);
-      expect(attachment.localPath, absolutePath);
-      expect(File(absolutePath).existsSync(), isFalse);
-    });
+        final attachment = snapshot!.messages.single.media.single;
+        expect(attachment.id, 'att-snap-relay-hash');
+        expect(attachment.downloadStatus, kMediaDownloadStatusDone);
+        expect(attachment.localPath, absolutePath);
+        expect(File(absolutePath).existsSync(), isTrue);
+        final skipped = events.singleWhere(
+          (event) =>
+              event['event'] ==
+              'GROUP_FEED_MEDIA_PLAINTEXT_HASH_VALIDATION_SKIPPED',
+        );
+        expect(
+          skipped['details'],
+          allOf(
+            containsPair('contentHashScope', 'relay_blob'),
+            containsPair('plaintextHashValidationSkipped', true),
+            containsPair('deleteAttempted', false),
+          ),
+        );
+      },
+    );
 
     test(
       'loadGroupFeedSnapshot without media repos returns empty media',

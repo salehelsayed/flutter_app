@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -85,6 +86,56 @@ func TestRelayMetricsDeltas(t *testing.T) {
 	}
 }
 
+func TestInboxRejectAndTTLPruneTelemetry(t *testing.T) {
+	beforeRejectedFull := metricValue(t, inboxRejectedFullCounter)
+	beforeCapped := metricValue(t, inboxCappedCounter)
+	beforeExpiredPruned := metricValue(t, inboxExpiredPrunedCounter)
+	beforeExpired := metricValue(t, inboxExpiredCounter)
+
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStoreWithBackendAndCapacity(
+		newMemoryInboxBackendWithLimits(1),
+		push,
+		1,
+	)
+
+	requireInboxStoreResult(t, inbox, "peer-1", inboxMessage{
+		From:      "sender",
+		Message:   "msg-0",
+		Timestamp: time.Now().UnixMilli(),
+	}, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "peer-1", inboxMessage{
+		From:      "sender",
+		Message:   "overflow",
+		Timestamp: time.Now().UnixMilli(),
+	}, InboxStoreResultRejectedFull)
+
+	if got := metricValue(t, inboxRejectedFullCounter) - beforeRejectedFull; got != 1 {
+		t.Fatalf("relay_inbox_rejected_full_total delta = %v, want 1", got)
+	}
+	if got := metricValue(t, inboxCappedCounter) - beforeCapped; got != 1 {
+		t.Fatalf("relay_inbox_capped_total delta = %v, want 1", got)
+	}
+
+	requireInboxStoreResult(t, inbox, "peer-expired", inboxMessage{
+		From:      "sender",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-metrics-expired","text":"old"}`,
+		Timestamp: time.Now().Add(-8 * 24 * time.Hour).UnixMilli(),
+	}, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "peer-expired", inboxMessage{
+		From:      "sender",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-metrics-expired","text":"fresh"}`,
+		Timestamp: time.Now().UnixMilli(),
+	}, InboxStoreResultStored)
+
+	if got := metricValue(t, inboxExpiredPrunedCounter) - beforeExpiredPruned; got != 1 {
+		t.Fatalf("relay_inbox_expired_pruned_total delta = %v, want 1", got)
+	}
+	if got := metricValue(t, inboxExpiredCounter) - beforeExpired; got != 1 {
+		t.Fatalf("relay_inbox_expired_total delta = %v, want 1", got)
+	}
+}
+
 func TestRelayMetricsHandlerScrapeContract(t *testing.T) {
 	const proto = "metrics_contract_scrape"
 
@@ -103,7 +154,11 @@ func TestRelayMetricsHandlerScrapeContract(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"# HELP relay_inbox_stored_total Messages accepted into inbox.",
+		"# HELP relay_inbox_rejected_full_total 1:1 inbox messages rejected because the recipient inbox is full.",
+		"# HELP relay_inbox_expired_pruned_total 1:1 inbox messages pruned by TTL during lazy cleanup.",
 		"relay_inbox_stored_total",
+		"relay_inbox_rejected_full_total",
+		"relay_inbox_expired_pruned_total",
 		"relay_active_streams{proto=\"metrics_contract_scrape\"} 3",
 		"relay_stream_duration_seconds_count{proto=\"metrics_contract_scrape\",result=\"ok\"}",
 	} {

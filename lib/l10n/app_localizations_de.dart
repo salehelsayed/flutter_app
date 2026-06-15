@@ -34,6 +34,13 @@ class AppLocalizationsDe extends AppLocalizations {
       'Mit deiner Wiederherstellungsphrase wiederherstellen';
 
   @override
+  String get onboarding_move_from_old_phone => 'Vom alten Handy umziehen';
+
+  @override
+  String get onboarding_move_desc =>
+      'Bring dein bestehendes Konto auf dieses Gerät';
+
+  @override
   String get onboarding_privacy_1 => 'Nur du kannst deine Nachrichten lesen';
 
   @override
@@ -105,6 +112,17 @@ class AppLocalizationsDe extends AppLocalizations {
   String get qr_scan_subtitle => 'Die Person wird deinem Kreis hinzugefügt';
 
   @override
+  String get account_migration_scan_title => 'Migrations-QR scannen';
+
+  @override
+  String get account_migration_scan_instruction =>
+      'Richte deine Kamera auf den Move-Account-QR auf deinem neuen Handy';
+
+  @override
+  String get account_migration_scan_subtitle =>
+      'Hier werden nur Move-Account-QR-Codes akzeptiert';
+
+  @override
   String get qr_my_code => 'Mein QR-Code';
 
   @override
@@ -125,6 +143,21 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get qr_paste_button => 'Aus Zwischenablage einfügen';
+
+  @override
+  String get account_migration_paste_title => 'Migrations-QR einfügen';
+
+  @override
+  String get account_migration_paste_hint =>
+      'Füge die Move-Account-QR-Daten ein, die auf deinem neuen Handy angezeigt werden:';
+
+  @override
+  String get account_migration_paste_button =>
+      'Migrations-QR aus Zwischenablage einfügen';
+
+  @override
+  String get account_migration_paste_payload_hint =>
+      'kind: account_migration_pairing, version: 1, sessionId: ...';
 
   @override
   String get posts_title => 'Beiträge';
@@ -388,6 +421,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get conversation_voice_fail =>
       'Sprachnachricht konnte nicht gesendet werden.';
+
+  @override
+  String get conversation_voice_limit_reached =>
+      'Die Aufnahme hat das 5-Minuten-Limit erreicht.';
 
   @override
   String conversation_block(String username) {
@@ -721,6 +758,16 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get settings_share_nearby_desc =>
       'Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karte und nie mit Fremden.';
+
+  @override
+  String get settings_move_account_title => 'Konto auf neues Handy umziehen';
+
+  @override
+  String get settings_move_account_desc =>
+      'Scanne den Migrations-QR, der auf deinem neuen Handy angezeigt wird, um dieses Konto umzuziehen.';
+
+  @override
+  String get settings_move_account_action => 'Umzug starten';
 
   @override
   String get settings_recovery_title => 'WIEDERHERSTELLUNGSPHRASE';

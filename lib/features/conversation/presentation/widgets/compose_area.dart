@@ -7,10 +7,14 @@ import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 
-enum VoiceRecordingState { idle, arming, recording, stopping }
+enum VoiceRecordingState { idle, arming, recording, stopping, reviewing }
 
 extension VoiceRecordingStateX on VoiceRecordingState {
   bool get isActive => this != VoiceRecordingState.idle;
+
+  /// The recorder auto-stopped at the max duration and the captured clip is
+  /// being held for the user to review (send or discard) — 117 Session 3.
+  bool get isReviewing => this == VoiceRecordingState.reviewing;
 }
 
 /// Compose area at the bottom of the conversation screen.
@@ -29,6 +33,8 @@ class ComposeArea extends StatefulWidget {
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
+  final VoidCallback? onReviewSend;
+  final VoidCallback? onReviewDiscard;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final String? initialText;
@@ -50,6 +56,8 @@ class ComposeArea extends StatefulWidget {
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
+    this.onReviewSend,
+    this.onReviewDiscard,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.initialText,
@@ -172,6 +180,99 @@ class _ComposeAreaState extends State<ComposeArea>
     widget.onSend(text);
   }
 
+  String _formatDuration(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  /// 117 Session 3: read-only preview of the auto-stopped recording held for
+  /// review (a voice glyph + its duration), shown in place of the text input.
+  Widget _buildReviewPreview(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 44),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(255, 255, 255, 0.06),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.10)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.graphic_eq_rounded,
+            size: 20,
+            color: Color(0xFF4ecdc4),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            _formatDuration(widget.recordingDuration),
+            style: const TextStyle(
+              fontSize: 14,
+              color: Color.fromRGBO(255, 255, 255, 0.95),
+              fontWeight: FontWeight.w600,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          const Spacer(),
+        ],
+      ),
+    );
+  }
+
+  /// 117 Session 3: discard / send controls for the held review recording.
+  Widget _buildReviewActions(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          key: const ValueKey('voice-review-discard'),
+          onTap: widget.onReviewDiscard,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color.fromRGBO(255, 255, 255, 0.08),
+              borderRadius: BorderRadius.circular(100),
+              border: Border.all(color: const Color.fromRGBO(255, 80, 80, 0.4)),
+            ),
+            child: const Center(
+              child: Icon(
+                Icons.delete_outline_rounded,
+                size: 20,
+                color: Color.fromRGBO(255, 120, 120, 0.9),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          key: const ValueKey('voice-review-send'),
+          onTap: widget.onReviewSend,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color.fromRGBO(29, 185, 84, 0.15),
+              borderRadius: BorderRadius.circular(100),
+              border: Border.all(color: const Color.fromRGBO(29, 185, 84, 0.3)),
+            ),
+            child: const Center(
+              child: Icon(
+                Icons.arrow_upward_rounded,
+                size: 20,
+                color: Color(0xFF1DB954),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   void dispose() {
     _controller.removeListener(_updateInputDirection);
@@ -270,9 +371,11 @@ class _ComposeAreaState extends State<ComposeArea>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Text input or recording overlay
+                  // Review preview, recording overlay, or text input
                   Expanded(
-                    child: _isRecording
+                    child: widget.recordingState.isReviewing
+                        ? _buildReviewPreview(context)
+                        : _isRecording
                         ? RecordingOverlay(
                             elapsed: widget.recordingDuration,
                             onCancel: widget.onRecordCancel ?? () {},
@@ -348,10 +451,12 @@ class _ComposeAreaState extends State<ComposeArea>
                           ),
                   ),
                   const SizedBox(width: 8),
-                  // Mic button or Send button
+                  // Review actions, mic button, or send button
                   Padding(
                     padding: const EdgeInsets.only(bottom: 3),
-                    child: _shouldShowMicButton
+                    child: widget.recordingState.isReviewing
+                        ? _buildReviewActions(context)
+                        : _shouldShowMicButton
                         ? VoiceRecordButton(
                             onTapDown: widget.onRecordStart!,
                             onTapUp: widget.onRecordStop!,

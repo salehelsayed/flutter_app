@@ -367,25 +367,7 @@ Future<void> _captureScenario(
   _printReportEntry(timelineSummaryKey);
 }
 
-void main() {
-  final originalDebugProfilePaintsEnabled = debugProfilePaintsEnabled;
-  debugProfilePaintsEnabled = true;
-  final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
-  if (skipOnMobileDevice) {
-    testWidgets(
-      'captures Orbit route performance evidence',
-      (_) async {},
-      skip: true,
-    );
-    return;
-  }
-  VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
-  binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  tearDown(() {
-    debugProfilePaintsEnabled = originalDebugProfilePaintsEnabled;
-  });
-
+void registerOrbitPerf() {
   const noOverflow = _OrbitScenario(
     id: 'orbit_open_close_no_overflow',
     friends: <OrbitFriend>[
@@ -416,7 +398,22 @@ void main() {
     ),
   ];
 
-  testWidgets('captures Orbit route performance evidence', (tester) async {
+  testWidgets('ORBIT 0', (tester) async {
+    final originalDebugProfilePaintsEnabled = debugProfilePaintsEnabled;
+    debugProfilePaintsEnabled = true;
+    final skipOnMobileDevice =
+        !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    if (skipOnMobileDevice) {
+      debugProfilePaintsEnabled = originalDebugProfilePaintsEnabled;
+      return;
+    }
+    VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
+    binding = IntegrationTestWidgetsFlutterBinding.instance;
+
+    addTearDown(() {
+      debugProfilePaintsEnabled = originalDebugProfilePaintsEnabled;
+    });
+
     debugProfilePaintsEnabled = true;
     binding.reportData ??= <String, dynamic>{};
     binding.reportData!['orbit_perf_meta'] = <String, dynamic>{

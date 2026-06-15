@@ -259,6 +259,10 @@ class FakeP2PService
   bool sendLocalMediaResult = false;
   int sendLocalMediaCallCount = 0;
   String? lastSendLocalMediaPeerId;
+  String? lastSendLocalMediaFilePath;
+  String? lastSendLocalMediaMime;
+  bool? lastSendLocalMediaEnc;
+  String? lastSendLocalMediaEncScheme;
 
   @override
   Future<bool> sendLocalMedia({
@@ -270,9 +274,15 @@ class FakeP2PService
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     sendLocalMediaCallCount++;
     lastSendLocalMediaPeerId = peerId;
+    lastSendLocalMediaFilePath = filePath;
+    lastSendLocalMediaMime = mime;
+    lastSendLocalMediaEnc = enc;
+    lastSendLocalMediaEncScheme = encScheme;
     return sendLocalMediaResult;
   }
 

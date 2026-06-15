@@ -23,7 +23,7 @@ type ServerLimits struct {
 	MaxRelayReservations int
 
 	// MaxInboxMessagesPerPeer is the maximum number of pending inbox
-	// messages stored per peer. When exceeded, the oldest are evicted.
+	// messages stored per peer. When full, new stores are rejected.
 	MaxInboxMessagesPerPeer int
 
 	// MaxGroupInboxMessages is the maximum number of messages stored
@@ -109,6 +109,7 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) (
 	defer b.inner.mu.Unlock()
 
 	entry = ensureInboxMessageID(entry)
+	messages := b.inner.pruneExpiredForPeerLocked(toPeerId)
 
 	// Extract messageId for dedup.
 	msgId := extractMessageId(entry.Message)
@@ -118,12 +119,9 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) (
 		}
 	}
 
-	messages := b.inner.pruneExpired(b.inner.store[toPeerId])
-
 	// Enforce configurable cap.
 	if len(messages) >= b.maxPerPeer {
-		messages = messages[len(messages)-b.maxPerPeer+1:]
-		b.inner.rebuildMessageIds(toPeerId, messages)
+		return InboxStoreResultRejectedFull, nil
 	}
 
 	messages = append(messages, entry)

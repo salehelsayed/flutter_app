@@ -25,6 +25,13 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
     String? reasonDetail,
   })
   dbMarkInboxStagingEntryRejected;
+  final Future<int> Function(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  })
+  dbMarkInboxStagingEntryQuarantined;
+  final Future<int> Function() dbCountQuarantinedInboxStagingEntries;
 
   InboxStagingRepositoryImpl({
     required this.dbInsertInboxStagingEntry,
@@ -33,6 +40,8 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
     required this.dbDeleteInboxStagingEntry,
     required this.dbMarkInboxStagingEntryRetryable,
     required this.dbMarkInboxStagingEntryRejected,
+    required this.dbMarkInboxStagingEntryQuarantined,
+    required this.dbCountQuarantinedInboxStagingEntries,
   });
 
   @override
@@ -112,5 +121,23 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
       reasonCode: reasonCode,
       reasonDetail: reasonDetail,
     );
+  }
+
+  @override
+  Future<void> markQuarantined(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    await dbMarkInboxStagingEntryQuarantined(
+      entryId,
+      reasonCode: reasonCode,
+      reasonDetail: reasonDetail,
+    );
+  }
+
+  @override
+  Future<int> countQuarantinedEntries() async {
+    return dbCountQuarantinedInboxStagingEntries();
   }
 }

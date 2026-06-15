@@ -1,5 +1,6 @@
 import '../../../core/services/p2p_service.dart';
 import '../../../core/utils/flow_event_emitter.dart';
+import '../../account_migration/application/account_migration_runtime_network_gate.dart';
 import '../../identity/domain/repositories/identity_repository.dart';
 
 /// Result of starting the P2P node.
@@ -15,6 +16,9 @@ enum StartNodeResult {
 
   /// Connection error (relay unavailable, etc).
   connectionError,
+
+  /// Account migration authority blocks runtime network side effects.
+  accountMigrationBlocked,
 }
 
 /// Use case for starting the P2P node.
@@ -26,6 +30,8 @@ enum StartNodeResult {
 Future<StartNodeResult> startP2PNode({
   required IdentityRepository identityRepo,
   required P2PService p2pService,
+  AccountMigrationNetworkGate accountMigrationNetworkGate =
+      allowAccountMigrationNetworkSideEffects,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -44,6 +50,19 @@ Future<StartNodeResult> startP2PNode({
         details: {},
       );
       return StartNodeResult.noIdentity;
+    }
+
+    final migrationAllowsNetwork = await accountMigrationNetworkGate(
+      peerId: identity.peerId,
+      operation: 'p2p_start',
+    );
+    if (!migrationAllowsNetwork) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_START_NODE_USE_CASE_ACCOUNT_MIGRATION_BLOCKED',
+        details: {'peerId': identity.peerId},
+      );
+      return StartNodeResult.accountMigrationBlocked;
     }
 
     // Start the P2P node

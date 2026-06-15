@@ -119,6 +119,37 @@ void main() {
       });
     });
 
+    test('account migration block does not schedule registration retry', () {
+      fakeAsync((async) {
+        final refreshController = StreamController<String>.broadcast(
+          sync: true,
+        );
+        var registerCalls = 0;
+
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: () async => true,
+          registerPushToken: () async {
+            registerCalls++;
+            return RegisterPushTokenResult.accountMigrationBlocked;
+          },
+          tokenRefreshStream: refreshController.stream,
+          retryDelay: const Duration(seconds: 15),
+        );
+
+        coordinator.ensureStarted();
+        async.flushMicrotasks();
+        expect(registerCalls, equals(1));
+
+        async.elapse(const Duration(minutes: 2));
+        async.flushMicrotasks();
+
+        expect(registerCalls, equals(1));
+
+        coordinator.dispose();
+        refreshController.close();
+      });
+    });
+
     test('retryNow retries registration after prior noToken or failed', () {
       fakeAsync((async) {
         final refreshController = StreamController<String>.broadcast(

@@ -1,8 +1,7 @@
 /// Simulator Benchmark: Voice Send Sub-Steps (Test K)
 ///
 /// Measures voice message upload + transport sub-step timing.
-/// Run: flutter test integration_test/benchmark_voice_harness.dart -d <DEVICE_ID>
-@Tags(['device'])
+/// Invoked via the shared benchmark dispatcher (benchmarkKey: VOICE).
 library;
 
 import 'dart:convert';
@@ -24,71 +23,67 @@ const _configuredCliPeerFixture = String.fromEnvironment(
   defaultValue: '',
 );
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runVoiceBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('K-Sim-1: Voice note send', (tester) async {
-    print('\n${'═' * 60}');
-    print('  BENCHMARK: VOICE SEND (K-Sim-1)');
-    print('${'═' * 60}\n');
+  print('\n${'═' * 60}');
+  print('  BENCHMARK: VOICE SEND (K-Sim-1)');
+  print('${'═' * 60}\n');
 
-    final node = await createBenchmarkNode();
-    await node.startAndWaitOnline();
+  final node = await createBenchmarkNode();
+  await node.startAndWaitOnline();
 
-    // Create a test audio file
-    final tmpDir = Directory.systemTemp.createTempSync('voice_bench_');
-    final testFile = File('${tmpDir.path}/test_voice.m4a');
-    testFile.writeAsBytesSync(List.filled(48000, 0)); // ~48KB
+  // Create a test audio file
+  final tmpDir = Directory.systemTemp.createTempSync('voice_bench_');
+  final testFile = File('${tmpDir.path}/test_voice.m4a');
+  testFile.writeAsBytesSync(List.filled(48000, 0)); // ~48KB
 
-    final recording = AudioRecording(
-      filePath: testFile.path,
-      durationMs: 3000,
-      sizeBytes: 48000,
+  final recording = AudioRecording(
+    filePath: testFile.path,
+    durationMs: 3000,
+    sizeBytes: 48000,
+  );
+
+  final messageRepo = InMemoryMessageRepository();
+  final targetPeerId = '12D3KooWOfflinePeerForVoiceBenchmark00000';
+
+  final events = await captureFlowEvents(() async {
+    await sendVoiceMessage(
+      p2pService: node.service,
+      messageRepo: messageRepo,
+      targetPeerId: targetPeerId,
+      senderPeerId: node.peerId,
+      senderUsername: 'BenchmarkUser',
+      recording: recording,
+      bridge: node.bridge,
     );
-
-    final messageRepo = InMemoryMessageRepository();
-    final targetPeerId = '12D3KooWOfflinePeerForVoiceBenchmark00000';
-
-    final events = await captureFlowEvents(() async {
-      await sendVoiceMessage(
-        p2pService: node.service,
-        messageRepo: messageRepo,
-        targetPeerId: targetPeerId,
-        senderPeerId: node.peerId,
-        senderUsername: 'BenchmarkUser',
-        recording: recording,
-        bridge: node.bridge,
-      );
-    });
-
-    final voiceTiming = filterEvents(events, 'VOICE_SEND_TIMING');
-    if (voiceTiming.isNotEmpty) {
-      final d = voiceTiming.first['details'] as Map<String, dynamic>;
-      printBenchmarkSingle('sim_voice_total_ms', d['elapsedMs'] as int);
-      if (d.containsKey('uploadMs')) {
-        printBenchmarkSingle('sim_voice_upload_ms', d['uploadMs'] as int);
-      }
-      if (d.containsKey('sendMs')) {
-        printBenchmarkSingle('sim_voice_send_ms', d['sendMs'] as int);
-      }
-      // §8: upload share percentage
-      if (d.containsKey('uploadMs') && d.containsKey('elapsedMs')) {
-        final uploadMs = d['uploadMs'] as int;
-        final totalMs = d['elapsedMs'] as int;
-        final uploadSharePct =
-            totalMs > 0 ? (uploadMs / totalMs * 100).round() : 0;
-        print('[BENCHMARK] sim_voice_upload_share_pct = $uploadSharePct%');
-      }
-      print('[BENCHMARK] sim_voice_outcome = ${d['outcome']}');
-    }
-
-    // Cleanup
-    tmpDir.deleteSync(recursive: true);
-    await node.dispose();
   });
+
+  final voiceTiming = filterEvents(events, 'VOICE_SEND_TIMING');
+  if (voiceTiming.isNotEmpty) {
+    final d = voiceTiming.first['details'] as Map<String, dynamic>;
+    printBenchmarkSingle('sim_voice_total_ms', d['elapsedMs'] as int);
+    if (d.containsKey('uploadMs')) {
+      printBenchmarkSingle('sim_voice_upload_ms', d['uploadMs'] as int);
+    }
+    if (d.containsKey('sendMs')) {
+      printBenchmarkSingle('sim_voice_send_ms', d['sendMs'] as int);
+    }
+    // §8: upload share percentage
+    if (d.containsKey('uploadMs') && d.containsKey('elapsedMs')) {
+      final uploadMs = d['uploadMs'] as int;
+      final totalMs = d['elapsedMs'] as int;
+      final uploadSharePct =
+          totalMs > 0 ? (uploadMs / totalMs * 100).round() : 0;
+      print('[BENCHMARK] sim_voice_upload_share_pct = $uploadSharePct%');
+    }
+    print('[BENCHMARK] sim_voice_outcome = ${d['outcome']}');
+  }
+
+  // Cleanup
+  tmpDir.deleteSync(recursive: true);
+  await node.dispose();
 }

@@ -93,6 +93,8 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 }
 
 const _testTs = '2026-01-01T00:00:00.000Z';
+const _testContentHash =
+    'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 
 void main() {
   group('Media retry smoke test -- end-to-end', () {
@@ -155,6 +157,10 @@ void main() {
               localPath: '/tmp/final.jpg',
               downloadStatus: 'done',
               createdAt: _testTs,
+              contentHash: _testContentHash,
+              encryptionKeyBase64: 'test-blob-key-base64',
+              encryptionNonce: 'test-blob-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             ),
           ],
           mediaAttachmentRepo: mediaAttachmentRepo,
@@ -212,6 +218,10 @@ void main() {
           downloadStatus: 'done',
           createdAt: stuckTs,
           localPath: '/tmp/photo.jpg',
+          contentHash: _testContentHash,
+          encryptionKeyBase64: 'test-blob-key-base64',
+          encryptionNonce: 'test-blob-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
 
         final messageRepo = FakeMessageRepository()..seed([stuckMessage]);
@@ -325,6 +335,10 @@ void main() {
           downloadStatus: 'done',
           createdAt: stuckTs,
           localPath: '/tmp/voice.m4a',
+          contentHash: _testContentHash,
+          encryptionKeyBase64: 'test-blob-key-base64',
+          encryptionNonce: 'test-blob-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
 
         final messageRepo = FakeMessageRepository()..seed([voiceMsg]);

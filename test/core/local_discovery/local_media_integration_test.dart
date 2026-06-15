@@ -59,6 +59,65 @@ void main() {
       return (file, hash);
     }
 
+    // --- 112 Phase 4: LAN transfers ship ciphertext ---
+    test(
+        'enc-flagged LAN transfer ships ciphertext: receiver stages an .enc '
+        'artifact, never canonical media', () async {
+      // The composer encrypts once and streams the artifact; this pins the
+      // server-to-server leg. The decrypt-adopt restore is pinned by the
+      // download/link suites (1.3 adoption + 1.5 staging placement).
+      const size = 1024;
+      final (plaintextFile, plaintextHash) =
+          await _createTestFile(tempDirA, size, seed: 7);
+      // Stand-in ciphertext artifact: distinct bytes from the plaintext.
+      final plaintextBytes = await plaintextFile.readAsBytes();
+      final artifactBytes = [
+        ...'cipher:'.codeUnits,
+        ...plaintextBytes.reversed,
+      ];
+      final artifact = File('${tempDirA.path}/artifact.enc');
+      await artifact.writeAsBytes(artifactBytes, flush: true);
+      final artifactHash = sha256.convert(artifactBytes).toString();
+
+      final mediaReadyEvents = <LocalMediaReady>[];
+      final sub = serverB.mediaReadyStream!.listen(mediaReadyEvents.add);
+
+      final result = await serverA.sendMedia(
+        host: 'localhost',
+        port: portB,
+        toPeerId: 'receiverPeer',
+        filePath: artifact.path,
+        mediaId: 'e2e-enc-1',
+        mime: 'application/octet-stream',
+        fromPeerId: 'senderPeer',
+        enc: true,
+        encScheme: 'blob_aes_256_gcm_v1',
+      );
+
+      expect(result, isTrue);
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(mediaReadyEvents, hasLength(1));
+      final ready = mediaReadyEvents.first;
+      expect(ready.enc, isTrue);
+      expect(ready.encScheme, 'blob_aes_256_gcm_v1');
+      expect(ready.sha256, artifactHash);
+
+      // The receiver-staged bytes are the CIPHERTEXT, not the plaintext.
+      final stagedBytes = await File(ready.localPath).readAsBytes();
+      expect(stagedBytes, equals(artifactBytes));
+      expect(sha256.convert(stagedBytes).toString(), isNot(plaintextHash));
+
+      // persistMedia stages as an opaque .enc artifact, never a
+      // renderable canonical extension.
+      final persisted =
+          await mediaServerB.persistMedia('e2e-enc-1', 'senderPeer');
+      expect(persisted, isNotNull);
+      expect(persisted, endsWith('.enc'));
+
+      await sub.cancel();
+    });
+
     test(
         'sender uploads 1KB image, receiver gets file at local path, '
         'SHA-256 matches', () async {

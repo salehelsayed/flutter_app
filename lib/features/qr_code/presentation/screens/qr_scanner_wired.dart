@@ -11,6 +11,8 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -41,6 +43,7 @@ import 'package:flutter_app/features/share/presentation/navigation/share_target_
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/scanned_qr_classifier.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'qr_scanner_screen.dart';
 
@@ -88,6 +91,9 @@ class QRScannerWired extends StatelessWidget {
   final PendingPostTargetStore? pendingPostTargetStore;
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
   final TransportMetrics? transportMetrics;
+  final MigrationQrScannedHandler? onMigrationQrScanned;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
 
   const QRScannerWired({
     super.key,
@@ -124,6 +130,9 @@ class QRScannerWired extends StatelessWidget {
     this.pendingPostTargetStore,
     this.postsPrivacySettingsRepository,
     this.transportMetrics,
+    this.onMigrationQrScanned,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
   });
 
   @override
@@ -139,6 +148,36 @@ class QRScannerWired extends StatelessWidget {
       event: 'QR_SCAN_RECEIVED',
       details: {'length': qrData.length},
     );
+
+    if (isAccountMigrationPairingQr(qrData)) {
+      final migrationHandler = onMigrationQrScanned;
+      if (migrationHandler == null) {
+        if (!context.mounted) return;
+        _showError(
+          context,
+          AppLocalizations.of(context)!.qr_invalid_title,
+          AppLocalizations.of(context)!.qr_invalid_body,
+        );
+        return;
+      }
+
+      try {
+        await migrationHandler(qrData);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'QR_SCAN_MIGRATION_DISPATCHED',
+          details: {},
+        );
+      } catch (e) {
+        if (!context.mounted) return;
+        _showError(
+          context,
+          AppLocalizations.of(context)!.qr_invalid_title,
+          AppLocalizations.of(context)!.qr_invalid_body,
+        );
+      }
+      return;
+    }
 
     // Parse and validate the QR payload
     final (result, contact) = await parseQRPayload(
@@ -380,6 +419,9 @@ class QRScannerWired extends StatelessWidget {
                             postsPrivacySettingsRepository ??
                             _missingPostsPrivacySettingsRepository(),
                         transportMetrics: transportMetrics,
+                        accountMigrationRunTransfer:
+                            accountMigrationRunTransfer,
+                        accountMigrationSizeGate: accountMigrationSizeGate,
                       ),
                     ),
                     (route) => false,

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -65,6 +66,11 @@ class LocalP2PService {
   /// Stream of messages received from local peers.
   Stream<LocalChatMessage> get localMessageStream => _wsServer.messageStream;
 
+  /// Configure the receiver-side commit handler for durable inbound LAN chat.
+  void configureInboundChatCommitHandler(LanInboundChatCommitHandler handler) {
+    _wsServer.configureInboundChatCommitHandler(handler);
+  }
+
   /// Stream of discovered peer map changes.
   Stream<Map<String, LocalPeer>> get discoveredPeersStream =>
       _discovery.discoveredPeersStream;
@@ -81,8 +87,7 @@ class LocalP2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      (await _discovery.resolvePeer(peerId, timeout: timeout)) != null;
+  }) async => (await _discovery.resolvePeer(peerId, timeout: timeout)) != null;
 
   /// Stream of media files received via local WiFi transfer.
   Stream<LocalMediaReady>? get mediaReadyStream => _wsServer.mediaReadyStream;
@@ -96,10 +101,29 @@ class LocalP2PService {
     String fromPeerId, {
     int? timeoutMs,
   }) async {
-    final peer = _discovery.getLocalPeer(peerId);
-    if (peer == null) return false;
+    return await sendMessageDetailed(
+          peerId,
+          content,
+          fromPeerId,
+          timeoutMs: timeoutMs,
+        ) ==
+        LanSendAck.committed;
+  }
 
-    return _wsServer.sendMessage(
+  /// Send a message to a local peer and return the detailed LAN ack result.
+  ///
+  /// Returns [LanSendAck.failed] if the peer is not on the local network or the
+  /// send fails before a peer ack is classified.
+  Future<LanSendAck> sendMessageDetailed(
+    String peerId,
+    String content,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
+    final peer = _discovery.getLocalPeer(peerId);
+    if (peer == null) return LanSendAck.failed;
+
+    return _wsServer.sendMessageWithAck(
       peer.host,
       peer.port,
       content,
@@ -121,6 +145,8 @@ class LocalP2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     final peer = _discovery.getLocalPeer(peerId);
     if (peer == null) return false;
@@ -136,6 +162,8 @@ class LocalP2PService {
       durationMs: durationMs,
       waveform: waveform,
       filename: filename,
+      enc: enc,
+      encScheme: encScheme,
     );
   }
 

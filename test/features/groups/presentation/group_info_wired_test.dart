@@ -1742,8 +1742,15 @@ void main() {
     );
 
     testWidgets(
-      'UP-006 re-added member renders joined instead of stale removed or pending invite',
+      'UP-006 a re-added member is NOT shown joined until a real rejoin '
+      'confirmation arrives (B3.1)',
       (tester) async {
+        // B3.1: the admin's OWN members_added re-add event is not a join
+        // confirmation. After a removal, the re-added member must show the
+        // pending re-invite status ("Invite sent") until a genuine member_joined
+        // receipt comes back — not an optimistic "Joined" (the field bug where
+        // the admin saw a re-added member as joined before they actually
+        // rejoined and obtained the new key).
         final groupRepo = InMemoryGroupRepository();
         final msgRepo = InMemoryGroupMessageRepository();
         final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
@@ -1767,14 +1774,15 @@ void main() {
             username: 'Charlie',
           ).copyWith(joinedAt: readdAt),
         );
+        // A fresh re-invite was SENT at re-add time; no rejoin receipt yet.
         await inviteStatusRepo.saveAttempt(
           GroupInviteDeliveryAttempt(
             groupId: 'group-1',
             peerId: 'peer-charlie',
             username: 'Charlie',
-            status: GroupInviteDeliveryStatus.joined,
-            attemptedAt: firstInviteAt,
-            updatedAt: firstInviteAt.add(const Duration(minutes: 1)),
+            status: GroupInviteDeliveryStatus.sent,
+            attemptedAt: readdAt,
+            updatedAt: readdAt,
           ),
         );
         await msgRepo.saveMessage(
@@ -1787,6 +1795,7 @@ void main() {
             eventAt: removedAt,
           ),
         );
+        // Only the admin's own re-add event exists — no member_joined receipt.
         await msgRepo.saveMessage(
           buildMembersAddedTimelineMessage(
             groupId: 'group-1',
@@ -1817,6 +1826,95 @@ void main() {
           const ValueKey('group-member-invite-status-peer-charlie'),
         );
         expect(find.text('Charlie'), findsOneWidget);
+        expect(
+          find.descendant(of: charlieBadge, matching: find.text('Invite sent')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: charlieBadge, matching: find.text('Joined')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'UP-006b a re-added member DOES show joined once a real member_joined '
+      'receipt arrives after the re-add (B3.1 positive)',
+      (tester) async {
+        // The truthful-pending rule must not permanently hide a genuinely
+        // re-joined member: a member_joined receipt dated AFTER the removal
+        // flips the status back to "Joined".
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        final removedAt = DateTime.utc(2026, 5, 16, 10);
+        final readdAt = removedAt.add(const Duration(minutes: 5));
+        final rejoinReceiptAt = removedAt.add(const Duration(minutes: 8));
+
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+          ).copyWith(joinedAt: readdAt),
+        );
+        await msgRepo.saveMessage(
+          buildMemberRemovedTimelineMessage(
+            groupId: 'group-1',
+            removedPeerId: 'peer-charlie',
+            removedUsername: 'Charlie',
+            senderId: 'peer-admin',
+            senderUsername: 'Admin',
+            eventAt: removedAt,
+          ),
+        );
+        await msgRepo.saveMessage(
+          buildMembersAddedTimelineMessage(
+            groupId: 'group-1',
+            addedMembers: const [(peerId: 'peer-charlie', username: 'Charlie')],
+            senderId: 'peer-admin',
+            senderUsername: 'Admin',
+            eventAt: readdAt,
+          ),
+        );
+        // The member's own rejoin receipt, dated after the removal.
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-charlie',
+            joinedUsername: 'Charlie',
+            eventAt: rejoinReceiptAt,
+          ),
+        );
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final charlieBadge = find.byKey(
+          const ValueKey('group-member-invite-status-peer-charlie'),
+        );
         expect(
           find.descendant(of: charlieBadge, matching: find.text('Joined')),
           findsOneWidget,
@@ -2435,6 +2533,134 @@ void main() {
           find.byKey(const ValueKey('group-edit-details-button')),
           findsNothing,
         );
+      },
+    );
+
+    // B4 (Option A — widget caller, the genuine field bug): when the admin
+    // dissolves via the GroupInfo screen, the published group_dissolved audit
+    // MUST carry the actor's device/transport binding (the same binding the Go
+    // transport stamps on the live message), so verifyGroupTransitionAudit on
+    // every receiver matches signed-vs-observed and applies isDissolved. Before
+    // the fix, _onDissolveGroup called dissolveGroup without the binding; the
+    // signer omitted deviceId/transportPeerId; receivers saw observed-present
+    // vs signed-absent and rejected with device_mismatch/transport_mismatch, so
+    // the group stayed live for everyone but the dissolver.
+    testWidgets(
+      'B4 dissolve via screen signs an audit whose actor carries the local '
+      'device/transport binding',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        // The admin member carries a registered active device whose transport
+        // peer id equals this device's live peer id (peer-admin). This is the
+        // realistic shape resolveGroupSenderDeviceBinding resolves against, so
+        // the threaded binding is non-empty and lands in the signed audit.
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+          ).copyWith(
+            devices: const [
+              GroupMemberDeviceIdentity(
+                deviceId: 'dev-admin-1',
+                transportPeerId: 'peer-admin',
+                deviceSigningPublicKey: 'pk-admin',
+                keyPackageId: 'kp-admin-1',
+              ),
+            ],
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'msg-1'},
+            'group:inboxStore': {'ok': true},
+            'group:leave': {'ok': true},
+          },
+        );
+
+        // The local node exposes a non-empty peerId so the widget's
+        // _currentSenderDeviceId resolves to 'peer-admin' (the preferred
+        // device/transport hint fed into resolveGroupSenderDeviceBinding).
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(
+            peerId: 'peer-admin',
+            isStarted: true,
+          ),
+        );
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: p2pService,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await scrollToDissolveGroupButton(tester);
+        await tester.tap(find.byKey(const ValueKey('group-dissolve-button')));
+        await pumpFrames(tester, count: 5);
+        await confirmDissolveGroupDialog(tester);
+
+        // Sanity: the dissolve actually completed and published.
+        final updated = await groupRepo.getGroup(group.id);
+        expect(updated, isNotNull);
+        expect(updated!.isDissolved, isTrue);
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+
+        // Decode the signed audit's actor from the proven inboxStore replay
+        // path (mirrors dissolve_group_use_case_test's decode pattern).
+        final inboxStoreMessage = bridge.sentMessages.firstWhere((message) {
+          return (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore';
+        });
+        final inboxPayload =
+            (jsonDecode(inboxStoreMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final replayEnvelope =
+            jsonDecode(inboxPayload['message'] as String)
+                as Map<String, dynamic>;
+        final replayPlaintext =
+            jsonDecode(replayEnvelope['ciphertext'] as String)
+                as Map<String, dynamic>;
+        final sysPayload =
+            jsonDecode(replayPlaintext['text'] as String)
+                as Map<String, dynamic>;
+        final audit =
+            sysPayload[signedGroupTransitionAuditField]
+                as Map<String, dynamic>;
+        final signedPayload =
+            jsonDecode(audit['signedPayload'] as String)
+                as Map<String, dynamic>;
+        final actor = signedPayload['actor'] as Map<String, dynamic>;
+
+        // The crux of B4: actor must carry a non-empty device + transport
+        // binding equal to this device's live peer id. With Option A reverted
+        // the binding is omitted and these assertions fail.
+        expect(actor['deviceId'], isNotNull);
+        expect(actor['deviceId'] as String, isNotEmpty);
+        expect(actor['deviceId'], 'dev-admin-1');
+        expect(actor['transportPeerId'], isNotNull);
+        expect(actor['transportPeerId'] as String, isNotEmpty);
+        expect(actor['transportPeerId'], 'peer-admin');
+        expect(actor['transportPeerId'], p2pService.currentState.peerId);
+        expect(actor['keyPackageId'], 'kp-admin-1');
       },
     );
 
@@ -3962,6 +4188,129 @@ void main() {
         expect(find.byType(GroupInfoScreen), findsOneWidget);
         expect(find.text('Open Info'), findsNothing);
         expect(find.text('Failed to leave group'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'writer Leave tears down local membership even when rotation is deferred',
+      (tester) async {
+        // Non-creator writer voluntary leave: the leaver cannot rotate the key,
+        // so the departure rotation is deferred (best-effort). The leave must
+        // still reach leaveGroup() and tear down local membership instead of
+        // dead-ending on the old "Failed to rotate group key before leaving".
+        final writerIdentity = IdentityModel(
+          peerId: 'peer-writer',
+          publicKey: 'pk-writer',
+          privateKey: 'sk-writer',
+          mnemonic12:
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 '
+              'word11 word12',
+          mlKemPublicKey: 'mlkem-pk-writer',
+          username: 'Writer',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+          updatedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        // myRole == member, createdBy == peer-admin (NOT the leaver): both
+        // rotation gates deny the writer.
+        final group = makeMemberGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-writer',
+            username: 'Writer',
+            role: MemberRole.writer,
+            publicKey: 'pk-writer',
+            mlKemPublicKey: 'mlkem-pk-writer',
+          ),
+        );
+        // A remaining member so the use case attempts (and defers) rotation.
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+          ),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        bridge.responses['group:leave'] = {'ok': true};
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'writer-leave-sys',
+        };
+        bridge.responses['group:inboxStore'] = {'ok': true};
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: writerIdentity,
+                          ),
+                          p2pService: FakeP2PService(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 30);
+
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+        await tapLeaveGroupButton(tester, settleFrameCount: 30);
+
+        // The member_removed was broadcast, then leaveGroup() ran and tore down
+        // local membership.
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        // Rotation was deferred, not performed: the writer never generated a key.
+        expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
+        // Local membership torn down (leaveGroup deletes the group).
+        expect(await groupRepo.getGroup('group-1'), isNull);
+        // No rotation-failed error and no native-leave failure SnackBar.
+        expect(
+          find.text('Failed to rotate group key before leaving'),
+          findsNothing,
+        );
+        expect(find.text('Failed to leave group'), findsNothing);
+        // Popped back to the first route.
+        expect(find.byType(GroupInfoScreen), findsNothing);
+        expect(find.text('Open Info'), findsOneWidget);
       },
     );
 

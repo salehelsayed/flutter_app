@@ -124,7 +124,13 @@ class FakeMediaFileManager extends MediaFileManager {
   }
 
   @override
-  Future<void> deleteFile(String localPath) async {
+  Future<void> deleteFile(
+    String localPath, {
+    String caller = 'MediaFileManager.deleteFile',
+    String reason = 'media_file_delete',
+    String? storedPath,
+    Map<String, Object?> details = const {},
+  }) async {
     deletedFilePaths.add(localPath);
   }
 }

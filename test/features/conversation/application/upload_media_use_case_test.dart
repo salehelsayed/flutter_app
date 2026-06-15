@@ -9,12 +9,17 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+
+import '../../../shared/fakes/fake_media_file_manager.dart';
 
 /// Fake bridge that responds to media:upload commands.
 class _FakeBridge implements Bridge {
   Map<String, dynamic> uploadResponse = {'ok': true};
+  Map<String, dynamic>? keygenResponse;
+  Map<String, dynamic>? encryptResponse;
   Map<String, dynamic>? lastRequest;
   final List<Map<String, dynamic>> requests = [];
   final List<String> commandLog = [];
@@ -30,9 +35,15 @@ class _FakeBridge implements Bridge {
     final cmd = lastRequest!['cmd'] as String?;
     if (cmd != null) commandLog.add(cmd);
     if (cmd == 'blob:keygen') {
+      if (keygenResponse != null) {
+        return jsonEncode(keygenResponse);
+      }
       final key = 'group-test-key-${generatedKeys.length + 1}';
       generatedKeys.add(key);
       return jsonEncode({'ok': true, 'keyBase64': key});
+    }
+    if (cmd == 'blob:encrypt' && encryptResponse != null) {
+      return jsonEncode(encryptResponse);
     }
     if (cmd == 'blob:encrypt') {
       final payload = lastRequest!['payload'] as Map<String, dynamic>;
@@ -117,6 +128,18 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
       .toList();
 }
 
+Future<void> _waitForCapturedFlowEvent(
+  List<Map<String, dynamic>> events,
+  String eventName,
+) async {
+  for (var attempt = 0; attempt < 20; attempt += 1) {
+    if (events.any((event) => event['event'] == eventName)) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
 void main() {
   late _FakeBridge bridge;
   late Directory tempDir;
@@ -124,6 +147,7 @@ void main() {
   late File gifFile;
 
   setUp(() async {
+    debugGroupMediaUploadPostCommitProbeDelays = const [];
     bridge = _FakeBridge();
     tempDir = await Directory.systemTemp.createTemp('upload_test_');
     tempFile = File('${tempDir.path}/test_image.jpg');
@@ -133,6 +157,10 @@ void main() {
   });
 
   tearDown(() async {
+    debugGroupMediaUploadPostCommitProbeDelays = const [
+      Duration(milliseconds: 250),
+      Duration(seconds: 1),
+    ];
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -151,7 +179,7 @@ void main() {
 
       expect(result, isNotNull);
       expect(result!.mime, 'image/jpeg');
-      expect(result.size, 1024);
+      expect(result.size, 1024); // plaintext size on wire/DB (group convention)
       expect(result.mediaType, 'image');
       expect(result.width, 1920);
       expect(result.height, 1080);
@@ -160,7 +188,28 @@ void main() {
       expect(result.messageId, ''); // set by caller
       expect(result.id, isNotEmpty);
       expect(result.createdAt, isNotEmpty);
-      expect(result.contentHash, isNull);
+      // 112: every 1:1 attachment carries the full blob-encryption
+      // metadata; contentHash is the hash of the ENCRYPTED artifact.
+      expect(result.encryptionKeyBase64, isNotNull);
+      expect(result.encryptionNonce, isNotNull);
+      expect(
+        result.encryptionScheme,
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final uploadRequest = bridge.requests.lastWhere(
+        (request) => request['cmd'] == 'media:upload',
+      );
+      final uploadPayload = uploadRequest['payload'] as Map<String, dynamic>;
+      expect(
+        result.contentHash,
+        bridge.uploadedContentHashes[uploadPayload['filePath'] as String],
+      );
+      expect(
+        result.contentHash,
+        isNot(
+          await GroupMediaIntegrityPolicy.computeFileSha256Hex(tempFile.path),
+        ),
+      );
     });
 
     test('sends correct command to bridge', () async {
@@ -171,13 +220,217 @@ void main() {
         recipientPeerId: '12D3KooWRecipient123',
       );
 
+      // 112: 1:1 uploads are encrypted before the relay ever sees bytes.
+      expect(
+        bridge.commandLog,
+        containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
+      );
       expect(bridge.lastRequest, isNotNull);
       expect(bridge.lastRequest!['cmd'], 'media:upload');
       final payload = bridge.lastRequest!['payload'] as Map<String, dynamic>;
       expect(payload['to'], '12D3KooWRecipient123');
-      expect(payload['mime'], 'image/jpeg');
-      expect(payload['filePath'], tempFile.path);
+      expect(payload['filePath'], endsWith('.enc'));
+      expect(payload['filePath'], isNot(tempFile.path));
       expect(payload['id'], isNotEmpty);
+    });
+
+    test('distinct key, nonce, and contentHash per 1:1 object', () async {
+      final first = File('${tempDir.path}/direct_first.jpg');
+      final second = File('${tempDir.path}/direct_second.jpg');
+      await first.writeAsBytes(List<int>.filled(64, 0x11));
+      await second.writeAsBytes(List<int>.filled(64, 0x22));
+
+      final firstResult = await uploadMedia(
+        bridge: bridge,
+        localFilePath: first.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'contact-A',
+      );
+      final secondResult = await uploadMedia(
+        bridge: bridge,
+        localFilePath: second.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'contact-A',
+      );
+
+      expect(firstResult, isNotNull);
+      expect(secondResult, isNotNull);
+      expect(
+        firstResult!.encryptionKeyBase64,
+        isNot(secondResult!.encryptionKeyBase64),
+      );
+      expect(firstResult.encryptionNonce, isNot(secondResult.encryptionNonce));
+      expect(firstResult.contentHash, isNot(secondResult.contentHash));
+    });
+
+    test(
+      '1:1 encrypted upload advertises opaque mime to the transport',
+      () async {
+        // G7a: the relay's plaintext metadata sidecar must not learn the
+        // real content type; it travels only inside the ML-KEM envelope.
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'contact-A',
+        );
+
+        expect(result, isNotNull);
+        expect(result!.mime, 'image/jpeg');
+        final payload = bridge.lastRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['mime'], kOpaqueMediaTransportMime);
+      },
+    );
+
+    test('group upload still advertises the real mime to the relay', () async {
+      // Green pin protecting the group relay_mime_mismatch cross-check
+      // (Alternatives rejected #7): opaque mime is 1:1-ONLY.
+      final validJpegFile = File('${tempDir.path}/group_real_mime.jpg');
+      await validJpegFile.writeAsBytes([
+        0xff,
+        0xd8,
+        0xff,
+        ...List<int>.filled(32, 0xff),
+      ]);
+
+      final result = await uploadMedia(
+        bridge: bridge,
+        localFilePath: validJpegFile.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'group-1',
+        allowedPeers: const ['peer-2'],
+      );
+
+      expect(result, isNotNull);
+      final payload = bridge.lastRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['mime'], 'image/jpeg');
+    });
+
+    test('1:1 upload skips group mime/size policy', () async {
+      // Green pin guarding the crypto-block hoist: encryption became
+      // unconditional but GroupMediaMimePolicy/GroupMediaSizePolicy stay
+      // group-gated (application/pdf is group-rejected, 1:1-allowed).
+      final pdfFile = File('${tempDir.path}/doc.pdf');
+      await pdfFile.writeAsBytes(List<int>.filled(2048, 0x25));
+
+      final result = await uploadMedia(
+        bridge: bridge,
+        localFilePath: pdfFile.path,
+        mime: 'application/pdf',
+        recipientPeerId: 'contact-A',
+        groupMediaPerAttachmentLimitBytes: 512,
+      );
+
+      expect(result, isNotNull);
+      expect(result!.mediaType, 'file');
+    });
+
+    test(
+      'encrypted temp deleted after successful 1:1 upload; plaintext durable '
+      'copy retained',
+      () async {
+        final mediaFileManager = FakeMediaFileManager();
+        const blobId = 'blob-enc-temp-cleanup';
+
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'contact-A',
+          mediaFileManager: mediaFileManager,
+          blobId: blobId,
+        );
+
+        expect(result, isNotNull);
+        final uploadRequest = bridge.requests.lastWhere(
+          (request) => request['cmd'] == 'media:upload',
+        );
+        final uploadedPath =
+            (uploadRequest['payload'] as Map<String, dynamic>)['filePath']
+                as String;
+        expect(File(uploadedPath).existsSync(), isFalse);
+        // The durable copy is the PLAINTEXT render source for the sender.
+        final resolvedPath = await mediaFileManager.resolveStoredPath(
+          result!.localPath!,
+        );
+        expect(File(resolvedPath).existsSync(), isTrue);
+        expect(File(resolvedPath).lengthSync(), tempFile.lengthSync());
+      },
+    );
+
+    test(
+      'transient source file deleted after durable copy and successful '
+      'upload when deleteSourceWhenDone',
+      () async {
+        final mediaFileManager = FakeMediaFileManager();
+        final pickerTemp = File('${tempDir.path}/picker_temp.jpg');
+        await pickerTemp.writeAsBytes(List<int>.filled(128, 0x33));
+
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: pickerTemp.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'contact-A',
+          mediaFileManager: mediaFileManager,
+          deleteSourceWhenDone: true,
+        );
+
+        expect(result, isNotNull);
+        // Best-effort unlink only — secure-delete/overwrite is not
+        // meaningfully achievable on flash/APFS.
+        expect(pickerTemp.existsSync(), isFalse);
+        final resolvedPath = await mediaFileManager.resolveStoredPath(
+          result!.localPath!,
+        );
+        expect(File(resolvedPath).existsSync(), isTrue);
+      },
+    );
+
+    test(
+      'deleteSourceWhenDone without durable copy keeps the source',
+      () async {
+        // Without a mediaFileManager the source IS the sender's only
+        // render copy — it must never be deleted.
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'contact-A',
+          deleteSourceWhenDone: true,
+        );
+
+        expect(result, isNotNull);
+        expect(tempFile.existsSync(), isTrue);
+        expect(result!.localPath, tempFile.path);
+      },
+    );
+
+    test('1:1 upload fails closed when blob keygen/encrypt fails', () async {
+      bridge.keygenResponse = {'ok': false, 'errorMessage': 'keygen broken'};
+
+      final result = await uploadMedia(
+        bridge: bridge,
+        localFilePath: tempFile.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'contact-A',
+      );
+
+      expect(result, isNull);
+      // No plaintext fallback: media:upload must never be issued.
+      expect(bridge.commandLog, isNot(contains('media:upload')));
+
+      bridge.keygenResponse = null;
+      bridge.encryptResponse = {'ok': false, 'errorMessage': 'encrypt broken'};
+
+      final encryptFailResult = await uploadMedia(
+        bridge: bridge,
+        localFilePath: tempFile.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'contact-A',
+      );
+
+      expect(encryptFailResult, isNull);
+      expect(bridge.commandLog, isNot(contains('media:upload')));
     });
 
     test('returns null when bridge returns error', () async {
@@ -244,6 +497,106 @@ void main() {
       },
     );
 
+    test(
+      'copies successful uploads into owned media storage with durability telemetry',
+      () async {
+        final mediaFileManager = FakeMediaFileManager();
+        const blobId = 'blob-owned-copy-test';
+        const recipientPeerId = 'peer-owned-copy-test';
+
+        final events = await captureFlowEvents(() async {
+          final result = await uploadMedia(
+            bridge: bridge,
+            localFilePath: tempFile.path,
+            mime: 'image/jpeg',
+            recipientPeerId: recipientPeerId,
+            mediaFileManager: mediaFileManager,
+            blobId: blobId,
+          );
+
+          expect(result, isNotNull);
+          expect(result!.localPath, 'media/$recipientPeerId/$blobId.jpg');
+          final resolvedPath = await mediaFileManager.resolveStoredPath(
+            result.localPath!,
+          );
+          expect(File(resolvedPath).existsSync(), isTrue);
+          expect(File(resolvedPath).lengthSync(), tempFile.lengthSync());
+        });
+
+        final durability = events.singleWhere(
+          (event) => event['event'] == 'MEDIA_UPLOAD_DURABLE_COPY_COMMITTED',
+        );
+        expect(
+          durability['details'],
+          allOf(
+            containsPair('blobId', 'blob-own'),
+            containsPair('storedPath', 'media/$recipientPeerId/$blobId.jpg'),
+            containsPair('fileExists', true),
+            containsPair('fileBytes', tempFile.lengthSync()),
+            containsPair('expectedBytes', tempFile.lengthSync()),
+          ),
+        );
+      },
+    );
+
+    test(
+      'group durable copy emits delayed post-commit existence probe',
+      () async {
+        debugGroupMediaUploadPostCommitProbeDelays = const [Duration.zero];
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final validJpegFile = File('${tempDir.path}/valid_group_probe.jpg');
+        await validJpegFile.writeAsBytes([
+          0xff,
+          0xd8,
+          0xff,
+          ...List<int>.filled(32, 0xff),
+        ]);
+        final mediaFileManager = FakeMediaFileManager();
+        const blobId = 'blob-group-probe';
+
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: validJpegFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'group-1',
+          allowedPeers: const ['peer-2'],
+          mediaFileManager: mediaFileManager,
+          blobId: blobId,
+        );
+
+        expect(result, isNotNull);
+        expect(result!.localPath, 'media/group-1/$blobId.jpg');
+        await _waitForCapturedFlowEvent(
+          events,
+          'MEDIA_GROUP_UPLOAD_DURABLE_COPY_DELAYED_PROBE',
+        );
+
+        final probe = events.singleWhere(
+          (event) =>
+              event['event'] == 'MEDIA_GROUP_UPLOAD_DURABLE_COPY_DELAYED_PROBE',
+        );
+        expect(
+          probe['details'],
+          allOf(
+            containsPair('blobId', 'blob-gro'),
+            containsPair('recipientClass', 'group'),
+            containsPair('storedPath', 'media/group-1/$blobId.jpg'),
+            containsPair('fileExists', true),
+            containsPair('fileBytes', validJpegFile.lengthSync()),
+            containsPair('expectedBytes', validJpegFile.lengthSync()),
+          ),
+        );
+        expect(
+          events.map((event) => event['event']),
+          isNot(
+            contains('MEDIA_GROUP_UPLOAD_DURABLE_COPY_DELAYED_PROBE_MISSING'),
+          ),
+        );
+      },
+    );
+
     test('infers mediaType from mime', () async {
       final cases = {
         'video/mp4': 'video',
@@ -300,9 +653,11 @@ void main() {
         expect(result.mediaType, 'image');
         expect(result.isAnimated, isTrue);
 
+        // 112: animated metadata survives on the attachment while the
+        // transport sees only opaque ciphertext.
         final payload = bridge.lastRequest!['payload'] as Map<String, dynamic>;
-        expect(payload['mime'], 'image/gif');
-        expect(payload['filePath'], gifFile.path);
+        expect(payload['mime'], kOpaqueMediaTransportMime);
+        expect(payload['filePath'], endsWith('.enc'));
       },
     );
 

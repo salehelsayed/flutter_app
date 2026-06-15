@@ -4,6 +4,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../_support/signal_files.dart';
+
 const _defaultPrimaryDevice = '347FB118-10D0-40C8-A05B-B0C3BD6B8CCD';
 const _defaultSiblingDevice = '5BA69F1C-B112-47BE-B1FF-8C1003728C8F';
 const _goMknoonDir = 'go-mknoon';
@@ -29,37 +31,6 @@ List<String> _relayDartDefines() {
 void _log(String tag, String msg) {
   final ts = DateTime.now().toIso8601String().substring(11, 23);
   stderr.writeln('[$ts] [$tag] $msg');
-}
-
-String _signalPath(Directory dir, String runId, String name) =>
-    '${dir.path}/md004_${runId}_$name';
-
-Future<Map<String, dynamic>> _waitForJson(
-  String path, {
-  Duration timeout = const Duration(minutes: 3),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(path);
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Timed out waiting for json: $path');
-}
-
-Future<void> _waitForSignal(
-  String path, {
-  Duration timeout = const Duration(minutes: 3),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(path);
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Timed out waiting for signal: $path');
 }
 
 void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
@@ -267,6 +238,12 @@ Future<void> main(List<String> args) async {
   final sharedDir = await Directory.systemTemp.createTemp(
     'md004_multi_device_real_',
   );
+  final signalDir = SignalDir(
+    dir: sharedDir.path,
+    prefix: 'md004_',
+    runId: '${runId}_',
+    role: 'Orchestrator',
+  );
   final cliFixturePath = '${sharedDir.path}/cli_peer_fixture.json';
   final phoneLog = File(
     '${sharedDir.path}/primary.log',
@@ -307,8 +284,8 @@ Future<void> main(List<String> args) async {
     _pipeOutput(primary.stdout, 'PRIMARY', phoneLog);
     _pipeOutput(primary.stderr, 'PRIMARY-ERR', phoneLog);
 
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'cli_group_join_fixture.json'),
+    await signalDir.waitForJson(
+      'cli_group_join_fixture.json',
       timeout: const Duration(minutes: 5),
     );
     _log('ORCH', 'Primary is ready; starting sibling harness');
@@ -323,8 +300,8 @@ Future<void> main(List<String> args) async {
     _pipeOutput(sibling.stdout, 'SIBLING', siblingLog);
     _pipeOutput(sibling.stderr, 'SIBLING-ERR', siblingLog);
 
-    final cliGroupJoinFixture = await _waitForJson(
-      _signalPath(sharedDir, runId, 'cli_group_join_fixture.json'),
+    final cliGroupJoinFixture = await signalDir.waitForJson(
+      'cli_group_join_fixture.json',
       timeout: const Duration(minutes: 5),
     );
     final cliRecipientPeerIds = _recipientPeerIdsForCliStore(
@@ -337,8 +314,8 @@ Future<void> main(List<String> args) async {
     );
     await peer.commandOk('group_join', cliGroupJoinFixture);
 
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'cli_publish_ready'),
+    await signalDir.waitForSignal(
+      'cli_publish_ready',
       timeout: const Duration(minutes: 5),
     );
     _log('ORCH', 'Publishing CLI live message into the MD-004 group');
@@ -361,9 +338,7 @@ Future<void> main(List<String> args) async {
       'groupKey': cliGroupJoinFixture['groupKey'],
       'recipientPeerIds': cliRecipientPeerIds,
     });
-    File(
-      _signalPath(sharedDir, runId, 'cli_message_published'),
-    ).writeAsStringSync('ok');
+    signalDir.writeSignal('cli_message_published');
 
     final primaryExit = await primary.exitCode;
     final siblingExit = await sibling.exitCode;
@@ -373,8 +348,8 @@ Future<void> main(List<String> args) async {
       );
     }
 
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'sibling_complete'),
+    await signalDir.waitForSignal(
+      'sibling_complete',
       timeout: const Duration(minutes: 2),
     );
     _log('ORCH', 'MD-004 proof completed successfully');

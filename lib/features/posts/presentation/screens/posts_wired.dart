@@ -14,6 +14,8 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -85,6 +87,8 @@ class PostsWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final IntroductionRepository? introductionRepository;
   final ActiveConversationTracker? conversationTracker;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
 
   const PostsWired({
     super.key,
@@ -113,6 +117,8 @@ class PostsWired extends StatefulWidget {
     this.reactionListener,
     this.introductionRepository,
     this.conversationTracker,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
   });
 
   @override
@@ -543,6 +549,8 @@ class _PostsWiredState extends State<PostsWired> {
                 widget.postsPrivacySettingsRepository,
             introductionRepository: widget.introductionRepository,
             nearbyLocationService: widget.nearbyLocationService,
+            accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+            accountMigrationSizeGate: widget.accountMigrationSizeGate,
             showNavigationBar: false,
           ),
         ),

@@ -20,10 +20,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-const _aliceHarness =
-    'integration_test/notification_sound_smoke_alice_harness.dart';
-const _bobHarness =
-    'integration_test/notification_sound_smoke_bob_harness.dart';
+import '../_support/signal_files.dart';
+
+// Single role-dispatched harness; the SMOKE_ROLE dart-define selects the
+// alice (sender) or bob (receiver) path inside the merged file.
+const _mergedHarness =
+    'integration_test/notification_sound_smoke_harness.dart';
 
 bool _isIosDeviceId(String? id) {
   if (id == null) return false;
@@ -52,42 +54,11 @@ void _log(String tag, String msg) {
 late Directory _sharedDir;
 late String _runId;
 
-String _sig(String name) => '${_sharedDir.path}/nsmoke_${_runId}_$name';
-
-void _writeSignal(String name) {
-  File(_sig(name)).writeAsStringSync('ok');
-}
-
-Future<void> _waitForSignal(
-  String name, {
-  Duration timeout = const Duration(minutes: 5),
-}) async {
-  final path = _sig(name);
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (File(path).existsSync()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Orchestrator: timed out waiting for $name');
-}
-
-Future<Map<String, dynamic>> _readJsonSignal(
-  String name, {
-  Duration timeout = const Duration(minutes: 5),
-}) async {
-  final path = _sig(name);
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    final file = File(path);
-    if (file.existsSync()) {
-      try {
-        return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-      } catch (_) {}
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Orchestrator: timed out waiting for json: $name');
-}
+/// Canonical signal-file coordinator for the `nsmoke_` family. Reproduces the
+/// inline `'${_sharedDir.path}/nsmoke_${_runId}_$name'` path byte-for-byte
+/// (prefix `'nsmoke_'`, runId baked with the trailing `'_'`). Assigned in
+/// [main] once `_sharedDir` / `_runId` are known.
+late SignalDir _signals;
 
 void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
   stream.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
@@ -190,8 +161,11 @@ Future<ScenarioOutcome> _runScenario({
   required bool expectAudible,
 }) async {
   _log('ORCH', '─── $id: $description ───');
-  _writeSignal(goSignal);
-  final verdict = await _readJsonSignal(bobVerdictSignal);
+  _signals.writeSignal(goSignal);
+  final verdict = await _signals.waitForJson(
+    bobVerdictSignal,
+    timeout: const Duration(minutes: 5),
+  );
   final programmaticPass = verdict['programmaticPass'] as bool? ?? false;
   _log(
     'ORCH',
@@ -215,7 +189,7 @@ Future<ScenarioOutcome> _runScenario({
     audibleConfirmed = answer.startsWith('y');
   }
 
-  _writeSignal(verdictAckSignal);
+  _signals.writeSignal(verdictAckSignal);
   return ScenarioOutcome(
     id: id,
     programmaticPass: programmaticPass,
@@ -248,6 +222,14 @@ Future<void> main(List<String> args) async {
 
   _runId = DateTime.now().millisecondsSinceEpoch.toString();
   _sharedDir = await Directory.systemTemp.createTemp('notif_sound_smoke_');
+  // Byte-identical to the old inline `'$_sharedDir/nsmoke_${_runId}_$name'`:
+  // prefix 'nsmoke_', runId carries the trailing '_'.
+  _signals = SignalDir(
+    dir: _sharedDir.path,
+    prefix: 'nsmoke_',
+    runId: '${_runId}_',
+    role: 'Orchestrator',
+  );
 
   final aliceLog = File(
     '${_sharedDir.path}/alice.log',
@@ -265,7 +247,7 @@ Future<void> main(List<String> args) async {
 
   try {
     alice = await _launchHarness(
-      harness: _aliceHarness,
+      harness: _mergedHarness,
       role: 'alice',
       deviceId: aliceDevice,
       dbName: 'notif_sound_smoke_${_runId}_alice.db',
@@ -274,11 +256,14 @@ Future<void> main(List<String> args) async {
     _pipeOutput(alice.stderr, 'ALICE-ERR', aliceLog);
 
     _log('ORCH', 'Waiting for alice_ready...');
-    await _waitForSignal('alice_ready');
+    await _signals.waitForSignal(
+      'alice_ready',
+      timeout: const Duration(minutes: 5),
+    );
     _log('ORCH', 'Alice ready — launching Bob');
 
     bob = await _launchHarness(
-      harness: _bobHarness,
+      harness: _mergedHarness,
       role: 'bob',
       deviceId: bobDevice,
       dbName: 'notif_sound_smoke_${_runId}_bob.db',
@@ -287,7 +272,10 @@ Future<void> main(List<String> args) async {
     _pipeOutput(bob.stderr, 'BOB-ERR', bobLog);
 
     _log('ORCH', 'Waiting for bob_ready...');
-    await _waitForSignal('bob_ready');
+    await _signals.waitForSignal(
+      'bob_ready',
+      timeout: const Duration(minutes: 5),
+    );
     _log('ORCH', 'Both harnesses ready');
 
     // Human checklist + audio-setup confirmation.
@@ -308,7 +296,10 @@ Future<void> main(List<String> args) async {
     // S2: Group discussion (GroupType.chat). Group creation + join runs
     // inside the harnesses; orchestrator just triggers the send.
     _log('ORCH', 'Waiting for Bob to join chat group...');
-    await _waitForSignal('bob_group_chat_joined');
+    await _signals.waitForSignal(
+      'bob_group_chat_joined',
+      timeout: const Duration(minutes: 5),
+    );
     outcomes.add(
       await _runScenario(
         id: 'S2',
@@ -322,7 +313,10 @@ Future<void> main(List<String> args) async {
 
     // S3: Group announcement
     _log('ORCH', 'Waiting for Bob to join announcement group...');
-    await _waitForSignal('bob_group_announcement_joined');
+    await _signals.waitForSignal(
+      'bob_group_announcement_joined',
+      timeout: const Duration(minutes: 5),
+    );
     outcomes.add(
       await _runScenario(
         id: 'S3',
@@ -336,7 +330,10 @@ Future<void> main(List<String> args) async {
 
     // S4: Suppression control — Bob simulates viewing Alice's 1:1 conversation.
     _log('ORCH', 'Waiting for Bob to simulate viewing conversation...');
-    await _waitForSignal('bob_viewing_conversation');
+    await _signals.waitForSignal(
+      'bob_viewing_conversation',
+      timeout: const Duration(minutes: 5),
+    );
     outcomes.add(
       await _runScenario(
         id: 'S4',
@@ -348,9 +345,15 @@ Future<void> main(List<String> args) async {
       ),
     );
 
-    _writeSignal('all_done');
-    await _waitForSignal('alice_done', timeout: const Duration(seconds: 60));
-    await _waitForSignal('bob_done', timeout: const Duration(seconds: 60));
+    _signals.writeSignal('all_done');
+    await _signals.waitForSignal(
+      'alice_done',
+      timeout: const Duration(seconds: 60),
+    );
+    await _signals.waitForSignal(
+      'bob_done',
+      timeout: const Duration(seconds: 60),
+    );
   } finally {
     _log('ORCH', 'Cleaning up...');
     alice?.kill();

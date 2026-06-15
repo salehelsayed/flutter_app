@@ -254,6 +254,8 @@ class FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -1202,7 +1204,9 @@ void main() {
     );
 
     test(
-      'Messages to offline peer are marked delivered after inbox store',
+      // 115 P1 contract flip: inbox store is custody → 'inboxed' (pending UI)
+      // until a delivery receipt (115 P2) flips it to 'delivered'.
+      'Messages to offline peer are marked inboxed after inbox store',
       () async {
         final offlineUser = TestUser.create(
           peerId: '12D3KooWOfflineUser0000000004',
@@ -1225,14 +1229,16 @@ void main() {
         // Network can't find the peer, so send falls back to inbox storage.
         expect(result, SendChatMessageResult.success);
         expect(msg, isNotNull);
-        expect(msg!.status, 'delivered');
+        expect(msg!.status, 'inboxed');
 
-        // Sender persists delivered status (inbox accepted by relay).
+        // Sender persists inboxed custody status (inbox accepted by relay,
+        // envelope retained for the custody sweep / receipt flip).
         final convo = await alice.messageRepo.getMessagesForContact(
           offlineUser.peerId,
         );
         expect(convo.length, 1);
-        expect(convo.first.status, 'delivered');
+        expect(convo.first.status, 'inboxed');
+        expect(convo.first.wireEnvelope, isNotNull);
 
         // Peer comes back online and drains inbox.
         offlineUser.setOnline(true);

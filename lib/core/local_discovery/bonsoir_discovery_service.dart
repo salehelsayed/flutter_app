@@ -5,6 +5,10 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
+typedef BonsoirBroadcastFactory =
+    BonsoirBroadcast Function(BonsoirService service);
+typedef BonsoirDiscoveryFactory = BonsoirDiscovery Function(String type);
+
 /// mDNS-based implementation of [LocalDiscoveryService] using the bonsoir package.
 ///
 /// Advertises this device as `_mknoon._tcp` on the local network with the
@@ -12,6 +16,23 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 class BonsoirDiscoveryService implements LocalDiscoveryService {
   static const String _serviceType = '_mknoon._tcp';
   static const String _serviceName = 'mknoon';
+
+  /// Factory seams so host tests can drive the discovery contract with fake
+  /// bonsoir objects; production defaults construct the real plugin types.
+  /// `printLogs: false` is a deliberate iOS-crash mitigation — it stays
+  /// inside the defaults.
+  BonsoirDiscoveryService({
+    BonsoirBroadcastFactory? createBroadcast,
+    BonsoirDiscoveryFactory? createDiscovery,
+  }) : _createBroadcast =
+           createBroadcast ??
+           ((service) => BonsoirBroadcast(service: service, printLogs: false)),
+       _createDiscovery =
+           createDiscovery ??
+           ((type) => BonsoirDiscovery(type: type, printLogs: false));
+
+  final BonsoirBroadcastFactory _createBroadcast;
+  final BonsoirDiscoveryFactory _createDiscovery;
 
   BonsoirBroadcast? _broadcast;
   BonsoirDiscovery? _discovery;
@@ -42,8 +63,9 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     );
 
     // Bonsoir's native iOS log formatting can crash while stringifying
-    // resolved service payloads, so keep plugin-side logging disabled here.
-    _broadcast = BonsoirBroadcast(service: service, printLogs: false);
+    // resolved service payloads, so plugin-side logging stays disabled in
+    // the default factory.
+    _broadcast = _createBroadcast(service);
     await _broadcast!.ready;
     await _broadcast!.start();
 
@@ -54,7 +76,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     );
 
     // Start discovery of other peers.
-    _discovery = BonsoirDiscovery(type: _serviceType, printLogs: false);
+    _discovery = _createDiscovery(_serviceType);
     await _discovery!.ready;
     _discoverySub?.cancel();
     _discoverySub = _discovery!.eventStream!.listen(_handleDiscoveryEvent);
@@ -78,7 +100,8 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
       final disc = _discovery;
       if (disc == null) return;
       for (final e in _peers.entries.toList()) {
-        if (now.difference(e.value.discoveredAt) > const Duration(seconds: 15)) {
+        if (now.difference(e.value.discoveredAt) >
+            const Duration(seconds: 15)) {
           final svc = _resolvable[e.key];
           if (svc != null) unawaited(svc.resolve(disc.serviceResolver));
         }
@@ -130,19 +153,34 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         final peerId = service?.attributes['peerId'];
         if (peerId == null) return;
 
-        _peers.remove(peerId);
-        _resolvable.remove(peerId);
-        _peersController.add(Map.unmodifiable(_peers));
-
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'LOCAL_MDNS_PEER_LOST',
-          details: {'peerId': peerId},
-        );
+        _markPeerLost(peerId);
         break;
       default:
         break;
     }
+  }
+
+  void _markPeerLost(String peerId) {
+    _resolvable.remove(peerId);
+
+    final cachedPeer = _peers[peerId];
+    if (cachedPeer != null && !cachedPeer.isStale(DateTime.now().toUtc())) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MDNS_PEER_LOST_RETAINED',
+        details: {'peerId': peerId},
+      );
+      return;
+    }
+
+    _peers.remove(peerId);
+    _peersController.add(Map.unmodifiable(_peers));
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LOCAL_MDNS_PEER_LOST',
+      details: {'peerId': peerId},
+    );
   }
 
   @override
@@ -188,6 +226,11 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   @visibleForTesting
   void debugSeedPeer(LocalPeer peer) {
     _peers[peer.peerId] = peer;
+  }
+
+  @visibleForTesting
+  void debugMarkPeerLost(String peerId) {
+    _markPeerLost(peerId);
   }
 
   @override
@@ -238,10 +281,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     }
 
     try {
-      return await completer.future.timeout(
-        timeout,
-        onTimeout: () => null,
-      );
+      return await completer.future.timeout(timeout, onTimeout: () => null);
     } finally {
       // Clean up so we never leak completers across send attempts.
       _pendingResolves.remove(peerId);

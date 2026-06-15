@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -31,28 +32,96 @@ type inboxRequest struct {
 }
 
 type inboxResponse struct {
-	Status   string         `json:"status"`
-	Error    string         `json:"error,omitempty"`
-	Messages []InboxMessage `json:"messages,omitempty"`
-	HasMore  bool           `json:"hasMore,omitempty"`
-	Acked    int            `json:"acked,omitempty"`
+	Status      string         `json:"status"`
+	Error       string         `json:"error,omitempty"`
+	ErrorCode   string         `json:"errorCode,omitempty"`
+	StoreStatus string         `json:"storeStatus,omitempty"`
+	ExpiresAtMs int64          `json:"expiresAtMs,omitempty"`
+	Occupancy   int            `json:"occupancy,omitempty"`
+	Capacity    int            `json:"capacity,omitempty"`
+	Messages    []InboxMessage `json:"messages,omitempty"`
+	HasMore     bool           `json:"hasMore,omitempty"`
+	Acked       int            `json:"acked,omitempty"`
+}
+
+var ErrInboxFull = errors.New("inbox full")
+
+type InboxStoreOutcome struct {
+	StoreStatus  string
+	ErrorCode    string
+	ErrorMessage string
+	ExpiresAtMs  int64
+	Occupancy    int
+	Capacity     int
+}
+
+func parseInboxStoreResponse(respBytes []byte) (InboxStoreOutcome, error) {
+	var resp inboxResponse
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return InboxStoreOutcome{}, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	outcome := InboxStoreOutcome{
+		StoreStatus:  resp.StoreStatus,
+		ErrorCode:    resp.ErrorCode,
+		ErrorMessage: resp.Error,
+		ExpiresAtMs:  resp.ExpiresAtMs,
+		Occupancy:    resp.Occupancy,
+		Capacity:     resp.Capacity,
+	}
+
+	if resp.Status == "OK" {
+		if outcome.StoreStatus == "" {
+			outcome.StoreStatus = "stored"
+		}
+		return outcome, nil
+	}
+
+	errorCode := resp.ErrorCode
+	if errorCode == "" && resp.Error == "INBOX_FULL" {
+		errorCode = "INBOX_FULL"
+	}
+	if errorCode == "INBOX_FULL" || resp.StoreStatus == "rejected_full" {
+		outcome.ErrorCode = "INBOX_FULL"
+		if outcome.StoreStatus == "" {
+			outcome.StoreStatus = "rejected_full"
+		}
+		return outcome, fmt.Errorf("%w: %s", ErrInboxFull, resp.Error)
+	}
+
+	if outcome.ErrorCode == "" {
+		outcome.ErrorCode = "INBOX_ERROR"
+	}
+	return outcome, fmt.Errorf("inbox store failed: %s", resp.Error)
 }
 
 // InboxStore stores a message in the offline inbox for a peer.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) InboxStore(toPeerId string, message string, timeoutMs int) error {
+	_, err := n.InboxStoreDetailed(toPeerId, message, timeoutMs)
+	return err
+}
+
+// InboxStoreDetailed stores a message and returns relay custody metadata when
+// the relay supports the enriched store response.
+func (n *Node) InboxStoreDetailed(
+	toPeerId string,
+	message string,
+	timeoutMs int,
+) (InboxStoreOutcome, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
 
 	if h == nil {
-		return fmt.Errorf("node not started")
+		return InboxStoreOutcome{}, fmt.Errorf("node not started")
 	}
 
 	rs := n.buildRelaySelector(nil)
 
 	totalStart := time.Now()
-	return rs.ForEach(func(relay RelayInfo) error {
+	var lastOutcome InboxStoreOutcome
+	err := rs.ForEach(func(relay RelayInfo) error {
 		timeout := InboxTimeout
 		if timeoutMs > 0 {
 			timeout = time.Duration(timeoutMs) * time.Millisecond
@@ -113,13 +182,20 @@ func (n *Node) InboxStore(toPeerId string, message string, timeoutMs int) error 
 			return fmt.Errorf("read response: %w", err)
 		}
 
-		var resp inboxResponse
-		if err := json.Unmarshal(respBytes, &resp); err != nil {
-			return fmt.Errorf("unmarshal response: %w", err)
-		}
-
-		if resp.Status != "OK" {
-			return fmt.Errorf("inbox store failed: %s", resp.Error)
+		outcome, err := parseInboxStoreResponse(respBytes)
+		lastOutcome = outcome
+		if err != nil {
+			n.emitEvent("inbox:store_timing", map[string]interface{}{
+				"connectMs":    connectMs,
+				"streamOpenMs": streamOpenMs,
+				"writeMs":      writeMs,
+				"readMs":       readMs,
+				"totalMs":      time.Since(totalStart).Milliseconds(),
+				"outcome":      "store_failed",
+				"storeStatus":  outcome.StoreStatus,
+				"errorCode":    outcome.ErrorCode,
+			})
+			return err
 		}
 
 		n.emitEvent("inbox:store_timing", map[string]interface{}{
@@ -129,11 +205,15 @@ func (n *Node) InboxStore(toPeerId string, message string, timeoutMs int) error 
 			"readMs":       readMs,
 			"totalMs":      time.Since(totalStart).Milliseconds(),
 			"outcome":      "success",
+			"storeStatus":  outcome.StoreStatus,
+			"occupancy":    outcome.Occupancy,
+			"capacity":     outcome.Capacity,
 		})
 		log.Printf("[INBOX] Stored message for %s", toPeerId[:min(20, len(toPeerId))])
 		streamOK = true
 		return nil
 	})
+	return lastOutcome, err
 }
 
 // InboxRetrieve retrieves pending messages from the offline inbox.
@@ -512,6 +592,71 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 
 		log.Printf("[INBOX] Push token registered on relay %s (%s)",
 			relay.ID.String()[:min(20, len(relay.ID.String()))], platform)
+		streamOK = true
+		return nil
+	})
+}
+
+// InboxUnregisterToken unregisters this peer's FCM push token with all
+// configured relays. Missing server-side token state is idempotent at the
+// relay; this call only fails if no relay accepts the command.
+func (n *Node) InboxUnregisterToken(serverAddresses []string) error {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	rs := n.buildRelaySelector(serverAddresses)
+
+	return rs.FanOut(func(relay RelayInfo) error {
+		timeout := InboxTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
+
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return fmt.Errorf("connect to relay: %w", err)
+		}
+
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return fmt.Errorf("open inbox stream: %w", err)
+		}
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
+
+		req := inboxRequest{
+			Action: "unregister_token",
+		}
+
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
+
+		if err := writeFrame(s, reqBytes); err != nil {
+			return fmt.Errorf("write request: %w", err)
+		}
+
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return fmt.Errorf("unmarshal response: %w", err)
+		}
+
+		if resp.Status != "OK" {
+			return fmt.Errorf("unregister token failed: %s", resp.Error)
+		}
+
+		log.Printf("[INBOX] Push token unregistered on relay %s",
+			relay.ID.String()[:min(20, len(relay.ID.String()))])
 		streamOK = true
 		return nil
 	})

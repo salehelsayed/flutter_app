@@ -1,7 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
+import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
+    show shouldMintDeliveryReceipt;
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -23,8 +29,14 @@ enum HandleChatMessageResult {
   /// material is not currently available.
   missingMlKemSecret,
 
-  /// V2 chat message decryption failed.
+  /// V2 chat message decryption failed cryptographically (Go-returned
+  /// failure). Terminal for this attempt; the staged entry must be kept.
   decryptionFailed,
+
+  /// V2 chat message decryption hit a transient infrastructure failure
+  /// (bridge timeout or thrown bridge exception). Safe to retry later;
+  /// the message content was never evaluated.
+  decryptionDeferred,
 
   /// Sender is not a known contact.
   unknownSender,
@@ -56,9 +68,46 @@ handleIncomingChatMessage({
   required ContactRepository contactRepo,
   Bridge? bridge,
   String? ownMlKemSecretKey,
+  // Prior ML-KEM secrets (newest first) tried in order when the primary
+  // secret fails CRYPTOGRAPHICALLY — same-device recovery of traffic
+  // encrypted to a pre-restore key (P0-B). Never consulted on transient
+  // failures.
+  List<String>? fallbackMlKemSecretKeys,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  // Used by the duplicate-replay media repair to invalidate staged
+  // artifacts left behind by a previous key/nonce (112 Phase 1).
+  MediaFileManager? mediaFileManager,
   String? transport,
+  // 115 P2: delivery-receipt hook + arrival-origin marker. The hook fires
+  // AFTER a durable persist (and on duplicate receives, closing the
+  // lost-receipt repair loop) — but ONLY for relay-inbox arrivals per the
+  // shared origin contract (shouldMintDeliveryReceipt): 'direct:'/'lan:'
+  // staged replays are confirmed by their own acks.
+  Future<void> Function(String messageId)? sendDeliveryReceipt,
+  String? stagedEntryId,
 }) async {
+  Future<void> maybeSendDeliveryReceipt(String messageId) async {
+    if (sendDeliveryReceipt == null) return;
+    if (!shouldMintDeliveryReceipt(
+      stagedEntryId: stagedEntryId,
+      transport: transport,
+    )) {
+      return;
+    }
+    try {
+      await sendDeliveryReceipt(messageId);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_HOOK_ERROR',
+        details: {
+          'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_RECEIVE_START',
@@ -94,7 +143,7 @@ handleIncomingChatMessage({
 
     final encrypted = v2Envelope['encrypted'] as Map<String, dynamic>;
     try {
-      final decryptResult = await callDecryptMessage(
+      var decryptResult = await callDecryptMessage(
         bridge: bridge,
         ownMlKemSecretKey: ownMlKemSecretKey,
         kem: encrypted['kem'] as String,
@@ -103,12 +152,55 @@ handleIncomingChatMessage({
       );
 
       if (decryptResult['ok'] != true) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_RECEIVE_DECRYPT_FAILED',
-          details: {'errorCode': decryptResult['errorCode']},
-        );
-        return (HandleChatMessageResult.decryptionFailed, null, null);
+        // BRIDGE_TIMEOUT is synthesized on the Dart side (bridge.dart) when
+        // the native call never answered — the ciphertext was never
+        // evaluated, so the failure is transient, not cryptographic.
+        if (decryptResult['errorCode'] == 'BRIDGE_TIMEOUT') {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_DECRYPT_DEFERRED',
+            details: {'errorCode': decryptResult['errorCode']},
+          );
+          return (HandleChatMessageResult.decryptionDeferred, null, null);
+        }
+
+        // Cryptographic failure with the primary secret: the sender may
+        // have encrypted to a pre-restore key — try the ring.
+        for (final fallbackSecret in fallbackMlKemSecretKeys ?? const []) {
+          final fallbackResult = await callDecryptMessage(
+            bridge: bridge,
+            ownMlKemSecretKey: fallbackSecret,
+            kem: encrypted['kem'] as String,
+            ciphertext: encrypted['ciphertext'] as String,
+            nonce: encrypted['nonce'] as String,
+          );
+          if (fallbackResult['ok'] == true) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'MLKEM_RING_FALLBACK_USED',
+              details: {},
+            );
+            decryptResult = fallbackResult;
+            break;
+          }
+          if (fallbackResult['errorCode'] == 'BRIDGE_TIMEOUT') {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CHAT_MSG_RECEIVE_DECRYPT_DEFERRED',
+              details: {'errorCode': fallbackResult['errorCode']},
+            );
+            return (HandleChatMessageResult.decryptionDeferred, null, null);
+          }
+        }
+
+        if (decryptResult['ok'] != true) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_DECRYPT_FAILED',
+            details: {'errorCode': decryptResult['errorCode']},
+          );
+          return (HandleChatMessageResult.decryptionFailed, null, null);
+        }
       }
 
       payload = MessagePayload.fromDecryptedJson(
@@ -120,7 +212,7 @@ handleIncomingChatMessage({
         event: 'CHAT_MSG_RECEIVE_DECRYPT_ERROR',
         details: {'error': e.toString()},
       );
-      return (HandleChatMessageResult.decryptionFailed, null, null);
+      return (HandleChatMessageResult.decryptionDeferred, null, null);
     }
   } else {
     // v1 plaintext envelope
@@ -201,11 +293,34 @@ handleIncomingChatMessage({
       !payload.isEdit &&
       !shouldMaterializeDeferredEdit &&
       !shouldPreserveDeletedPlaceholder) {
+    if (payload.text != existingMessage.text) {
+      final idPrefix = payload.id.length > 8
+          ? payload.id.substring(0, 8)
+          : payload.id;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_DUPLICATE_CONTENT_MISMATCH',
+        details: {
+          'id': idPrefix,
+          'incomingTextLength': payload.text.length,
+          'existingTextLength': existingMessage.text.length,
+          'existingHasEditedAt': existingMessage.editedAt != null,
+        },
+      );
+    }
+    await _repairDuplicateReplayMedia(
+      payload: payload,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_RECEIVE_DUPLICATE',
       details: {'id': payload.id.substring(0, 8)},
     );
+    // Duplicate receive of an already-durable message: re-mint the receipt
+    // (the sender may have missed the first one — D-5 repair loop).
+    await maybeSendDeliveryReceipt(payload.id);
     return (HandleChatMessageResult.duplicate, null, null);
   }
   if (existingMessage == null && payload.isEdit) {
@@ -308,6 +423,9 @@ handleIncomingChatMessage({
           transport: transport,
         );
   await messageRepo.saveMessage(conversationMessage);
+  // 115 P2: the message is durably persisted — confirm custody to the
+  // sender (relay-drain arrivals only, per the origin contract).
+  await maybeSendDeliveryReceipt(payload.id);
   if (shouldMaterializeDeferredEdit) {
     emitFlowEvent(
       layer: 'FL',
@@ -368,6 +486,108 @@ handleIncomingChatMessage({
     return (resultAfterSave, null, updatedContact);
   }
   return (HandleChatMessageResult.chatMessage, hydratedMessage, updatedContact);
+}
+
+Future<void> _repairDuplicateReplayMedia({
+  required MessagePayload payload,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  MediaFileManager? mediaFileManager,
+}) async {
+  final incomingMedia = payload.media;
+  if (mediaAttachmentRepo == null ||
+      incomingMedia == null ||
+      incomingMedia.isEmpty) {
+    return;
+  }
+
+  final existingAttachments = await mediaAttachmentRepo
+      .getAttachmentsForMessage(payload.id);
+  final existingById = {
+    for (final attachment in existingAttachments) attachment.id: attachment,
+  };
+  var repairedCount = 0;
+  for (final mediaJson in incomingMedia) {
+    final incoming = MediaAttachment.fromJson(
+      mediaJson,
+    ).copyWith(messageId: payload.id);
+    final existing = existingById[incoming.id];
+    if (existing != null && _isCompleteLocalMedia(existing)) {
+      continue;
+    }
+    if (existing == null || _isRecoverableIncomingMediaStatus(existing)) {
+      // A replay that carries DIFFERENT key/nonce supersedes whatever was
+      // staged under the old metadata — the new key must never be asked to
+      // decrypt old bytes (112 KC-2 receive side). Drop stale staged
+      // artifacts before resetting the row.
+      if (existing != null &&
+          mediaFileManager != null &&
+          (existing.encryptionKeyBase64 != incoming.encryptionKeyBase64 ||
+              existing.encryptionNonce != incoming.encryptionNonce)) {
+        await _invalidateStaleStagedArtifacts(
+          mediaFileManager: mediaFileManager,
+          contactPeerId: payload.senderPeerId,
+          existing: existing,
+        );
+      }
+      await mediaAttachmentRepo.saveAttachment(incoming);
+      repairedCount++;
+    }
+  }
+
+  if (repairedCount > 0) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_DUPLICATE_MEDIA_REPAIR',
+      details: {'id': payload.id.substring(0, 8), 'count': repairedCount},
+    );
+  }
+}
+
+/// Deletes staged download artifacts (`.enc`/`.part`) that were produced
+/// under a superseded key/nonce. Paths derive from the EXISTING row's mime —
+/// that is the metadata the artifact was staged under.
+Future<void> _invalidateStaleStagedArtifacts({
+  required MediaFileManager mediaFileManager,
+  required String contactPeerId,
+  required MediaAttachment existing,
+}) async {
+  late final String absolutePath;
+  try {
+    absolutePath = await mediaFileManager.localPathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: existing.id,
+      mime: existing.mime,
+    );
+  } catch (_) {
+    return;
+  }
+  for (final suffix in const ['.enc', '.part']) {
+    await deleteAppOwnedMediaFileIfExists(
+      file: File('$absolutePath$suffix'),
+      caller: 'handleIncomingChatMessage.invalidateStaleStagedArtifacts',
+      reason: 'duplicate_replay_key_rotation',
+      details: {
+        'attachmentId': existing.id,
+        'messageId': existing.messageId,
+        'mime': existing.mime,
+        'downloadStatus': existing.downloadStatus,
+      },
+      swallowErrors: true,
+    );
+  }
+}
+
+bool _isCompleteLocalMedia(MediaAttachment attachment) {
+  return attachment.downloadStatus == 'done' &&
+      attachment.localPath != null &&
+      attachment.localPath!.isNotEmpty;
+}
+
+bool _isRecoverableIncomingMediaStatus(MediaAttachment attachment) {
+  return attachment.downloadStatus == 'pending' ||
+      attachment.downloadStatus == 'downloading' ||
+      attachment.downloadStatus == 'failed' ||
+      attachment.downloadStatus == 'integrity_failed';
 }
 
 bool _isHiddenIncomingEditPlaceholder(ConversationMessage message) {

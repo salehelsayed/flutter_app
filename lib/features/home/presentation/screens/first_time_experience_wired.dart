@@ -16,6 +16,9 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -94,6 +97,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
   final TransportMetrics? transportMetrics;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
 
   const FirstTimeExperienceWired({
     super.key,
@@ -130,6 +135,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
     this.transportMetrics,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
   });
 
   @override
@@ -272,6 +279,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
                 widget.contactPresenceSnapshotRepository,
             nearbyLocationService: widget.nearbyLocationService,
             transportMetrics: widget.transportMetrics,
+            accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+            accountMigrationSizeGate: widget.accountMigrationSizeGate,
           ),
         ),
       );
@@ -535,7 +544,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => QRScannerWired(
+        builder: (scannerContext) => QRScannerWired(
           bridge: widget.bridge,
           contactRepository: widget.contactRepository,
           contactRequestRepository: widget.contactRequestRepository,
@@ -568,6 +577,32 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           pendingPostTargetStore: widget.pendingPostTargetStore,
           postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
           transportMetrics: widget.transportMetrics,
+          accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+          accountMigrationSizeGate: widget.accountMigrationSizeGate,
+          onMigrationQrScanned: (qrData) async {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'FTE_FL_MIGRATION_QR_DISPATCH',
+              details: {
+                'hasTransferRunner': widget.accountMigrationRunTransfer != null,
+              },
+            );
+            if (!scannerContext.mounted) return;
+            await Navigator.of(scannerContext).pushReplacement<void, void>(
+              MaterialPageRoute(
+                builder: (_) => AccountMigrationJourneyWired.oldPhone(
+                  secureKeyStore: widget.secureKeyStore,
+                  identityRepository: widget.repository,
+                  runTransfer: widget.accountMigrationRunTransfer,
+                  sizeGate: widget.accountMigrationSizeGate,
+                  initialScannedQr: qrData,
+                  backgroundPreference:
+                      widget.appShellController?.backgroundPreference ??
+                      BackgroundPreference.defaultBackground,
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

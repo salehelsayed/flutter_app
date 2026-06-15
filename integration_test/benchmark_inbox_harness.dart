@@ -2,14 +2,12 @@
 ///
 /// Measures inbox store per-step timing and e2e delivery latency.
 /// Run: flutter test integration_test/benchmark_inbox_harness.dart -d <DEVICE_ID>
-@Tags(['device'])
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -18,15 +16,13 @@ import '../test/shared/fakes/in_memory_message_repository.dart';
 
 import 'benchmark_helpers.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runInboxBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('D-Sim-1: Store message in offline peer inbox', (tester) async {
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: INBOX STORE (D-Sim-1)');
     print('${'═' * 60}\n');
@@ -73,9 +69,9 @@ void main() {
     }
 
     await node.dispose();
-  });
+  }
 
-  testWidgets('D-Sim-2: Inbox retrieve timing', (tester) async {
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: INBOX RETRIEVE (D-Sim-2)');
     print('${'═' * 60}\n');
@@ -116,5 +112,5 @@ void main() {
     }
 
     await node.dispose();
-  });
+  }
 }

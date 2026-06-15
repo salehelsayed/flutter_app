@@ -44,7 +44,15 @@ class FakeBridge implements Bridge {
   bool throwOnCheckHealth = false;
   bool throwOnReinitialize = false;
 
-  FakeBridge({Map<String, Map<String, dynamic>>? initialResponses}) {
+  /// Whether raw messages are retained in [sentMessages]/[lastSentMessage].
+  /// Scale tests moving hundreds of MB through migration chunk commands turn
+  /// this off so the fake does not hold the whole account in memory.
+  final bool retainMessageLog;
+
+  FakeBridge({
+    Map<String, Map<String, dynamic>>? initialResponses,
+    this.retainMessageLog = true,
+  }) {
     if (initialResponses != null) {
       responses.addAll(initialResponses);
     }
@@ -77,8 +85,10 @@ class FakeBridge implements Bridge {
     assertNotInsideDbWriteTransaction(commandPreview: cmdPreview);
 
     sendCallCount++;
-    lastSentMessage = message;
-    sentMessages.add(message);
+    if (retainMessageLog) {
+      lastSentMessage = message;
+      sentMessages.add(message);
+    }
 
     if (throwOnSend) {
       throw Exception(throwOnSendMessage ?? 'FakeBridge: send error');
@@ -103,6 +113,62 @@ class FakeBridge implements Bridge {
     if (cmd == 'message.decrypt' && !responses.containsKey(cmd)) {
       final payload = parsed['payload'] as Map<String, dynamic>;
       return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
+    }
+
+    if (cmd == 'migration.session.encap' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final material =
+          '${payload['sessionId']}:${payload['bundleId']}:'
+          '${payload['direction']}';
+      return jsonEncode({
+        'ok': true,
+        'kemCiphertext': 'fake-migration-kem:$material',
+        'sessionKey': base64Encode(utf8.encode('fake-session-key:$material')),
+      });
+    }
+
+    if (cmd == 'migration.session.decap' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final material =
+          '${payload['sessionId']}:${payload['bundleId']}:'
+          '${payload['direction']}';
+      return jsonEncode({
+        'ok': true,
+        'sessionKey': base64Encode(utf8.encode('fake-session-key:$material')),
+      });
+    }
+
+    if (cmd == 'migration.chunk.encrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final envelope = jsonEncode({
+        'sessionKey': payload['sessionKey'],
+        'aad': payload['aad'],
+        'plaintextBase64': payload['plaintextBase64'],
+      });
+      return jsonEncode({
+        'ok': true,
+        'ciphertext': base64Encode(utf8.encode(envelope)),
+        'nonce': payload['nonce'],
+      });
+    }
+
+    if (cmd == 'migration.chunk.decrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final envelope =
+          jsonDecode(utf8.decode(base64Decode(payload['ciphertext'] as String)))
+              as Map<String, dynamic>;
+      if (envelope['sessionKey'] != payload['sessionKey'] ||
+          envelope['aad'] != payload['aad']) {
+        return jsonEncode({
+          'ok': false,
+          'errorCode': 'AUTH_FAILED',
+          'errorMessage': 'chunk authentication failed',
+        });
+      }
+      return jsonEncode({
+        'ok': true,
+        'plaintextBase64': envelope['plaintextBase64'],
+      });
     }
 
     if (cmd == 'payload.sign' && !responses.containsKey(cmd)) {
@@ -135,15 +201,19 @@ class FakeBridge implements Bridge {
       });
     }
 
+    // Blob handlers use SYNC file I/O deliberately: real async dart:io
+    // awaited inside testWidgets deadlocks (exact 10-min timeout) — see the
+    // testwidgets-sync-io-only rule. Since 112, real widget flows reach
+    // these handlers (prepareEncryptedMediaArtifact / decrypt-adopt).
     if (cmd == 'blob:encrypt' && !responses.containsKey(cmd)) {
       final payload = parsed['payload'] as Map<String, dynamic>;
       final filePath = payload['filePath'] as String;
       final encryptedPath = '$filePath.enc';
       final source = File(filePath);
-      if (await source.exists()) {
-        await source.copy(encryptedPath);
+      if (source.existsSync()) {
+        source.copySync(encryptedPath);
       } else {
-        await File(encryptedPath).writeAsBytes(<int>[1, 2, 3, 4]);
+        File(encryptedPath).writeAsBytesSync(<int>[1, 2, 3, 4]);
       }
       return jsonEncode({
         'ok': true,
@@ -157,10 +227,10 @@ class FakeBridge implements Bridge {
       final filePath = payload['filePath'] as String;
       final decryptedPath = '$filePath.dec';
       final encrypted = File(filePath);
-      if (await encrypted.exists()) {
-        await encrypted.copy(decryptedPath);
+      if (encrypted.existsSync()) {
+        encrypted.copySync(decryptedPath);
       } else {
-        await File(decryptedPath).writeAsBytes(<int>[1, 2, 3, 4]);
+        File(decryptedPath).writeAsBytesSync(<int>[1, 2, 3, 4]);
       }
       return jsonEncode({'ok': true, 'decryptedPath': decryptedPath});
     }

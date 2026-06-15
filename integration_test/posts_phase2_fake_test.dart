@@ -19,7 +19,7 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../test/core/secure_storage/fake_secure_key_store.dart';
+import '_support/fake_secure_key_store.dart';
 import '../test/shared/fakes/fake_media_file_manager.dart';
 import '../test/shared/fakes/fake_p2p_network.dart';
 import '../test/shared/fakes/fake_p2p_service_integration.dart';

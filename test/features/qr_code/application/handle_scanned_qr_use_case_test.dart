@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/qr_code/application/handle_scanned_qr_use_case.dart';
 
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -51,6 +52,21 @@ void main() {
     return jsonEncode(payload);
   }
 
+  String buildMigrationQRData({
+    String sessionId = 'mig-session-1',
+    String createdAt = '2026-01-01T12:00:00.000Z',
+    String expiresAt = '2026-01-01T12:05:00.000Z',
+  }) {
+    return jsonEncode({
+      'kind': accountMigrationPairingQrKind,
+      'version': currentAccountMigrationPairingQrVersion,
+      'sessionId': sessionId,
+      'createdAt': createdAt,
+      'expiresAt': expiresAt,
+      'newPhoneEphemeralPublicKey': 'new-phone-mlkem-public',
+    });
+  }
+
   setUp(() {
     bridge = FakeBridge();
     contactRepo = FakeContactRepository();
@@ -84,6 +100,73 @@ void main() {
 
       expect(result, HandleScannedQRResult.invalidJson);
     });
+
+    test(
+      'migration QR goes to migration handler with zero contact side effects',
+      () async {
+        var migrationHandlerCalls = 0;
+        var downloadCalls = 0;
+        final qrData = buildMigrationQRData();
+
+        final result = await handleScannedQR(
+          qrData: qrData,
+          bridge: bridge,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          ownPeerId: ownPeerId,
+          onMigrationQrScanned: (rawQrData) async {
+            migrationHandlerCalls++;
+            expect(rawQrData, qrData);
+          },
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                downloadCalls++;
+                return null;
+              },
+        );
+
+        await Future.delayed(Duration.zero);
+
+        expect(result, HandleScannedQRResult.migrationHandled);
+        expect(migrationHandlerCalls, 1);
+        expect(contactRepo.addContactCallCount, 0);
+        expect(downloadCalls, 0);
+        expect(bridge.commandLog, isNot(contains('payload.verify')));
+        expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
+      },
+    );
+
+    test(
+      'malformed migration QR fails before contact parsing and side effects',
+      () async {
+        final result = await handleScannedQR(
+          qrData: jsonEncode({
+            'kind': accountMigrationPairingQrKind,
+            'version': currentAccountMigrationPairingQrVersion,
+            'sessionId': 'mig-session-1',
+            'createdAt': 'not-a-timestamp',
+          }),
+          bridge: bridge,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          ownPeerId: ownPeerId,
+        );
+
+        await Future.delayed(Duration.zero);
+
+        expect(result, HandleScannedQRResult.unsupportedMigrationQr);
+        expect(contactRepo.addContactCallCount, 0);
+        expect(bridge.commandLog, isNot(contains('payload.verify')));
+        expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
+      },
+    );
 
     test('returns success and adds contact for valid QR', () async {
       final qrData = buildValidQRData();
@@ -189,10 +272,7 @@ void main() {
     test('v2: sends encrypted envelope with contactrequest.encrypt', () async {
       // Use a running P2P service so sendContactRequest actually executes
       final runningP2P = FakeP2PService(
-        initialState: const NodeState(
-          isStarted: true,
-          peerId: ownPeerId,
-        ),
+        initialState: const NodeState(isStarted: true, peerId: ownPeerId),
       );
       runningP2P.storeInInboxResult = true;
 
@@ -233,58 +313,64 @@ void main() {
       runningP2P.dispose();
     });
 
-    test('success: calls downloadProfilePictureFn after adding contact',
-        () async {
-      final qrData = buildValidQRData();
-      String? capturedPeerId;
+    test(
+      'success: calls downloadProfilePictureFn after adding contact',
+      () async {
+        final qrData = buildValidQRData();
+        String? capturedPeerId;
 
-      final result = await handleScannedQR(
-        qrData: qrData,
-        bridge: bridge,
-        contactRepo: contactRepo,
-        identityRepo: identityRepo,
-        p2pService: p2pService,
-        ownPeerId: ownPeerId,
-        downloadProfilePictureFn: ({
-          required bridge,
-          required contactRepo,
-          required ownerPeerId,
-          required avatarVersion,
-        }) async {
-          capturedPeerId = ownerPeerId;
-          return null;
-        },
-      );
+        final result = await handleScannedQR(
+          qrData: qrData,
+          bridge: bridge,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          ownPeerId: ownPeerId,
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                capturedPeerId = ownerPeerId;
+                return null;
+              },
+        );
 
-      expect(result, HandleScannedQRResult.success);
-      await Future.delayed(Duration.zero);
-      expect(capturedPeerId, 'scanned-peer-id');
-    });
+        expect(result, HandleScannedQRResult.success);
+        await Future.delayed(Duration.zero);
+        expect(capturedPeerId, 'scanned-peer-id');
+      },
+    );
 
-    test('success: downloadProfilePictureFn failure does not affect result',
-        () async {
-      final qrData = buildValidQRData();
+    test(
+      'success: downloadProfilePictureFn failure does not affect result',
+      () async {
+        final qrData = buildValidQRData();
 
-      final result = await handleScannedQR(
-        qrData: qrData,
-        bridge: bridge,
-        contactRepo: contactRepo,
-        identityRepo: identityRepo,
-        p2pService: p2pService,
-        ownPeerId: ownPeerId,
-        downloadProfilePictureFn: ({
-          required bridge,
-          required contactRepo,
-          required ownerPeerId,
-          required avatarVersion,
-        }) async {
-          throw Exception('download failed');
-        },
-      );
+        final result = await handleScannedQR(
+          qrData: qrData,
+          bridge: bridge,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          ownPeerId: ownPeerId,
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                throw Exception('download failed');
+              },
+        );
 
-      expect(result, HandleScannedQRResult.success);
-      await Future.delayed(Duration.zero);
-    });
+        expect(result, HandleScannedQRResult.success);
+        await Future.delayed(Duration.zero);
+      },
+    );
 
     test('alreadyExists: does not call downloadProfilePictureFn', () async {
       final qrData = buildValidQRData();
@@ -308,15 +394,16 @@ void main() {
         identityRepo: identityRepo,
         p2pService: p2pService,
         ownPeerId: ownPeerId,
-        downloadProfilePictureFn: ({
-          required bridge,
-          required contactRepo,
-          required ownerPeerId,
-          required avatarVersion,
-        }) async {
-          wasCalled = true;
-          return null;
-        },
+        downloadProfilePictureFn:
+            ({
+              required bridge,
+              required contactRepo,
+              required ownerPeerId,
+              required avatarVersion,
+            }) async {
+              wasCalled = true;
+              return null;
+            },
       );
 
       expect(result, HandleScannedQRResult.alreadyExists);

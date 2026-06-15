@@ -1615,6 +1615,13 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 
 	if n.shouldDeferDirectAck(msgBytes) {
 		nonce := uuid.NewString()
+		// WIRE CONTRACT (Go->Dart, doc 118 / plan 120 G5): the "confirmNonce"
+		// key on this "message:received" event is consumed by Dart's
+		// ChatMessage.fromJson (lib/features/p2p/domain/models/chat_message.dart)
+		// to drive the deferred-ack->notify path. Renaming/dropping this key or
+		// flipping EnableDeferredDirectAck's default silently breaks live-direct
+		// notifications. Guarded by transport_label_test.go
+		// TestHandleIncomingMessage_DirectAckContract_AttachesConfirmNonce.
 		msgData["confirmNonce"] = nonce
 		confirmCh := n.registerDirectConfirm(nonce)
 		n.emitEvent("message:received", msgData)

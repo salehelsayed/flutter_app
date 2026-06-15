@@ -65,6 +65,9 @@ ContactModel _makeContact({
   );
 }
 
+const _testContentHash =
+    'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
 MediaAttachment _makeAttachment({
   String id = 'att-001',
   required String messageId,
@@ -84,6 +87,10 @@ MediaAttachment _makeAttachment({
     downloadStatus: downloadStatus,
     createdAt: '2026-01-01T00:00:00.000Z',
     durationMs: durationMs,
+    contentHash: _testContentHash,
+    encryptionKeyBase64: 'test-blob-key-base64',
+    encryptionNonce: 'test-blob-nonce',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
   );
 }
 

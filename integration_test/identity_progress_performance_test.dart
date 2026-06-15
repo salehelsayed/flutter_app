@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -98,85 +97,78 @@ class _FrameTimingCollector {
   }
 }
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+void registerIdentityProgressPerf() {
+  testWidgets('IDENTITY_PROGRESS 1', (tester) async {
+    final repo = _FakeIdentityRepo();
+    final generateCompleter = Completer<Map<String, dynamic>>();
+    final firstFrameCompleter = Completer<void>();
+    final events = <String>[];
+    final collector = _FrameTimingCollector();
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
 
-  group('Identity progress route performance', () {
-    testWidgets(
-      'pushes a rendered progress frame before identity generation begins',
-      (tester) async {
-        final repo = _FakeIdentityRepo();
-        final generateCompleter = Completer<Map<String, dynamic>>();
-        final firstFrameCompleter = Completer<void>();
-        final events = <String>[];
-        final collector = _FrameTimingCollector();
-        final l10n = await AppLocalizations.delegate.load(const Locale('en'));
-
-        await tester.pumpWidget(
-          _wrap(
-            IdentityChoiceWired(
-              repository: repo,
-              callIdentityGenerate: () {
-                events.add('generate-start');
-                return generateCompleter.future;
-              },
-              callIdentityRestore: (_) async => {'ok': true},
-              callMlKemKeygen: () async => _fakeMlKemResponse,
-              onNavigateToMain: (progressContext) async {
-                Navigator.of(progressContext).pushReplacement(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        const Scaffold(body: Center(child: Text('Done'))),
-                  ),
-                );
-              },
-              onProgressRouteFirstFrame: () {
-                events.add('progress-first-frame');
-                if (!firstFrameCompleter.isCompleted) {
-                  firstFrameCompleter.complete();
-                }
-              },
-            ),
-          ),
-        );
-        await _pumpPastAnimations(tester);
-
-        collector.start();
-
-        final newHereFinder = find.text(l10n.onboarding_new_here);
-        expect(newHereFinder, findsOneWidget);
-        await tester.tap(newHereFinder);
-        expect(
-          events,
-          isNot(contains('generate-start')),
-          reason: 'generation should wait until the progress route paints',
-        );
-
-        await tester.pump();
-        await firstFrameCompleter.future.timeout(const Duration(seconds: 5));
-
-        expect(
-          events,
-          equals(<String>['progress-first-frame', 'generate-start']),
-          reason:
-              'the first rendered progress frame must land before generation starts',
-        );
-
-        generateCompleter.complete({'ok': true, 'identity': _fakeIdentityJson});
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 250));
-
-        await collector.stop();
-        collector.printSummary('Identity progress route push');
-        expect(
-          collector.hasData,
-          isTrue,
-          reason:
-              'No FrameTiming data collected; rerun on macOS/iOS/Android for a real engine-backed validation',
-        );
-
-        expect(find.text('Done'), findsOneWidget);
-      },
+    await tester.pumpWidget(
+      _wrap(
+        IdentityChoiceWired(
+          repository: repo,
+          callIdentityGenerate: () {
+            events.add('generate-start');
+            return generateCompleter.future;
+          },
+          callIdentityRestore: (_) async => {'ok': true},
+          callMlKemKeygen: () async => _fakeMlKemResponse,
+          onNavigateToMain: (progressContext) async {
+            Navigator.of(progressContext).pushReplacement(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    const Scaffold(body: Center(child: Text('Done'))),
+              ),
+            );
+          },
+          onProgressRouteFirstFrame: () {
+            events.add('progress-first-frame');
+            if (!firstFrameCompleter.isCompleted) {
+              firstFrameCompleter.complete();
+            }
+          },
+        ),
+      ),
     );
+    await _pumpPastAnimations(tester);
+
+    collector.start();
+
+    final newHereFinder = find.text(l10n.onboarding_new_here);
+    expect(newHereFinder, findsOneWidget);
+    await tester.tap(newHereFinder);
+    expect(
+      events,
+      isNot(contains('generate-start')),
+      reason: 'generation should wait until the progress route paints',
+    );
+
+    await tester.pump();
+    await firstFrameCompleter.future.timeout(const Duration(seconds: 5));
+
+    expect(
+      events,
+      equals(<String>['progress-first-frame', 'generate-start']),
+      reason:
+          'the first rendered progress frame must land before generation starts',
+    );
+
+    generateCompleter.complete({'ok': true, 'identity': _fakeIdentityJson});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    await collector.stop();
+    collector.printSummary('Identity progress route push');
+    expect(
+      collector.hasData,
+      isTrue,
+      reason:
+          'No FrameTiming data collected; rerun on macOS/iOS/Android for a real engine-backed validation',
+    );
+
+    expect(find.text('Done'), findsOneWidget);
   });
 }

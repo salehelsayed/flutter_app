@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -14,6 +15,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+
+import '../../../shared/fakes/fake_media_file_manager.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
@@ -215,7 +218,12 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<void> saveAttachment(MediaAttachment attachment) async {
-    saved.add(attachment);
+    final index = saved.indexWhere((saved) => saved.id == attachment.id);
+    if (index == -1) {
+      saved.add(attachment);
+    } else {
+      saved[index] = attachment;
+    }
   }
 
   @override
@@ -371,6 +379,7 @@ void main() {
     String? action,
     String? editedAt,
     String? quotedMessageId,
+    List<Map<String, dynamic>>? media,
   }) {
     return jsonEncode({
       'type': 'chat_message',
@@ -384,6 +393,7 @@ void main() {
         if (action != null) 'action': action,
         if (editedAt != null) 'editedAt': editedAt,
         if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+        if (media != null) 'media': media,
       },
     });
   }
@@ -467,6 +477,201 @@ void main() {
       expect(result, HandleChatMessageResult.duplicate);
       expect(msg, isNull);
       expect(messageRepo.saved, isEmpty);
+    });
+
+    test(
+      'emits duplicate-content-mismatch telemetry when a non-edit duplicate carries different text',
+      () async {
+        const messageId = 'msg-uuid-001';
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        const existing = ConversationMessage(
+          id: messageId,
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'pre-edit',
+          timestamp: '2026-02-09T15:29:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:29:00.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {messageId: existing},
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(id: messageId, text: 'post-edit'),
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+        final stored = await messageRepo.getMessage(messageId);
+        expect(stored, isNotNull);
+        expect(stored!.text, 'pre-edit');
+        final mismatchEvent = flowEvents.singleWhere(
+          (event) =>
+              event['event'] == 'CHAT_MSG_RECEIVE_DUPLICATE_CONTENT_MISMATCH',
+        );
+        final details = mismatchEvent['details'] as Map<String, dynamic>;
+        expect(details['id'], messageId.substring(0, 8));
+        expect(details['incomingTextLength'], 'post-edit'.length);
+        expect(details['existingTextLength'], 'pre-edit'.length);
+        expect(details['existingHasEditedAt'], isFalse);
+        expect(jsonEncode(details), isNot(contains('post-edit')));
+        expect(jsonEncode(details), isNot(contains('pre-edit')));
+      },
+    );
+
+    test(
+      'duplicate replay repairs failed media attachment without duplicate',
+      () async {
+        const messageId = 'msg-duplicate-media-repair';
+        const attachmentId = 'duplicate-media-attachment';
+        final existing = ConversationMessage(
+          id: messageId,
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'existing media',
+          timestamp: '2026-02-09T15:29:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:29:00.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {messageId: existing},
+        );
+        final mediaRepo = FakeMediaAttachmentRepository();
+        await mediaRepo.saveAttachment(
+          const MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 42,
+            mediaType: 'image',
+            downloadStatus: 'failed',
+            createdAt: '2026-02-09T15:29:00.000Z',
+          ),
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            id: messageId,
+            media: const [
+              {
+                'id': attachmentId,
+                'mime': 'image/jpeg',
+                'size': 42,
+                'mediaType': 'image',
+              },
+            ],
+          ),
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+        final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+        expect(attachments, hasLength(1));
+        expect(attachments.single.id, attachmentId);
+        expect(attachments.single.downloadStatus, 'pending');
+      },
+    );
+
+    test('duplicate replay carrying new key/nonce invalidates stale staged '
+        'artifacts before reset to pending', () async {
+      const messageId = 'msg-duplicate-key-rotation';
+      const attachmentId = 'duplicate-key-rotation-attachment';
+      final existing = ConversationMessage(
+        id: messageId,
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: 'existing media',
+        timestamp: '2026-02-09T15:29:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-09T15:29:00.000Z',
+      );
+      messageRepo = FakeMessageRepository(
+        existingMessages: {messageId: existing},
+      );
+      final mediaRepo = FakeMediaAttachmentRepository();
+      await mediaRepo.saveAttachment(
+        const MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 42,
+          mediaType: 'image',
+          downloadStatus: 'integrity_failed',
+          createdAt: '2026-02-09T15:29:00.000Z',
+          encryptionKeyBase64: 'old-key',
+          encryptionNonce: 'old-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ),
+      );
+      final fileManager = FakeMediaFileManager();
+      final absolutePath = await fileManager.localPathForAttachment(
+        contactPeerId: senderPeerId,
+        blobId: attachmentId,
+        mime: 'image/jpeg',
+      );
+      final staleStaged = File('$absolutePath.enc');
+      await staleStaged.parent.create(recursive: true);
+      await staleStaged.writeAsBytes(List<int>.filled(58, 7), flush: true);
+      addTearDown(() {
+        if (staleStaged.existsSync()) {
+          staleStaged.deleteSync();
+        }
+      });
+
+      final message = buildP2PMessage(
+        buildValidChatJson(
+          id: messageId,
+          media: const [
+            {
+              'id': attachmentId,
+              'mime': 'image/jpeg',
+              'size': 42,
+              'mediaType': 'image',
+              'encryptionKeyBase64': 'new-key',
+              'encryptionNonce': 'new-nonce',
+              'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            },
+          ],
+        ),
+      );
+
+      final (result, msg, _) = await handleIncomingChatMessage(
+        message: message,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+      );
+
+      expect(result, HandleChatMessageResult.duplicate);
+      expect(msg, isNull);
+      final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+      expect(attachments, hasLength(1));
+      expect(attachments.single.downloadStatus, 'pending');
+      expect(attachments.single.encryptionKeyBase64, 'new-key');
+      expect(attachments.single.encryptionNonce, 'new-nonce');
+      // The stale ciphertext staged under the OLD key must be gone — the
+      // new key must never be asked to decrypt old bytes.
+      expect(staleStaged.existsSync(), isFalse);
     });
 
     test(
@@ -854,7 +1059,64 @@ void main() {
         },
       );
 
-      test('returns decryptionFailed when bridge decrypt throws', () async {
+      test('returns decryptionFailed for Go-shaped INTERNAL_ERROR', () async {
+        final bridge = FakeDecryptBridge()
+          ..decryptResponse = {
+            'ok': false,
+            'errorCode': 'INTERNAL_ERROR',
+            'errorMessage': 'message authentication failed',
+          };
+        final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: 'own-secret-key',
+        );
+
+        expect(result, HandleChatMessageResult.decryptionFailed);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+      });
+
+      test(
+        'returns decryptionDeferred when decrypt fails with BRIDGE_TIMEOUT',
+        () async {
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': false,
+              'errorCode': 'BRIDGE_TIMEOUT',
+              'errorMessage': 'Bridge call timed out after 10s',
+            };
+          final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+
+          final lines = await captureDebugPrintedLines(() async {
+            final (result, msg, _) = await handleIncomingChatMessage(
+              message: message,
+              messageRepo: messageRepo,
+              contactRepo: contactRepo,
+              bridge: bridge,
+              ownMlKemSecretKey: 'own-secret-key',
+            );
+
+            expect(result, HandleChatMessageResult.decryptionDeferred);
+            expect(msg, isNull);
+          });
+
+          expect(messageRepo.saved, isEmpty);
+          expect(bridge.decryptCallCount, 1);
+          expect(
+            lines.any(
+              (line) => line.contains('CHAT_MSG_RECEIVE_DECRYPT_DEFERRED'),
+            ),
+            isTrue,
+          );
+        },
+      );
+
+      test('returns decryptionDeferred when bridge decrypt throws', () async {
         final bridge = ThrowingDecryptBridge();
         final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
 
@@ -867,7 +1129,7 @@ void main() {
             ownMlKemSecretKey: 'own-secret-key',
           );
 
-          expect(result, HandleChatMessageResult.decryptionFailed);
+          expect(result, HandleChatMessageResult.decryptionDeferred);
           expect(msg, isNull);
         });
 
@@ -882,6 +1144,59 @@ void main() {
           isFalse,
         );
       });
+
+      test(
+        'BRIDGE_TIMEOUT then successful decrypt on replay stores the message',
+        () async {
+          // The user story behind P0-A: one slow decrypt must not lose the
+          // message. First attempt times out (deferred, nothing saved);
+          // the staged-entry replay decrypts fine and commits.
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': false,
+              'errorCode': 'BRIDGE_TIMEOUT',
+              'errorMessage': 'Bridge call timed out after 10s',
+            };
+          final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+
+          final (firstResult, firstMsg, _) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+          );
+
+          expect(firstResult, HandleChatMessageResult.decryptionDeferred);
+          expect(firstMsg, isNull);
+          expect(messageRepo.saved, isEmpty);
+
+          bridge.decryptResponse = {
+            'ok': true,
+            'plaintext': jsonEncode({
+              'id': 'msg-replay-001',
+              'text': 'Recovered after timeout',
+              'senderPeerId': senderPeerId,
+              'senderUsername': 'Alice',
+              'timestamp': '2026-02-09T15:30:00.000Z',
+            }),
+          };
+
+          final (secondResult, secondMsg, _) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+          );
+
+          expect(secondResult, HandleChatMessageResult.chatMessage);
+          expect(secondMsg, isNotNull);
+          expect(secondMsg!.text, 'Recovered after timeout');
+          expect(messageRepo.saved, hasLength(1));
+          expect(bridge.decryptCallCount, 2);
+        },
+      );
 
       test(
         'rejects edit payloads when encrypted envelope sender mismatches decrypted payload sender',
@@ -1384,6 +1699,152 @@ void main() {
         expect(messageRepo.saved.first.id, 'msg-with-media-001');
         expect(messageRepo.saved.first.text, 'Photo attached');
       });
+    });
+
+    // ─── 115 Phase 2.4 — delivery-receipt hook + origin-marker contract ───
+    // Receipts confirm relay-inbox custody became durable receiver state.
+    // They mint ONLY for relay-drain arrivals: the live deferred direct ack
+    // ('direct:' staged replays) and doc 114's committed LAN ack ('lan:'
+    // staged replays) already gave their senders 'delivered' at the same
+    // durable bar — receipts there would be redundant and, worse, would let
+    // a quarantined replay flip a sender to 'delivered' for content the
+    // receiver never displays.
+    group('115 P2 — delivery receipt hook', () {
+      test(
+        'invokes sendDeliveryReceipt after durable persist of an inbox-originated message, and re-invokes on duplicate receive',
+        () async {
+          final receiptIds = <String>[];
+          var savedWhenInvoked = false;
+          Future<void> hook(String messageId) async {
+            receiptIds.add(messageId);
+            savedWhenInvoked = messageRepo.saved.isNotEmpty;
+          }
+
+          final message = buildP2PMessage(buildValidChatJson());
+
+          // First receive (relay drain) → receipt after the repo save.
+          final (first, _, __) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            stagedEntryId: 'relay-entry-001',
+            sendDeliveryReceipt: hook,
+          );
+          expect(first, HandleChatMessageResult.chatMessage);
+          expect(receiptIds, ['msg-uuid-001']);
+          expect(
+            savedWhenInvoked,
+            isTrue,
+            reason: 'receipt must fire AFTER the durable persist',
+          );
+
+          // Duplicate receive (lost-receipt repair loop) → re-invoked.
+          final (second, _, __2) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            stagedEntryId: 'relay-entry-001',
+            sendDeliveryReceipt: hook,
+          );
+          expect(second, HandleChatMessageResult.duplicate);
+          expect(receiptIds, ['msg-uuid-001', 'msg-uuid-001']);
+
+          // Live-direct origin → NOT called (confirmNonce owns that ack).
+          final (third, _, __3) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-live-001')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'direct',
+            stagedEntryId: 'direct:nonce-1',
+            sendDeliveryReceipt: hook,
+          );
+          expect(third, HandleChatMessageResult.chatMessage);
+          expect(receiptIds, hasLength(2));
+        },
+      );
+
+      test(
+        "origin-marker contract: 'direct:' and 'lan:' staged replays skip receipts; relay-drain entries send receipts; quarantined replays never mint receipts",
+        () async {
+          final receiptIds = <String>[];
+          Future<void> hook(String messageId) async {
+            receiptIds.add(messageId);
+          }
+
+          // 'direct:<nonce>' — the live deferred-ack owns confirmation.
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-direct-01')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'direct',
+            stagedEntryId: 'direct:n1',
+            sendDeliveryReceipt: hook,
+          );
+          expect(receiptIds, isEmpty);
+
+          // 'lan:<nonce>' — doc 114's committed-ack owns confirmation.
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-lan-00001')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'wifi',
+            stagedEntryId: 'lan:n1',
+            sendDeliveryReceipt: hook,
+          );
+          expect(receiptIds, isEmpty);
+
+          // Relay-drain entry (any other namespace) → receipt.
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-relay-001')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            stagedEntryId: 'relay-uuid-1',
+            sendDeliveryReceipt: hook,
+          );
+          expect(receiptIds, ['msg-relay-001']);
+
+          // Unstaged inbox forward (staging unavailable) — still a relay
+          // delivery: receipt.
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-relay-002')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            sendDeliveryReceipt: hook,
+          );
+          expect(receiptIds, ['msg-relay-001', 'msg-relay-002']);
+
+          // Live direct with no staging id and no inbox transport → never.
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-direct-02')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'direct',
+            sendDeliveryReceipt: hook,
+          );
+          expect(receiptIds, ['msg-relay-001', 'msg-relay-002']);
+
+          // Quarantined/retryable replay (decrypt failure) → never reaches a
+          // persist, never mints a receipt — the 111 state machine owns it.
+          final failBridge = FakeDecryptBridge()
+            ..decryptResponse = {'ok': false, 'errorCode': 'DECRYPT_FAILED'};
+          final (result, _, __) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: failBridge,
+            ownMlKemSecretKey: 'own-secret',
+            transport: 'inbox',
+            stagedEntryId: 'relay-uuid-2',
+            sendDeliveryReceipt: hook,
+          );
+          expect(result, HandleChatMessageResult.decryptionFailed);
+          expect(receiptIds, ['msg-relay-001', 'msg-relay-002']);
+        },
+      );
     });
   });
 }

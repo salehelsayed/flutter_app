@@ -1,0 +1,138 @@
+import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
+import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  group('MigrationSecureStorageRegistry', () {
+    test(
+      'classifies every fixed primary-store key with an explicit policy',
+      () {
+        final fixed = MigrationSecureStorageRegistry.fixedKeys;
+        final byKey = {
+          for (final key in fixed.where(
+            (key) => key.scope == MigrationSecureStoreScope.primary,
+          ))
+            key.activeKey: key,
+        };
+
+        expect(
+          byKey.keys,
+          containsAll({
+            'db_encryption_key',
+            'identity_private_key',
+            'identity_mnemonic12',
+            'identity_ml_kem_secret_key',
+            'secrets_migrated',
+            'background_preference',
+            'image_quality_preference',
+            'video_quality_preference',
+            'push_fcm_token',
+            'push_fcm_platform',
+            SecureKeyStoreAccountMigrationAuthorityRepository.storageKey,
+            SecureKeyStoreMigrationPairingSessionRepository.storageKey,
+          }),
+        );
+
+        expect(
+          byKey['db_encryption_key']!.policy,
+          MigrationSecureStorageKeyPolicy.migrate,
+        );
+        expect(
+          byKey['identity_private_key']!.criticality,
+          MigrationSecureStorageKeyCriticality.critical,
+        );
+        expect(
+          byKey['identity_mnemonic12']!.policy,
+          MigrationSecureStorageKeyPolicy.migrate,
+        );
+        expect(
+          byKey['identity_ml_kem_secret_key']!.criticality,
+          MigrationSecureStorageKeyCriticality.critical,
+        );
+        expect(
+          byKey['secrets_migrated']!.policy,
+          MigrationSecureStorageKeyPolicy.derivedOnPromotion,
+        );
+        expect(
+          byKey['background_preference']!.policy,
+          MigrationSecureStorageKeyPolicy.migrate,
+        );
+        expect(
+          byKey['image_quality_preference']!.criticality,
+          MigrationSecureStorageKeyCriticality.optional,
+        );
+        expect(
+          byKey['video_quality_preference']!.policy,
+          MigrationSecureStorageKeyPolicy.migrate,
+        );
+        expect(
+          byKey['push_fcm_token']!.policy,
+          MigrationSecureStorageKeyPolicy.clearRegenerate,
+        );
+        expect(byKey['push_fcm_platform']!.includeInExportPayload, isFalse);
+        expect(
+          byKey[SecureKeyStoreAccountMigrationAuthorityRepository.storageKey]!
+              .policy,
+          MigrationSecureStorageKeyPolicy.deviceLocal,
+        );
+        expect(
+          byKey[SecureKeyStoreMigrationPairingSessionRepository.storageKey]!
+              .includeInExportPayload,
+          isFalse,
+        );
+      },
+    );
+
+    test('classifies iOS shared access-group identity and group mirrors', () {
+      final sharedFixed = MigrationSecureStorageRegistry.fixedKeys.where(
+        (key) => key.scope == MigrationSecureStoreScope.iosSharedAccessGroup,
+      );
+
+      expect(sharedFixed.single.activeKey, 'identity_ml_kem_secret_key');
+      expect(sharedFixed.single.appleAccessGroup, mknoonSharedAppleAccessGroup);
+
+      final groupMirror = MigrationSecureStorageRegistry.sharedGroupMirror(
+        groupId: 'group/raw:1',
+        generation: 7,
+      );
+
+      expect(groupMirror.scope, MigrationSecureStoreScope.iosSharedAccessGroup);
+      expect(groupMirror.activeKey, 'group_key:group/raw:1:7');
+      expect(groupMirror.policy, MigrationSecureStorageKeyPolicy.migrate);
+      expect(
+        groupMirror.criticality,
+        MigrationSecureStorageKeyCriticality.critical,
+      );
+      expect(groupMirror.includeInExportPayload, isTrue);
+    });
+
+    test('merges fixed and DB-discovered keys deterministically', () {
+      final media = MigrationSecureStorageRegistry.primaryMediaAttachmentKey(
+        attachmentId: 'photo 1',
+      );
+      final group = MigrationSecureStorageRegistry.primaryGroupKeyMaterial(
+        groupId: 'group/1',
+        generation: 3,
+      );
+
+      final resolved = MigrationSecureStorageRegistry.resolve(
+        discoveredKeys: [media, group, media],
+      );
+      final resolvedIds = resolved
+          .map((key) => '${key.scope.name}:${key.activeKey}')
+          .toList();
+
+      expect(
+        resolvedIds.where(
+          (id) => id == 'primary:media_attachment_encryption_key:photo%201',
+        ),
+        hasLength(1),
+      );
+      expect(resolvedIds, contains('primary:group_key_material:group%2F1:3'));
+      expect(resolvedIds, equals(resolvedIds.toList()..sort()));
+    });
+  });
+}

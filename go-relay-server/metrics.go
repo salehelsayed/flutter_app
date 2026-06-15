@@ -91,10 +91,28 @@ var inboxExpiredCounter = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Messages pruned by TTL.",
 })
 
+var inboxExpiredPrunedCounter = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "relay_inbox_expired_pruned_total",
+	Help: "1:1 inbox messages pruned by TTL during lazy cleanup.",
+})
+
 var inboxCappedCounter = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "relay_inbox_capped_total",
 	Help: "Messages dropped by per-peer cap overflow.",
 })
+
+var inboxRejectedFullCounter = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "relay_inbox_rejected_full_total",
+	Help: "1:1 inbox messages rejected because the recipient inbox is full.",
+})
+
+func recordInboxExpiredPruned(count int) {
+	if count <= 0 {
+		return
+	}
+	inboxExpiredCounter.Add(float64(count))
+	inboxExpiredPrunedCounter.Add(float64(count))
+}
 
 // Media counters
 

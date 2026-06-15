@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../_support/signal_files.dart';
 import 'group_multi_party_device_criteria.dart';
 
 const _harnessPath =
@@ -31,74 +32,38 @@ void _log(String tag, String message) {
   stderr.writeln('[$ts] [$tag] $message');
 }
 
-String _signalPath(Directory sharedDir, String runId, String name) {
-  return '${sharedDir.path}/gmp_${runId}_$name';
-}
-
-String _verdictPath(Directory sharedDir, String runId, String role) {
-  return _signalPath(sharedDir, runId, '${role}_verdict.json');
-}
-
-Future<Map<String, dynamic>> _waitForJson(
-  String path, {
-  Duration timeout = const Duration(minutes: 10),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(path);
-  Object? lastDecodeError;
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) {
-      try {
-        return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-      } on FormatException catch (error) {
-        lastDecodeError = error;
-      } on FileSystemException catch (error) {
-        lastDecodeError = error;
-      }
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  if (lastDecodeError != null) {
-    throw TimeoutException(
-      'Timed out waiting for complete json: $path; last error: '
-      '$lastDecodeError',
-    );
-  }
-  throw TimeoutException('Timed out waiting for json: $path');
-}
-
-Future<void> _waitForSignal(
-  String path, {
-  Duration timeout = const Duration(minutes: 10),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(path);
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  throw TimeoutException('Timed out waiting for signal: $path');
+/// Builds the canonical `gmp_`-family signal accessor for one scenario run.
+///
+/// Reproduces the old inline `_signalPath`/`_verdictPath` paths byte-for-byte:
+/// `SignalDir.path(name)` yields `'${sharedDir.path}/gmp_${runId}_$name'`, and
+/// the verdict path is `signals.path('${role}_verdict.json')`.
+SignalDir _signalsFor(Directory sharedDir, String runId, {String role = 'gmp'}) {
+  return SignalDir.forDirectory(
+    sharedDir,
+    prefix: 'gmp_',
+    runId: '${runId}_',
+    role: role,
+  );
 }
 
 Future<Map<String, dynamic>> _waitForVerdictOrExit({
   required Process process,
-  required String path,
+  required SignalDir signals,
+  required String name,
   required String role,
   required String logPath,
 }) async {
-  final file = File(path);
   final result = await Future.any<Object>([
-    _waitForJson(path, timeout: _roleVerdictTimeout),
+    signals.waitForJson(name, timeout: _roleVerdictTimeout),
     process.exitCode.then<Object>((exitCode) => _ProcessExit(exitCode)),
   ]);
   if (result is Map<String, dynamic>) {
     return result;
   }
   if (result is _ProcessExit) {
-    if (file.existsSync()) {
-      return Map<String, dynamic>.from(
-        jsonDecode(file.readAsStringSync()) as Map,
-      );
+    final raw = signals.read(name);
+    if (raw != null) {
+      return Map<String, dynamic>.from(jsonDecode(raw) as Map);
     }
     throw StateError(
       '$role exited with code ${result.exitCode} before writing a verdict; '
@@ -110,12 +75,13 @@ Future<Map<String, dynamic>> _waitForVerdictOrExit({
 
 Future<Map<String, dynamic>> _waitForIdentityOrExit({
   required Process process,
-  required String path,
+  required SignalDir signals,
+  required String name,
   required String role,
   required String logPath,
 }) async {
   final result = await Future.any<Object>([
-    _waitForJson(path, timeout: _roleIdentityTimeout),
+    signals.waitForJson(name, timeout: _roleIdentityTimeout),
     process.exitCode.then<Object>((exitCode) => _ProcessExit(exitCode)),
   ]);
   if (result is Map<String, dynamic>) {
@@ -369,6 +335,8 @@ List<String> _scenariosToRun(String scenario) {
       return const <String>['private_abc_create'];
     case 'private_reaction_roundtrip':
       return const <String>['private_reaction_roundtrip'];
+    case 'private_media_reaction_roundtrip':
+      return const <String>['private_media_reaction_roundtrip'];
     case 'private_removed_reaction_rejected':
       return const <String>['private_removed_reaction_rejected'];
     case 'private_never_member_publish_rejected':
@@ -379,6 +347,8 @@ List<String> _scenariosToRun(String scenario) {
       return const <String>['private_full_mesh_online'];
     case 'private_relay_only_delivery':
       return const <String>['private_relay_only_delivery'];
+    case 'private_stale_roster_recipient_omission':
+      return const <String>['private_stale_roster_recipient_omission'];
     case 'private_partition_readd_heal':
       return const <String>['private_partition_readd_heal'];
     case 'private_relay_reconnect_group_recovery':
@@ -429,12 +399,18 @@ List<String> _scenariosToRun(String scenario) {
       return const <String>['private_timeline_truth'];
     case 'private_non_friend_member_delivery':
       return const <String>['private_non_friend_member_delivery'];
+    case 'private_online_dissolve_convergence':
+      return const <String>['private_online_dissolve_convergence'];
+    case 'private_voluntary_leave_convergence':
+      return const <String>['private_voluntary_leave_convergence'];
     case 'private_admin_role_transfer_delivery':
       return const <String>['private_admin_role_transfer_delivery'];
     case 'private_admin_metadata_intro_photo_convergence':
       return const <String>['private_admin_metadata_intro_photo_convergence'];
     case 'private_admin_demotion_enforcement':
       return const <String>['private_admin_demotion_enforcement'];
+    case 'private_override_removal_nonconvergence':
+      return const <String>['private_override_removal_nonconvergence'];
     case 'regression_group_admin_permissions_and_message_reliability_four_users':
       return const <String>[
         'regression_group_admin_permissions_and_message_reliability_four_users',
@@ -546,6 +522,7 @@ Future<void> _runGe012Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<void> launchRole(String role, {String? restoreMnemonic}) async {
     final logPath = '${sharedDir.path}/$role.log';
@@ -564,8 +541,8 @@ Future<void> _runGe012Scenario({
     processes[role] = process;
     _pipeOutput(process.stdout, role.toUpperCase(), logSink);
     _pipeOutput(process.stderr, '${role.toUpperCase()}-ERR', logSink);
-    await _waitForJson(
-      _signalPath(sharedDir, runId, '${role}_identity.json'),
+    await signals.waitForJson(
+      '${role}_identity.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/$role identity ready');
@@ -574,8 +551,8 @@ Future<void> _runGe012Scenario({
   try {
     await launchRole('alice');
     await launchRole('bob');
-    final bobIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_identity.json'),
+    final bobIdentity = await signals.waitForJson(
+      'bob_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
@@ -588,7 +565,8 @@ Future<void> _runGe012Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -601,7 +579,7 @@ Future<void> _runGe012Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -610,7 +588,7 @@ Future<void> _runGe012Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -637,7 +615,7 @@ Future<void> _runGe012Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -681,6 +659,7 @@ Future<void> _runGe013Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<void> launchRole(String role, {String? restoreMnemonic}) async {
     final logPath = '${sharedDir.path}/$role.log';
@@ -699,8 +678,8 @@ Future<void> _runGe013Scenario({
     processes[role] = process;
     _pipeOutput(process.stdout, role.toUpperCase(), logSink);
     _pipeOutput(process.stderr, '${role.toUpperCase()}-ERR', logSink);
-    await _waitForJson(
-      _signalPath(sharedDir, runId, '${role}_identity.json'),
+    await signals.waitForJson(
+      '${role}_identity.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/$role identity ready');
@@ -709,8 +688,8 @@ Future<void> _runGe013Scenario({
   try {
     await launchRole('alice');
     await launchRole('bob');
-    final bobIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_identity.json'),
+    final bobIdentity = await signals.waitForJson(
+      'bob_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
@@ -723,7 +702,8 @@ Future<void> _runGe013Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -736,7 +716,7 @@ Future<void> _runGe013Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -745,7 +725,7 @@ Future<void> _runGe013Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -772,7 +752,7 @@ Future<void> _runGe013Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -817,6 +797,7 @@ Future<void> _runSt007Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
     String role, {
@@ -863,67 +844,68 @@ Future<void> _runSt007Scenario({
       final process = await launchRole(role);
       await _waitForIdentityOrExit(
         process: process,
-        path: _signalPath(sharedDir, runId, '${role}_identity.json'),
+        signals: signals,
+        name: '${role}_identity.json',
         role: role,
         logPath: logPaths[role]!,
       );
       _log('ORCH', '$scenario/$role identity ready');
     }
 
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_st007_add_state_persisted.json'),
+    await signals.waitForJson(
+      'charlie_st007_add_state_persisted.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario killing Charlie after add checkpoint');
     await killActiveRole('charlie', 'after-add');
     File(
-      _signalPath(sharedDir, runId, 'charlie_st007_add_crash_complete'),
+      signals.path('charlie_st007_add_crash_complete'),
     ).writeAsStringSync('ok');
     await launchRole(
       'charlie',
       logLabel: 'charlie_after_add_relaunch',
       reuseExistingIdentity: true,
     );
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'charlie_st007_add_recovered'),
+    await signals.waitForSignal(
+      'charlie_st007_add_recovered',
       timeout: const Duration(minutes: 15),
     );
 
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_st007_remove_state_persisted.json'),
+    await signals.waitForJson(
+      'bob_st007_remove_state_persisted.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario killing Bob after remove checkpoint');
     await killActiveRole('bob', 'after-remove');
     File(
-      _signalPath(sharedDir, runId, 'bob_st007_remove_crash_complete'),
+      signals.path('bob_st007_remove_crash_complete'),
     ).writeAsStringSync('ok');
     await launchRole(
       'bob',
       logLabel: 'bob_after_remove_relaunch',
       reuseExistingIdentity: true,
     );
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'bob_st007_remove_recovered'),
+    await signals.waitForSignal(
+      'bob_st007_remove_recovered',
       timeout: const Duration(minutes: 15),
     );
 
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_st007_readd_state_persisted.json'),
+    await signals.waitForJson(
+      'charlie_st007_readd_state_persisted.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario killing Charlie after re-add checkpoint');
     await killActiveRole('charlie', 'after-readd');
     File(
-      _signalPath(sharedDir, runId, 'charlie_st007_readd_crash_complete'),
+      signals.path('charlie_st007_readd_crash_complete'),
     ).writeAsStringSync('ok');
     await launchRole(
       'charlie',
       logLabel: 'charlie_after_readd_relaunch',
       reuseExistingIdentity: true,
     );
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'charlie_st007_readd_recovered'),
+    await signals.waitForSignal(
+      'charlie_st007_readd_recovered',
       timeout: const Duration(minutes: 15),
     );
 
@@ -932,7 +914,8 @@ Future<void> _runSt007Scenario({
         final label = activeProcessLabelByRole[role]!;
         return _waitForVerdictOrExit(
           process: processes[label]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[label]!,
         );
@@ -945,7 +928,7 @@ Future<void> _runSt007Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -954,7 +937,7 @@ Future<void> _runSt007Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -983,7 +966,7 @@ Future<void> _runSt007Scenario({
     for (final role in roles) {
       final label = activeProcessLabelByRole[role]!;
       _log('ORCH', '$role log: ${logPaths[label]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -1091,6 +1074,7 @@ Future<void> _runScenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   try {
     for (final role in roles) {
@@ -1110,8 +1094,8 @@ Future<void> _runScenario({
       _pipeOutput(process.stdout, role.toUpperCase(), logSink);
       _pipeOutput(process.stderr, '${role.toUpperCase()}-ERR', logSink);
 
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
@@ -1121,7 +1105,8 @@ Future<void> _runScenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -1134,7 +1119,7 @@ Future<void> _runScenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -1143,7 +1128,7 @@ Future<void> _runScenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -1170,7 +1155,7 @@ Future<void> _runScenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -1213,6 +1198,7 @@ Future<void> _runGe014Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
     String role, {
@@ -1244,8 +1230,8 @@ Future<void> _runGe014Scenario({
   try {
     for (final role in const <String>['alice', 'bob']) {
       await launchRole(role);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
@@ -1256,20 +1242,16 @@ Future<void> _runGe014Scenario({
       mode: 'restartSeed',
       logLabel: 'charlie_seed',
     );
-    final charlieIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_identity.json'),
+    final charlieIdentity = await signals.waitForJson(
+      'charlie_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final charlieMnemonic = (charlieIdentity['mnemonic12'] as String?)?.trim();
     if (charlieMnemonic == null || charlieMnemonic.isEmpty) {
       throw StateError('ge014 Charlie seed did not publish a mnemonic');
     }
-    await _waitForJson(
-      _signalPath(
-        sharedDir,
-        runId,
-        'charlie_ge014_persisted_invite_restart_ready.json',
-      ),
+    await signals.waitForJson(
+      'charlie_ge014_persisted_invite_restart_ready.json',
       timeout: const Duration(minutes: 15),
     );
     final seedExit = await charlieSeed.exitCode.timeout(
@@ -1290,12 +1272,8 @@ Future<void> _runGe014Scenario({
     _log('ORCH', '$scenario/charlie stopped after persisted invite/key');
 
     await launchRole('charlie', restoreMnemonic: charlieMnemonic);
-    await _waitForSignal(
-      _signalPath(
-        sharedDir,
-        runId,
-        'charlie_ge014_restarted_before_topic_join',
-      ),
+    await signals.waitForSignal(
+      'charlie_ge014_restarted_before_topic_join',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/charlie restart boundary recorded');
@@ -1304,7 +1282,8 @@ Future<void> _runGe014Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -1317,7 +1296,7 @@ Future<void> _runGe014Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -1326,7 +1305,7 @@ Future<void> _runGe014Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -1353,7 +1332,7 @@ Future<void> _runGe014Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final process in processes.values) {
@@ -1397,6 +1376,7 @@ Future<void> _runGe015Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
     String role, {
@@ -1428,8 +1408,8 @@ Future<void> _runGe015Scenario({
   try {
     for (final role in const <String>['bob', 'charlie']) {
       await launchRole(role);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
@@ -1440,20 +1420,16 @@ Future<void> _runGe015Scenario({
       mode: 'restartSeed',
       logLabel: 'alice_seed',
     );
-    final aliceIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'alice_identity.json'),
+    final aliceIdentity = await signals.waitForJson(
+      'alice_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final aliceMnemonic = (aliceIdentity['mnemonic12'] as String?)?.trim();
     if (aliceMnemonic == null || aliceMnemonic.isEmpty) {
       throw StateError('ge015 Alice seed did not publish a mnemonic');
     }
-    await _waitForJson(
-      _signalPath(
-        sharedDir,
-        runId,
-        'alice_ge015_post_remove_restart_ready.json',
-      ),
+    await signals.waitForJson(
+      'alice_ge015_post_remove_restart_ready.json',
       timeout: const Duration(minutes: 15),
     );
     final seedExit = await aliceSeed.exitCode.timeout(
@@ -1471,12 +1447,8 @@ Future<void> _runGe015Scenario({
     _log('ORCH', '$scenario/alice stopped before fanout repair');
 
     await launchRole('alice', restoreMnemonic: aliceMnemonic);
-    await _waitForSignal(
-      _signalPath(
-        sharedDir,
-        runId,
-        'alice_ge015_restarted_before_fanout_repair',
-      ),
+    await signals.waitForSignal(
+      'alice_ge015_restarted_before_fanout_repair',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/alice restart boundary recorded');
@@ -1485,7 +1457,8 @@ Future<void> _runGe015Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -1498,7 +1471,7 @@ Future<void> _runGe015Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -1507,7 +1480,7 @@ Future<void> _runGe015Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -1534,7 +1507,7 @@ Future<void> _runGe015Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -1578,6 +1551,7 @@ Future<void> _runGm008Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
     String role, {
@@ -1609,8 +1583,8 @@ Future<void> _runGm008Scenario({
   try {
     for (final role in const <String>['alice', 'bob']) {
       await launchRole(role);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
@@ -1621,16 +1595,16 @@ Future<void> _runGm008Scenario({
       mode: 'restartSeed',
       logLabel: 'charlie_seed',
     );
-    final charlieIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_identity.json'),
+    final charlieIdentity = await signals.waitForJson(
+      'charlie_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final charlieMnemonic = (charlieIdentity['mnemonic12'] as String?)?.trim();
     if (charlieMnemonic == null || charlieMnemonic.isEmpty) {
       throw StateError('gm008 Charlie seed did not publish a mnemonic');
     }
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_removed_restart_ready.json'),
+    await signals.waitForJson(
+      'charlie_removed_restart_ready.json',
       timeout: const Duration(minutes: 15),
     );
     final seedExit = await charlieSeed.exitCode.timeout(
@@ -1651,8 +1625,8 @@ Future<void> _runGm008Scenario({
     _log('ORCH', '$scenario/charlie stopped after removal; relaunching');
 
     await launchRole('charlie', restoreMnemonic: charlieMnemonic);
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'charlie_restarted_after_removal'),
+    await signals.waitForSignal(
+      'charlie_restarted_after_removal',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/charlie restart boundary recorded');
@@ -1661,7 +1635,8 @@ Future<void> _runGm008Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -1674,7 +1649,7 @@ Future<void> _runGm008Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -1683,7 +1658,7 @@ Future<void> _runGm008Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -1710,7 +1685,7 @@ Future<void> _runGm008Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -1765,6 +1740,7 @@ Future<void> _runIr001Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
   final oldStateSignal = scenario == 'ir015'
       ? 'bob_ir015_old_state_persisted.json'
       : scenario == 'ir016'
@@ -1816,8 +1792,8 @@ Future<void> _runIr001Scenario({
   try {
     for (final role in const <String>['alice', 'charlie']) {
       await launchRole(role);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
@@ -1828,16 +1804,16 @@ Future<void> _runIr001Scenario({
       mode: 'seedOffline',
       logLabel: 'bob_seed',
     );
-    final bobIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_identity.json'),
+    final bobIdentity = await signals.waitForJson(
+      'bob_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
     if (bobMnemonic == null || bobMnemonic.isEmpty) {
       throw StateError('$scenario Bob seed did not publish a mnemonic');
     }
-    await _waitForJson(
-      _signalPath(sharedDir, runId, oldStateSignal),
+    await signals.waitForJson(
+      oldStateSignal,
       timeout: const Duration(minutes: 15),
     );
     final seedExit = await bobSeed.exitCode.timeout(
@@ -1852,17 +1828,17 @@ Future<void> _runIr001Scenario({
     }
     processes.remove('bob_seed');
     await _terminateRunnerApp(roleDevices['bob']!, '$scenario/bob-seed');
-    File(_signalPath(sharedDir, runId, offlineSignal)).writeAsStringSync('ok');
+    File(signals.path(offlineSignal)).writeAsStringSync('ok');
     _log('ORCH', '$scenario/bob joined state persisted; Bob offline');
 
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, relaunchReadySignal),
+    await signals.waitForSignal(
+      relaunchReadySignal,
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario relaunching Bob after $relaunchReason');
     await launchRole('bob', restoreMnemonic: bobMnemonic);
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_identity.json'),
+    await signals.waitForJson(
+      'bob_identity.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/bob reconnect identity ready');
@@ -1871,7 +1847,8 @@ Future<void> _runIr001Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -1884,7 +1861,7 @@ Future<void> _runIr001Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -1893,7 +1870,7 @@ Future<void> _runIr001Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -1920,7 +1897,7 @@ Future<void> _runIr001Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -1974,6 +1951,7 @@ Future<void> _runGe007Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
     String role, {
@@ -2005,8 +1983,8 @@ Future<void> _runGe007Scenario({
   try {
     for (final role in const <String>['alice', 'charlie']) {
       await launchRole(role);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
@@ -2017,16 +1995,16 @@ Future<void> _runGe007Scenario({
       mode: 'seedOffline',
       logLabel: 'bob_seed',
     );
-    final bobIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_identity.json'),
+    final bobIdentity = await signals.waitForJson(
+      'bob_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
     if (bobMnemonic == null || bobMnemonic.isEmpty) {
       throw StateError('$scenario Bob seed did not publish a mnemonic');
     }
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_old_state_persisted.json'),
+    await signals.waitForJson(
+      'bob_old_state_persisted.json',
       timeout: const Duration(minutes: 15),
     );
     final seedExit = await bobSeed.exitCode.timeout(
@@ -2042,18 +2020,18 @@ Future<void> _runGe007Scenario({
     processes.remove('bob_seed');
     await _terminateRunnerApp(roleDevices['bob']!, '$scenario/bob-seed');
     File(
-      _signalPath(sharedDir, runId, 'bob_offline_before_mutation'),
+      signals.path('bob_offline_before_mutation'),
     ).writeAsStringSync('ok');
     _log('ORCH', '$scenario/bob old state persisted; Bob offline');
 
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'bob_relaunch_ready'),
+    await signals.waitForSignal(
+      'bob_relaunch_ready',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario relaunching Bob after mutation and sends');
     await launchRole('bob', restoreMnemonic: bobMnemonic);
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'bob_identity.json'),
+    await signals.waitForJson(
+      'bob_identity.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/bob reconnect identity ready');
@@ -2062,7 +2040,8 @@ Future<void> _runGe007Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -2075,7 +2054,7 @@ Future<void> _runGe007Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -2084,7 +2063,7 @@ Future<void> _runGe007Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -2111,7 +2090,7 @@ Future<void> _runGe007Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -2154,6 +2133,7 @@ Future<void> _runOfflineCharlieRelaunchScenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
     String role, {
@@ -2185,8 +2165,8 @@ Future<void> _runOfflineCharlieRelaunchScenario({
   try {
     for (final role in const <String>['alice', 'bob']) {
       await launchRole(role);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
@@ -2198,21 +2178,21 @@ Future<void> _runOfflineCharlieRelaunchScenario({
       mode: 'seedOffline',
       logLabel: keepCharlieSeedProcess ? 'charlie' : 'charlie_seed',
     );
-    final charlieIdentity = await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_identity.json'),
+    final charlieIdentity = await signals.waitForJson(
+      'charlie_identity.json',
       timeout: const Duration(minutes: 15),
     );
     final charlieMnemonic = (charlieIdentity['mnemonic12'] as String?)?.trim();
     if (charlieMnemonic == null || charlieMnemonic.isEmpty) {
       throw StateError('$scenario Charlie seed did not publish a mnemonic');
     }
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'charlie_old_state_persisted.json'),
+    await signals.waitForJson(
+      'charlie_old_state_persisted.json',
       timeout: const Duration(minutes: 15),
     );
     if (keepCharlieSeedProcess) {
-      await _waitForSignal(
-        _signalPath(sharedDir, runId, 'charlie_offline_before_removal'),
+      await signals.waitForSignal(
+        'charlie_offline_before_removal',
         timeout: const Duration(minutes: 15),
       );
       _log(
@@ -2238,13 +2218,13 @@ Future<void> _runOfflineCharlieRelaunchScenario({
         '$scenario/charlie-seed',
       );
       File(
-        _signalPath(sharedDir, runId, 'charlie_offline_before_removal'),
+        signals.path('charlie_offline_before_removal'),
       ).writeAsStringSync('ok');
       _log('ORCH', '$scenario/charlie old state persisted; Charlie offline');
     }
 
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'charlie_relaunch_ready'),
+    await signals.waitForSignal(
+      'charlie_relaunch_ready',
       timeout: const Duration(minutes: 15),
     );
     if (keepCharlieSeedProcess) {
@@ -2255,8 +2235,8 @@ Future<void> _runOfflineCharlieRelaunchScenario({
     } else {
       _log('ORCH', '$scenario relaunching Charlie after removal and sends');
       await launchRole('charlie', restoreMnemonic: charlieMnemonic);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, 'charlie_identity.json'),
+      await signals.waitForJson(
+        'charlie_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/charlie reconnect identity ready');
@@ -2266,7 +2246,8 @@ Future<void> _runOfflineCharlieRelaunchScenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -2279,7 +2260,7 @@ Future<void> _runOfflineCharlieRelaunchScenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -2288,7 +2269,7 @@ Future<void> _runOfflineCharlieRelaunchScenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -2315,7 +2296,7 @@ Future<void> _runOfflineCharlieRelaunchScenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -2358,6 +2339,7 @@ Future<void> _runGm003Scenario({
   _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
   _log('ORCH', '$scenario run id: $runId');
   _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final signals = _signalsFor(sharedDir, runId, role: scenario);
 
   Future<Process> launchRole(
     String role, {
@@ -2394,16 +2376,15 @@ Future<void> _runGm003Scenario({
       mode: 'identityOnly',
       logLabel: 'dana_preflight',
     );
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'dana_identity.json'),
+    await signals.waitForJson(
+      'dana_identity.json',
       timeout: const Duration(minutes: 15),
     );
-    final danaRestoreIdentityPath = _signalPath(
-      sharedDir,
-      runId,
+    final danaRestoreIdentityPath = signals.path('dana_identity_restore.json');
+    await signals.waitForJson(
       'dana_identity_restore.json',
+      timeout: const Duration(minutes: 10),
     );
-    await _waitForJson(danaRestoreIdentityPath);
     final danaPreflightExit = await danaPreflight.exitCode.timeout(
       const Duration(minutes: 5),
       onTimeout: () {
@@ -2422,21 +2403,21 @@ Future<void> _runGm003Scenario({
 
     for (final role in const <String>['alice', 'bob', 'charlie']) {
       await launchRole(role);
-      await _waitForJson(
-        _signalPath(sharedDir, runId, '${role}_identity.json'),
+      await signals.waitForJson(
+        '${role}_identity.json',
         timeout: const Duration(minutes: 15),
       );
       _log('ORCH', '$scenario/$role identity ready');
     }
 
-    await _waitForSignal(
-      _signalPath(sharedDir, runId, 'dana_late_launch_ready'),
+    await signals.waitForSignal(
+      'dana_late_launch_ready',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario launching Dana after offline add/post-add send');
     await launchRole('dana', restoreIdentityPath: danaRestoreIdentityPath);
-    await _waitForJson(
-      _signalPath(sharedDir, runId, 'dana_late_identity.json'),
+    await signals.waitForJson(
+      'dana_late_identity.json',
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/dana late identity ready');
@@ -2445,7 +2426,8 @@ Future<void> _runGm003Scenario({
       roles.map(
         (role) => _waitForVerdictOrExit(
           process: processes[role]!,
-          path: _verdictPath(sharedDir, runId, role),
+          signals: signals,
+          name: '${role}_verdict.json',
           role: role,
           logPath: logPaths[role]!,
         ),
@@ -2458,7 +2440,7 @@ Future<void> _runGm003Scenario({
       verdicts: verdicts,
     );
     File(
-      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+      signals.path('${scenario}_orchestrator_verdict.json'),
     ).writeAsStringSync(
       jsonEncode(<String, dynamic>{
         'scenario': scenario,
@@ -2467,7 +2449,7 @@ Future<void> _runGm003Scenario({
         'sharedDir': sharedDir.path,
         'roleDevices': roleDevices,
         'roleVerdicts': {
-          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+          for (final role in roles) role: signals.path('${role}_verdict.json'),
         },
       }),
     );
@@ -2494,7 +2476,7 @@ Future<void> _runGm003Scenario({
     _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
     for (final role in roles) {
       _log('ORCH', '$role log: ${logPaths[role]}');
-      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+      _log('ORCH', '$role verdict: ${signals.path('${role}_verdict.json')}');
     }
   } finally {
     for (final entry in processes.entries) {
@@ -2517,7 +2499,7 @@ Future<void> main(List<String> args) async {
   final relayCheck = evaluateRelayConfiguration(relayAddresses);
   final usage =
       'Usage: dart run integration_test/scripts/run_group_multi_party_device_real.dart '
-      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|de002|de003|de007|de017|ir001|ir015|ir016|pl002|pl012|private_abc_create|private_reaction_roundtrip|private_removed_reaction_rejected|private_never_member_publish_rejected|private_removed_old_key_publish_rejected|private_full_mesh_online|private_relay_only_delivery|private_partition_readd_heal|private_relay_reconnect_group_recovery|private_peer_disconnect_not_removal|private_background_resume_group_delivery|private_long_offline_epoch_churn|private_process_death_matrix|private_online_add|private_offline_add|private_online_remove|private_removed_notification_privacy|private_offline_remove|private_offline_readd|private_readd_current|private_readd_active_members|private_readd_alternating_churn|private_max_group_size_churn|private_network_chaos_invariants|private_late_leave_readd|private_rotated_device_readd|private_same_user_multi_device_readd|private_readd_cycles|private_rapid_readd|private_concurrent_admin_membership_edits|private_timeline_truth|private_non_friend_member_delivery|private_admin_role_transfer_delivery|private_admin_metadata_intro_photo_convergence|private_admin_demotion_enforcement|regression_group_admin_permissions_and_message_reliability_four_users|scenario7_group_invite_stale_metadata_recovery|private_history_retention|private_invite_terminal_states|private_stale_invite_readd|private_stale_lower_key_update|private_same_epoch_key_conflict|private_partial_key_distribution|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]> [--list-scenarios]';
+      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|de002|de003|de007|de017|ir001|ir015|ir016|pl002|pl012|private_abc_create|private_reaction_roundtrip|private_media_reaction_roundtrip|private_removed_reaction_rejected|private_never_member_publish_rejected|private_removed_old_key_publish_rejected|private_full_mesh_online|private_relay_only_delivery|private_partition_readd_heal|private_relay_reconnect_group_recovery|private_peer_disconnect_not_removal|private_background_resume_group_delivery|private_long_offline_epoch_churn|private_process_death_matrix|private_online_add|private_offline_add|private_online_remove|private_removed_notification_privacy|private_offline_remove|private_offline_readd|private_readd_current|private_readd_active_members|private_readd_alternating_churn|private_max_group_size_churn|private_network_chaos_invariants|private_late_leave_readd|private_rotated_device_readd|private_same_user_multi_device_readd|private_readd_cycles|private_rapid_readd|private_concurrent_admin_membership_edits|private_timeline_truth|private_online_dissolve_convergence|private_stale_roster_recipient_omission|private_non_friend_member_delivery|private_voluntary_leave_convergence|private_admin_role_transfer_delivery|private_admin_metadata_intro_photo_convergence|private_admin_demotion_enforcement|private_override_removal_nonconvergence|regression_group_admin_permissions_and_message_reliability_four_users|scenario7_group_invite_stale_metadata_recovery|private_history_retention|private_invite_terminal_states|private_stale_invite_readd|private_stale_lower_key_update|private_same_epoch_key_conflict|private_partial_key_distribution|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]> [--list-scenarios]';
 
   if (listScenarios) {
     try {

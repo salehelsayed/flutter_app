@@ -1293,6 +1293,8 @@ Future<void> _section10WidgetMediaLifecycleProof(
           List<double>? waveform,
           List<String>? allowedPeers,
           String? blobId,
+          bool deleteSourceWhenDone = false,
+          preparedArtifact,
         }) async {
           senderBridge.operationLog.add('uploadMediaFn');
           uploadedBlobId = blobId;
@@ -1472,6 +1474,8 @@ Future<void> _section10WidgetVoiceLifecycleProof(
           List<double>? waveform,
           List<String>? allowedPeers,
           String? blobId,
+          bool deleteSourceWhenDone = false,
+          preparedArtifact,
         }) async {
           senderBridge.operationLog.add('uploadMediaFn');
           return _uploadedMedia(
@@ -4317,19 +4321,40 @@ void main() {
           groupRepo: bob.groupRepo,
           msgRepo: bob.msgRepo,
           groupMessageListener: bob.groupMessageListener,
+          // B3: the group is now RETAINED read-only on self-removal, so the
+          // drain's early-stop is keyed on self no longer being an active
+          // member (not on the group vanishing) — which needs the same
+          // `selfPeerId` every production drain call site already passes.
+          selfPeerId: bob.peerId,
         );
 
         expect(removedGroups, contains(groupId));
-        expect(await bob.groupRepo.getGroup(groupId), isNull);
+        // B3: the quiet group is RETAINED read-only (was hard-deleted). Bob is
+        // no longer an active member and keys are gone, but the group row and
+        // the remaining members persist, and a visible removal message stands
+        // in for the previously-purged content.
+        expect(await bob.groupRepo.getGroup(groupId), isNotNull);
+        expect(await bob.groupRepo.getMember(groupId, bob.peerId), isNull);
+        expect(await bob.groupRepo.getMember(groupId, admin.peerId), isNotNull);
+        expect(await bob.groupRepo.getLatestKey(groupId), isNull);
         expect(bob.bridge.commandLog, contains('group:leave'));
-        expect(await bob.loadGroupMessages(groupId), isEmpty);
+        final retainedMessages = await bob.loadGroupMessages(groupId);
+        expect(
+          retainedMessages.map((message) => message.text),
+          ['Admin removed Bob'],
+          reason:
+              'Removed member keeps a visible removal timeline message, no group content',
+        );
 
         final (result, message) = await bob.sendGroupMessageViaBridge(
           groupId: groupId,
           text: 'Should not send after offline removal',
         );
 
-        expect(result, SendGroupMessageResult.groupNotFound);
+        // B3: the group is retained, so a post-removal send is rejected as
+        // unauthorized (sender no longer a configured member) rather than
+        // groupNotFound — the removed member still CANNOT send.
+        expect(result, SendGroupMessageResult.unauthorized);
         expect(message, isNull);
         expect(
           bob.bridge.commandLog.where((command) => command == 'group:publish'),

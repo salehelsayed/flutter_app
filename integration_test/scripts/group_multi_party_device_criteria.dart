@@ -69,6 +69,11 @@ const _privateReactionRoundtripRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_reaction_roundtrip',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _privateMediaReactionRoundtripRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_media_reaction_roundtrip',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privateRemovedReactionRejectedRequirement =
     GroupMultiPartyScenarioRequirement(
       scenario: 'private_removed_reaction_rejected',
@@ -92,6 +97,11 @@ const _privateRelayOnlyDeliveryRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_relay_only_delivery',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _privateStaleRosterRecipientOmissionRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_stale_roster_recipient_omission',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privatePartitionReaddHealRequirement =
     GroupMultiPartyScenarioRequirement(
       scenario: 'private_partition_readd_heal',
@@ -234,6 +244,16 @@ const _privateNonFriendMemberDeliveryRequirement =
       scenario: 'private_non_friend_member_delivery',
       roles: <String>['alice', 'bob', 'dana'],
     );
+const _privateOnlineDissolveConvergenceRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_online_dissolve_convergence',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
+const _privateVoluntaryLeaveConvergenceRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_voluntary_leave_convergence',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privateAdminRoleTransferDeliveryRequirement =
     GroupMultiPartyScenarioRequirement(
       scenario: 'private_admin_role_transfer_delivery',
@@ -248,6 +268,11 @@ const _privateAdminDemotionEnforcementRequirement =
     GroupMultiPartyScenarioRequirement(
       scenario: 'private_admin_demotion_enforcement',
       roles: <String>['alice', 'bob', 'charlie', 'dana'],
+    );
+const _privateOverrideRemovalNonconvergenceRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_override_removal_nonconvergence',
+      roles: <String>['alice', 'bob', 'charlie'],
     );
 const _regressionGroupAdminPermissionsFourUsersRequirement =
     GroupMultiPartyScenarioRequirement(
@@ -501,6 +526,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'pl012': _pl012Requirement,
   'private_abc_create': _privateAbcCreateRequirement,
   'private_reaction_roundtrip': _privateReactionRoundtripRequirement,
+  'private_media_reaction_roundtrip':
+      _privateMediaReactionRoundtripRequirement,
   'private_removed_reaction_rejected':
       _privateRemovedReactionRejectedRequirement,
   'private_never_member_publish_rejected':
@@ -509,6 +536,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
       _privateRemovedOldKeyPublishRejectedRequirement,
   'private_full_mesh_online': _privateFullMeshOnlineRequirement,
   'private_relay_only_delivery': _privateRelayOnlyDeliveryRequirement,
+  'private_stale_roster_recipient_omission':
+      _privateStaleRosterRecipientOmissionRequirement,
   'private_partition_readd_heal': _privatePartitionReaddHealRequirement,
   'private_relay_reconnect_group_recovery':
       _privateRelayReconnectGroupRecoveryRequirement,
@@ -547,12 +576,18 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'private_partial_key_distribution': _privatePartialKeyDistributionRequirement,
   'private_non_friend_member_delivery':
       _privateNonFriendMemberDeliveryRequirement,
+  'private_online_dissolve_convergence':
+      _privateOnlineDissolveConvergenceRequirement,
+  'private_voluntary_leave_convergence':
+      _privateVoluntaryLeaveConvergenceRequirement,
   'private_admin_role_transfer_delivery':
       _privateAdminRoleTransferDeliveryRequirement,
   'private_admin_metadata_intro_photo_convergence':
       _privateAdminMetadataIntroPhotoConvergenceRequirement,
   'private_admin_demotion_enforcement':
       _privateAdminDemotionEnforcementRequirement,
+  'private_override_removal_nonconvergence':
+      _privateOverrideRemovalNonconvergenceRequirement,
   'regression_group_admin_permissions_and_message_reliability_four_users':
       _regressionGroupAdminPermissionsFourUsersRequirement,
   'scenario7_group_invite_stale_metadata_recovery':
@@ -788,6 +823,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
             requirement.scenario == 'gm020' ||
             requirement.scenario == 'gm034' ||
             requirement.scenario == 'private_history_retention' ||
+            requirement.scenario == 'private_voluntary_leave_convergence' ||
             requirement.scenario == 'private_invite_terminal_states' ||
             requirement.scenario ==
                 'private_removed_old_key_publish_rejected' ||
@@ -1017,6 +1053,44 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
           failures.add('$role: RA-013 membership includes Dana account');
         }
       }
+    } else if (requirement.scenario == 'private_voluntary_leave_convergence') {
+      // H-01: Charlie voluntarily leaves; alice (creator) + bob (remaining)
+      // converge to {alice, bob} and must EXCLUDE charlie. Charlie hard-deletes
+      // the group locally, so it carries no roster (the strong end-state is
+      // asserted by _validateVoluntaryLeaveConvergenceProof). The generic
+      // everyone-has-everyone convergence check is wrong here — exactly as for
+      // the member-removal scenarios above — so model the post-leave roster.
+      final remainingPeerIds = <String>{
+        peerIdByRole['alice']!,
+        peerIdByRole['bob']!,
+      };
+      final leaverPeerId = peerIdByRole['charlie']!;
+      for (final role in const <String>['alice', 'bob']) {
+        final verdict = byRole[role];
+        if (verdict == null) continue;
+        final members = _activeMemberPeerIds(verdict).toSet();
+        final missingMembers = remainingPeerIds.difference(members);
+        if (missingMembers.isNotEmpty) {
+          failures.add(
+            '$role: incomplete H-01 membership convergence, missing '
+            '${missingMembers.join(', ')}',
+          );
+        }
+        if (members.contains(leaverPeerId)) {
+          failures.add(
+            '$role: H-01 roster still includes charlie after voluntary leave',
+          );
+        }
+      }
+    } else if (requirement.scenario ==
+            'private_override_removal_nonconvergence' ||
+        requirement.scenario == 'private_stale_roster_recipient_omission') {
+      // Divergence by design: C07 (a non-admin writer's removal is rejected by
+      // receivers, so bob excludes the removed member while alice + charlie
+      // retain it) and B02 (the sender corrupts its own local roster to omit a
+      // member) intentionally leave rosters non-converged. Their own
+      // per-scenario validators assert the expected divergence/omission, so the
+      // generic all-rosters-must-converge check must NOT run for them.
     } else {
       for (final role in requirement.roles) {
         final verdict = byRole[role];
@@ -1870,6 +1944,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceReactionTarget',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_media_reaction_roundtrip':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceMediaReactionTarget',
           senderRole: 'alice',
           receiverRoles: <String>['bob', 'charlie'],
         ),
@@ -3156,6 +3238,11 @@ void _validateScenarioProofFields({
     _validatePl009ReactionRoundtripProof(byRole: byRole, failures: failures);
     return;
   }
+
+  if (scenario == 'private_media_reaction_roundtrip') {
+    _validateL01MediaReactionRoundtripProof(byRole: byRole, failures: failures);
+    return;
+  }
   if (scenario == 'private_removed_reaction_rejected') {
     _validatePl010RemovedReactionProof(
       byRole: byRole,
@@ -3418,8 +3505,35 @@ void _validateScenarioProofFields({
     _validateUp011MutedDeliveryProof(byRole: byRole, failures: failures);
     return;
   }
+  if (scenario == 'private_stale_roster_recipient_omission') {
+    _validatePrivateStaleRosterRecipientOmissionProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+
   if (scenario == 'private_non_friend_member_delivery') {
     _validateMl016NonFriendDeliveryProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+
+  if (scenario == 'private_online_dissolve_convergence') {
+    _validateI01DissolveConvergenceProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+
+  if (scenario == 'private_voluntary_leave_convergence') {
+    _validateVoluntaryLeaveConvergenceProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
       failures: failures,
@@ -3459,6 +3573,15 @@ void _validateScenarioProofFields({
     );
     return;
   }
+  if (scenario == 'private_override_removal_nonconvergence') {
+    _validatePrivateOverrideRemovalNonconvergenceProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
+    return;
+  }
+
   if (scenario == 'private_admin_metadata_intro_photo_convergence') {
     _validatePromptGroupMessagingProof(
       byRole: byRole,
@@ -5277,6 +5400,88 @@ void _validatePl012MediaSchemaProof({
 
     if (!mediaOk(entryFor(role, 'receivedMessages'))) {
       failures.add('$role: $proofName received variant descriptor mismatch');
+    }
+  }
+}
+
+void _validateL01MediaReactionRoundtripProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'l01MediaReactionRoundtripProof';
+  final aliceSent = _mapList(byRole['alice']?['sentMessages'])
+      .where(
+        (entry) => _stringValue(entry['key']) == 'aliceMediaReactionTarget',
+      )
+      .toList(growable: false);
+  final targetMessageId = aliceSent.length == 1
+      ? _stringValue(aliceSent.single['messageId'])
+      : null;
+  if (targetMessageId == null || targetMessageId.isEmpty) {
+    failures.add('alice: missing L-01 aliceMediaReactionTarget sent message');
+  }
+  if (aliceSent.length == 1 &&
+      (_intValue(aliceSent.single['mediaAttachmentCount']) ?? 0) < 1) {
+    failures.add('alice: L-01 reaction target must carry a media attachment');
+  }
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'L-01') {
+      failures.add('$role: $proofName.rowId must be L-01');
+    }
+    if (_stringValue(proof['scenario']) != 'private_media_reaction_roundtrip') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    final activeRoles = _stringList(proof['activeRoles']).toSet();
+    for (final expectedRole in const <String>['alice', 'bob', 'charlie']) {
+      if (!activeRoles.contains(expectedRole)) {
+        failures.add('$role: $proofName.activeRoles missing $expectedRole');
+      }
+    }
+    if (targetMessageId != null &&
+        _stringValue(proof['targetMessageId']) != targetMessageId) {
+      failures.add('$role: $proofName targetMessageId mismatch');
+    }
+    if (proof['targetIsMedia'] != true ||
+        (_intValue(proof['targetMediaCount']) ?? 0) < 1) {
+      failures.add('$role: L-01 reaction target must be a media message');
+    }
+    if (_stringValue(proof['reactorRole']) != 'bob') {
+      failures.add('$role: $proofName.reactorRole must be bob');
+    }
+    if (_stringValue(proof['reactionEmoji']) == null ||
+        _stringValue(proof['reactionEmoji'])!.isEmpty) {
+      failures.add('$role: $proofName missing reactionEmoji');
+    }
+    if (_stringValue(proof['reactionOutcome']) != 'success' ||
+        proof['reactionAccepted'] != true) {
+      failures.add('$role: L-01 Bob reaction must publish successfully');
+    }
+    if (_stringValue(proof['observedByRole']) != role) {
+      failures.add('$role: $proofName observedByRole mismatch');
+    }
+    if (proof['appliedOnceToTarget'] != true ||
+        _intValue(proof['persistedReactionCount']) != 1) {
+      failures.add(
+        '$role: L-01 reaction must apply exactly once to the media target',
+      );
+    }
+    if ((role == 'alice' || role == 'charlie') &&
+        proof['receivedViaGroupReactionStream'] != true) {
+      failures.add(
+        '$role: L-01 reaction must arrive through the group reaction stream',
+      );
+    }
+    if (proof['aliceObservedSignal'] != true ||
+        proof['charlieObservedSignal'] != true) {
+      failures.add(
+        '$role: L-01 must prove Alice and Charlie observed Bob reaction',
+      );
     }
   }
 }
@@ -7891,6 +8096,317 @@ void _validateUp011MutedDeliveryProof({
   final finalEpoch = _intValue(bobProof['finalEpoch']);
   if (finalEpoch == null || finalEpoch < 2) {
     failures.add('bob: $proofName.finalEpoch must be >= 2');
+  }
+}
+
+void _validateVoluntaryLeaveConvergenceProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'h01VoluntaryLeaveConvergenceProof';
+  final charliePeerId = peerIdByRole['charlie'];
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'H-01') {
+      failures.add('$role: $proofName.rowId must be H-01');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_voluntary_leave_convergence') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    for (final field in const <String>[
+      'charlieExcludedFromRoster',
+      'leaveTimelineRendered',
+      'leaveWasSilent',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  // Forward secrecy is now driven by the remaining creator, not the leaver: the
+  // departing writer leaves best-effort (rotationDeferred), and alice re-keys on
+  // receipt while bob converges to the new epoch. So keyEpochAdvanced is proven
+  // on alice + bob, and the leaver (charlie) proves the deferral instead.
+  for (final role in const <String>['alice', 'bob']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) continue;
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'keyEpochAdvanced',
+      failures: failures,
+    );
+  }
+  final charlieKeyProof = _mapValue(byRole['charlie']?[proofName]);
+  if (charlieKeyProof != null) {
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieKeyProof,
+      field: 'rotationDeferred',
+      failures: failures,
+    );
+  }
+
+  // alice + bob: charlie must be dropped from the active roster.
+  for (final role in const <String>['alice', 'bob']) {
+    final members = _stringList(byRole[role]?['memberPeerIds']).toSet();
+    if (charliePeerId != null && members.contains(charliePeerId)) {
+      failures.add('$role: $proofName roster still contains charlie');
+    }
+  }
+
+  // charlie (the leaver): the locally-rendered timeline is source-verified to
+  // read 'X left the group' (actor == subject), and charlie hard-deletes the
+  // group locally. The receiver render path (alice/bob) is validated only for
+  // roster exclusion + a leave-timeline row, not the exact text.
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  if (charlieProof != null) {
+    final leaveText = _stringValue(charlieProof['leaveTimelineText']);
+    if (leaveText != null && !leaveText.contains('left the group')) {
+      failures.add(
+        'charlie: $proofName.leaveTimelineText must contain "left the group"',
+      );
+    }
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'groupHardDeletedLocally',
+      failures: failures,
+    );
+  }
+}
+
+// C07 proof validator modeled on _validateMl016NonFriendDeliveryProof.
+// The trailing DIVERGENCE check is the load-bearing assertion: it PASSES only
+// when divergence is observed (bob excludes the removed member; alice + charlie
+// retain it), documenting the sender/receiver permission-gate asymmetry.
+void _validatePrivateOverrideRemovalNonconvergenceProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'c07OverrideRemovalNonconvergenceProof';
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'C07') {
+      failures.add('$role: $proofName.rowId must be C07');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_override_removal_nonconvergence') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  if (aliceProof == null || bobProof == null || charlieProof == null) {
+    return;
+  }
+
+  // alice (admin) granted the override and must REJECT bob's writer removal.
+  for (final field in const <String>[
+    'grantedBobRemoveOverride',
+    'rejectedWriterRemoval',
+    'stillSeesRemovedMember',
+    'stillSeesRemover',
+  ]) {
+    _requireTrueProof(
+      role: 'alice',
+      proofName: proofName,
+      proof: aliceProof,
+      field: field,
+      failures: failures,
+    );
+  }
+
+  // bob (writer) carries the override and applied the removal LOCALLY.
+  for (final field in const <String>[
+    'bobIsWriter',
+    'bobHasRemoveOverride',
+    'localRemovalApplied',
+    'excludesRemovedMemberLocally',
+  ]) {
+    _requireTrueProof(
+      role: 'bob',
+      proofName: proofName,
+      proof: bobProof,
+      field: field,
+      failures: failures,
+    );
+  }
+
+  // charlie (target) must REJECT a non-admin writer removal of itself.
+  for (final field in const <String>[
+    'rejectedWriterRemoval',
+    'selfStillMember',
+    'groupPresentAfterRemoval',
+  ]) {
+    _requireTrueProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: field,
+      failures: failures,
+    );
+  }
+
+  // DIVERGENCE assertion (load-bearing): bob's local roster excludes the member
+  // while alice and charlie retain it. If all three converged, the documented
+  // asymmetry no longer holds and the scenario premise is broken.
+  final bobExcludes = bobProof['excludesRemovedMemberLocally'] == true;
+  final aliceRetains = aliceProof['stillSeesRemovedMember'] == true;
+  final charlieRetains = charlieProof['selfStillMember'] == true;
+  if (!(bobExcludes && aliceRetains && charlieRetains)) {
+    failures.add(
+      'C07: expected roster DIVERGENCE (bob excludes removed member; '
+      'alice + charlie retain) but observed '
+      'bobExcludes=$bobExcludes aliceRetains=$aliceRetains '
+      'charlieRetains=$charlieRetains',
+    );
+  }
+}
+
+// B-02 (private_stale_roster_recipient_omission) proof validator.
+// RED BY DESIGN: asserts the CORRECT behavior that bob STILL receives charlie's
+// message even though charlie's local roster (and thus the relay
+// recipientPeerIds + floodPublish set) omitted bob. On HEAD this is false, so
+// this validator appends a failure -> the scenario fails as intended.
+void _validatePrivateStaleRosterRecipientOmissionProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'staleRosterRecipientOmissionProof';
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'B-02') {
+      failures.add('$role: $proofName.rowId must be B-02');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_stale_roster_recipient_omission') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    // Precondition: bob was genuinely omitted from charlie's sender roster.
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'bobOmittedFromCharlieRoster',
+      failures: failures,
+    );
+    // CORRECT behavior (RED on HEAD): bob must still eventually receive.
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'bobMessageReceived',
+      failures: failures,
+    );
+  }
+}
+
+void _validateI01DissolveConvergenceProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'i01DissolveConvergenceProof';
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing $proofName');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'I-01') {
+      failures.add('$role: $proofName.rowId must be I-01');
+    }
+    if (_stringValue(proof['scenario']) !=
+        'private_online_dissolve_convergence') {
+      failures.add('$role: $proofName.scenario mismatch');
+    }
+    if (_stringValue(proof['proofRole']) != role) {
+      failures.add('$role: $proofName.proofRole mismatch');
+    }
+    // Convergence: every role must end with the group locally dissolved.
+    _requireTrueProof(
+      role: role,
+      proofName: proofName,
+      proof: proof,
+      field: 'groupDissolvedLocally',
+      failures: failures,
+    );
+  }
+
+  // Alice is the dissolving admin: she must have succeeded and signed a binding.
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'dissolveResultSuccess',
+      'actorBindingSigned',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  // Bob and Charlie are receivers: each must have flipped to dissolved/read-only
+  // in real time and recorded the terminal group_dissolved timeline row.
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      continue;
+    }
+    for (final field in const <String>[
+      'readOnlyAfterDissolve',
+      'dissolveTimelineRowPresent',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
   }
 }
 
@@ -12947,11 +13463,10 @@ void _validateGe002RemovalContinuityProof({
       field: 'removedCharlie',
       failures: failures,
     );
-    _requireTrueProof(
+    _requireDurableOrLiveTopicProof(
       role: 'alice',
       proofName: 'ge002RemovalContinuityProof',
       proof: aliceProof,
-      field: 'actualDurablePayloadProof',
       failures: failures,
     );
     _requireTrueProof(
@@ -13112,11 +13627,10 @@ void _validateGe003RemainingPairProof({
   if (bobProof == null) {
     failures.add('bob: missing GE-003 remaining pair proof fields');
   } else {
-    _requireTrueProof(
+    _requireDurableOrLiveTopicProof(
       role: 'bob',
       proofName: 'ge003RemainingPairProof',
       proof: bobProof,
-      field: 'actualDurablePayloadProof',
       failures: failures,
     );
     _requireTrueProof(
@@ -13230,11 +13744,10 @@ void _validateGe004ReaddExchangeProof({
       field: 'memberListIncludesAll',
       failures: failures,
     );
-    _requireTrueProof(
+    _requireDurableOrLiveTopicProof(
       role: role,
       proofName: proofName,
       proof: proof,
-      field: 'actualDurablePayloadProof',
       failures: failures,
     );
     _requireIntProof(
@@ -13283,15 +13796,9 @@ void _validateGe004ReaddExchangeProof({
       );
     }
 
-    _requireSentActualDurablePayloadProof(
-      role: role,
-      key: sentKey,
-      byRole: byRole,
-      failures: failures,
-    );
     final senderPeerId = peerIdByRole[role];
     if (senderPeerId != null && expectedMembers.length == 3) {
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: role,
         key: sentKey,
         expectedPeerIds: expectedMembers.difference(<String>{senderPeerId}),
@@ -13386,11 +13893,10 @@ void _validateGe005RemoveReaddLoopProof({
 
   final aliceProof = _mapValue(byRole['alice']?[proofName]);
   if (aliceProof != null) {
-    _requireTrueProof(
+    _requireDurableOrLiveTopicProof(
       role: 'alice',
       proofName: proofName,
       proof: aliceProof,
-      field: 'actualDurablePayloadProof',
       failures: failures,
     );
     _requireTrueProof(
@@ -13436,11 +13942,10 @@ void _validateGe005RemoveReaddLoopProof({
 
   final bobProof = _mapValue(byRole['bob']?[proofName]);
   if (bobProof != null) {
-    _requireTrueProof(
+    _requireDurableOrLiveTopicProof(
       role: 'bob',
       proofName: proofName,
       proof: bobProof,
-      field: 'actualDurablePayloadProof',
       failures: failures,
     );
     _requireTrueProof(
@@ -13522,13 +14027,7 @@ void _validateGe005RemoveReaddLoopProof({
 
   if (bobPeerId != null) {
     for (final key in removedKeys) {
-      _requireSentActualDurablePayloadProof(
-        role: 'alice',
-        key: key,
-        byRole: byRole,
-        failures: failures,
-      );
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: 'alice',
         key: key,
         expectedPeerIds: <String>{bobPeerId},
@@ -13539,13 +14038,7 @@ void _validateGe005RemoveReaddLoopProof({
   }
   if (alicePeerId != null && charliePeerId != null) {
     for (final key in readdKeys) {
-      _requireSentActualDurablePayloadProof(
-        role: 'bob',
-        key: key,
-        byRole: byRole,
-        failures: failures,
-      );
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: 'bob',
         key: key,
         expectedPeerIds: <String>{alicePeerId, charliePeerId},
@@ -14729,6 +15222,7 @@ void _validateGe006OfflineReaddProof({
   final aliceProof = _mapValue(byRole['alice']?[proofName]);
   final bobProof = _mapValue(byRole['bob']?[proofName]);
   final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  final bobPeerId = peerIdByRole['bob'];
   final charliePeerId = peerIdByRole['charlie'];
 
   if (aliceProof == null) {
@@ -14754,6 +15248,21 @@ void _validateGe006OfflineReaddProof({
     if (charliePeerId != null &&
         _stringValue(aliceProof['removedPeerId']) != charliePeerId) {
       failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+    if (bobPeerId != null && charliePeerId != null) {
+      _requireSentActualDurablePayloadProof(
+        role: 'alice',
+        key: 'aliceGe006PostReadd',
+        byRole: byRole,
+        failures: failures,
+      );
+      _requireSentRecipientPeerIds(
+        role: 'alice',
+        key: 'aliceGe006PostReadd',
+        expectedPeerIds: <String>{bobPeerId, charliePeerId},
+        byRole: byRole,
+        failures: failures,
+      );
     }
   }
 
@@ -14846,6 +15355,32 @@ void _validateGe007OfflineObserverProof({
   final charlieProof = _mapValue(byRole['charlie']?[proofName]);
   final bobPeerId = peerIdByRole['bob'];
 
+  void requireAliceDurableBobReplay(String key) {
+    _requireSentActualDurablePayloadProof(
+      role: 'alice',
+      key: key,
+      byRole: byRole,
+      failures: failures,
+    );
+    if (bobPeerId == null) return;
+    final aliceVerdict = byRole['alice'];
+    if (aliceVerdict == null) return;
+    final sentEntries = _mapList(aliceVerdict['sentMessages'])
+        .where((entry) => _stringValue(entry['key']) == key)
+        .toList(growable: false);
+    if (sentEntries.length != 1) return;
+    final recipientPeerIds = _stringList(
+      sentEntries.single['recipientPeerIds'],
+    );
+    if (recipientPeerIds.isEmpty) {
+      failures.add('alice: sent $key missing recipientPeerIds');
+      return;
+    }
+    if (!recipientPeerIds.toSet().contains(bobPeerId)) {
+      failures.add('alice: sent $key recipientPeerIds missing $bobPeerId');
+    }
+  }
+
   if (aliceProof == null) {
     failures.add('alice: missing GE-007 offline observer proof fields');
   } else {
@@ -14871,6 +15406,8 @@ void _validateGe007OfflineObserverProof({
       failures.add('alice: $proofName.offlinePeerId must be bob');
     }
   }
+  requireAliceDurableBobReplay('aliceGe007RemovedWindow');
+  requireAliceDurableBobReplay('aliceGe007PostReadd');
 
   if (bobProof == null) {
     failures.add('bob: missing GE-007 offline observer proof fields');
@@ -15298,7 +15835,7 @@ void _validateGe008SendStormProof({
 
   if (alicePeerId != null && bobPeerId != null && charliePeerId != null) {
     for (final key in <String>[..._ge008AlicePreKeys, ..._ge008AlicePostKeys]) {
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: 'alice',
         key: key,
         expectedPeerIds: <String>{bobPeerId, charliePeerId},
@@ -15307,7 +15844,7 @@ void _validateGe008SendStormProof({
       );
     }
     for (final key in _ge008AliceRemovedKeys) {
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: 'alice',
         key: key,
         expectedPeerIds: <String>{bobPeerId},
@@ -15316,7 +15853,7 @@ void _validateGe008SendStormProof({
       );
     }
     for (final key in <String>[..._ge008BobPreKeys, ..._ge008BobPostKeys]) {
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: 'bob',
         key: key,
         expectedPeerIds: <String>{alicePeerId, charliePeerId},
@@ -15325,7 +15862,7 @@ void _validateGe008SendStormProof({
       );
     }
     for (final key in _ge008BobRemovedKeys) {
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: 'bob',
         key: key,
         expectedPeerIds: <String>{alicePeerId},
@@ -15337,33 +15874,10 @@ void _validateGe008SendStormProof({
       ..._ge008CharliePreKeys,
       ..._ge008CharliePostKeys,
     ]) {
-      _requireSentRecipientPeerIds(
+      _requireSentDurableOrLiveRecipientProof(
         role: 'charlie',
         key: key,
         expectedPeerIds: <String>{alicePeerId, bobPeerId},
-        byRole: byRole,
-        failures: failures,
-      );
-    }
-  }
-
-  for (final entry in const <String, List<String>>{
-    'alice': <String>[
-      ..._ge008AlicePreKeys,
-      ..._ge008AliceRemovedKeys,
-      ..._ge008AlicePostKeys,
-    ],
-    'bob': <String>[
-      ..._ge008BobPreKeys,
-      ..._ge008BobRemovedKeys,
-      ..._ge008BobPostKeys,
-    ],
-    'charlie': <String>[..._ge008CharliePreKeys, ..._ge008CharliePostKeys],
-  }.entries) {
-    for (final key in entry.value) {
-      _requireSentActualDurablePayloadProof(
-        role: entry.key,
-        key: key,
         byRole: byRole,
         failures: failures,
       );
@@ -23294,7 +23808,7 @@ void _validateGm017StaleSubscriptionValidationProof({
   }
 
   if (bobPeerId != null) {
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'alice',
       key: 'aliceAfterStaleCharlieReject',
       expectedPeerIds: <String>{bobPeerId},
@@ -25849,6 +26363,21 @@ void _requireTrueProof({
   }
 }
 
+void _requireDurableOrLiveTopicProof({
+  required String role,
+  required String proofName,
+  required Map<String, dynamic> proof,
+  required List<String> failures,
+}) {
+  if (proof['actualDurablePayloadProof'] == true ||
+      proof['actualLiveTopicPeerProof'] == true) {
+    return;
+  }
+  failures.add(
+    '$role: $proofName.actualDurablePayloadProof or actualLiveTopicPeerProof must be true',
+  );
+}
+
 void _requireFalseProof({
   required String role,
   required String proofName,
@@ -25940,11 +26469,70 @@ void _requireSentActualDurablePayloadProof({
   }
 }
 
+void _requireSentDurableOrLiveRecipientProof({
+  required String role,
+  required String key,
+  required Set<String> expectedPeerIds,
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  final verdict = byRole[role];
+  if (verdict == null) return;
+  final sentEntries = _mapList(
+    verdict['sentMessages'],
+  ).where((entry) => _stringValue(entry['key']) == key).toList(growable: false);
+  if (sentEntries.length != 1) return;
+
+  final sent = sentEntries.single;
+  if (sent['actualDurablePayloadProof'] == true) {
+    _requireSentRecipientPeerIds(
+      role: role,
+      key: key,
+      expectedPeerIds: expectedPeerIds,
+      byRole: byRole,
+      failures: failures,
+    );
+    return;
+  }
+
+  if (sent['actualTopicPeerProof'] == true) {
+    if (_stringValue(sent['deliveryMode']) != 'live_only') {
+      failures.add(
+        '$role: sent $key deliveryMode must be live_only without durable proof',
+      );
+    }
+    if (sent['inboxStored'] == true) {
+      failures.add(
+        '$role: sent $key inboxStored must be false without durable proof',
+      );
+    }
+    final topicPeers = _requireSentLiveTopicPeerEvidence(
+      role: role,
+      key: key,
+      minTopicPeers: expectedPeerIds.length,
+      byRole: byRole,
+      failures: failures,
+    );
+    if (topicPeers != null && topicPeers < expectedPeerIds.length) {
+      failures.add(
+        '$role: sent $key topicPeers must cover '
+        '${expectedPeerIds.length} recipients',
+      );
+    }
+    return;
+  }
+
+  failures.add(
+    '$role: sent $key must report actual durable payload proof or live topic peer proof',
+  );
+}
+
 int? _requireSentLiveTopicPeerEvidence({
   required String role,
   required String key,
   required Map<String, Map<String, dynamic>> byRole,
   required List<String> failures,
+  int minTopicPeers = 2,
 }) {
   final verdict = byRole[role];
   if (verdict == null) return null;
@@ -25966,8 +26554,8 @@ int? _requireSentLiveTopicPeerEvidence({
     failures.add('$role: sent $key missing topicPeers');
     return null;
   }
-  if (topicPeers < 2) {
-    failures.add('$role: sent $key topicPeers must be >= 2');
+  if (topicPeers < minTopicPeers) {
+    failures.add('$role: sent $key topicPeers must be >= $minTopicPeers');
   }
   return topicPeers;
 }

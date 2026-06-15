@@ -8,7 +8,10 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 
 - Canonical loading-state baseline file: `integration_test/loading_states_smoke_test.dart`
 - `test/features/loading_states_smoke_test.dart` stays out of the Baseline Gate. It is a lighter widget/render smoke, not the startup-wiring smoke.
-- The 1:1 Reliability Gate stays at 9 tests.
+- The 1:1 Reliability Gate includes the 9 historical integration-smoke files,
+  the 14 Dart host files from
+  `111-one-to-one-p0-silent-message-loss-test-inventory.md`, and the Doc 115
+  relay-inbox custody, delivery-receipt, retry, router, and migration pins.
 - `test/features/conversation/integration/quote_reply_thread_test.dart` stays in the 1:1 gate because quoted-message persistence rides the same shared send/persist path that Session 2 and Session 3 will touch.
 - Report 78 added encrypted v2 retry-envelope duplicate proof inside
   `test/features/conversation/integration/two_user_message_exchange_test.dart`,
@@ -52,6 +55,63 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
   fixture-backed group real-network command. It requires `FLUTTER_DEVICE_ID`
   and passes `MKNOON_REQUIRE_MULTI_RELAY=true`, so missing relay config fails
   clearly.
+- `test/features/push/infrastructure/push_token_store_impl_test.dart` carries
+  the Move Account MIG-003 device-bound push-token clear/regenerate storage
+  policy. It stays outside the frozen named gates and should be run directly
+  when push-token persistence or migration secure-storage policy changes.
+- `test/features/account_migration/application/migration_file_manifest_builder_test.dart`,
+  `migration_file_manifest_validator_test.dart`,
+  `migration_storage_preflight_test.dart`, and
+  `migration_file_import_cleanup_test.dart` carry the Move Account MIG-005
+  app-owned file manifest, media metadata validation, storage preflight, and
+  staged file cleanup proof. They stay classified by the feature-local direct
+  suite rule and should be run directly when migration file manifest or storage
+  preflight behavior changes.
+- `test/features/account_migration/application/migration_group_manifest_builder_test.dart`
+  and `migration_group_manifest_validator_test.dart` carry the Move Account
+  MIG-006 group manifest and validation proof. They stay classified by the
+  feature-local direct suite rule and should be run directly when migration
+  group manifest, retained group-key, shared mirror, pending draft, pending
+  key repair, pending membership, welcome tombstone, inbox cursor, or moved
+  account group-device policy behavior changes.
+- `test/features/account_migration/application/migration_transfer_manifest_test.dart`,
+  `migration_segment_crypto_test.dart`,
+  `migration_transfer_checkpoint_store_test.dart`, and
+  `migration_segmented_transfer_service_test.dart` carry the Move Account
+  MIG-007 migration-specific segmented transfer proof. They stay classified by
+  the feature-local direct suite rule and should be run directly when migration
+  transfer manifesting, segment crypto, checkpoint/resume, or migration route
+  isolation behavior changes.
+- `test/features/account_migration/application/migration_cutover_coordinator_test.dart`
+  carries the Move Account MIG-008 durable cutover and server lease-cleanup
+  proof. It stays classified by the feature-local direct suite rule and should
+  be run directly when account migration cutover ordering, old-block proof,
+  new-active commit, rendezvous unregister, inbox token unregister, or stale
+  push-token cleanup behavior changes.
+- `test/features/account_migration/application/account_migration_runtime_network_gate_test.dart`
+  carries the Move Account MIG-009 migrated-out runtime network gate proof. It
+  stays classified by the feature-local direct suite rule and should be run
+  directly when account authority gating is threaded into startup, resume, P2P,
+  push, inbox drain, group recovery, or retrier side-effect boundaries.
+- `test/features/account_migration/application/migration_pending_work_manifest_builder_test.dart`
+  and `migration_pending_work_manifest_validator_test.dart` carry the Move
+  Account MIG-010 pending-work ownership and unsafe-row policy proof. They stay
+  classified by the feature-local direct suite rule and should be run directly
+  when migration pending-work ownership, new-phone-only resume policy, unsafe
+  row blocking, pending upload file references, or sensitive pending-payload
+  exclusion behavior changes.
+- `test/features/account_migration/presentation/account_migration_journey_screen_test.dart`
+  and `account_migration_blocked_screen_test.dart` carry the Move Account
+  MIG-011 host-side journey, migration-specific scanner copy, progress/wake-lock,
+  settings-entry, and migrated-out erase UX proof. They stay classified by the
+  feature-local direct suite rule and should be run directly when migration
+  presentation, QR scanner copy, settings move-account entry, wake-lock
+  foreground behavior, or migrated-out UX changes.
+- `integration_test/migration_database_sqlcipher_capability_test.dart` remains
+  an Optional / manual direct suite, and is also classified in
+  `$run-flutter-reliability-sims move-feature/all` as a Move Account concrete-target
+  integration companion. It is not a group-messaging proof; it stays in the
+  dedicated Move Account reliability scope.
 
 ## Bulk-Classification Policy
 
@@ -61,6 +121,95 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - High-value integration, cross-feature, service, lifecycle, resilience, and orchestration suites must be classified intentionally, even when they stay outside the named gates.
 - Red tests are not removed from a gate definition to make the gate look green. They stay documented as known failures until fixed.
 - When adding a new integration, cross-feature, core-service, lifecycle, resilience, or orchestration test, classify it here and keep `./scripts/run_test_gates.sh completeness-check` green.
+
+## Move Account Gate Capture
+
+Use this section when validating the Move Account / account-migration inventory through the skill-backed broad gates.
+
+Host command plan source:
+
+```bash
+"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-host-gates/scripts/run_host_gates.sh" feature-host-all --list
+"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-host-gates/scripts/run_host_gates.sh" core-host-all --list
+"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-host-gates/scripts/run_host_gates.sh" host-all --list
+```
+
+Host capture:
+
+- `move-feature` captures all 40 dedicated `test/features/account_migration/**/*_test.dart` files, currently 226 declared `test` / `testWidgets` cases, plus the shared lifecycle, push, local-discovery, startup, and P2P move guards listed below.
+- `feature-host-all` and `host-all` capture all 40 dedicated account-migration files plus the shared feature suites under identity, push, QR code, settings, and home.
+- `core-host-all` and `host-all` capture the shared core-side move gates under lifecycle, local-discovery, and P2P services.
+
+Shared host suites that should stay visible in Move Account reviews:
+
+- `test/core/lifecycle/handle_app_resumed_export_pause_recovery_test.dart`
+- `test/core/local_discovery/bonsoir_discovery_service_contract_test.dart`
+- `test/core/services/p2p_service_impl_test.dart`
+- `test/features/identity/application/startup_decision_test.dart`
+- `test/features/identity/presentation/screens/startup_router_recovery_test.dart`
+- `test/features/push/application/background_message_handler_test.dart`
+- `test/features/push/application/push_registration_post_cutover_test.dart`
+- `test/features/qr_code/application/handle_scanned_qr_use_case_test.dart`
+- `test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart`
+- `test/features/settings/presentation/screens/settings_wired_test.dart`
+- `test/features/home/presentation/screens/first_time_experience_wired_test.dart`
+
+Reliability command plan source:
+
+```bash
+"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-reliability-sims/scripts/run_with_devices.sh" move-feature --list
+```
+
+Reliability capture under `move-feature` / `all`:
+
+- `integration_test/account_migration_group_media_durability_simulator_test.dart`
+- `integration_test/account_migration_local_transfer_timeout_simulator_test.dart`
+- `integration_test/account_migration_scale_benchmark_test.dart`
+- `integration_test/migration_database_sqlcipher_capability_test.dart`
+
+The SQLCipher capability test is a Move Account concrete-target integration companion, not a group chat scenario. The Android-to-iOS SQLCipher migration path remains a known acceptance gap outside this same-device probe.
+
+## 111 P0 Silent 1:1 Message Loss Gate Capture
+
+Use this section when validating
+`111-one-to-one-p0-silent-message-loss-test-inventory.md` through the
+skill-backed 1:1 gates.
+
+Host command plan source:
+
+```bash
+"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-host-gates/scripts/run_host_gates.sh" 1to1 --list
+```
+
+Host capture:
+
+- `1to1` captures the 9 historical 1:1 integration-smoke files plus the 14 Dart
+  host files from the 111 inventory. Doc 115 extends the same gate with relay
+  custody, delivery-receipt, retry, router, and migration pins.
+- `host-all`, `feature-host-all`, and `core-host-all` also capture the matching
+  111 Dart files through broad directory discovery.
+
+Reliability command plan source:
+
+```bash
+"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-reliability-sims/scripts/run_with_devices.sh" 1to1 --list
+```
+
+Reliability capture under `1to1` / `all`:
+
+- The 111 inventory did not add a new `integration_test/*.dart` simulator file.
+  The reliability-sim 1:1 scope still captures the existing 1:1 simulator/E2E
+  entrypoints for text, media, voice, notification-open, push-decrypt,
+  routing, cold-start, reconnect, Wi-Fi/relay fallback, and soak coverage.
+
+Non-Flutter companions from the same inventory remain explicit Go gates, not
+Flutter host/simulator gates:
+
+```bash
+(cd go-mknoon && make test)
+(cd go-relay-server && go test ./...)
+(cd go-mknoon && go test -tags integration ./integration/...)
+```
 
 ## Named Gates
 
@@ -85,7 +234,9 @@ Files:
 
 ### 1:1 Reliability Gate
 
-Run when shared 1:1 send, retry, upload, listener, inbox, or feed-originated 1:1 entry points change.
+Run when shared 1:1 send, retry, upload/download, listener, inbox,
+decrypt/key-recovery, contact-key rotation, or feed-originated 1:1 entry
+points change.
 
 Command:
 
@@ -104,6 +255,111 @@ Files:
 - `test/features/conversation/integration/send_then_lock_delivery_test.dart`
 - `test/features/conversation/integration/stuck_sending_recovery_test.dart`
 - `test/features/conversation/integration/quote_reply_thread_test.dart`
+- `test/features/conversation/integration/edit_retry_round_trip_test.dart`
+- `test/core/database/migrations/077_message_relay_custody_test.dart`
+- `test/core/inbox/inbox_round_trip_test.dart`
+- `test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart`
+- `test/core/services/incoming_message_router_test.dart`
+- `test/core/services/pending_message_retrier_upload_ordering_test.dart`
+- `test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart`
+- `test/features/conversation/application/chat_message_listener_test.dart`
+- `test/features/conversation/application/send_chat_message_use_case_test.dart`
+- `test/features/conversation/application/retry_unacked_messages_use_case_test.dart`
+- `test/features/conversation/application/recovered_inbox_chat_disposition_test.dart`
+- `test/features/conversation/application/delivered_status_minting_sites_test.dart`
+- `test/features/conversation/application/delete_message_use_case_test.dart`
+- `test/features/conversation/application/handle_incoming_message_deletion_use_case_test.dart`
+- `test/features/conversation/application/handle_delivery_receipt_use_case_test.dart`
+- `test/features/conversation/application/send_delivery_receipt_use_case_test.dart`
+- `test/features/conversation/application/verify_inbox_custody_use_case_test.dart`
+- `test/core/database/helpers/inbox_staging_db_helpers_test.dart`
+- `test/core/services/p2p_service_impl_test.dart`
+- `test/features/conversation/application/download_media_use_case_test.dart`
+- `test/features/conversation/application/upload_media_use_case_test.dart`
+- `test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart`
+- `test/core/bridge/go_bridge_client_test.dart`
+- `test/core/bridge/p2p_bridge_client_test.dart`
+- `test/features/conversation/application/media_download_slow_transfer_simulator_test.dart`
+- `test/features/contact_request/application/handle_incoming_message_use_case_test.dart`
+- `test/features/contact_request/application/retry_incomplete_key_exchanges_use_case_test.dart`
+- `test/features/conversation/application/post_restore_stale_key_recovery_test.dart`
+- `test/features/contact_request/application/contact_request_listener_test.dart`
+- `test/features/identity/domain/repositories/identity_repository_impl_test.dart`
+
+### 114 LAN Ack-After-Commit Gate Capture
+
+Doc 114 host implementation is covered by focused direct suites plus the
+current 1:1 Reliability Gate:
+
+- `test/core/local_discovery/local_ws_server_test.dart` pins the committed ack
+  wire contract, legacy ack classification, nacks, and raw old-matcher behavior.
+- `test/core/local_discovery/local_ws_durable_ack_integration_test.dart` pins
+  real loopback WebSocket committed-ack custody over a real staging DB,
+  restart replay, quarantine, legacy classification, rejecting nacks, and media
+  envelope preservation.
+- `./scripts/run_test_gates.sh completeness-check` passed on 2026-06-13 with
+	  `841/841` files classified; the new local-discovery file is currently
+	  classified by the core component direct-suite rule.
+- `./scripts/run_reliability_simulations.sh 1to1 --only 16` passed on
+  2026-06-13 after `wifi_relay_fallback_smoke_test.dart` was aligned to DB
+  version 77 and truthful `inboxed` fallback statuses; S1-S4 reported `4/4`
+  passed.
+
+The 114 local-discovery files remain classified by the core component
+direct-suite rule. The coordinated 3-doc program `1to1` array edit is now
+landed through the 115 relay-custody expansion plus the 116 edit-retry
+integration entry below.
+
+### 115 Relay Inbox Custody Gate Capture
+
+Doc 115 host implementation is covered by the expanded 1:1 Reliability Gate
+plus focused Go relay and go-mknoon contract gates:
+
+- The expanded 1:1 gate includes the message relay-custody migration,
+  inbox-staging round trip, resumed-upload ordering, incoming router,
+  pending-message retrier, send/retry, delivery receipt, delete/deletion
+  propagation, recovered-inbox disposition, bridge, media, encryption, and
+  offline inbox round-trip suites that pin the Flutter-side custody contract.
+- Relay server contract companions: `(cd go-relay-server && go test -count=1 ./...)`
+  and focused protocol/backend tests pin full-inbox typed rejection, backend
+  capacity policy, Redis no-trim semantics, metrics, and bootstrap capacity.
+- go-mknoon companions: `(cd go-mknoon && make testpeer)`,
+  `(cd go-mknoon && make verify-bindings)`, focused `node`, `bridge`, and
+  `cmd/testpeer` tests, plus
+  `(cd go-mknoon && go test -tags integration ./integration -run TestInboxStoreFull_TypedRejectionAgainstLocalRelay -count=1)`.
+- Production relay deployment to `mknoun.xyz` is verified for Doc 115
+  (`relay-server v1.5.1`, installed hash
+  `3d732c11f4d4ce4ba72a03d2440571c66f2b183677f4e6c19850bddddffe1bf5`,
+  active service, and SSH-local Doc 115 metrics counters). TestFlight and
+  two-device relay-drain evidence remains unclaimed residual lab proof, not
+  host-synthesized proof.
+
+### 116 Edit Retry Fidelity Gate Capture
+
+Doc 116 host implementation is covered by focused direct suites plus the
+current 1:1 Reliability Gate:
+
+- `test/features/conversation/integration/edit_retry_round_trip_test.dart`
+  pins failed-edit retry convergence so sender and receiver keep the edited
+  text and edited badge semantics after a failed-then-retried edit.
+- `test/features/conversation/application/retry_failed_messages_use_case_test.dart`
+  and `send_chat_message_use_case_test.dart` pin row-derived retry action,
+  no-downgrade writer gates, single-flight retry, settled-row skips, and
+  tombstone retry liveness.
+- `test/features/conversation/application/delete_message_use_case_test.dart`
+  pins the shared deletion-envelope builder and inbox-custody tombstone
+  semantics.
+- `test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart`,
+  `chat_message_listener_test.dart`, and
+  `recovered_inbox_chat_disposition_test.dart` pin receiver duplicate mismatch
+  telemetry, ignored-edit `ok=true` nonce confirmation, and staged ignored-edit
+  replay disposition.
+- The final 116 host closure on 2026-06-13 passed direct P3A/P3B suites,
+	  `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline`,
+	  `./scripts/run_test_gates.sh completeness-check`, `git diff --check`, and
+	  `./graphify-arch/refresh_arch_graph.sh`. The final expanded
+	  `./scripts/run_test_gates.sh 1to1` passed with `+793` after the aggregate
+	  bridge timeout row and send-then-lock 7c stale expectation were closed.
 
 ### Feed / Surface Gate
 
@@ -244,6 +500,64 @@ Command:
 Files:
 
 - `test/features/push/application/push_preview_telemetry_gate_test.dart`
+
+### Move Account Gate (`move-feature`)
+
+Run whenever anything under `lib/features/account_migration/`, the migration
+transport (`lib/core/local_discovery/local_ws_server.dart`), the runtime
+network gate, or the cutover/authority model changes — and ALWAYS before a
+physical-device move test.
+
+Command:
+
+```bash
+./scripts/run_test_gates.sh move-feature
+```
+
+Equivalent skill-backed form:
+
+```bash
+"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-host-gates/scripts/run_host_gates.sh" move-feature
+```
+
+Files: all 40 dedicated `test/features/account_migration/**/*_test.dart`
+files, currently 226 declared tests, including
+`account_migration_end_to_end_test.dart` — the chained host E2E of the shipped
+composition (production bundle source → real in-process `LocalWsServer` HTTP
+wire → production receiver → cutover), with a realistic-scale ~12 MB / 50+
+segment variant.
+
+Shared host files included by the `move-feature` host plan:
+
+- `test/core/lifecycle/handle_app_resumed_export_pause_recovery_test.dart`
+- `test/core/local_discovery/bonsoir_discovery_service_contract_test.dart`
+- `test/core/services/p2p_service_impl_test.dart`
+- `test/features/identity/application/startup_decision_test.dart`
+- `test/features/push/application/push_registration_post_cutover_test.dart`
+
+Device/simulator companion (required pre-step for physical move tests, runs
+the durability + transfer-timeout simulators and the SQLCipher capability
+probe):
+
+```bash
+./scripts/run_test_gates.sh reliability-sim move
+```
+
+Cross-platform SQLCipher portability (spec gap G2, semi-manual two-step —
+the artifact flow documented in
+`integration_test/migration_database_sqlcipher_capability_test.dart`):
+
+```bash
+# 1. Source platform (Android device/emulator), then `adb pull` the dir:
+flutter test integration_test/migration_database_sqlcipher_capability_test.dart \
+  -d <android-device> --dart-define=MIGRATION_PORTABILITY_EXPORT_DIR=/data/local/tmp/mig_portability
+# 2. Target platform (iOS simulator) against the pulled artifact:
+flutter test integration_test/migration_database_sqlcipher_capability_test.dart \
+  -d <ios-sim> --dart-define=MIGRATION_PORTABILITY_FIXTURE_DIR=<pulled-dir>
+```
+
+Run it whenever the SQLCipher plugin or cipher defaults change, and once per
+release that touches the move feature.
 
 Runtime gate definition:
 
@@ -395,6 +709,9 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/integration/group_multi_party_device_criteria_test.dart` | Optional / manual direct suite | PREREQ-GM-MULTI-PARTY-DEVICE-HARNESS host-side guard that multi-party GM proof cannot pass with missing relay env, underspecified roles, sender-only evidence, receiver/sender message tuple mismatches, duplicate persistence, incomplete GM-002 convergence, or missing GM-003 offline catch-up proof |
 | `test/integration/routing_smoke_group_criteria_test.dart` | Optional / manual direct suite | Report 85 host-side guard that the two-simulator group smoke G2/G4/G5/G7/G8 rows cannot pass with pending or sender-only receiver evidence |
 | `integration_test/cold_start_sendable_no_user_action_test.dart` | Optional / manual direct suite | Cold-start sendability check without widening the startup or transport gates |
+| `integration_test/account_migration_group_media_durability_simulator_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` | Move Account MIG-012 group-media durability and relay-free bundleability proof; classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
+| `integration_test/account_migration_local_transfer_timeout_simulator_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` | Move Account local segmented transfer timeout proof: 34-segment near-budget success with monotonic `ACCOUNT_MIGRATION_LOCAL_TRANSFER_SEGMENT_PROGRESS` telemetry plus over-budget typed `localTransferTimedOut` failure with `ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_FAILED` phase diagnostics and no `bundleSourceFailed` mislabel; classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
+| `integration_test/account_migration_scale_benchmark_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` with `--dart-define=MIGRATION_BENCH_MB=<N>` | Move Account P0-7 scale benchmark harness for 200/500/1000 MB Pixel evidence; emits `ACCOUNT_MIGRATION_SCALE_BENCHMARK` structured metrics and remains classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
 | `integration_test/cold_start_message_render_simulator_test.dart` | Optional / manual direct suite | Simulator-bound Orbit render smoke for previously received 1:1 and group message bodies after a cold restart |
 | `integration_test/conversation_wired_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation screen wiring |
 | `integration_test/conversation_wired_subscription_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation subscription churn |
@@ -408,6 +725,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `integration_test/group_new_member_media_simulator_proof_test.dart` | Optional / manual direct suite | Report 89 simulator-backed new discussion member video and voice render/play/reopen proof; Report 90 GMAR-005 configured-simulator proof without widening frozen named gates |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/media_message_journey_e2e_test.dart` | Optional / manual direct suite | End-to-end media delivery journey coverage that stays outside the frozen named gates; Report 90 GMAR-005 runs it directly as final media-journey evidence |
+| `integration_test/migration_database_sqlcipher_capability_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` | Move Account MIG-004 plugin-registered SQLCipher export capability probe; classified as a reliability-sim Move Account concrete-target companion, not a group messaging proof |
 | `integration_test/notification_open_ui_smoke_test.dart` | Optional / manual direct suite | Notification-open UI routing smoke without widening the frozen named gates |
 | `scripts/run_ios_notification_tap_ui_smoke.sh` | Optional / manual direct suite | iOS simulator-bound APNs notification tap smoke using `simctl push` plus a real Springboard notification tap; release/nightly confidence only, not a PR gate |
 | `integration_test/orbit_performance_test.dart` | Optional / manual direct suite | Performance-only validation for Orbit surface behavior |
@@ -426,6 +744,8 @@ These directories are intentionally outside the named gates, but they are not ac
 | Scope | Classification | Reason |
 |------|----------------|--------|
 | `test/core/services/*.dart` | Direct suite | Service, router, retrier, and orchestration coverage for the exact module being edited |
+| `test/features/account_migration/**/*.dart` | Direct suite; `$run-flutter-host-gates move-feature/feature-host-all/host-all` | All 40 dedicated Move Account host files, currently 226 declared test cases, covering transfer, bundle content, secure storage, database import, cutover/authority/gating, QR/pairing, presentation, chained host E2E, post-import behavior, and keep-alive |
+| `test/features/account_migration/presentation/*.dart` | Direct suite | Move Account MIG-011 host-side presentation, scanner-copy, wake-lock, and migrated-out UX tests without widening frozen named gates |
 | `test/core/lifecycle/*.dart` | Direct suite | Pause/resume ordering and lifecycle hardening; kept separate so the transport gate stays bounded |
 | `test/core/resilience/*.dart` | Direct suite | Deterministic chaos/failover coverage; broader than the frozen transport gate |
 | `test/core/notifications/*.dart` | Direct suite | Notification route/dispatch helpers without promoting them into the baseline |
@@ -475,16 +795,19 @@ Validation run dates:
   `group_info_wired_test.dart`, `send_group_invite_use_case_test.dart`,
   `member_removal_integration_test.dart`, and `git diff --check`
 - 2026-05-31 Report 102 GIRD-007 completeness revalidation for direct-suite classification coverage.
+- 2026-06-13 Doc 114 S4/S5 completeness revalidation for LAN ack-after-commit host integration coverage.
+- 2026-06-13 Doc 115 P5 completeness and expanded 1:1 revalidation for relay inbox custody, receipts, retry, router, bridge, and local-relay `INBOX_FULL` acceptance.
+- 2026-06-13 Doc 116 final host closure added `edit_retry_round_trip_test.dart` to the frozen 1:1 gate and revalidated direct P3A/P3B suites, baseline, completeness, Go scope-leak sanity, diff hygiene, and graph refresh.
 
-- Completeness check: latest attempted on 2026-05-31 via `./scripts/run_test_gates.sh completeness-check` and passed with `767/767` test files classified. Report 102 GIRD-007 added direct-suite classifications for `test/core/debug/*.dart`, `test/l10n/*.dart`, and `test/shared/fakes/*.dart`.
+- Completeness check: latest attempted on 2026-06-13 via `./scripts/run_test_gates.sh completeness-check` and passed with `841/841` test files classified. Docs 115 and 116 expanded the frozen `1to1` gate to 39 files for relay custody, edit retry fidelity, receipts, retry, router, bridge, media, identity, and migration coverage.
 - Report 90 GMAR-005 final gate set: passed on 2026-05-03 via the required direct optional/manual suites, configured simulator commands on `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD`, paired simulator smoke commands on `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD,5BA69F1C-B112-47BE-B1FF-8C1003728C8F` with relay addresses, `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD ./scripts/run_test_gates.sh all`, broad `flutter test`, `cd go-mknoon && go test ./...`, and `git diff --check`.
 - Report 89 simulator proof: passed on 2026-04-29 via `flutter test -d emulator-5554 integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d emulator-5554 integration_test/media_message_journey_e2e_test.dart`, `flutter test -d emulator-5554 integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d emulator-5554 integration_test/foreground_group_push_drain_test.dart`.
 - Report 89 iOS simulator proof: passed on 2026-04-29 via `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_message_journey_e2e_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/foreground_group_push_drain_test.dart`.
 - Baseline Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` and passed.
-- 1:1 Reliability Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1` and passed.
+- 1:1 Reliability Gate: revalidated on 2026-06-13 via `./scripts/run_test_gates.sh 1to1` and passed with `+793`. The prior aggregate-only `test/core/bridge/p2p_bridge_client_test.dart: callP2PInboxStore timeout bridge hang triggers TimeoutException after 15s` follow-up is closed by deterministic `fakeAsync` coverage. The subsequent `send_then_lock_delivery_test.dart` 7c custody-state expectation was corrected to Doc 115 semantics: retry stores the deletion tombstone as visible `inboxed`, then Bob's inbox drain and Alice's delivery receipt flip it to `delivered`/hidden.
 - Feed / Surface Gate: passed via `./scripts/run_test_gates.sh feed`.
 - Group Messaging Gate: revalidated on 2026-04-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` and passed.
 - Posts / Privacy Gate: `test/features/posts/phase3/post_presence_listener_test.dart` passed, and `integration_test/posts_phase1_fake_test.dart` ran successfully on macOS. `integration_test/posts_phase2_fake_test.dart` through `integration_test/posts_phase5_fake_test.dart` failed to start on macOS with `Error waiting for a debug connection` / `Unable to start the app on the device`.
 - Startup / Transport Gate: revalidated on 2026-03-26 via `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport` and passed. During the first rerun, `integration_test/wifi_relay_fallback_smoke_test.dart` and `integration_test/transport_e2e_test.dart` exposed stale `MessageRepositoryImpl` constructor wiring; after those repo-local test harness fixes landed, the same simulator-backed gate reran green.
-- Top-level script validation: earlier Session 41 reruns confirmed `completeness-check`, `baseline`, `1to1`, and `groups` green; the latest 2026-05-31 completeness-check attempt is green with `767/767` classified files after the direct-suite classification update listed above.
+- Top-level script validation: earlier Session 41 reruns confirmed `completeness-check`, `baseline`, `1to1`, and `groups` green; the latest 2026-06-13 completeness-check attempt is green with `841/841` classified files after the Doc 115 P5 gate expansion listed above.
 - Device note: when multiple Flutter targets are attached, set `FLUTTER_DEVICE_ID=<device-id>` for integration-backed gates. Session 27 revalidation used `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F`.

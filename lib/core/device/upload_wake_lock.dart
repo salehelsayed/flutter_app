@@ -15,6 +15,9 @@ class WakelockPlusUploadWakeLockDriver implements UploadWakeLockDriver {
   Future<void> disable() => WakelockPlus.disable();
 }
 
+/// Ref-counted screen wake lock. Despite the name it is shared by every
+/// keep-the-screen-on hold in the app: relay uploads, account migration, and
+/// voice recording ([RecordAudioRecorderService]).
 class UploadWakeLockController {
   UploadWakeLockController._();
 

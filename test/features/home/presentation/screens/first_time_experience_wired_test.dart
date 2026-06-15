@@ -11,12 +11,16 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
+import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -137,6 +141,7 @@ void main() {
   Widget buildFTE({
     ContactRequestListener? overrideListener,
     ShareIntentService? shareIntentService,
+    AccountMigrationTransferRunFn? accountMigrationRunTransfer,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -162,6 +167,7 @@ void main() {
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
         contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
         nearbyLocationService: nearbyLocationService,
+        accountMigrationRunTransfer: accountMigrationRunTransfer,
       ),
     );
   }
@@ -279,6 +285,51 @@ void main() {
       expect(find.byIcon(Icons.crop_free), findsOneWidget);
     });
 
+    testWidgets('scan routes Move Account QR to old-phone migration', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+      final createdAt = DateTime.now().toUtc();
+      final migrationQr = MigrationQrPayload(
+        sessionId: 'fte-migration-session',
+        createdAt: createdAt,
+        expiresAt: createdAt.add(const Duration(minutes: 5)),
+        newPhoneEphemeralPublicKey: 'new-phone-ephemeral-public',
+        channelNonce: 'fte-channel-nonce',
+      ).toJsonString();
+
+      Future<AccountMigrationTransferResult> runner({
+        required AccountMigrationTransferRequest request,
+        required AccountMigrationTransferProgressCallback onProgress,
+        required bool Function() isCancelled,
+        AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
+      }) async {
+        return const AccountMigrationTransferResult.success();
+      }
+
+      await tester.pumpWidget(buildFTE(accountMigrationRunTransfer: runner));
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text("Scan a friend's code"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final scanner = tester.widget<QRScannerScreen>(
+        find.byType(QRScannerScreen),
+      );
+      scanner.onScanned(migrationQr);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final journey = tester.widget<AccountMigrationJourneyWired>(
+        find.byType(AccountMigrationJourneyWired),
+      );
+      expect(journey.runTransfer, same(runner));
+      expect(journey.initialScannedQr, migrationQr);
+    });
+
     testWidgets('does not crash when contact request stream emits', (
       tester,
     ) async {
@@ -296,8 +347,21 @@ void main() {
       final customListener = _FakeContactRequestListener(
         requestStream: requestController.stream,
       );
+      Future<AccountMigrationTransferResult> runner({
+        required AccountMigrationTransferRequest request,
+        required AccountMigrationTransferProgressCallback onProgress,
+        required bool Function() isCancelled,
+        AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
+      }) async {
+        return const AccountMigrationTransferResult.success();
+      }
 
-      await tester.pumpWidget(buildFTE(overrideListener: customListener));
+      await tester.pumpWidget(
+        buildFTE(
+          overrideListener: customListener,
+          accountMigrationRunTransfer: runner,
+        ),
+      );
       await tester.pump();
       await tester.pump();
 
@@ -590,8 +654,21 @@ void main() {
       final customListener = _FakeContactRequestListener(
         requestStream: requestController.stream,
       );
+      Future<AccountMigrationTransferResult> runner({
+        required AccountMigrationTransferRequest request,
+        required AccountMigrationTransferProgressCallback onProgress,
+        required bool Function() isCancelled,
+        AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
+      }) async {
+        return const AccountMigrationTransferResult.success();
+      }
 
-      await tester.pumpWidget(buildFTE(overrideListener: customListener));
+      await tester.pumpWidget(
+        buildFTE(
+          overrideListener: customListener,
+          accountMigrationRunTransfer: runner,
+        ),
+      );
       await tester.pump();
       await tester.pump();
 
@@ -610,6 +687,7 @@ void main() {
         same(contactPresenceSnapshotRepository),
       );
       expect(feedWired.nearbyLocationService, same(nearbyLocationService));
+      expect(feedWired.accountMigrationRunTransfer, same(runner));
 
       await tester.pump(const Duration(seconds: 5));
       await tester.pump();

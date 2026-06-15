@@ -4,6 +4,8 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -78,7 +80,9 @@ void _recordSuccessfulSendReadinessProof(
   P2PService p2pService,
   ConversationMessage message,
 ) {
-  if (message.status != 'delivered') {
+  // 'inboxed' (relay custody, doc 115) proves transport readiness exactly as
+  // the pre-115 'delivered'/'inbox' terminal did: the relay accepted a store.
+  if (message.status != 'delivered' && message.status != 'inboxed') {
     return;
   }
 
@@ -110,12 +114,37 @@ enum SendChatMessageResult {
   nodeNotRunning,
   invalidMessage,
   encryptionRequired,
+
+  /// 112 G5: an outbound attachment lacks complete blob-encryption
+  /// metadata — the media mirror of [encryptionRequired]. Nothing was
+  /// persisted or transported.
+  mediaEncryptionRequired,
   peerNotFound,
   dialFailed,
   sendFailed,
 }
 
 const _uuid = Uuid();
+
+/// 112 G5 fail-closed gate: every outbound 1:1 attachment must be
+/// decryptable-with-v1 (key + nonce + whitelisted scheme — the sender
+/// always writes the scheme explicitly) and carry the encrypted-blob
+/// contentHash. Returns a reason code, or null when the attachments pass.
+String? _sanitizeDirectMediaAttachments(List<MediaAttachment>? attachments) {
+  if (attachments == null || attachments.isEmpty) {
+    return null;
+  }
+  for (final attachment in attachments) {
+    if (!attachment.hasEncryptionMetadata ||
+        attachment.encryptionScheme == null) {
+      return 'missing_media_encryption_metadata';
+    }
+    if (attachment.contentHash == null || attachment.contentHash!.isEmpty) {
+      return 'missing_media_content_hash';
+    }
+  }
+  return null;
+}
 
 /// Sends a chat message to a contact via P2P and persists it locally.
 ///
@@ -157,6 +186,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
+  StoreInInboxDetailedFn? storeInInboxDetailed,
 }) async {
   final sendStopwatch = Stopwatch()..start();
   final targetPrefix = targetPeerId.length > 10
@@ -165,6 +195,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final sanitizedText = sanitizeMessageText(text);
   final hasAttachments =
       mediaAttachments != null && mediaAttachments.isNotEmpty;
+  final detailedInboxStore = p2pService is DetailedInboxStore
+      ? p2pService as DetailedInboxStore
+      : null;
+  final effectiveStoreInInboxDetailed =
+      storeInInboxDetailed ?? detailedInboxStore?.storeInInboxDetailed;
   var connectionReused = false;
   var sendPath = 'unknown';
   Map<String, int> stepTimings = {};
@@ -227,6 +262,32 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.invalidMessage, null);
   }
 
+  // 116 EF-2 no-downgrade writer gate: a plain send under a message id whose
+  // outgoing row carries editedAt or deletedAt would transmit downgraded
+  // content AND poison the stored edit/deletion envelope via the pre-race
+  // updateWireEnvelope below. Fail closed BEFORE encryption and before any
+  // persist. All UI retry paths route through retryFailedMessage, so this
+  // gate has zero legitimate trips — any field occurrence is a bug detector.
+  if (action == MessagePayload.actionSend && messageId != null) {
+    final existing = await messageRepo.getMessage(messageId);
+    if (existing != null &&
+        !existing.isIncoming &&
+        (existing.editedAt != null || existing.isDeleted)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_ACTION_DOWNGRADE_BLOCKED',
+        details: {
+          'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+          'reason': existing.isDeleted
+              ? 'deleted_row_plain_send'
+              : 'edited_row_plain_send',
+        },
+      );
+      emitSendTiming(outcome: 'action_downgrade_blocked');
+      return (SendChatMessageResult.invalidMessage, null);
+    }
+  }
+
   // 2. Check P2P node
   if (!p2pService.currentState.isStarted) {
     emitFlowEvent(
@@ -254,6 +315,25 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       },
     );
     return (SendChatMessageResult.encryptionRequired, null);
+  }
+
+  // 112 G5: outbound 1:1 media must carry complete blob-encryption
+  // metadata — the media mirror of the encryptionRequired gate above
+  // (mirror of the group path's _sanitizeGroupMediaAttachments). Fails
+  // closed BEFORE any envelope is built or persisted so a plaintext blob
+  // reference can never ride a v2 envelope.
+  final mediaGateReason = _sanitizeDirectMediaAttachments(mediaAttachments);
+  if (mediaGateReason != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'DIRECT_MEDIA_ENCRYPTION_REQUIRED',
+      details: {'reason': mediaGateReason},
+    );
+    emitSendTiming(
+      outcome: 'media_encryption_required',
+      details: {'reason': mediaGateReason},
+    );
+    return (SendChatMessageResult.mediaEncryptionRequired, null);
   }
 
   // 3. Build payload
@@ -388,7 +468,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           p2pService,
           targetPeerId,
           sendResult,
-          preserveLocalPeerLabel: true,
         );
         transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
         recordMetrics(transport: reuseVia, rung: 'reuse');
@@ -810,27 +889,34 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   var failureReason = raceResult.reason ?? 'unknown';
 
-  // Persist a durable-custody (inbox) success. Shared by the concurrent-fallback
-  // short-circuit below and the sequential inbox tail so the terminal
-  // `recordMetrics(rung:'inbox')` and status write stay identical and fire
-  // exactly once.
-  Future<(SendChatMessageResult, ConversationMessage)> persistInboxDelivered({
+  // Persist a durable-custody (inbox) acceptance. Shared by the
+  // concurrent-fallback short-circuit below and the sequential inbox tail so
+  // the terminal `recordMetrics(rung:'inbox')` and status write stay identical
+  // and fire exactly once. Relay-inbox acceptance is CUSTODY, not delivery
+  // (doc 115): the row persists non-terminal 'inboxed' with the wire envelope
+  // RETAINED so the custody sweep can re-store and a delivery receipt can
+  // flip it to 'delivered'.
+  Future<(SendChatMessageResult, ConversationMessage)> persistInboxAccepted({
     required bool recordInboxAttempt,
+    int? expiresAtMs,
   }) async {
     sendPath = 'inbox';
     if (recordInboxAttempt) {
       transportMetrics?.recordAttempt(leg: 'inbox', succeeded: true);
     }
     recordMetrics(transport: 'inbox', rung: 'inbox');
-    final deliveredMessage = payload.toConversationMessage(
-      contactPeerId: targetPeerId,
-      isIncoming: false,
-      status: 'delivered',
-      createdAt: createdAt,
-      editedAt: resolvedEditedAt,
-      transport: 'inbox',
-    );
-    await messageRepo.saveMessage(deliveredMessage);
+    final inboxedMessage = payload
+        .toConversationMessage(
+          contactPeerId: targetPeerId,
+          isIncoming: false,
+          status: 'inboxed',
+          createdAt: createdAt,
+          editedAt: resolvedEditedAt,
+          transport: 'inbox',
+          wireEnvelope: jsonString,
+        )
+        .copyWith(relayExpiresAt: expiresAtMs);
+    await messageRepo.saveMessage(inboxedMessage);
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
@@ -840,24 +926,64 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       event: 'CHAT_MSG_SEND_SUCCESS',
       details: {
         'id': resolvedMessageId.substring(0, 8),
-        'status': 'delivered',
+        'status': 'inboxed',
         'via': 'inbox',
       },
     );
     emitSendTiming(
       outcome: 'success',
-      details: {'status': 'delivered', 'via': 'inbox'},
+      details: {'status': 'inboxed', 'via': 'inbox'},
     );
     logChatOutgoing(
       messageId: resolvedMessageId,
       toPeerId: targetPeerId,
-      status: 'delivered',
+      status: 'inboxed',
       text: sanitizedText,
     );
-    _recordSuccessfulSendReadinessProof(p2pService, deliveredMessage);
+    _recordSuccessfulSendReadinessProof(p2pService, inboxedMessage);
     return (
       SendChatMessageResult.success,
-      deliveredMessage.copyWith(media: normalizedAttachments ?? const []),
+      inboxedMessage.copyWith(media: normalizedAttachments ?? const []),
+    );
+  }
+
+  Future<(SendChatMessageResult, ConversationMessage)>
+  persistInboxRejectedFull() async {
+    sendPath = 'inbox';
+    transportMetrics?.recordAttempt(leg: 'inbox', succeeded: false);
+    recordMetrics(transport: null, rung: 'failed');
+    final sentMessage = payload.toConversationMessage(
+      contactPeerId: targetPeerId,
+      isIncoming: false,
+      status: 'sent',
+      createdAt: createdAt,
+      editedAt: resolvedEditedAt,
+      transport: 'inbox',
+      wireEnvelope: jsonString,
+    );
+    await messageRepo.saveMessage(sentMessage);
+    await _persistOutgoingMedia(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: normalizedAttachments,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_INBOX_FULL_RETRYABLE',
+      details: {'id': resolvedMessageId.substring(0, 8), 'via': 'inbox'},
+    );
+    emitSendTiming(
+      outcome: 'retryable',
+      details: {'status': 'sent', 'via': 'inbox', 'errorCode': 'INBOX_FULL'},
+    );
+    logChatOutgoing(
+      messageId: resolvedMessageId,
+      toPeerId: targetPeerId,
+      status: 'sent',
+      text: sanitizedText,
+    );
+    return (
+      SendChatMessageResult.success,
+      sentMessage.copyWith(media: normalizedAttachments ?? const []),
     );
   }
 
@@ -880,7 +1006,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           'reason': failureReason,
         },
       );
-      return persistInboxDelivered(recordInboxAttempt: false);
+      return persistInboxAccepted(recordInboxAttempt: false);
     }
   }
 
@@ -936,15 +1062,35 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   try {
     final inboxStopwatch = Stopwatch()..start();
-    final storedInInbox = await p2pService.storeInInbox(
-      targetPeerId,
-      jsonString,
-      timeoutMs: interactiveInboxBudget.inMilliseconds,
-    );
+    final detailedStore = effectiveStoreInInboxDetailed;
+    final InboxStoreOutcome? outcome;
+    final bool storedInInbox;
+    if (detailedStore != null) {
+      final detailedOutcome = await detailedStore(
+        targetPeerId,
+        jsonString,
+        timeoutMs: interactiveInboxBudget.inMilliseconds,
+      );
+      outcome = detailedOutcome;
+      storedInInbox = detailedOutcome.accepted;
+    } else {
+      outcome = null;
+      storedInInbox = await p2pService.storeInInbox(
+        targetPeerId,
+        jsonString,
+        timeoutMs: interactiveInboxBudget.inMilliseconds,
+      );
+    }
     inboxStopwatch.stop();
     stepTimings['inboxMs'] = inboxStopwatch.elapsedMilliseconds;
     if (storedInInbox) {
-      return persistInboxDelivered(recordInboxAttempt: true);
+      return persistInboxAccepted(
+        recordInboxAttempt: true,
+        expiresAtMs: outcome?.expiresAtMs,
+      );
+    }
+    if (outcome?.status == InboxStoreStatus.rejectedFull) {
+      return persistInboxRejectedFull();
     }
   } catch (e) {
     emitFlowEvent(
@@ -1084,14 +1230,6 @@ class _RaceResult {
   );
 }
 
-String _inferTransportForConnectedPeer(P2PService p2pService, String peerId) {
-  if (p2pService.isLocalPeer(peerId)) {
-    return 'local';
-  }
-
-  return _inferDirectVsRelayForConnectedPeer(p2pService, peerId);
-}
-
 String _inferDirectVsRelayForConnectedPeer(
   P2PService p2pService,
   String peerId,
@@ -1109,20 +1247,11 @@ String _inferDirectVsRelayForConnectedPeer(
 String _resolveGoSendTransport(
   P2PService p2pService,
   String peerId,
-  SendMessageResult sendResult, {
-  bool preserveLocalPeerLabel = false,
-}) {
-  if (preserveLocalPeerLabel && p2pService.isLocalPeer(peerId)) {
-    return 'local';
-  }
-
+  SendMessageResult sendResult,
+) {
   final actualTransport = sendResult.transport;
   if (actualTransport != null && actualTransport.isNotEmpty) {
     return actualTransport;
-  }
-
-  if (preserveLocalPeerLabel) {
-    return _inferTransportForConnectedPeer(p2pService, peerId);
   }
 
   return _inferDirectVsRelayForConnectedPeer(p2pService, peerId);
@@ -1179,19 +1308,48 @@ Future<_RaceResult> _tryLocalSend(
   TransportMetrics? transportMetrics,
 }) async {
   final localStopwatch = Stopwatch()..start();
-  final localSent = await p2pService.sendLocalMessage(
-    targetPeerId,
-    jsonString,
-    senderPeerId,
-    timeoutMs: timeoutMs,
-  );
+  final durableLanSender = p2pService is DurableLanSender
+      ? p2pService as DurableLanSender
+      : null;
+  final (localSent, acknowledged, ackKind) = durableLanSender != null
+      ? switch (await durableLanSender.sendLocalMessageDurable(
+          targetPeerId,
+          jsonString,
+          senderPeerId,
+          timeoutMs: timeoutMs,
+        )) {
+          LanSendAck.committed => (true, true, 'committed'),
+          LanSendAck.legacyAck => (true, false, 'legacy'),
+          LanSendAck.failed => (false, false, 'failed'),
+        }
+      : await () async {
+          final sent = await p2pService.sendLocalMessage(
+            targetPeerId,
+            jsonString,
+            senderPeerId,
+            timeoutMs: timeoutMs,
+          );
+          return sent
+              ? (true, false, 'bool_legacy')
+              : (false, false, 'bool_failed');
+        }();
   localStopwatch.stop();
   final timings = {'localSendMs': localStopwatch.elapsedMilliseconds};
   transportMetrics?.recordAttempt(leg: 'local', succeeded: localSent);
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CHAT_MSG_SEND_LAN_ACK',
+    details: {
+      'targetPeerId': targetPeerId.length > 8
+          ? targetPeerId.substring(0, 8)
+          : targetPeerId,
+      'kind': ackKind,
+    },
+  );
   if (localSent) {
     return _RaceResult.succeeded(
       via: 'local',
-      acknowledged: true,
+      acknowledged: acknowledged,
       stepTimings: timings,
     );
   }
@@ -1289,7 +1447,11 @@ Future<_RaceResult> _tryDirectSend(
   String jsonString, {
   TransportMetrics? transportMetrics,
 }) async {
-  final result = await _tryDirectSendInner(p2pService, targetPeerId, jsonString);
+  final result = await _tryDirectSendInner(
+    p2pService,
+    targetPeerId,
+    jsonString,
+  );
   transportMetrics?.recordAttempt(leg: 'direct', succeeded: result.success);
   return result;
 }
@@ -1641,10 +1803,11 @@ Future<ConversationMessage> _persistOutgoingSendResult({
 
   // NET-REL-05 P1/P4: the live write was unacked. If a concurrent durable copy
   // was fired for this low-confidence send and already took custody, settle as
-  // 'delivered'/'inbox' WITHOUT a second sequential `storeInInbox` — one message
+  // 'inboxed'/'inbox' WITHOUT a second sequential `storeInInbox` — one message
   // must never produce two relay writes (R1 guard). `concurrentInbox` resolves
   // to false on failure/timeout, in which case we fall through to the normal
-  // sequential handoff below.
+  // sequential handoff below. Inbox acceptance is custody, not delivery
+  // (doc 115): keep the envelope for the custody sweep / receipt flip.
   if (concurrentInbox != null) {
     final concurrentOk = await concurrentInbox;
     if (concurrentOk) {
@@ -1656,10 +1819,11 @@ Future<ConversationMessage> _persistOutgoingSendResult({
       return payload.toConversationMessage(
         contactPeerId: targetPeerId,
         isIncoming: false,
-        status: 'delivered',
+        status: 'inboxed',
         createdAt: createdAt,
         editedAt: editedAt,
         transport: 'inbox',
+        wireEnvelope: jsonString,
       );
     }
   }
@@ -1684,10 +1848,11 @@ Future<ConversationMessage> _persistOutgoingSendResult({
       return payload.toConversationMessage(
         contactPeerId: targetPeerId,
         isIncoming: false,
-        status: 'delivered',
+        status: 'inboxed',
         createdAt: createdAt,
         editedAt: editedAt,
         transport: 'inbox',
+        wireEnvelope: jsonString,
       );
     }
     emitFlowEvent(

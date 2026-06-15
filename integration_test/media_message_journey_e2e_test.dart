@@ -607,6 +607,8 @@ class _JourneyHarnessAppState extends State<_JourneyHarnessApp> {
             waveform,
             allowedPeers,
             blobId,
+            deleteSourceWhenDone = false,
+            preparedArtifact,
           }) async => MediaAttachment(
             id: blobId ?? 'blob-${DateTime.now().microsecondsSinceEpoch}',
             messageId: '',
@@ -620,20 +622,15 @@ class _JourneyHarnessAppState extends State<_JourneyHarnessApp> {
             height: height,
             durationMs: durationMs,
             waveform: waveform,
-            contentHash: allowedPeers != null
-                ? await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-                    localFilePath,
-                  )
-                : null,
-            encryptionKeyBase64: allowedPeers != null
-                ? _fixtureEncryptionKeyBase64
-                : null,
-            encryptionNonce: allowedPeers != null
-                ? _fixtureEncryptionNonce
-                : null,
-            encryptionScheme: allowedPeers != null
-                ? kMediaAttachmentEncryptionSchemeBlobAesGcmV1
-                : null,
+            // 112: 1:1 attachments carry the full blob-encryption metadata
+            // too (the G5 send gate enforces it); the receiver leg of this
+            // journey exercises the direct decrypt-adopt path.
+            contentHash: await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+              localFilePath,
+            ),
+            encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+            encryptionNonce: _fixtureEncryptionNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
       sendChatMessageFn: sendChatMessage,
       deleteContactFn: (_) async {},
@@ -669,6 +666,8 @@ class _JourneyHarnessAppState extends State<_JourneyHarnessApp> {
             waveform,
             allowedPeers,
             blobId,
+            deleteSourceWhenDone = false,
+            preparedArtifact,
           }) async => MediaAttachment(
             id: blobId ?? 'blob-${DateTime.now().microsecondsSinceEpoch}',
             messageId: '',

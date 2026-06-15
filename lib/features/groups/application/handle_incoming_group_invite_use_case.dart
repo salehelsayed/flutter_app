@@ -595,16 +595,43 @@ storeIncomingPendingGroupInvite({
 
   final existingGroup = await groupRepo.getGroup(payload.groupId);
   if (existingGroup != null) {
+    // B3 re-join: a previously-removed member RETAINS the group read-only
+    // (self removed from members, keys cleared) instead of hard-deleting it,
+    // so a fresh re-add invite must be STORED as pending — letting the
+    // accept/materialize path re-join (re-saving group/members/key + myRole) —
+    // rather than being dropped here as a duplicate. Detect the retained-removed
+    // shell via self no longer being an active member: a voluntarily-left group
+    // is hard-deleted (getGroup == null), so "row exists + self absent" uniquely
+    // identifies the retained-removed case. A genuinely-joined duplicate (self
+    // still a member) short-circuits as before. Mirrors the guard in
+    // materializeAcceptedGroupInvitePayload.
+    final selfPeerId = ownPeerId?.trim();
+    final selfIsActiveMember = selfPeerId == null || selfPeerId.isEmpty
+        ? true
+        : (await groupRepo.getMember(payload.groupId, selfPeerId)) != null;
+    if (selfIsActiveMember) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_STORE_PENDING_DUPLICATE_GROUP',
+        details: {
+          'groupId': payload.groupId.length > 8
+              ? payload.groupId.substring(0, 8)
+              : payload.groupId,
+        },
+      );
+      return (StorePendingGroupInviteResult.duplicateGroup, null);
+    }
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_INVITE_STORE_PENDING_DUPLICATE_GROUP',
+      event: 'GROUP_INVITE_STORE_PENDING_REJOIN_AFTER_REMOVAL',
       details: {
         'groupId': payload.groupId.length > 8
             ? payload.groupId.substring(0, 8)
             : payload.groupId,
       },
     );
-    return (StorePendingGroupInviteResult.duplicateGroup, null);
+    // Fall through to store the pending invite so the accept/materialize path
+    // re-joins the retained group.
   }
 
   final invite = PendingGroupInvite.fromPayload(
@@ -768,6 +795,7 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
     groupRepo: groupRepo,
     bridge: bridge,
     downloadGroupAvatarFn: downloadGroupAvatarFn,
+    ownPeerId: ownPeerId,
   );
 }
 
@@ -777,6 +805,7 @@ materializeAcceptedGroupInvitePayload({
   required GroupRepository groupRepo,
   required Bridge bridge,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
+  String? ownPeerId,
 }) async {
   if (!payload.isInvitePolicyValid()) {
     emitFlowEvent(
@@ -793,16 +822,40 @@ materializeAcceptedGroupInvitePayload({
 
   final existingGroup = await groupRepo.getGroup(payload.groupId);
   if (existingGroup != null) {
+    // B3 re-join: a previously-removed member RETAINS the group read-only
+    // (self removed from members, keys cleared) instead of hard-deleting it,
+    // so a fresh re-add invite must RE-JOIN by falling through to
+    // re-materialization (group/members/key + myRole) rather than being
+    // rejected as a duplicate. Detect the retained-removed shell via self no
+    // longer being an active member — a voluntarily-left group is hard-deleted
+    // (getGroup == null), so this uniquely identifies the retained case. A
+    // genuinely-joined duplicate (self still a member) short-circuits as before.
+    final selfPeerId = ownPeerId?.trim();
+    final selfIsActiveMember = selfPeerId == null || selfPeerId.isEmpty
+        ? true
+        : (await groupRepo.getMember(payload.groupId, selfPeerId)) != null;
+    if (selfIsActiveMember) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_HANDLE_DUPLICATE',
+        details: {
+          'groupId': payload.groupId.length > 8
+              ? payload.groupId.substring(0, 8)
+              : payload.groupId,
+        },
+      );
+      return (HandleGroupInviteResult.duplicateGroup, null);
+    }
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_INVITE_HANDLE_DUPLICATE',
+      event: 'GROUP_INVITE_HANDLE_REJOIN_AFTER_REMOVAL',
       details: {
         'groupId': payload.groupId.length > 8
             ? payload.groupId.substring(0, 8)
             : payload.groupId,
       },
     );
-    return (HandleGroupInviteResult.duplicateGroup, null);
+    // Fall through to materialization to re-join the retained group.
   }
 
   final config = payload.groupConfig;

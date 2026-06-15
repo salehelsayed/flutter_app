@@ -253,6 +253,45 @@ Future<Map<String, dynamic>> callP2PRendezvousRegister(
   return response;
 }
 
+/// Calls the bridge to unregister from a rendezvous namespace.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [namespace]: Optional namespace (defaults to mknoon:chat:<peerId>)
+///   - [serverAddresses]: Optional list of rendezvous server addresses
+///
+/// Returns: `{ "ok": true, "unregistered": true }`
+Future<Map<String, dynamic>> callP2PRendezvousUnregister(
+  Bridge bridge, {
+  String? namespace,
+  List<String>? serverAddresses,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RENDEZVOUS_UNREGISTER_REQUEST',
+    details: {'namespace': namespace},
+  );
+
+  final request = {
+    'cmd': 'rendezvous:unregister',
+    'payload': {
+      if (namespace != null) 'namespace': namespace,
+      if (serverAddresses != null) 'serverAddresses': serverAddresses,
+    },
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RENDEZVOUS_UNREGISTER_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
 /// Calls the bridge to discover peers on a rendezvous namespace.
 ///
 /// Parameters:
@@ -456,6 +495,42 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
   return response;
 }
 
+/// Calls the bridge to unregister this peer's push token from the relay inbox.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [serverAddresses]: Optional list of relay server addresses
+///
+/// Returns: `{ "ok": true, "unregistered": true }`
+Future<Map<String, dynamic>> callP2PInboxUnregisterToken(
+  Bridge bridge, {
+  List<String>? serverAddresses,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_UNREGISTER_TOKEN_REQUEST',
+    details: {},
+  );
+
+  final request = {
+    'cmd': 'inbox:unregister_token',
+    'payload': {
+      if (serverAddresses != null) 'serverAddresses': serverAddresses,
+    },
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_UNREGISTER_TOKEN_RESPONSE',
+    details: {'ok': response['ok']},
+  );
+
+  return response;
+}
+
 /// Calls the bridge to retrieve messages from the offline inbox.
 ///
 /// Parameters:
@@ -570,6 +645,105 @@ Future<Map<String, dynamic>> callP2PInboxAck(
 
 // --- Media ---
 
+/// Default Dart-side stall budget for media transfers. Generous on purpose:
+/// the Go node's 10s idle-timeout reader is the real failure authority and
+/// the native layer emits progress events at a 256KiB/250ms cadence while a
+/// transfer is moving, so this only fires when the native call truly stalls
+/// without ever reporting failure.
+const mediaTransferDefaultStallTimeout = Duration(seconds: 60);
+
+/// Floor used to scale the absolute transfer ceiling to the payload size:
+/// `size / 64KiB-per-second`, never below 5 minutes. A last-resort backstop —
+/// a slow-but-moving transfer is kept alive by progress events instead.
+const mediaTransferBytesPerSecondFloor = 64 * 1024;
+
+Duration mediaTransferMaxTimeout(int? payloadSizeBytes) {
+  const minimum = Duration(minutes: 5);
+  if (payloadSizeBytes == null || payloadSizeBytes <= 0) {
+    return minimum;
+  }
+  final scaledSeconds = payloadSizeBytes ~/ mediaTransferBytesPerSecondFloor;
+  final scaled = Duration(seconds: scaledSeconds);
+  return scaled > minimum ? scaled : minimum;
+}
+
+/// Sends a media transfer command guarded by a progress-aware watchdog
+/// instead of a fixed wall clock: the stall timer re-arms on every matching
+/// progress event, and an absolute ceiling remains as a last resort.
+Future<Map<String, dynamic>> _sendMediaTransferWithWatchdog({
+  required Bridge bridge,
+  required Map<String, dynamic> request,
+  required Stream<Map<String, dynamic>> progressStream,
+  required String id,
+  required Duration stallTimeout,
+  required Duration maxTimeout,
+  required String watchdogLabel,
+}) async {
+  final completer = Completer<String>();
+  Timer? stallTimer;
+  Timer? maxTimer;
+
+  void failWithTimeout(String reason, Duration budget) {
+    if (completer.isCompleted) {
+      return;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_TRANSFER_WATCHDOG_TIMEOUT',
+      details: {
+        'id': id,
+        'operation': watchdogLabel,
+        'reason': reason,
+        'budgetMs': budget.inMilliseconds,
+      },
+    );
+    completer.completeError(
+      TimeoutException('$watchdogLabel $reason after ${budget.inSeconds}s'),
+    );
+  }
+
+  void armStallTimer() {
+    stallTimer?.cancel();
+    stallTimer = Timer(
+      stallTimeout,
+      () => failWithTimeout('stalled_no_progress', stallTimeout),
+    );
+  }
+
+  final progressSub = progressStream
+      .where((event) => event['id'] == id)
+      .listen((_) => armStallTimer());
+  armStallTimer();
+  maxTimer = Timer(
+    maxTimeout,
+    () => failWithTimeout('absolute_ceiling_exceeded', maxTimeout),
+  );
+
+  bridge
+      .send(jsonEncode(request))
+      .then(
+        (value) {
+          if (!completer.isCompleted) {
+            completer.complete(value);
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (!completer.isCompleted) {
+            completer.completeError(error, stackTrace);
+          }
+        },
+      );
+
+  try {
+    final responseJson = await completer.future;
+    return jsonDecode(responseJson) as Map<String, dynamic>;
+  } finally {
+    stallTimer?.cancel();
+    maxTimer.cancel();
+    await progressSub.cancel();
+  }
+}
+
 /// Calls the bridge to upload a media blob to the relay.
 ///
 /// Parameters:
@@ -578,6 +752,8 @@ Future<Map<String, dynamic>> callP2PInboxAck(
 ///   - [toPeerId]: The recipient peer ID
 ///   - [mime]: MIME type of the file
 ///   - [filePath]: Absolute path to the local file
+///   - [stallTimeout]/[maxTimeout]: watchdog budgets (test seam); defaults
+///     are progress-aware with a payload-scaled absolute ceiling.
 ///
 /// Returns: `{ "ok": true, "id": "..." }`
 Future<Map<String, dynamic>> callP2PMediaUpload(
@@ -587,6 +763,9 @@ Future<Map<String, dynamic>> callP2PMediaUpload(
   required String mime,
   required String filePath,
   List<String>? allowedPeers,
+  int? payloadSizeBytes,
+  Duration? stallTimeout,
+  Duration? maxTimeout,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -606,10 +785,15 @@ Future<Map<String, dynamic>> callP2PMediaUpload(
     },
   };
 
-  final responseJson = await bridge
-      .send(jsonEncode(request))
-      .timeout(const Duration(minutes: 5));
-  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+  final response = await _sendMediaTransferWithWatchdog(
+    bridge: bridge,
+    request: request,
+    progressStream: mediaUploadProgressStream,
+    id: id,
+    stallTimeout: stallTimeout ?? mediaTransferDefaultStallTimeout,
+    maxTimeout: maxTimeout ?? mediaTransferMaxTimeout(payloadSizeBytes),
+    watchdogLabel: 'media:upload',
+  );
 
   emitFlowEvent(
     layer: 'FL',
@@ -632,6 +816,9 @@ Future<Map<String, dynamic>> callP2PMediaDownload(
   Bridge bridge, {
   required String id,
   required String outputPath,
+  int? payloadSizeBytes,
+  Duration? stallTimeout,
+  Duration? maxTimeout,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -644,15 +831,36 @@ Future<Map<String, dynamic>> callP2PMediaDownload(
     'payload': {'id': id, 'outputPath': outputPath},
   };
 
-  final responseJson = await bridge
-      .send(jsonEncode(request))
-      .timeout(const Duration(minutes: 5));
-  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+  final response = await _sendMediaTransferWithWatchdog(
+    bridge: bridge,
+    request: request,
+    progressStream: mediaDownloadProgressStream,
+    id: id,
+    stallTimeout: stallTimeout ?? mediaTransferDefaultStallTimeout,
+    maxTimeout: maxTimeout ?? mediaTransferMaxTimeout(payloadSizeBytes),
+    watchdogLabel: 'media:download',
+  );
+  final responseDetails = <String, dynamic>{
+    'ok': response['ok'],
+    'id': response['id'],
+  };
+  for (final key in const [
+    'sourceRole',
+    'sourcePeerId',
+    'sourcePeerShort',
+    'streamTransport',
+    'servedByPhone',
+    'routedViaRelayStore',
+  ]) {
+    if (response.containsKey(key)) {
+      responseDetails[key] = response[key];
+    }
+  }
 
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_MEDIA_DOWNLOAD_RESPONSE',
-    details: {'ok': response['ok'], 'id': response['id']},
+    details: responseDetails,
   );
 
   return response;

@@ -1,9 +1,28 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_compress/video_compress.dart';
 
 const _videoExtensions = {'mp4', 'mov', 'avi', 'mkv', 'm4v'};
+
+/// Generates a thumbnail JPG for [videoPath] and returns the file.
+///
+/// Injectable seam: production uses [VideoCompress.getFileThumbnail]; tests
+/// override it via [debugSetVideoThumbnailGenerator] to exercise the
+/// generation-failure path deterministically (no platform channel).
+typedef VideoThumbnailGenerator = Future<File> Function(String videoPath);
+
+Future<File> _defaultThumbnailGenerator(String videoPath) =>
+    VideoCompress.getFileThumbnail(videoPath, quality: 70, position: -1);
+
+VideoThumbnailGenerator _thumbnailGenerator = _defaultThumbnailGenerator;
+
+@visibleForTesting
+void debugSetVideoThumbnailGenerator(VideoThumbnailGenerator? generator) {
+  _thumbnailGenerator = generator ?? _defaultThumbnailGenerator;
+}
 
 bool isLikelyVideoPath(String path) {
   final dotIndex = path.lastIndexOf('.');
@@ -62,11 +81,7 @@ class VideoThumbnailCache {
     String preferredOutputPath,
   ) async {
     try {
-      final thumbnail = await VideoCompress.getFileThumbnail(
-        videoPath,
-        quality: 70,
-        position: -1,
-      );
+      final thumbnail = await _thumbnailGenerator(videoPath);
       final generatedPath = thumbnail.path;
       if (generatedPath == preferredOutputPath) {
         return generatedPath;
@@ -82,7 +97,16 @@ class VideoThumbnailCache {
       } catch (_) {
         return generatedPath;
       }
-    } catch (_) {
+    } catch (e) {
+      // 117 Session 1: do NOT swallow silently. A generation failure here is
+      // indistinguishable in logs from "video has no thumbnail" unless we
+      // emit telemetry. Callers still receive null (the benign "no thumbnail"
+      // signal), but the failure is now observable.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'VIDEO_THUMBNAIL_GENERATE_FAILED',
+        details: {'path': videoPath, 'error': e.toString()},
+      );
       return null;
     }
   }

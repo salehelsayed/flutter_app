@@ -8,11 +8,11 @@
 /// a real Flutter binding. Mirrors the host widget test
 /// (`test/features/orbit/.../orbit_wired_test.dart`) but uses
 /// IntegrationTestWidgetsFlutterBinding so it runs on device.
+library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -27,8 +27,8 @@ import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import '_support/fake_secure_key_store.dart';
 import '../test/core/bridge/fake_bridge.dart';
-import '../test/core/secure_storage/fake_secure_key_store.dart';
 import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../test/features/contacts/domain/repositories/fake_contact_repository.dart';
@@ -40,12 +40,8 @@ import '../test/shared/fakes/in_memory_media_attachment_repository.dart';
 import '../test/shared/fakes/in_memory_message_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  testWidgets(
-    'simulator: deleting one Orbit group preserves friends and 1:1 chat threads',
-    (tester) async {
+void registerDeletePreservesFriendsSim() {
+  testWidgets('DELETE_PRESERVES_FRIENDS 1', (tester) async {
       // -- arrange: full OrbitWired stack with in-memory fakes.
       final identityRepo = FakeIdentityRepository();
       final contactRepo = FakeContactRepository();
@@ -387,6 +383,5 @@ void main() {
       // After both round-trips, Orbit should still show both friends.
       expect(find.text('Alice'), findsWidgets);
       expect(find.text('Charlie'), findsWidgets);
-    },
-  );
+  });
 }

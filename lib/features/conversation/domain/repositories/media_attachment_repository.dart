@@ -42,3 +42,9 @@ abstract class MediaAttachmentRepository {
   /// Used by [retryIncompleteUploads] on app resume to re-upload and re-send.
   Future<List<MediaAttachment>> getUploadPendingAttachments();
 }
+
+/// Optional narrow lookup for callers that must reconcile an out-of-band media
+/// event with an attachment row regardless of current download status.
+abstract class MediaAttachmentByIdLookup {
+  Future<MediaAttachment?> getAttachmentById(String id);
+}

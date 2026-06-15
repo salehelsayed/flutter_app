@@ -25,7 +25,7 @@ void main() {
     p2pService.dispose();
   });
 
-  test('resume handler Step 8e calls retryFailedGroupInboxStoresFn', () async {
+  test('resume handler Step 8g calls retryFailedGroupInboxStoresFn', () async {
     int callCount = 0;
 
     await handleAppResumed(
@@ -40,7 +40,7 @@ void main() {
     expect(callCount, 1);
   });
 
-  test('resume handler Step 8e is fault-isolated from Step 8d', () async {
+  test('resume handler Step 8g is fault-isolated from Step 8d', () async {
     bool step8dCalled = false;
     bool step8eCalled = false;
 

@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
@@ -18,8 +20,11 @@ class IdentityChoiceWired extends StatefulWidget {
   callIdentityRestore;
   final Future<Map<String, dynamic>> Function() callMlKemKeygen;
   final Future<void> Function(BuildContext navigationContext) onNavigateToMain;
+  final WidgetBuilder? moveFromOldPhoneBuilder;
   final VoidCallback? onProgressRouteFirstFrame;
   final BackgroundPreference backgroundPreference;
+  final SecureKeyStore? secureKeyStore;
+  final ContactRepository? contactRepo;
 
   const IdentityChoiceWired({
     super.key,
@@ -28,8 +33,11 @@ class IdentityChoiceWired extends StatefulWidget {
     required this.callIdentityRestore,
     required this.callMlKemKeygen,
     required this.onNavigateToMain,
+    this.moveFromOldPhoneBuilder,
     this.onProgressRouteFirstFrame,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.secureKeyStore,
+    this.contactRepo,
   });
 
   @override
@@ -88,6 +96,7 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
 
       if (!mounted) return;
       final progressContext = await progressRouteContext.future;
+      if (!mounted || !progressContext.mounted) return;
 
       if (result == GenerateIdentityResult.success) {
         emitFlowEvent(
@@ -123,6 +132,7 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
       if (!mounted) return;
 
       final progressContext = await progressRouteContext.future;
+      if (!mounted || !progressContext.mounted) return;
       final navigator = Navigator.of(progressContext);
       if (navigator.canPop()) {
         navigator.pop();
@@ -157,6 +167,8 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
           repository: widget.repository,
           callIdentityRestore: widget.callIdentityRestore,
           callMlKemKeygen: widget.callMlKemKeygen,
+          secureKeyStore: widget.secureKeyStore,
+          contactRepo: widget.contactRepo,
           onNavigateToMain: () {
             // Pop back to this screen first, then navigate to main
             Navigator.of(routeContext).pop();
@@ -169,11 +181,33 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
     emitFlowEvent(layer: 'FL', event: 'ID_NAV_TO_MNEMONIC_SCREEN', details: {});
   }
 
+  void _handleMoveFromOldPhone() {
+    final builder = widget.moveFromOldPhoneBuilder;
+    if (builder == null || _isGeneratingIdentity) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ID_BTN_MOVE_FROM_OLD_PHONE_NAVIGATE',
+      details: {},
+    );
+
+    Navigator.of(context).push(
+      buildStartupReplacementRoute<void>(
+        builder: builder,
+        settings: const RouteSettings(name: 'account-migration-new-phone'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return IdentityChoiceScreen(
       onNewHere: _isGeneratingIdentity ? null : _handleNewHere,
       onLoadMyKey: _isGeneratingIdentity ? null : _handleLoadKey,
+      onMoveFromOldPhone:
+          _isGeneratingIdentity || widget.moveFromOldPhoneBuilder == null
+          ? null
+          : _handleMoveFromOldPhone,
       backgroundPreference: widget.backgroundPreference,
     );
   }

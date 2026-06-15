@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -135,6 +136,44 @@ ConversationMessage makeFailedLegacyDeletedMessage({
   );
 }
 
+ConversationMessage makeFailedEditMessage({
+  String id = 'msg-edit-fail-001',
+  String contactPeerId = 'peer-target',
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: 'my-peer-id',
+    text: 'edited text',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    status: 'failed',
+    isIncoming: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    editedAt: '2026-01-01T00:05:00.000Z',
+    wireEnvelope:
+        '{"type":"chat_message","version":"2","id":"$id","senderPeerId":"my-peer-id","encrypted":{"kem":"fake-kem","ciphertext":"{\\"id\\":\\"$id\\",\\"action\\":\\"edit\\"}","nonce":"fake-nonce"}}',
+  );
+}
+
+ConversationMessage makeFailedLegacyEditMessage({
+  String id = 'msg-legacy-edit-001',
+  String contactPeerId = 'peer-target',
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: 'my-peer-id',
+    text: 'edited legacy text',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    status: 'failed',
+    isIncoming: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    editedAt: '2026-01-01T00:05:00.000Z',
+    wireEnvelope:
+        '{"type":"chat_message","version":"1","payload":{"id":"$id","text":"edited legacy text"}}',
+  );
+}
+
 ContactModel makeContact({
   String peerId = 'peer-target',
   String? mlKemPublicKey = 'test-mlkem-pk',
@@ -158,6 +197,28 @@ Map<String, dynamic> decodeWirePayload(String wireJson) {
   }
   final encrypted = envelope['encrypted'] as Map<String, dynamic>;
   return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+}
+
+/// 116 P2.2: FakeP2PService whose storeInInbox blocks on a test-held gate so
+/// two concurrent retries of the same row can be caught in flight.
+class _GatedInboxP2PService extends FakeP2PService {
+  final gate = Completer<void>();
+
+  _GatedInboxP2PService({required super.initialState})
+    : super(storeInInboxResult: true);
+
+  @override
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    storeInInboxCallCount++;
+    lastStoreInInboxPeerId = toPeerId;
+    lastStoreInInboxMessage = message;
+    await gate.future;
+    return storeInInboxResult;
+  }
 }
 
 /// FakeP2PService subclass that throws on sendMessageWithReply for specific
@@ -370,6 +431,10 @@ void main() {
         expect(payload['timestamp'], failedTimestamp);
         expect(payload['text'], 'Recover this text');
         expect(payload['quotedMessageId'], 'quoted-parent-001');
+        // 116 P1 re-frame: action != edit / editedAt == null is CORRECT for
+        // PLAIN rows (no fabricated edit metadata). It is NOT the contract
+        // for edit rows — those are covered by the '116 Phase 1 — edit retry
+        // fidelity' group below (row-derived action metadata).
         expect(payload['action'], isNot(MessagePayload.actionEdit));
         expect(payload['editedAt'], isNull);
       },
@@ -418,7 +483,66 @@ void main() {
     );
 
     test(
-      'hides delivered outgoing delete tombstones after failed retry stores in inbox',
+      'failed delete tombstone retries over direct deletion route when inbox store fails',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedDeletedMessage()]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: false,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+        );
+
+        final events = await captureFlowEvents(() async {
+          final count = await retryFailedMessages(
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: PassthroughCryptoBridge(),
+          );
+          expect(count, 1);
+        });
+
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.sendMessageWithReplyCallCount, 1);
+        expect(
+          events.any((event) => event['event'] == 'CHAT_MSG_SEND_START'),
+          isFalse,
+        );
+
+        final directEnvelope =
+            jsonDecode(p2pService.lastSendMessageContent!)
+                as Map<String, dynamic>;
+        expect(directEnvelope['type'], 'message_deletion');
+        expect(directEnvelope['version'], '2');
+        expect(directEnvelope.containsKey('payload'), isFalse);
+
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'delivered');
+        expect(saved.transport, 'direct');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.isDeleted, isTrue);
+        expect(saved.isHidden, isTrue);
+        expect(saved.hiddenAt, saved.deletedAt);
+        expect(
+          events.any(
+            (event) =>
+                event['event'] == 'RETRY_FAILED_DELETE_TOMBSTONE_SUCCESS',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'v2 tombstone inbox custody success is inboxed and keeps the tombstone visible',
       () async {
         identityRepo.seed(makeIdentity());
         messageRepo.seed([makeFailedDeletedMessage()]);
@@ -437,12 +561,16 @@ void main() {
         );
 
         expect(count, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
         final saved = messageRepo.lastSavedMessage;
         expect(saved, isNotNull);
-        expect(saved!.status, 'delivered');
+        expect(saved!.status, 'inboxed');
+        expect(saved.transport, 'inbox');
+        expect(saved.wireEnvelope, makeFailedDeletedMessage().wireEnvelope);
         expect(saved.isDeleted, isTrue);
-        expect(saved.isHidden, isTrue);
-        expect(saved.hiddenAt, saved.deletedAt);
+        expect(saved.isHidden, isFalse);
+        expect(saved.hiddenAt, isNull);
       },
     );
 
@@ -766,10 +894,11 @@ void main() {
     );
 
     test(
-      'does not replay persisted v1 deletion wireEnvelope to inbox after restart',
+      'legacy v1 delete tombstone is rebuilt as encrypted v2 when key exists',
       () async {
         identityRepo.seed(makeIdentity());
         messageRepo.seed([makeFailedLegacyDeletedMessage()]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
         final p2pService = FakeP2PService(
           initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
@@ -781,12 +910,79 @@ void main() {
           identityRepo: identityRepo,
           contactRepo: contactRepo,
           p2pService: p2pService,
-          bridge: bridge,
+          bridge: PassthroughCryptoBridge(),
         );
 
-        expect(count, 0);
+        expect(count, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(
+          p2pService.lastStoreInInboxMessage,
+          isNot(contains('"version":"1"')),
+        );
+        expect(
+          p2pService.lastStoreInInboxMessage,
+          isNot(contains('"payload"')),
+        );
+        final envelope =
+            jsonDecode(p2pService.lastStoreInInboxMessage!)
+                as Map<String, dynamic>;
+        expect(envelope['type'], 'message_deletion');
+        expect(envelope['version'], '2');
+        expect(envelope['encrypted'], isA<Map<String, dynamic>>());
+        expect(envelope.containsKey('payload'), isFalse);
+
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'inboxed');
+        expect(saved.transport, 'inbox');
+        expect(saved.wireEnvelope, p2pService.lastStoreInInboxMessage);
+        expect(saved.isDeleted, isTrue);
+        expect(saved.isHidden, isFalse);
+      },
+    );
+
+    test(
+      'legacy tombstone without recipient key stays failed with explicit telemetry',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedLegacyDeletedMessage()]);
+        contactRepo.seed([
+          makeContact(peerId: 'peer-target', mlKemPublicKey: null),
+        ]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final events = await captureFlowEvents(() async {
+          final count = await retryFailedMessages(
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: PassthroughCryptoBridge(),
+          );
+          expect(count, 0);
+        });
+
         expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
         expect(messageRepo.lastSavedMessage, isNull);
+        final saved = await messageRepo.getMessage('msg-legacy-delete-001');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'failed');
+        expect(saved.wireEnvelope, contains('"version":"1"'));
+
+        final unavailable = events.singleWhere(
+          (event) =>
+              event['event'] == 'RETRY_FAILED_DELETE_REBUILD_UNAVAILABLE',
+        );
+        expect(
+          (unavailable['details'] as Map<String, dynamic>)['reason'],
+          'missing_recipient_key',
+        );
       },
     );
 
@@ -958,64 +1154,61 @@ void main() {
     // the relay takes custody. This is the SAME terminal shape the existing inbox
     // tail produces. These tests pin that such a row is invisible to the failed
     // retrier so the concurrent copy is never sent a SECOND time.
-    test(
-      'concurrently-inboxed message (delivered/inbox/null-envelope) is NOT '
-      'picked up by the failed retrier',
-      () async {
-        identityRepo.seed(makeIdentity());
-        // The exact row shape persistInboxDelivered writes for a concurrent
-        // fallback that took custody: terminal delivered, transport inbox,
-        // wireEnvelope cleared.
-        messageRepo.seed([
-          ConversationMessage(
-            id: 'msg-concurrent-inbox-001',
-            contactPeerId: 'peer-target',
-            senderPeerId: 'my-peer-id',
-            text: 'Low-confidence send',
-            timestamp: '2026-01-01T00:00:00.000Z',
-            status: 'delivered',
-            isIncoming: false,
-            createdAt: '2026-01-01T00:00:00.000Z',
-            transport: 'inbox',
-            wireEnvelope: null,
-          ),
-        ]);
-        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+    test('concurrently-inboxed message (delivered/inbox/null-envelope) is NOT '
+        'picked up by the failed retrier', () async {
+      identityRepo.seed(makeIdentity());
+      // The exact row shape persistInboxDelivered writes for a concurrent
+      // fallback that took custody: terminal delivered, transport inbox,
+      // wireEnvelope cleared.
+      messageRepo.seed([
+        ConversationMessage(
+          id: 'msg-concurrent-inbox-001',
+          contactPeerId: 'peer-target',
+          senderPeerId: 'my-peer-id',
+          text: 'Low-confidence send',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          transport: 'inbox',
+          wireEnvelope: null,
+        ),
+      ]);
+      contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-          discoverPeerResult: const DiscoveredPeer(
-            id: 'peer-target',
-            addresses: ['/ip4/127.0.0.1/tcp/4001'],
-          ),
-          dialPeerResult: true,
-          sendMessageWithReplyResult: const p2p.SendMessageResult(
-            sent: true,
-            reply: 'ack',
-          ),
-          storeInInboxResult: true,
-        );
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        discoverPeerResult: const DiscoveredPeer(
+          id: 'peer-target',
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        ),
+        dialPeerResult: true,
+        sendMessageWithReplyResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: 'ack',
+        ),
+        storeInInboxResult: true,
+      );
 
-        final count = await retryFailedMessages(
-          messageRepo: messageRepo,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          p2pService: p2pService,
-          bridge: bridge,
-        );
+      final count = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
 
-        // NEGATIVE CONTROL: the durable copy must NOT be re-sent. No live send,
-        // no second inbox store, nothing retried.
-        expect(count, 0);
-        expect(p2pService.sendMessageWithReplyCallCount, 0);
-        expect(p2pService.storeInInboxCallCount, 0);
-        // Row is untouched / still delivered (no resave that could regress it).
-        expect(
-          (await messageRepo.getMessage('msg-concurrent-inbox-001'))?.status,
-          'delivered',
-        );
-      },
-    );
+      // NEGATIVE CONTROL: the durable copy must NOT be re-sent. No live send,
+      // no second inbox store, nothing retried.
+      expect(count, 0);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+      // Row is untouched / still delivered (no resave that could regress it).
+      expect(
+        (await messageRepo.getMessage('msg-concurrent-inbox-001'))?.status,
+        'delivered',
+      );
+    });
 
     test(
       'failed retrier still prefers inbox-only re-store from persisted '
@@ -1075,6 +1268,316 @@ void main() {
         expect(saved!.status, 'delivered');
         expect(saved.transport, 'inbox');
         expect(saved.wireEnvelope, isNull);
+      },
+    );
+  });
+
+  // ─── 116 Phase 1 — edit retry fidelity through the full-send fallback ───
+  // A failed edit retried via the fallback must STAY an edit: row-derived
+  // action metadata (EF-1), never caller defaults. Without it the retry goes
+  // out as a plain send under the original id, the receiver dedups it by id,
+  // and sender/receiver text silently diverge (doc 116 §1).
+  group('116 Phase 1 — edit retry fidelity', () {
+    late FakeIdentityRepository identityRepo;
+    late FakeMessageRepository messageRepo;
+    late FakeContactRepository contactRepo;
+
+    setUp(() {
+      identityRepo = FakeIdentityRepository()..seed(makeIdentity());
+      messageRepo = FakeMessageRepository();
+      contactRepo = FakeContactRepository()
+        ..seed([makeContact(peerId: 'peer-target')]);
+    });
+
+    FakeP2PService makeHealthyDirectInboxDownP2P() => FakeP2PService(
+      initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      discoverPeerResult: const DiscoveredPeer(
+        id: 'peer-target',
+        addresses: ['/ip4/127.0.0.1/tcp/4001'],
+      ),
+      dialPeerResult: true,
+      sendMessageWithReplyResult: const p2p.SendMessageResult(
+        sent: true,
+        reply: 'ack',
+      ),
+      // Envelope replay fails → the full-send fallback fires.
+      storeInInboxResult: false,
+    );
+
+    test(
+      'failed edit retry preserves action edit, original editedAt, and createdAt through the full-send fallback',
+      () async {
+        messageRepo.seed([makeFailedEditMessage()]);
+        final p2pService = makeHealthyDirectInboxDownP2P();
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        expect(count, 1);
+        final payload = decodeWirePayload(p2pService.lastSendMessageContent!);
+        expect(payload['action'], MessagePayload.actionEdit);
+        expect(payload['editedAt'], '2026-01-01T00:05:00.000Z');
+        expect(payload['id'], 'msg-edit-fail-001');
+        expect(payload['timestamp'], '2026-01-01T00:00:00.000Z');
+
+        expect(
+          messageRepo.lastSavedMessage!.editedAt,
+          '2026-01-01T00:05:00.000Z',
+        );
+        expect(
+          messageRepo.lastSavedMessage!.createdAt,
+          '2026-01-01T00:00:00.000Z',
+        );
+        // The pre-race updateWireEnvelope persist must now write an EDIT
+        // envelope — the poisoning boundary (EF-2's content half).
+        final persistedEnvelope = decodeWirePayload(
+          messageRepo.wireEnvelopeUpdates.single.envelope,
+        );
+        expect(persistedEnvelope['action'], MessagePayload.actionEdit);
+      },
+    );
+
+    test(
+      'edit metadata survives a fallback attempt that fails terminally',
+      () async {
+        messageRepo.seed([makeFailedEditMessage()]);
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          // ALL transports fail: no discover, no send, no inbox.
+          discoverPeerResult: null,
+          dialPeerResult: false,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(sent: false),
+          storeInInboxResult: false,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        expect(count, 0);
+        final row = await messageRepo.getMessage('msg-edit-fail-001');
+        expect(row!.status, 'failed');
+        expect(
+          row.editedAt,
+          '2026-01-01T00:05:00.000Z',
+          reason: 'a failed fallback attempt must never null the edit metadata',
+        );
+        // The last persisted envelope must still be an EDIT envelope — the
+        // edit must remain recoverable by the next retry cycle.
+        final lastEnvelope = decodeWirePayload(
+          messageRepo.wireEnvelopeUpdates.last.envelope,
+        );
+        expect(lastEnvelope['action'], MessagePayload.actionEdit);
+      },
+    );
+
+    test(
+      'v1-legacy failed edit row reconstructs edit params from the DB row',
+      () async {
+        messageRepo.seed([makeFailedLegacyEditMessage()]);
+        final p2pService = makeHealthyDirectInboxDownP2P();
+
+        final events = await captureFlowEvents(() async {
+          final count = await retryFailedMessages(
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: PassthroughCryptoBridge(),
+          );
+          expect(count, 1);
+        });
+
+        // Leak guard preserved: the v1 envelope never reaches any transport
+        // (the legacy skip routes straight to the fallback rebuild).
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(
+          events.any(
+            (e) =>
+                e['event'] == 'RETRY_FAILED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE',
+          ),
+          isTrue,
+        );
+        // The rebuilt outgoing payload carries the row's edit metadata.
+        final payload = decodeWirePayload(p2pService.lastSendMessageContent!);
+        expect(payload['action'], MessagePayload.actionEdit);
+        expect(payload['editedAt'], '2026-01-01T00:05:00.000Z');
+        expect(payload['id'], 'msg-legacy-edit-001');
+        expect(payload['timestamp'], '2026-01-01T00:00:00.000Z');
+      },
+    );
+
+    test(
+      'plain failed retry preserves the original createdAt on the settled row',
+      () async {
+        messageRepo.seed([makeFailedMessage()]);
+        final p2pService = makeHealthyDirectInboxDownP2P();
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        expect(count, 1);
+        expect(
+          messageRepo.lastSavedMessage!.createdAt,
+          '2026-01-01T00:00:00.000Z',
+          reason: 'the fallback must not re-mint createdAt for retried rows',
+        );
+      },
+    );
+
+    // 116 P2.2 companion PIN (green-on-arrival post-P1): the pre-race
+    // updateWireEnvelope persist of a retried edit writes an EDIT envelope.
+    // This is the explicit prerequisite the 115 P3 custody sweep inherits:
+    // a sweep re-store of an edit row's wire_envelope carries action:edit.
+    test(
+      'retried edit pre-race envelope persist writes an edit envelope',
+      () async {
+        messageRepo.seed([makeFailedEditMessage()]);
+        final p2pService = makeHealthyDirectInboxDownP2P();
+
+        await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        final persisted = decodeWirePayload(
+          messageRepo.wireEnvelopeUpdates.single.envelope,
+        );
+        expect(persisted['action'], MessagePayload.actionEdit);
+        expect(persisted['editedAt'], '2026-01-01T00:05:00.000Z');
+      },
+    );
+  });
+
+  // ─── 116 Phase 2 — single-flight + settled-skip (EF-3) ──────────────────
+  // PendingMessageRetrier periodic + reconnect debounce + app-resume 8c + the
+  // UI retry button can overlap: at most ONE retry per message id may be in
+  // flight, and a candidate whose row settled between load and execution is
+  // skipped, not re-sent.
+  group('116 Phase 2 — single-flight and settled-skip', () {
+    late FakeIdentityRepository identityRepo;
+    late FakeMessageRepository messageRepo;
+    late FakeContactRepository contactRepo;
+
+    setUp(() {
+      identityRepo = FakeIdentityRepository()..seed(makeIdentity());
+      messageRepo = FakeMessageRepository();
+      contactRepo = FakeContactRepository()
+        ..seed([makeContact(peerId: 'peer-target')]);
+    });
+
+    test(
+      'concurrent retries of the same failed row send at most once (single-flight per message id)',
+      () async {
+        messageRepo.seed([makeFailedEditMessage()]);
+        final p2pService = _GatedInboxP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        );
+
+        late List<int> results;
+        final events = await captureFlowEvents(() async {
+          final futures = Future.wait([
+            retryFailedMessage(
+              messageId: 'msg-edit-fail-001',
+              messageRepo: messageRepo,
+              identityRepo: identityRepo,
+              contactRepo: contactRepo,
+              p2pService: p2pService,
+              bridge: PassthroughCryptoBridge(),
+            ),
+            retryFailedMessage(
+              messageId: 'msg-edit-fail-001',
+              messageRepo: messageRepo,
+              identityRepo: identityRepo,
+              contactRepo: contactRepo,
+              p2pService: p2pService,
+              bridge: PassthroughCryptoBridge(),
+            ),
+          ]);
+          // Let both invocations reach the candidate before releasing.
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          p2pService.gate.complete();
+          results = await futures;
+        });
+
+        expect(
+          p2pService.storeInInboxCallCount,
+          1,
+          reason: 'exactly one in-flight retry per message id (EF-3)',
+        );
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(results..sort(), [0, 1]);
+        expect(
+          events
+              .where(
+                (e) => e['event'] == 'RETRY_FAILED_MESSAGE_SKIPPED_IN_FLIGHT',
+              )
+              .length,
+          1,
+        );
+      },
+    );
+
+    test(
+      'retry candidate skips a row that settled between load and execution',
+      () async {
+        // Stored state: the row already settled 'delivered'. The sweep's loaded
+        // list still holds a STALE 'failed' snapshot of the same row.
+        final staleSnapshot = makeFailedEditMessage(id: 'msg-stale-001');
+        messageRepo.seed([
+          staleSnapshot.copyWith(status: 'delivered', wireEnvelope: null),
+        ]);
+        messageRepo.failedOutgoingOverride = [staleSnapshot];
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final events = await captureFlowEvents(() async {
+          final count = await retryFailedMessages(
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: PassthroughCryptoBridge(),
+          );
+          expect(count, 0);
+        });
+
+        expect(
+          p2pService.storeInInboxCallCount,
+          0,
+          reason: 'a settled row must never be re-sent from a stale snapshot',
+        );
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(
+          events.any(
+            (e) => e['event'] == 'RETRY_FAILED_MESSAGE_SKIPPED_SETTLED',
+          ),
+          isTrue,
+        );
+        expect(
+          (await messageRepo.getMessage('msg-stale-001'))!.status,
+          'delivered',
+        );
       },
     );
   });

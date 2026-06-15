@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
@@ -147,18 +148,26 @@ class FakeP2PService implements P2PService {
           content: message['message'] as String,
           timestamp: timestamp,
           isIncoming: true,
+          // Mirror production: staged relay-drain entries replay with the
+          // 'inbox' transport tag (InboxStagingEntry.toChatMessage) — the
+          // tag that marks them delivery-receipt-eligible (115 P2).
+          transport: 'inbox',
         ),
       );
+      // Mirror the real staged-inbox drain, which awaits each entry's replay
+      // before forwarding the next. Listener pipelines over in-memory fakes
+      // are pure microtask chains, so one timer-event yield fully completes
+      // the previous entry's processing — without it, a deletion envelope's
+      // tombstone write can interleave ahead of the original's commit and be
+      // overwritten by it (an ordering production never produces).
+      await Future<void>.delayed(Duration.zero);
     }
     return messages.length;
   }
 
   @override
-  NodeState get currentState => NodeState(
-        isStarted: true,
-        peerId: peerId,
-        connections: testConnections,
-      );
+  NodeState get currentState =>
+      NodeState(isStarted: true, peerId: peerId, connections: testConnections);
 
   @override
   Stream<NodeState> get stateStream => const Stream.empty();
@@ -221,8 +230,20 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     return network.storeInInbox(peerId, toPeerId, message);
+  }
+
+  Future<InboxStoreOutcome> storeInInboxDetailed(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    return network.storeInInboxDetailed(peerId, toPeerId, message);
   }
 
   @override
@@ -237,8 +258,7 @@ class FakeP2PService implements P2PService {
   Future<void> performImmediateHealthCheck() async {}
 
   @override
-  Future<RelayProbeResult> probeRelay(String peerId) async =>
-      probeRelayResult;
+  Future<RelayProbeResult> probeRelay(String peerId) async => probeRelayResult;
 
   @override
   bool isConnectedToPeer(String peerId) => connectedPeers.contains(peerId);
@@ -279,8 +299,7 @@ class FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      localPeers.contains(peerId);
+  }) async => localPeers.contains(peerId);
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -319,6 +338,8 @@ class FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override

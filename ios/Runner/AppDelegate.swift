@@ -13,6 +13,18 @@ import UserNotifications
   private var pendingIosNotificationOpen: [String: Any]?
   private var iosNotificationOpenBridgeReady = false
 
+  // Move Account transfer keep-alive (audit gap G7, background half): while
+  // Dart holds the keep-alive, a UIKit background task assertion buys ~30s of
+  // continued execution after the user backgrounds the app, so a brief app
+  // switch does not suspend the sender's segment POSTs or the receiver's
+  // local HTTP server mid-transfer.
+  private let migrationKeepAliveChannelName = "mknoon/migration_keepalive"
+  private var migrationKeepAliveChannel: FlutterMethodChannel?
+  private var migrationKeepAliveActive = false
+  private var migrationBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+  private let diskSpaceChannelName = "mknoon/disk_space"
+  private var diskSpaceChannel: FlutterMethodChannel?
+
   deinit {
     NotificationCenter.default.removeObserver(self)
   }
@@ -131,6 +143,8 @@ import UserNotifications
     installNotificationCenterDelegate(context: "after_implicit_engine_plugin_registration")
     let messenger = engineBridge.applicationRegistrar.messenger()
     setupIosNotificationOpenBridge(messenger: messenger)
+    setupMigrationKeepAliveBridge(messenger: messenger)
+    setupDiskSpaceBridge(messenger: messenger)
 
 #if canImport(GoMknoon)
     goBridge = GoBridge(messenger: messenger)
@@ -254,6 +268,136 @@ import UserNotifications
       return
     }
     setupIosNotificationOpenBridge(messenger: controller.binaryMessenger)
+    setupMigrationKeepAliveBridge(messenger: controller.binaryMessenger)
+    setupDiskSpaceBridge(messenger: controller.binaryMessenger)
+  }
+
+  private func setupDiskSpaceBridge(messenger: FlutterBinaryMessenger) {
+    if diskSpaceChannel != nil {
+      return
+    }
+    let channel = FlutterMethodChannel(
+      name: diskSpaceChannelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handleDiskSpaceMethodCall(call, result: result)
+    }
+    diskSpaceChannel = channel
+  }
+
+  private func handleDiskSpaceMethodCall(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    guard call.method == "getAvailableBytes" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    guard
+      let arguments = call.arguments as? [String: Any],
+      let path = arguments["path"] as? String,
+      !path.isEmpty
+    else {
+      result(FlutterError(code: "bad_args", message: "path is required", details: nil))
+      return
+    }
+
+    do {
+      let url = URL(fileURLWithPath: path)
+      if #available(iOS 11.0, *) {
+        let values = try url.resourceValues(
+          forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+        )
+        if let capacity = values.volumeAvailableCapacityForImportantUsage {
+          result(Int64(capacity))
+          return
+        }
+      }
+      let attributes = try FileManager.default.attributesOfFileSystem(forPath: path)
+      if let freeSize = attributes[.systemFreeSize] as? NSNumber {
+        result(freeSize.int64Value)
+        return
+      }
+      result(FlutterError(
+        code: "disk_space_unavailable",
+        message: "free size unavailable",
+        details: nil
+      ))
+    } catch {
+      result(FlutterError(
+        code: "disk_space_unavailable",
+        message: String(describing: error),
+        details: nil
+      ))
+    }
+  }
+
+  private func setupMigrationKeepAliveBridge(messenger: FlutterBinaryMessenger) {
+    if migrationKeepAliveChannel != nil {
+      return
+    }
+    let channel = FlutterMethodChannel(
+      name: migrationKeepAliveChannelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handleMigrationKeepAliveMethodCall(call, result: result)
+    }
+    migrationKeepAliveChannel = channel
+  }
+
+  private func handleMigrationKeepAliveMethodCall(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    switch call.method {
+    case "start":
+      migrationKeepAliveActive = true
+      beginMigrationBackgroundTaskIfNeeded(context: "keepalive_start")
+      result(nil)
+    case "stop":
+      migrationKeepAliveActive = false
+      endMigrationBackgroundTask(context: "keepalive_stop")
+      result(nil)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func beginMigrationBackgroundTaskIfNeeded(context: String) {
+    guard migrationKeepAliveActive, migrationBackgroundTask == .invalid else {
+      return
+    }
+    migrationBackgroundTask = UIApplication.shared.beginBackgroundTask(
+      withName: "mknoon_account_move"
+    ) { [weak self] in
+      // Expiration: iOS is about to suspend us regardless; release the
+      // assertion so the app is not terminated for overrunning it.
+      self?.endMigrationBackgroundTask(context: "expiration")
+    }
+    NSLog("[MIGRATION_KEEPALIVE] background task begun context=%@", context)
+  }
+
+  private func endMigrationBackgroundTask(context: String) {
+    guard migrationBackgroundTask != .invalid else {
+      return
+    }
+    UIApplication.shared.endBackgroundTask(migrationBackgroundTask)
+    migrationBackgroundTask = .invalid
+    NSLog("[MIGRATION_KEEPALIVE] background task ended context=%@", context)
+  }
+
+  override func applicationDidEnterBackground(_ application: UIApplication) {
+    super.applicationDidEnterBackground(application)
+    // Re-arm the assertion on every backgrounding while a transfer is live
+    // (it is ended on foreground to avoid burning the background budget).
+    beginMigrationBackgroundTaskIfNeeded(context: "did_enter_background")
+  }
+
+  override func applicationWillEnterForeground(_ application: UIApplication) {
+    super.applicationWillEnterForeground(application)
+    endMigrationBackgroundTask(context: "will_enter_foreground")
   }
 
   private func setupIosNotificationOpenBridge(messenger: FlutterBinaryMessenger) {

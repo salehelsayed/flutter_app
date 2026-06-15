@@ -27,7 +27,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 
 import '../test/core/bridge/fake_bridge.dart';
-import '../test/core/secure_storage/fake_secure_key_store.dart';
+import '_support/fake_secure_key_store.dart' show FakeSecureKeyStore;
 import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../test/features/contacts/domain/repositories/fake_contact_repository.dart';
@@ -708,19 +708,7 @@ Future<void> _captureScenario(
   await timelineEnv.dispose();
 }
 
-void main() {
-  final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
-  if (skipOnMobileDevice) {
-    testWidgets(
-      'captures FeedWired init performance evidence',
-      (_) async {},
-      skip: true,
-    );
-    return;
-  }
-  VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
-  binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+void registerFeedInitPerf() {
   const scenarios = <_FeedScenario>[
     _FeedScenario(
       id: 'feed_wired_mount_cold_identity_cache',
@@ -732,7 +720,14 @@ void main() {
     ),
   ];
 
-  testWidgets('captures FeedWired init performance evidence', (tester) async {
+  testWidgets('FEED_INIT 1', (tester) async {
+    final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    if (skipOnMobileDevice) {
+      return;
+    }
+    VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
+    binding = IntegrationTestWidgetsFlutterBinding.instance;
+
     binding.reportData ??= <String, dynamic>{};
     binding.reportData!['feed_wired_init_perf_meta'] = <String, dynamic>{
       'maxMountFrames': _maxMountFrames,

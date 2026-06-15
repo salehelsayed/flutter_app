@@ -130,6 +130,15 @@ classify_path() {
       record "ignored" "$path" "ignored" "physical iOS APNs provider probe outside default simulator reliability gates"
       return
       ;;
+    integration_test/migration_database_sqlcipher_capability_test.dart)
+      record "move-feature" "$path" "test" "Move Account SQLCipher migration capability companion"
+      return
+      ;;
+    integration_test/benchmark_harness.dart|\
+    integration_test/performance_harness.dart)
+      record "ignored" "$path" "ignored" "single dispatched benchmark/performance entrypoint (BENCHMARK/PERF_TARGET=<key>) outside reliability simulation discovery"
+      return
+      ;;
     integration_test/scripts/run_benchmark_suite.dart|\
     integration_test/scripts/run_group_publish_benchmark.dart|\
     integration_test/scripts/run_timeout_accuracy_benchmark.dart|\
@@ -151,13 +160,11 @@ classify_path() {
       record "group" "$path" "runner" "two-simulator group routing smoke"
       return
       ;;
-    integration_test/routing_smoke_alice_harness.dart|\
-    integration_test/routing_smoke_bob_harness.dart)
+    integration_test/routing_smoke_harness.dart)
       record "support" "$path" "support" "1:1 routing smoke harness"
       return
       ;;
-    integration_test/group_smoke_alice_harness.dart|\
-    integration_test/group_smoke_bob_harness.dart)
+    integration_test/group_smoke_harness.dart)
       record "support" "$path" "support" "group routing smoke harness"
       return
       ;;
@@ -189,13 +196,11 @@ classify_path() {
       record "group" "$path" "runner" "notification sound smoke includes group rows"
       return
       ;;
-    integration_test/notification_open_during_other_chat_alice_harness.dart|\
-    integration_test/notification_open_during_other_chat_bob_harness.dart)
+    integration_test/notification_open_during_other_chat_harness.dart)
       record "support" "$path" "support" "1:1 notification-open two-simulator harness"
       return
       ;;
-    integration_test/notification_sound_smoke_alice_harness.dart|\
-    integration_test/notification_sound_smoke_bob_harness.dart)
+    integration_test/notification_sound_smoke_harness.dart)
       record "support" "$path" "support" "1:1/group notification sound harness"
       return
       ;;
@@ -210,8 +215,7 @@ classify_path() {
       record "group" "$path" "runner" "group simulator/E2E orchestrator"
       return
       ;;
-    integration_test/foreground_group_push_simulator_alice_harness.dart|\
-    integration_test/foreground_group_push_simulator_bob_harness.dart|\
+    integration_test/foreground_group_push_simulator_harness.dart|\
     integration_test/group_invite_status_matrix_harness.dart|\
     integration_test/group_multi_party_device_real_harness.dart|\
     integration_test/group_multi_device_real_harness.dart)
@@ -229,7 +233,6 @@ classify_path() {
     integration_test/wifi_relay_fallback_smoke_test.dart|\
     integration_test/wifi_transport_test.dart|\
     integration_test/background_reconnect_test.dart|\
-    integration_test/relay_chaos_soak_test.dart|\
     integration_test/soak_e2e_test.dart|\
     integration_test/conversation_bridge_test.dart|\
     integration_test/media_message_journey_e2e_test.dart|\
@@ -255,15 +258,27 @@ classify_path() {
       record "group" "$path" "test" "foreground group push drain test"
       return
       ;;
+    integration_test/account_migration_scale_benchmark_test.dart|\
+    integration_test/account_migration_group_media_durability_simulator_test.dart|\
+    integration_test/account_migration_local_transfer_timeout_simulator_test.dart)
+      record "move-feature" "$path" "test" "Move Account simulator/E2E test"
+      return
+      ;;
     integration_test/group_recovery_e2e_test.dart|\
     integration_test/group_recovery_cli_e2e_test.dart|\
+    integration_test/group_real_crypto_onboarding_test.dart)
+      record "group" "$path" "test" "group simulator/E2E test"
+      return
+      ;;
+    integration_test/group_lifecycle_simulator_harness.dart)
+      record "group" "$path" "test" "single dispatched group-lifecycle simulator entrypoint (GROUP_SIM_SCENARIO=<key>)"
+      return
+      ;;
     integration_test/group_admin_metadata_convergence_simulator_test.dart|\
     integration_test/group_delete_preserves_friends_simulator_test.dart|\
     integration_test/group_invite_accept_spinner_simulator_test.dart|\
-    integration_test/group_new_member_media_simulator_proof_test.dart|\
-    integration_test/group_real_crypto_onboarding_test.dart|\
-    integration_test/multi_relay_failover_test.dart)
-      record "group" "$path" "test" "group simulator/E2E test"
+    integration_test/group_new_member_media_simulator_proof_test.dart)
+      record "support" "$path" "support" "group-lifecycle simulator scenario library dispatched via group_lifecycle_simulator_harness.dart"
       return
       ;;
   esac
@@ -659,7 +674,7 @@ expand_record_to_checks() {
   local count
 
   case "$category" in
-    1to1|group|intro) ;;
+    1to1|group|intro|move-feature) ;;
     *) return ;;
   esac
 
@@ -766,6 +781,7 @@ printf 'Root: %s\n' "$ROOT_DIR"
 print_category "1to1" "1:1 entrypoints/files"
 print_category "group" "Group entrypoints/files"
 print_category "intro" "Intro entrypoints/files"
+print_category "move-feature" "Move Feature entrypoints/files"
 print_category "support" "Support"
 print_category "ignored" "Ignored"
 print_category "unclassified" "Unclassified"
@@ -774,6 +790,7 @@ printf '\nExpanded runnable checks/scenarios\n'
 print_check_category "1to1" "1:1 checks/scenarios"
 print_check_category "group" "Group checks/scenarios"
 print_check_category "intro" "Intro checks/scenarios"
+print_check_category "move-feature" "Move Feature checks/scenarios"
 
 if [ "$expansion_error_count" -gt 0 ]; then
   printf '\nExpansion errors (%s)\n' "$expansion_error_count"

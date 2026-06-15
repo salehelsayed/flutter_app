@@ -812,11 +812,41 @@ void main() {
           }
         }
 
+        // waitForDownloads only proves the download COMMANDS were issued;
+        // decrypt+promote+persist still completes asynchronously. Poll until
+        // every variant row is durably 'done' before asserting the schema —
+        // under full-suite load the last commit can lag the command.
+        Future<void> waitForVariantRowsDone(GroupTestUser user) async {
+          final deadline = DateTime.now().add(const Duration(seconds: 5));
+          while (DateTime.now().isBefore(deadline)) {
+            final incoming = (await user.loadGroupMessages(groupId))
+                .where(
+                  (message) =>
+                      message.isIncoming && message.text == messageText,
+                )
+                .toList();
+            if (incoming.length == 1) {
+              final attachments = await user.mediaAttachmentRepo
+                  .getAttachmentsForMessage(incoming.single.id);
+              final allDone =
+                  attachments.length == variants.length &&
+                  attachments.every(
+                    (attachment) =>
+                        attachment.downloadStatus == 'done' &&
+                        attachment.localPath != null,
+                  );
+              if (allDone) return;
+            }
+            await pump();
+          }
+        }
+
         for (final receiver in [bob, charlie]) {
           await waitForDownloads(
             user: receiver,
             expectedCount: variants.length,
           );
+          await waitForVariantRowsDone(receiver);
           await expectVariantSchema(receiver);
         }
 
@@ -893,7 +923,10 @@ void main() {
           expectedStatus: kMediaDownloadStatusFailed,
         );
         expect(bobBridge.firstPartialOutputPath, isNotNull);
-        expect(File(bobBridge.firstPartialOutputPath!).existsSync(), isFalse);
+        // 111 INV-1: a transient download failure PRESERVES the staged
+        // artifact (the native write may have completed after the Dart side
+        // gave up). Cleanup of a genuine partial happens at retry time.
+        expect(File(bobBridge.firstPartialOutputPath!).existsSync(), isTrue);
 
         final failedAttachment = await expectSingleAttachment(
           user: bob,
@@ -914,9 +947,13 @@ void main() {
           enforceGroupMediaPolicy: true,
         );
 
+        // The retry identifies the under-sized stale partial (< plaintext +
+        // 16-byte GCM tag), discards it WITHOUT quarantining the row, and
+        // completes via a fresh relay download.
         expect(retryResult, isNotNull);
         expect(retryResult!.downloadStatus, kMediaDownloadStatusDone);
         expect(File(retryResult.localPath!).existsSync(), isTrue);
+        expect(File(bobBridge.firstPartialOutputPath!).existsSync(), isFalse);
         expect(
           bobBridge.commandLog.where((cmd) => cmd == 'media:download'),
           hasLength(2),
@@ -1523,7 +1560,11 @@ void main() {
           )).map((member) => member.peerId),
           unorderedEquals([alice.peerId, bob.peerId]),
         );
-        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        // B3: the quiet group is RETAINED read-only on self-removal (was
+        // hard-deleted). Charlie is no longer an active member and gets no new
+        // keys, but the group row persists — media exclusion is unchanged.
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(await charlie.groupRepo.getKeyByGeneration(groupId, 2), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
@@ -1681,7 +1722,11 @@ void main() {
       await saveLatestKey(user: alice, groupId: groupId, epoch: 2);
       await saveLatestKey(user: bob, groupId: groupId, epoch: 2);
 
-      expect(await charlie.groupRepo.getGroup(groupId), isNull);
+      // B3: the quiet group is RETAINED read-only on self-removal (was
+      // hard-deleted). Charlie is no longer an active member and has no new
+      // keys, but the group row persists so a later re-add can re-activate it.
+      expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+      expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
       expect(await charlie.groupRepo.getKeyByGeneration(groupId, 2), isNull);
       expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 

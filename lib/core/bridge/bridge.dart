@@ -50,6 +50,8 @@ abstract class Bridge {
 
 final StreamController<Map<String, dynamic>> _mediaUploadProgressController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
+final StreamController<Map<String, dynamic>> _mediaDownloadProgressController =
+    StreamController<Map<String, dynamic>>.broadcast(sync: true);
 final StreamController<Map<String, dynamic>> _groupDiagnosticEventController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
 final StreamController<Map<String, dynamic>>
@@ -80,6 +82,11 @@ const _transportDiagnosticPayloadKeys = <String, Set<String>>{
 Stream<Map<String, dynamic>> get mediaUploadProgressStream =>
     _mediaUploadProgressController.stream;
 
+/// Broadcast stream for relay media-download progress events emitted by the
+/// active bridge implementation.
+Stream<Map<String, dynamic>> get mediaDownloadProgressStream =>
+    _mediaDownloadProgressController.stream;
+
 /// Broadcast stream for group diagnostic events emitted by the active bridge.
 Stream<Map<String, dynamic>> get groupDiagnosticEventStream =>
     _groupDiagnosticEventController.stream;
@@ -93,6 +100,11 @@ Stream<Map<String, dynamic>> get transportDiagnosticEventStream =>
 /// Publishes a media-upload progress event to Flutter listeners.
 void emitMediaUploadProgressEvent(Map<String, dynamic> data) {
   _mediaUploadProgressController.add(Map<String, dynamic>.from(data));
+}
+
+/// Publishes a media-download progress event to Flutter listeners.
+void emitMediaDownloadProgressEvent(Map<String, dynamic> data) {
+  _mediaDownloadProgressController.add(Map<String, dynamic>.from(data));
 }
 
 /// Publishes a group diagnostic event to Flutter listeners.

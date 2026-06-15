@@ -684,23 +684,37 @@ func ensureInboxMessageID(entry inboxMessage) inboxMessage {
 
 // InboxStore wraps an InboxBackend and a PushService.
 type InboxStore struct {
-	backend InboxBackend
-	push    *PushService
+	backend  InboxBackend
+	push     *PushService
+	capacity int
 }
 
 // NewInboxStore creates an InboxStore with an in-memory backend.
 func NewInboxStore(push *PushService) *InboxStore {
 	return &InboxStore{
-		backend: newMemoryInboxBackend(),
-		push:    push,
+		backend:  newMemoryInboxBackend(),
+		push:     push,
+		capacity: maxMessagesPerPeer,
 	}
 }
 
 // NewInboxStoreWithBackend creates an InboxStore with a custom backend.
 func NewInboxStoreWithBackend(backend InboxBackend, push *PushService) *InboxStore {
+	return NewInboxStoreWithBackendAndCapacity(backend, push, maxMessagesPerPeer)
+}
+
+func NewInboxStoreWithBackendAndCapacity(
+	backend InboxBackend,
+	push *PushService,
+	capacity int,
+) *InboxStore {
+	if capacity <= 0 {
+		capacity = maxMessagesPerPeer
+	}
 	return &InboxStore{
-		backend: backend,
-		push:    push,
+		backend:  backend,
+		push:     push,
+		capacity: capacity,
 	}
 }
 
@@ -722,6 +736,14 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 		inboxStoredCounter.Inc() // still count for metrics visibility
 		return InboxStoreResultDuplicate, nil
 	}
+	if result == InboxStoreResultRejectedFull {
+		inboxRejectedFullCounter.Inc()
+		inboxCappedCounter.Inc()
+		log.Printf("[INBOX] Rejected store for %s from %s: inbox full",
+			toPeerId[:min(20, len(toPeerId))],
+			entry.From[:min(20, len(entry.From))])
+		return InboxStoreResultRejectedFull, nil
+	}
 	inboxStoredCounter.Inc()
 	if biz != nil {
 		biz.RecordMessageStored()
@@ -736,6 +758,13 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 		go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
 	}
 	return InboxStoreResultStored, nil
+}
+
+func (is *InboxStore) Capacity() int {
+	if is.capacity <= 0 {
+		return maxMessagesPerPeer
+	}
+	return is.capacity
 }
 
 func (is *InboxStore) Retrieve(peerId string, limit int) []inboxMessage {
@@ -1298,6 +1327,9 @@ type inboxResponse struct {
 	Status        string                 `json:"status"`
 	Error         string                 `json:"error,omitempty"`
 	StoreStatus   string                 `json:"storeStatus,omitempty"`
+	ExpiresAtMs   int64                  `json:"expiresAtMs,omitempty"`
+	Occupancy     int                    `json:"occupancy,omitempty"`
+	Capacity      int                    `json:"capacity,omitempty"`
 	Messages      []inboxMessage         `json:"messages,omitempty"`
 	HasMore       bool                   `json:"hasMore,omitempty"`
 	Acked         int                    `json:"acked,omitempty"`
@@ -1392,8 +1424,24 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			result, err := inbox.Store(req.To, entry)
 			if err != nil {
 				resp = inboxResponse{Status: "ERROR", Error: fmt.Sprintf("store failed: %v", err)}
+			} else if result == InboxStoreResultRejectedFull {
+				resp = inboxResponse{
+					Status:      "ERROR",
+					Error:       "INBOX_FULL",
+					StoreStatus: string(result),
+					Occupancy:   inbox.Count(req.To),
+					Capacity:    inbox.Capacity(),
+				}
 			} else {
-				resp = inboxResponse{Status: "OK", StoreStatus: string(result)}
+				resp = inboxResponse{
+					Status:      "OK",
+					StoreStatus: string(result),
+					Occupancy:   inbox.Count(req.To),
+					Capacity:    inbox.Capacity(),
+				}
+				if result == InboxStoreResultStored {
+					resp.ExpiresAtMs = entry.Timestamp + maxMessageAge.Milliseconds()
+				}
 			}
 			// Push notification is now fired inside InboxStore.Store
 			// (only for genuinely new messages, skipped for duplicates).

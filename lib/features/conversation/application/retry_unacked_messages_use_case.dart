@@ -8,8 +8,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 /// in the relay inbox using the persisted wire_envelope.
 ///
 /// This is inbox-only -- no direct send, no re-encrypt, no media rebuild.
-/// Once successfully stored, status moves to 'delivered' and wire_envelope
-/// is cleared so the message is not retried again.
+/// Once successfully stored, status moves to 'inboxed' and wire_envelope is
+/// retained until a delivery receipt proves receiver-side delivery.
 ///
 /// Returns the count of successfully updated messages.
 Future<int> retryUnackedMessages({
@@ -74,21 +74,6 @@ Future<int> retryUnackedMessages({
       continue;
     }
 
-    // Skip inbox if already delivered via inbox (crash recovery guard).
-    if (msg.transport == 'inbox') {
-      await messageRepo.saveMessage(
-        normalizeOutgoingDeleteTombstoneVisibility(
-          msg.copyWith(status: 'delivered', wireEnvelope: null),
-        ),
-      );
-      count++;
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_UNACKED_MESSAGE_ALREADY_INBOX',
-        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
-      );
-      continue;
-    }
     if (isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!)) {
       await messageRepo.saveMessage(
         normalizeOutgoingDeleteTombstoneVisibility(
@@ -110,17 +95,13 @@ Future<int> retryUnackedMessages({
       if (stored) {
         await messageRepo.saveMessage(
           normalizeOutgoingDeleteTombstoneVisibility(
-            msg.copyWith(
-              status: 'delivered',
-              transport: 'inbox',
-              wireEnvelope: null,
-            ),
+            msg.copyWith(status: 'inboxed', transport: 'inbox'),
           ),
         );
         count++;
         emitFlowEvent(
           layer: 'FL',
-          event: 'RETRY_UNACKED_MESSAGE_DELIVERED',
+          event: 'RETRY_UNACKED_MESSAGE_INBOXED',
           details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
         );
       }

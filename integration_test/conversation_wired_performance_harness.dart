@@ -364,6 +364,9 @@ class _TrackingReactionListener extends ReactionListener {
 }
 
 class _TrackingAudioRecorderService implements AudioRecorderService {
+  @override
+  void Function(AudioRecording? recording)? onAutoStopped;
+
   _TrackingAudioRecorderService(this.recorder)
     : _durationController = StreamController<Duration>.broadcast(
         onListen: () => recorder.mark('duration_listener_attached'),
@@ -1054,22 +1057,16 @@ Future<void> _captureEvidence(WidgetTester tester) async {
   await timelineEnv.dispose();
 }
 
-void main() {
-  final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
-  if (skipOnMobileDevice) {
-    testWidgets(
-      'captures ConversationWired subscription performance evidence',
-      (_) async {},
-      skip: true,
-    );
-    return;
-  }
-  VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
-  binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+void registerConversationPerf() {
+  testWidgets('CONVERSATION 1', (tester) async {
+    final skipOnMobileDevice =
+        !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    if (skipOnMobileDevice) {
+      return;
+    }
+    VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
+    binding = IntegrationTestWidgetsFlutterBinding.instance;
 
-  testWidgets('captures ConversationWired subscription performance evidence', (
-    tester,
-  ) async {
     binding.reportData ??= <String, dynamic>{};
     binding.reportData!['conversation_wired_perf_meta'] = <String, dynamic>{
       'frameStepMs': _frameStep.inMilliseconds,

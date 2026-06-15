@@ -49,6 +49,7 @@ type interopVectors struct {
 	Identity   identityVectors   `json:"identity"`
 	Signature  signatureVectors  `json:"signature"`
 	Encryption encryptionVectors `json:"encryption"`
+	Migration  migrationVectors  `json:"migration"`
 }
 
 type identityVectors struct {
@@ -70,6 +71,23 @@ type encryptionVectors struct {
 	Kem        string `json:"kem"`
 	Ciphertext string `json:"ciphertext"`
 	Nonce      string `json:"nonce"`
+}
+
+// migrationVectors carries an account-move v2 session-chunk vector: the
+// receiver secret key plus KEM ciphertext re-derive sessionKey, which must
+// decrypt chunkCiphertext under chunkAad/chunkNonce back to chunkPlaintext.
+type migrationVectors struct {
+	PublicKey       string `json:"publicKey"`
+	SecretKey       string `json:"secretKey"`
+	SessionId       string `json:"sessionId"`
+	BundleId        string `json:"bundleId"`
+	Direction       string `json:"direction"`
+	KemCiphertext   string `json:"kemCiphertext"`
+	SessionKey      string `json:"sessionKey"`
+	ChunkPlaintext  string `json:"chunkPlaintextBase64"`
+	ChunkAad        string `json:"chunkAad"`
+	ChunkNonce      string `json:"chunkNonce"`
+	ChunkCiphertext string `json:"chunkCiphertext"`
 }
 
 // -----------------------------------------------------------------------
@@ -273,11 +291,60 @@ func TestInterop_WriteVectorsJSON(t *testing.T) {
 		Nonce:      encrypted.Nonce,
 	}
 
-	// 4. Assemble and write JSON.
+	// 4. Migration session-chunk vectors (randomized KEM; the consumer uses
+	// secretKey + kemCiphertext to re-derive sessionKey and decrypt the chunk).
+	migKp, err := MlKemKeygen()
+	if err != nil {
+		t.Fatalf("MlKemKeygen() error: %v", err)
+	}
+	migSession, err := MigrationSessionEncap(migKp.PublicKey, "interop-session", "interop-bundle", "old_to_new")
+	if err != nil {
+		t.Fatalf("MigrationSessionEncap() error: %v", err)
+	}
+	chunkPlaintext := base64.StdEncoding.EncodeToString([]byte("interop chunk payload"))
+	chunkAad := `{"bundle_id":"interop-bundle","chunk_index":0,"entry_id":"database","is_final":true,"offset":0,"protocol_version":2,"session_id":"interop-session"}`
+	chunkNonce := base64.StdEncoding.EncodeToString(make([]byte, 12))
+	chunkCiphertext, err := MigrationChunkEncrypt(migSession.SessionKey, chunkPlaintext, chunkAad, chunkNonce)
+	if err != nil {
+		t.Fatalf("MigrationChunkEncrypt() error: %v", err)
+	}
+
+	// Self-check: decap + chunk decrypt must reproduce the plaintext.
+	derivedKey, err := MigrationSessionDecap(migKp.SecretKey, migSession.KemCiphertext, "interop-session", "interop-bundle", "old_to_new")
+	if err != nil {
+		t.Fatalf("MigrationSessionDecap() self-check error: %v", err)
+	}
+	if derivedKey != migSession.SessionKey {
+		t.Fatal("self-check migration session key mismatch")
+	}
+	decryptedChunk, err := MigrationChunkDecrypt(derivedKey, chunkCiphertext, chunkAad, chunkNonce)
+	if err != nil {
+		t.Fatalf("MigrationChunkDecrypt() self-check error: %v", err)
+	}
+	if decryptedChunk != chunkPlaintext {
+		t.Fatal("self-check migration chunk plaintext mismatch")
+	}
+
+	migVec := migrationVectors{
+		PublicKey:       migKp.PublicKey,
+		SecretKey:       migKp.SecretKey,
+		SessionId:       "interop-session",
+		BundleId:        "interop-bundle",
+		Direction:       "old_to_new",
+		KemCiphertext:   migSession.KemCiphertext,
+		SessionKey:      migSession.SessionKey,
+		ChunkPlaintext:  chunkPlaintext,
+		ChunkAad:        chunkAad,
+		ChunkNonce:      chunkNonce,
+		ChunkCiphertext: chunkCiphertext,
+	}
+
+	// 5. Assemble and write JSON.
 	vectors := interopVectors{
 		Identity:   idVec,
 		Signature:  sigVec,
 		Encryption: encVec,
+		Migration:  migVec,
 	}
 
 	jsonData, err := json.MarshalIndent(vectors, "", "  ")

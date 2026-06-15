@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
@@ -15,8 +14,6 @@ import 'package:flutter_app/features/identity/presentation/widgets/cosmic_backgr
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-
-final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
 // ─── Data Generator ───────────────────────────────────────────────────────────
 
@@ -384,249 +381,254 @@ void _assertBackgroundScrollDoesNotRegress(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-void main() {
+void registerFeedPerf() {
   final items = _generateFeedItems();
 
-  group('Feed performance', () {
-    testWidgets('1. Scroll performance', (tester) async {
-      await _pumpFeedScreen(tester, items);
+  // 1. Scroll performance
+  testWidgets('FEED 1', (tester) async {
+    await _pumpFeedScreen(tester, items);
 
-      final scrollable = find.byType(CustomScrollView);
-      expect(scrollable, findsOneWidget);
+    final scrollable = find.byType(CustomScrollView);
+    expect(scrollable, findsOneWidget);
 
-      final collector = _FrameTimingCollector()..start();
+    final collector = _FrameTimingCollector()..start();
 
-      // Fling scroll to bottom
-      await tester.fling(scrollable, const Offset(0, -1500), 3000);
-      await _pumpFrames(tester, count: 30);
+    // Fling scroll to bottom
+    await tester.fling(scrollable, const Offset(0, -1500), 3000);
+    await _pumpFrames(tester, count: 30);
 
-      // Fling scroll back to top
-      await tester.fling(scrollable, const Offset(0, 1500), 3000);
-      await _pumpFrames(tester, count: 30);
+    // Fling scroll back to top
+    await tester.fling(scrollable, const Offset(0, 1500), 3000);
+    await _pumpFrames(tester, count: 30);
 
-      await collector.stop();
-      // Debug-mode flutter test scroll timing includes occasional sliver/card
-      // first-build spikes. Keep average and P99 budgets tight while allowing
-      // one isolated debug outlier to avoid false failures on lazy card mount.
-      _assertThresholds(
-        collector.stats,
-        'Scroll',
-        maxP99Ms: 24,
-        maxWorstMs: 100,
-      );
-    });
+    await collector.stop();
+    // Debug-mode flutter test scroll timing includes occasional sliver/card
+    // first-build spikes. Keep average and P99 budgets tight while allowing
+    // one isolated debug outlier to avoid false failures on lazy card mount.
+    _assertThresholds(
+      collector.stats,
+      'Scroll',
+      maxP99Ms: 24,
+      maxWorstMs: 100,
+    );
+  });
 
-    testWidgets('2. Card expand/collapse performance', (tester) async {
-      await _pumpFeedScreen(tester, items);
+  // 2. Card expand/collapse performance
+  testWidgets('FEED 2', (tester) async {
+    await _pumpFeedScreen(tester, items);
 
-      final collector = _FrameTimingCollector()..start();
+    final collector = _FrameTimingCollector()..start();
 
-      final scrollable = find.byType(CustomScrollView);
-      final exercisedThreadIds = <String>{};
+    final scrollable = find.byType(CustomScrollView);
+    final exercisedThreadIds = <String>{};
 
-      for (var attempts = 0; exercisedThreadIds.length < 3; attempts++) {
-        final nextCard = _nextBuiltCollapsedCard(tester, exercisedThreadIds);
-        if (nextCard == null) {
-          expect(
-            attempts,
-            lessThan(20),
-            reason: 'Could not find three collapsed feed cards to exercise',
-          );
-          await tester.drag(scrollable, const Offset(0, -300));
-          await tester.pump(const Duration(milliseconds: 16));
-          continue;
-        }
-
-        final card = find.byKey(ValueKey(nextCard.thread.id));
-        final headerLabel = find.descendant(
-          of: card,
-          matching: find.text(nextCard.thread.displayName),
+    for (var attempts = 0; exercisedThreadIds.length < 3; attempts++) {
+      final nextCard = _nextBuiltCollapsedCard(tester, exercisedThreadIds);
+      if (nextCard == null) {
+        expect(
+          attempts,
+          lessThan(20),
+          reason: 'Could not find three collapsed feed cards to exercise',
         );
-
-        await tester.ensureVisible(headerLabel);
+        await tester.drag(scrollable, const Offset(0, -300));
         await tester.pump(const Duration(milliseconds: 16));
-
-        // Expand via the tappable collapsed header instead of the full card body.
-        await tester.tap(headerLabel);
-        await _pumpFrames(tester, count: 25);
-
-        final collapseHint = find.descendant(
-          of: card,
-          matching: find.text(
-            AppLocalizations.of(tester.element(card))!.feed_collapse,
-          ),
-        );
-
-        await tester.ensureVisible(collapseHint);
-        await tester.pump(const Duration(milliseconds: 16));
-
-        await tester.tap(collapseHint);
-        await _pumpFrames(tester, count: 25);
-
-        exercisedThreadIds.add(nextCard.thread.id);
+        continue;
       }
 
-      await collector.stop();
-      // Expand triggers first-mount of 6 message bubbles + AnimatedSize +
-      // BackdropFilter recalc. First frame spikes are expected in debug mode;
-      // wider budget catches regressions without false positives.
-      _assertThresholds(
-        collector.stats,
-        'Expand/Collapse',
-        maxAvgMs: 16,
-        maxP99Ms: 64,
-        maxWorstMs: 100,
-      );
-    });
-
-    testWidgets('3. Swipe-to-quote gesture performance', (tester) async {
-      // Pre-expand thread_0 so SwipeToQuoteBubble widgets are rendered
-      await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
-
-      final swipeable = find.byType(SwipeToQuoteBubble);
-      expect(
-        swipeable,
-        findsWidgets,
-        reason: 'No SwipeToQuoteBubble found — is the card expanded?',
+      final card = find.byKey(ValueKey(nextCard.thread.id));
+      final headerLabel = find.descendant(
+        of: card,
+        matching: find.text(nextCard.thread.displayName),
       );
 
-      final target = swipeable.first;
-      final center = tester.getCenter(target);
-
-      final collector = _FrameTimingCollector()..start();
-
-      // Start drag gesture
-      final gesture = await tester.startGesture(center);
-
-      // Move past touch slop (18px default) to start drag recognition
-      await gesture.moveBy(const Offset(20, 0));
+      await tester.ensureVisible(headerLabel);
       await tester.pump(const Duration(milliseconds: 16));
 
-      // Drag right in 8 increments (40px total, well past 36px trigger)
-      for (var i = 0; i < 8; i++) {
-        await gesture.moveBy(const Offset(5, 0));
-        await tester.pump(const Duration(milliseconds: 16));
-      }
+      // Expand via the tappable collapsed header instead of the full card body.
+      await tester.tap(headerLabel);
+      await _pumpFrames(tester, count: 25);
 
-      // Release and pump through snap-back animation
-      await gesture.up();
-      await _pumpFrames(tester, count: 15);
-
-      await collector.stop();
-      // Steady-state transform animation: tight budget
-      _assertThresholds(collector.stats, 'Swipe-to-quote');
-    });
-
-    testWidgets('4. Compose input performance', (tester) async {
-      // Pre-expand thread_0 so the inline reply input is rendered
-      await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
-
-      final composeFinder = find.descendant(
-        of: find.byKey(const ValueKey('thread_0')),
-        matching: find.byType(InlineReplyInput),
+      final collapseHint = find.descendant(
+        of: card,
+        matching: find.text(
+          AppLocalizations.of(tester.element(card))!.feed_collapse,
+        ),
       );
-      expect(composeFinder, findsOneWidget);
 
-      final textField = find.descendant(
-        of: composeFinder,
-        matching: find.byType(TextField),
-      );
-      expect(textField, findsOneWidget);
-
-      // Tap to focus
-      await tester.tap(textField);
+      await tester.ensureVisible(collapseHint);
       await tester.pump(const Duration(milliseconds: 16));
 
-      final collector = _FrameTimingCollector()..start();
+      await tester.tap(collapseHint);
+      await _pumpFrames(tester, count: 25);
 
-      // Enter text in 10 chunks, each triggering a rebuild
-      const fullText = 'Performance test: typing fifty characters rapidly!';
-      for (var i = 1; i <= 10; i++) {
-        final chunk = fullText.substring(0, min(i * 5, fullText.length));
-        await tester.enterText(textField, chunk);
-        await tester.pump(const Duration(milliseconds: 16));
-      }
+      exercisedThreadIds.add(nextCard.thread.id);
+    }
 
-      await collector.stop();
-      // enterText replaces full text and exercises InlineReplyInput's local
-      // text/direction/send-button state. The harness stores drafts without
-      // setState to match production FeedWired behavior.
-      _assertThresholds(
-        collector.stats,
-        'Compose input',
-        maxAvgMs: 32,
-        maxP99Ms: 64,
-        maxWorstMs: 100,
-      );
-    });
+    await collector.stop();
+    // Expand triggers first-mount of 6 message bubbles + AnimatedSize +
+    // BackdropFilter recalc. First frame spikes are expected in debug mode;
+    // wider budget catches regressions without false positives.
+    _assertThresholds(
+      collector.stats,
+      'Expand/Collapse',
+      maxAvgMs: 16,
+      maxP99Ms: 64,
+      maxWorstMs: 100,
+    );
+  });
 
-    testWidgets('5. Cosmic scroll performance', (tester) async {
-      await _pumpFeedScreen(tester, items);
-      expect(find.byType(CosmicBackground), findsNothing);
+  // 3. Swipe-to-quote gesture performance
+  testWidgets('FEED 3', (tester) async {
+    // Pre-expand thread_0 so SwipeToQuoteBubble widgets are rendered
+    await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
 
-      final baselineStats = await _collectScrollStats(tester);
+    final swipeable = find.byType(SwipeToQuoteBubble);
+    expect(
+      swipeable,
+      findsWidgets,
+      reason: 'No SwipeToQuoteBubble found — is the card expanded?',
+    );
 
-      await _pumpFeedScreen(
-        tester,
-        items,
-        backgroundPreference: BackgroundPreference.cosmic,
-      );
+    final target = swipeable.first;
+    final center = tester.getCenter(target);
 
-      expect(find.byType(CosmicBackground), findsOneWidget);
+    final collector = _FrameTimingCollector()..start();
 
-      final cosmicStats = await _collectScrollStats(tester);
+    // Start drag gesture
+    final gesture = await tester.startGesture(center);
 
-      _assertBackgroundScrollDoesNotRegress(
-        baselineStats,
-        cosmicStats,
-        'Cosmic',
-      );
-    });
+    // Move past touch slop (18px default) to start drag recognition
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump(const Duration(milliseconds: 16));
 
-    testWidgets('6. Mirrored cosmic scroll performance', (tester) async {
-      await _pumpFeedScreen(tester, items);
-      expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+    // Drag right in 8 increments (40px total, well past 36px trigger)
+    for (var i = 0; i < 8; i++) {
+      await gesture.moveBy(const Offset(5, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
 
-      final baselineStats = await _collectScrollStats(tester);
+    // Release and pump through snap-back animation
+    await gesture.up();
+    await _pumpFrames(tester, count: 15);
 
-      await _pumpFeedScreen(
-        tester,
-        items,
-        backgroundPreference: BackgroundPreference.cosmicMirrored,
-      );
+    await collector.stop();
+    // Steady-state transform animation: tight budget
+    _assertThresholds(collector.stats, 'Swipe-to-quote');
+  });
 
-      expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+  // 4. Compose input performance
+  testWidgets('FEED 4', (tester) async {
+    // Pre-expand thread_0 so the inline reply input is rendered
+    await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
 
-      final mirroredStats = await _collectScrollStats(tester);
+    final composeFinder = find.descendant(
+      of: find.byKey(const ValueKey('thread_0')),
+      matching: find.byType(InlineReplyInput),
+    );
+    expect(composeFinder, findsOneWidget);
 
-      _assertBackgroundScrollDoesNotRegress(
-        baselineStats,
-        mirroredStats,
-        'Mirrored cosmic',
-      );
-    });
+    final textField = find.descendant(
+      of: composeFinder,
+      matching: find.byType(TextField),
+    );
+    expect(textField, findsOneWidget);
 
-    testWidgets('7. Daylight Lagoon scroll performance', (tester) async {
-      await _pumpFeedScreen(tester, items);
-      expect(find.byType(DaylightLagoonBackground), findsNothing);
+    // Tap to focus
+    await tester.tap(textField);
+    await tester.pump(const Duration(milliseconds: 16));
 
-      final baselineStats = await _collectScrollStats(tester);
+    final collector = _FrameTimingCollector()..start();
 
-      await _pumpFeedScreen(
-        tester,
-        items,
-        backgroundPreference: BackgroundPreference.daylightLagoon,
-      );
+    // Enter text in 10 chunks, each triggering a rebuild
+    const fullText = 'Performance test: typing fifty characters rapidly!';
+    for (var i = 1; i <= 10; i++) {
+      final chunk = fullText.substring(0, min(i * 5, fullText.length));
+      await tester.enterText(textField, chunk);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
 
-      expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+    await collector.stop();
+    // enterText replaces full text and exercises InlineReplyInput's local
+    // text/direction/send-button state. The harness stores drafts without
+    // setState to match production FeedWired behavior.
+    _assertThresholds(
+      collector.stats,
+      'Compose input',
+      maxAvgMs: 32,
+      maxP99Ms: 64,
+      maxWorstMs: 100,
+    );
+  });
 
-      final daylightStats = await _collectScrollStats(tester);
+  // 5. Cosmic scroll performance
+  testWidgets('FEED 5', (tester) async {
+    await _pumpFeedScreen(tester, items);
+    expect(find.byType(CosmicBackground), findsNothing);
 
-      _assertBackgroundScrollDoesNotRegress(
-        baselineStats,
-        daylightStats,
-        'Daylight Lagoon',
-      );
-    });
+    final baselineStats = await _collectScrollStats(tester);
+
+    await _pumpFeedScreen(
+      tester,
+      items,
+      backgroundPreference: BackgroundPreference.cosmic,
+    );
+
+    expect(find.byType(CosmicBackground), findsOneWidget);
+
+    final cosmicStats = await _collectScrollStats(tester);
+
+    _assertBackgroundScrollDoesNotRegress(
+      baselineStats,
+      cosmicStats,
+      'Cosmic',
+    );
+  });
+
+  // 6. Mirrored cosmic scroll performance
+  testWidgets('FEED 6', (tester) async {
+    await _pumpFeedScreen(tester, items);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+
+    final baselineStats = await _collectScrollStats(tester);
+
+    await _pumpFeedScreen(
+      tester,
+      items,
+      backgroundPreference: BackgroundPreference.cosmicMirrored,
+    );
+
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+
+    final mirroredStats = await _collectScrollStats(tester);
+
+    _assertBackgroundScrollDoesNotRegress(
+      baselineStats,
+      mirroredStats,
+      'Mirrored cosmic',
+    );
+  });
+
+  // 7. Daylight Lagoon scroll performance
+  testWidgets('FEED 7', (tester) async {
+    await _pumpFeedScreen(tester, items);
+    expect(find.byType(DaylightLagoonBackground), findsNothing);
+
+    final baselineStats = await _collectScrollStats(tester);
+
+    await _pumpFeedScreen(
+      tester,
+      items,
+      backgroundPreference: BackgroundPreference.daylightLagoon,
+    );
+
+    expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+
+    final daylightStats = await _collectScrollStats(tester);
+
+    _assertBackgroundScrollDoesNotRegress(
+      baselineStats,
+      daylightStats,
+      'Daylight Lagoon',
+    );
   });
 }

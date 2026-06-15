@@ -93,5 +93,27 @@ void main() {
         ),
       );
     });
+
+    test(
+      'foreground push fallback is migration-gated before display',
+      () async {
+        final mainDart = await File('lib/main.dart').readAsString();
+
+        final handlerIndex = mainDart.indexOf('_handleForegroundRemotePush');
+        final gateIndex = mainDart.indexOf(
+          'push_foreground_notification_display',
+          handlerIndex,
+        );
+        final fallbackIndex = mainDart.indexOf(
+          'showForegroundPushFallbackNotificationIfNeeded',
+          handlerIndex,
+        );
+
+        expect(handlerIndex, isNonNegative);
+        expect(gateIndex, isNonNegative);
+        expect(fallbackIndex, isNonNegative);
+        expect(gateIndex, lessThan(fallbackIndex));
+      },
+    );
   });
 }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
@@ -122,6 +123,82 @@ void main() {
           jsonDecode(replayEnvelope['ciphertext'] as String)
               as Map<String, dynamic>;
       expect(replayEnvelope['messageId'], replayPlaintext['messageId']);
+    },
+  );
+
+  // B4 (Option A signer contract): the published group_dissolved audit must
+  // carry the actor device/transport binding when the caller supplies it, so a
+  // receiver's observed live binding matches the signed binding and the
+  // dissolve verifies. Decode the audit from the proven inboxStore replay path.
+  Map<String, dynamic> publishedDissolveAuditActor() {
+    final inboxStoreMessage = bridge.sentMessages.firstWhere((message) {
+      return (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+          'group:inboxStore';
+    });
+    final inboxPayload =
+        (jsonDecode(inboxStoreMessage) as Map<String, dynamic>)['payload']
+            as Map<String, dynamic>;
+    final replayEnvelope =
+        jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+    final replayPlaintext =
+        jsonDecode(replayEnvelope['ciphertext'] as String)
+            as Map<String, dynamic>;
+    final sysPayload =
+        jsonDecode(replayPlaintext['text'] as String) as Map<String, dynamic>;
+    final audit =
+        sysPayload[signedGroupTransitionAuditField] as Map<String, dynamic>;
+    final signedPayload =
+        jsonDecode(audit['signedPayload'] as String) as Map<String, dynamic>;
+    return signedPayload['actor'] as Map<String, dynamic>;
+  }
+
+  test(
+    'B4 dissolve WITH actor binding signs an audit whose actor carries device/transport',
+    () async {
+      final (result, _) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        actorDeviceId: 'dev-admin-1',
+        actorTransportPeerId: 'transport-admin-1',
+        actorKeyPackageId: 'kp-admin-1',
+        dissolvedAt: now.add(const Duration(minutes: 5)),
+      );
+
+      expect(result, DissolveGroupResult.success);
+      final actor = publishedDissolveAuditActor();
+      expect(actor['deviceId'], 'dev-admin-1');
+      expect(actor['transportPeerId'], 'transport-admin-1');
+      expect(actor['keyPackageId'], 'kp-admin-1');
+    },
+  );
+
+  test(
+    'B4 dissolve WITHOUT actor binding (legacy caller) signs an audit whose actor OMITS device/transport',
+    () async {
+      final (result, _) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        dissolvedAt: now.add(const Duration(minutes: 5)),
+      );
+
+      expect(result, DissolveGroupResult.success);
+      final actor = publishedDissolveAuditActor();
+      // Documents the omit-on-null signer behavior that, paired with a present
+      // observed binding on receivers, produced the field rejection (B4).
+      expect(actor.containsKey('deviceId'), isFalse);
+      expect(actor.containsKey('transportPeerId'), isFalse);
     },
   );
 

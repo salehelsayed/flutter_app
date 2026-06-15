@@ -247,11 +247,25 @@ Future<List<PostMediaAttachmentModel>> _mergeSnapshotMedia({
         if (existing == null) {
           return attachment.copyWith(postId: postId);
         }
+        // KC-P3 persistence: the pin snapshot is crypto-free renderable JSON,
+        // so the merge must carry over the stored row's key material or the
+        // author pinning their own encrypted post strips every recipient's
+        // keys. A keyed row's blobId/key/nonce travel together — the
+        // snapshot blobId wins only when the existing row has no keys.
+        final hasExistingKeyMaterial =
+            existing.encryptionKeyBase64 != null &&
+            existing.encryptionNonce != null;
         return attachment.copyWith(
           postId: postId,
+          blobId: hasExistingKeyMaterial ? existing.blobId : null,
           localPath: existing.localPath,
           downloadStatus: existing.downloadStatus,
           createdAt: existing.createdAt,
+          encryptionKeyBase64: existing.encryptionKeyBase64,
+          encryptionNonce: existing.encryptionNonce,
+          encryptionScheme: existing.encryptionScheme,
+          contentHash: existing.contentHash,
+          isEncrypted: existing.isEncrypted ? true : null,
         );
       })
       .toList(growable: false);

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -287,6 +288,8 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -325,6 +328,71 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
 
   @override
   void dispose() {}
+}
+
+class DurableLanFakeP2PService extends FakeP2PService
+    implements DurableLanSender {
+  LanSendAck localSendAck;
+
+  DurableLanFakeP2PService({
+    this.localSendAck = LanSendAck.committed,
+    NodeState? currentState,
+    bool sendMessageResult = true,
+    String? sendMessageReply = 'received: ok',
+    bool? sendMessageAcked,
+    String? sendMessageTransport,
+    bool shouldThrow = false,
+    bool storeInInboxResult = false,
+    RelayProbeResult probeRelayResult = RelayProbeResult.error,
+    DiscoveredPeer? discoverPeerResult,
+    bool useNullDiscover = false,
+    bool dialPeerResult = true,
+  }) : super(
+         currentState: currentState,
+         sendMessageResult: sendMessageResult,
+         sendMessageReply: sendMessageReply,
+         sendMessageAcked: sendMessageAcked,
+         sendMessageTransport: sendMessageTransport,
+         shouldThrow: shouldThrow,
+         storeInInboxResult: storeInInboxResult,
+         probeRelayResult: probeRelayResult,
+         discoverPeerResult: discoverPeerResult,
+         useNullDiscover: useNullDiscover,
+         dialPeerResult: dialPeerResult,
+       );
+
+  @override
+  Future<LanSendAck> sendLocalMessageDurable(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
+    localSendCallCount++;
+    lastLocalSendTimeoutMs = timeoutMs;
+    if (localSendDelay > Duration.zero) {
+      await Future<void>.delayed(localSendDelay);
+    }
+    lastSentPeerId = peerId;
+    lastSentMessage = message;
+    if (!localSendResult) return LanSendAck.failed;
+    return localSendAck;
+  }
+
+  @override
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async =>
+      await sendLocalMessageDurable(
+        peerId,
+        message,
+        fromPeerId,
+        timeoutMs: timeoutMs,
+      ) ==
+      LanSendAck.committed;
 }
 
 // -- Fake Message Repository --
@@ -370,8 +438,13 @@ class FakeMessageRepository implements MessageRepository {
   @override
   Future<void> updateMessageStatus(String id, String status) async {}
 
+  /// 116 P2: seedable rows for the no-downgrade writer gate's
+  /// `getMessage(messageId)` lookup. Empty by default (legacy behavior).
+  final Map<String, ConversationMessage> existingMessages = {};
+
   @override
-  Future<ConversationMessage?> getMessage(String id) async => null;
+  Future<ConversationMessage?> getMessage(String id) async =>
+      existingMessages[id];
 
   @override
   Future<bool> messageExists(String id) async => false;
@@ -607,6 +680,78 @@ void main() {
   });
 
   group('sendChatMessage', () {
+    // --- 112 Phase 2.2: outbound fail-closed media gate (G5) ---
+    test(
+      'send fails closed when an attachment lacks encryption metadata',
+      () async {
+        const plaintextAttachment = MediaAttachment(
+          id: 'att-plain-1',
+          messageId: '',
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-06-12T11:00:00.000Z',
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'photo for you',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const [plaintextAttachment],
+        );
+
+        expect(result, SendChatMessageResult.mediaEncryptionRequired);
+        expect(message, isNull);
+        // Fails BEFORE any envelope is built/persisted or transport touched.
+        expect(messageRepo.saved, isEmpty);
+        expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+        expect(p2pService.lastSentMessage, isNull);
+      },
+    );
+
+    test('send proceeds for attachment with full encryption metadata', () async {
+      const encryptedAttachment = MediaAttachment(
+        id: 'att-enc-1',
+        messageId: '',
+        mime: 'image/jpeg',
+        size: 1024,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2026-06-12T11:00:00.000Z',
+        contentHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        encryptionKeyBase64: 'key-1',
+        encryptionNonce: 'nonce-1',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'photo for you',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        mediaAttachments: const [encryptedAttachment],
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      final payload = decodeWirePayload(p2pService.lastSentMessage!);
+      final media = payload['media'] as List<dynamic>;
+      final wireAttachment = media.single as Map<String, dynamic>;
+      expect(wireAttachment['encryptionKeyBase64'], 'key-1');
+      expect(wireAttachment['encryptionNonce'], 'nonce-1');
+      expect(
+        wireAttachment['encryptionScheme'],
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+    });
+
     test(
       'sanitizes outgoing comment text while preserving safe markers',
       () async {
@@ -658,6 +803,11 @@ void main() {
           mediaType: 'image',
           downloadStatus: 'done',
           createdAt: '2026-03-15T11:00:00.000Z',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: 'key-att-1',
+          encryptionNonce: 'nonce-att-1',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
 
         final (attachmentResult, attachmentMessage) = await sendChatMessage(
@@ -865,6 +1015,11 @@ void main() {
               localPath: '/tmp/final.jpg',
               downloadStatus: 'done',
               createdAt: '2026-01-01T00:00:00.000Z',
+              contentHash:
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              encryptionKeyBase64: 'key-final',
+              encryptionNonce: 'nonce-final',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             ),
           ],
           mediaAttachmentRepo: mediaAttachmentRepo,
@@ -896,6 +1051,11 @@ void main() {
           localPath: '/tmp/funny.gif',
           downloadStatus: 'done',
           createdAt: '2026-03-15T11:00:00.000Z',
+          contentHash:
+              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          encryptionKeyBase64: 'key-gif',
+          encryptionNonce: 'nonce-gif',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
 
         final (result, message) = await sendChatMessage(
@@ -1179,7 +1339,9 @@ void main() {
     );
 
     test(
-      'returns success and persists delivered status when inbox store succeeds',
+      // 115 P1 contract flip: inbox store success is CUSTODY ('inboxed'),
+      // not delivery — receipts (115 P2) own the 'delivered' flip.
+      'returns success and persists inboxed status when inbox store succeeds',
       () async {
         p2pService.sendMessageResult = false;
         p2pService.storeInInboxResult = true;
@@ -1195,9 +1357,9 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        expect(message!.status, 'inboxed');
         expect(messageRepo.saved.length, 1);
-        expect(messageRepo.saved.first.status, 'delivered');
+        expect(messageRepo.saved.first.status, 'inboxed');
         expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.lastInboxPeerId, 'target-peer');
         expect(p2pService.lastInboxMessage, isNotNull);
@@ -1377,15 +1539,17 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        // 115 P1 contract flip: inbox handoff is custody → 'inboxed' with the
+        // envelope retained for the custody sweep / receipt flip.
+        expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
-        expect(message.wireEnvelope, isNull);
+        expect(message.wireEnvelope, isNotNull);
         expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
     test('sends locally when peer is on local WiFi', () async {
-      p2pService = FakeP2PService(useNullDiscover: true)
+      p2pService = DurableLanFakeP2PService(useNullDiscover: true)
         ..localPeers.add('target-peer');
 
       final (result, message) = await sendChatMessage(
@@ -1524,7 +1688,7 @@ void main() {
         () async {
       // useNullDiscover makes the parallel direct leg miss, so only the local
       // leg can win — proving 'local' is the path actually taken.
-      p2pService = FakeP2PService(useNullDiscover: true)
+      p2pService = DurableLanFakeP2PService(useNullDiscover: true)
         ..localPeers.add('target-peer');
 
       final (result, message) = await sendChatMessage(
@@ -1590,7 +1754,7 @@ void main() {
       // Direct leg misses (useNullDiscover) so only the freshly-resolved local
       // leg can win. discoverLocalPeerResult=true models mDNS resolving at send
       // time; a small bounded delay proves it still lands inside the budget.
-      p2pService = FakeP2PService(useNullDiscover: true)
+      p2pService = DurableLanFakeP2PService(useNullDiscover: true)
         ..discoverLocalPeerResult = true
         ..discoverLocalPeerDelay = const Duration(milliseconds: 50);
       // Precondition: peer is NOT already known as local.
@@ -1649,6 +1813,139 @@ void main() {
       expect(p2pService.localSendCallCount, 0);
       // The direct leg carried the message.
       expect(p2pService.sendCallCount, 1);
+    });
+  });
+
+  group('Doc 114 S3 durable LAN ack policy', () {
+    test('committed LAN ack persists delivered local and trains sticky local',
+        () async {
+      p2pService = DurableLanFakeP2PService(useNullDiscover: true)
+        ..localPeers.add('target-peer');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Committed LAN custody',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'local');
+      expect(message.wireEnvelope, isNull);
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(p2pService.recordSuccessfulTransportCallCount, 1);
+      expect(p2pService.lastRecordedTransport, 'local');
+    });
+
+    test('legacy LAN ack hands off to inbox custody without sticky local',
+        () async {
+      p2pService = DurableLanFakeP2PService(
+        localSendAck: LanSendAck.legacyAck,
+        useNullDiscover: true,
+        storeInInboxResult: true,
+      )..localPeers.add('target-peer');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Legacy LAN ack needs custody',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'inboxed');
+      expect(message.transport, 'inbox');
+      expect(message.wireEnvelope, isNotNull);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.recordSuccessfulTransportCallCount, 0);
+      expect(p2pService.lastRecordedTransport, isNull);
+    });
+
+    test('legacy LAN ack keeps retryable sent envelope when inbox handoff fails',
+        () async {
+      p2pService = DurableLanFakeP2PService(
+        localSendAck: LanSendAck.legacyAck,
+        useNullDiscover: true,
+        storeInInboxResult: false,
+      )..localPeers.add('target-peer');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Legacy LAN ack retryable',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'sent');
+      expect(message.transport, 'local');
+      expect(message.wireEnvelope, isNotNull);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.recordSuccessfulTransportCallCount, 0);
+    });
+
+    test('bool-only local sender is non-durable and uses inbox backstop',
+        () async {
+      p2pService = FakeP2PService(
+        useNullDiscover: true,
+        storeInInboxResult: true,
+      )..localPeers.add('target-peer');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Bool LAN ack is legacy',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'inboxed');
+      expect(message.transport, 'inbox');
+      expect(message.wireEnvelope, isNotNull);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.recordSuccessfulTransportCallCount, 0);
+    });
+
+    test('sticky local short-circuit still backstops a legacy LAN ack',
+        () async {
+      p2pService = DurableLanFakeP2PService(
+        localSendAck: LanSendAck.legacyAck,
+        storeInInboxResult: true,
+      )
+        ..localPeers.add('target-peer')
+        ..lastKnownGoodTransportResult = 'local';
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Sticky local legacy ack',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'inboxed');
+      expect(message.transport, 'inbox');
+      expect(message.wireEnvelope, isNotNull);
+      expect(p2pService.localSendCallCount, 1);
+      expect(p2pService.discoverCallCount, 0);
+      expect(p2pService.dialCallCount, 0);
+      expect(p2pService.recordSuccessfulTransportCallCount, 0);
     });
   });
 
@@ -1790,7 +2087,7 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
         expect(message.transport, 'inbox');
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 0);
@@ -1818,7 +2115,7 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
         expect(message.transport, 'inbox');
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 0);
@@ -1847,9 +2144,10 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        // 115 P1 contract flip: custody → 'inboxed', envelope retained.
+        expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
-        expect(message.wireEnvelope, isNull);
+        expect(message.wireEnvelope, isNotNull);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 1);
@@ -1883,10 +2181,10 @@ void main() {
         );
 
         // The probe connected and dialed, but the live send never landed, so the
-        // message is durably handed off to the inbox.
+        // message is durably handed off to the inbox (custody → 'inboxed').
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
         expect(p2pService.probeRelayCallCount, 1);
         // Load-bearing: exactly ONE post-probe send attempt (P5: 2 → 1). This is
@@ -2040,7 +2338,7 @@ void main() {
     );
 
     test(
-      'existing local peer persists local transport on the reuse fast path',
+      'existing LAN-visible peer records actual Go transport on the reuse fast path',
       () async {
         p2pService = FakeP2PService(
           currentState: NodeState(
@@ -2060,17 +2358,19 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello through reused local',
+          text: 'Hello through reused direct',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.transport, 'local');
+        expect(message!.transport, 'direct');
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.discoverCallCount, 0);
         expect(p2pService.dialCallCount, 0);
+        expect(p2pService.recordSuccessfulTransportCallCount, 1);
+        expect(p2pService.lastRecordedTransport, 'direct');
       },
     );
 
@@ -2104,9 +2404,10 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        // 115 P1 contract flip: custody → 'inboxed', envelope retained.
+        expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
-        expect(message.wireEnvelope, isNull);
+        expect(message.wireEnvelope, isNotNull);
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.discoverCallCount, 0);
@@ -2117,7 +2418,8 @@ void main() {
     test(
       'local wifi and direct send race commits only the first successful path',
       () async {
-        p2pService.localPeers.add('target-peer');
+        p2pService = DurableLanFakeP2PService()
+          ..localPeers.add('target-peer');
         // Both local and direct will succeed — but only one message should be persisted
 
         final (result, message) = await sendChatMessage(
@@ -2209,7 +2511,7 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      expect(message!.status, 'delivered');
+      expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
       expect(p2pService.storeInInboxCallCount, 1);
     });
 
@@ -2431,14 +2733,15 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      expect(message!.status, 'delivered');
+      // 115 P1 contract flip: custody → 'inboxed', envelope retained.
+      expect(message!.status, 'inboxed');
       expect(message.transport, 'inbox');
-      expect(message.wireEnvelope, isNull);
+      expect(message.wireEnvelope, isNotNull);
       expect(p2pService.storeInInboxCallCount, 1);
     });
 
     test(
-      'explicit acked=false hands off to inbox-backed delivered when available',
+      'explicit acked=false hands off to inbox-backed custody when available',
       () async {
         p2pService = FakeP2PService(
           sendMessageResult: true,
@@ -2459,9 +2762,10 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        // 115 P1 contract flip: custody → 'inboxed', envelope retained.
+        expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
-        expect(message.wireEnvelope, isNull);
+        expect(message.wireEnvelope, isNotNull);
         expect(p2pService.storeInInboxCallCount, 1);
       },
     );
@@ -2485,7 +2789,7 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(message!.status, 'delivered');
+        expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
         expect(message.transport, 'inbox');
         // Exactly one inbox call from the failure fallback — not zero, not two
         expect(p2pService.storeInInboxCallCount, 1);
@@ -2707,7 +3011,7 @@ void main() {
     // window honors local > direct, not pure first-wins.
     test('U1 grace: local lands within grace of direct → transport == local',
         () async {
-      p2pService = FakeP2PService()
+      p2pService = DurableLanFakeP2PService()
         ..localPeers.add('target-peer')
         // Direct resolves immediately; local lands ~40ms later — inside the
         // 150ms grace window, so it must still preempt the worse direct leg.
@@ -2801,7 +3105,7 @@ void main() {
     // discover/dial. Pairs the direct case above for the other live transport.
     test('U2 sticky short-circuit: learned local skips local discover + direct',
         () async {
-      p2pService = FakeP2PService()
+      p2pService = DurableLanFakeP2PService()
         ..localPeers.add('target-peer')
         ..lastKnownGoodTransportResult = 'local';
 
@@ -2879,7 +3183,7 @@ void main() {
     // fast-path: on any miss it degrades to the cold race, never blocks.
     test('U-N2 sticky neg: learned transport fails → full race still delivers',
         () async {
-      p2pService = FakeP2PService(sendMessageResult: false) // direct send fails
+      p2pService = DurableLanFakeP2PService(sendMessageResult: false)
         ..localPeers.add('target-peer') // local can carry it
         ..lastKnownGoodTransportResult = 'direct';
 
@@ -3132,7 +3436,7 @@ void main() {
     // same id; only one message is saved.
     test('U4 dedup: same messageId across paths persists exactly one row',
         () async {
-      p2pService = FakeP2PService()..localPeers.add('target-peer');
+      p2pService = DurableLanFakeP2PService()..localPeers.add('target-peer');
       const fixedId = 'msg-nr05-dedup-001';
 
       final (result, message) = await sendChatMessage(
@@ -3212,7 +3516,7 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      expect(message!.status, 'delivered');
+      expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
       expect(message.transport, 'inbox');
       // Probe ran once and detected offline; no post-probe live send fired
       // (NO_RESERVATION skips the relay send loop straight to inbox).
@@ -3258,6 +3562,244 @@ void main() {
         interactiveLocalBudget.inMilliseconds,
       );
       expect(sw.elapsedMilliseconds, lessThan(3000));
+    });
+  });
+
+  // ─── 115 Phase 1 — inbox custody truthfulness ──────────────────────────
+  // Relay-inbox acceptance is CUSTODY, not delivery: the relay silently
+  // evicts at the 100-cap and TTL-prunes at 7 days with no protocol signal
+  // (doc 115 §1). Sender rows must persist the distinct non-terminal status
+  // 'inboxed' with the wire envelope RETAINED so the custody sweep (115 P3)
+  // can re-store and delivery receipts (115 P2) can flip to 'delivered'.
+  group('115 Phase 1 — inbox custody truthfulness', () {
+    test(
+      "sequential inbox fallback persists status 'inboxed' with transport 'inbox' and retains wire_envelope",
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: false,
+          useNullDiscover: true, // direct leg: peer_not_found
+          storeInInboxResult: true, // sequential inbox tail takes custody
+        );
+
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'Custody not delivery',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(message, isNotNull);
+          expect(message!.status, 'inboxed');
+          expect(message.transport, 'inbox');
+          expect(
+            message.wireEnvelope,
+            isNotNull,
+            reason: 'custody sweep re-store needs the envelope retained',
+          );
+          expect(messageRepo.saved.single.status, 'inboxed');
+          expect(messageRepo.saved.single.wireEnvelope, isNotNull);
+        });
+
+        final success = events.lastWhere(
+          (event) => event['event'] == 'CHAT_MSG_SEND_SUCCESS',
+        );
+        expect(success['details']['status'], 'inboxed');
+      },
+    );
+
+    test(
+      "unacked live write with successful inbox handoff persists 'inboxed', not 'delivered'",
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageResult: true,
+          sendMessageAcked: false, // live write unacked
+          sendMessageReply: '',
+          sendMessageTransport: 'direct',
+          storeInInboxResult: true, // handoff takes custody
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Unacked handoff custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'inboxed');
+        expect(message.transport, 'inbox');
+        expect(message.wireEnvelope, isNotNull);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+
+    test("concurrent durable-copy custody short-circuit persists 'inboxed'", () async {
+      p2pService = FakeP2PService(
+        sendMessageResult: false, // live race fails
+        storeInInboxResult: true, // concurrent inbox copy wins custody
+      );
+      // Prior terminally-failed attempt → low-confidence send → the
+      // concurrent inbox arm fires alongside the live race.
+      messageRepo.latestMessageForContact = ConversationMessage(
+        id: 'prior-attempt-id',
+        contactPeerId: 'target-peer',
+        senderPeerId: 'my-peer',
+        text: 'Earlier failed message',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        status: 'failed',
+        isIncoming: false,
+        createdAt: DateTime.now()
+            .toUtc()
+            .subtract(const Duration(seconds: 5))
+            .toIso8601String(),
+      );
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Concurrent custody short-circuit',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'inboxed');
+      expect(message.transport, 'inbox');
+      expect(message.wireEnvelope, isNotNull);
+    });
+
+    // Green-on-arrival PIN (does not count toward the phase RED count):
+    // the live deferred-ack is G4 allowed minting site (b) — Go withholds
+    // the wire ack until the receiver durably stages (node.go:1616-1652),
+    // so an acked live send IS receiver-confirmed and stays 'delivered'.
+    test('live acked send still persists delivered (live transport)', () async {
+      p2pService = FakeP2PService(); // acked direct send
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Live ack stays delivered',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'direct');
+      expect(p2pService.storeInInboxCallCount, 0);
+    });
+  });
+
+  // ─── 116 Phase 2 — no-downgrade writer gate (EF-2) ──────────────────────
+  // A plain-send invocation under a message id whose outgoing row carries
+  // editedAt or deletedAt must fail closed BEFORE encryption and before the
+  // pre-race updateWireEnvelope — so a stored edit envelope can never be
+  // overwritten (poisoned) by a plain envelope, and plain content can never
+  // be transmitted under an edit/tombstone id. All UI retry paths route
+  // through retryFailedMessage, so this gate has ZERO legitimate trips: any
+  // field occurrence of CHAT_MSG_SEND_ACTION_DOWNGRADE_BLOCKED is a bug
+  // detector, not a feature.
+  group('116 Phase 2 — no-downgrade writer gate', () {
+    const editEnvelope =
+        '{"type":"chat_message","version":"2","id":"msg-gate-edit-001","senderPeerId":"my-peer","encrypted":{"kem":"k","ciphertext":"{\\"id\\":\\"msg-gate-edit-001\\",\\"action\\":\\"edit\\"}","nonce":"n"}}';
+
+    test(
+      'refuses a plain send under an edited message id and leaves the stored edit envelope untouched',
+      () async {
+        final editedRow = ConversationMessage(
+          id: 'msg-gate-edit-001',
+          contactPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          text: 'edited text',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          editedAt: '2026-01-01T00:05:00.000Z',
+          wireEnvelope: editEnvelope,
+        );
+        messageRepo.existingMessages[editedRow.id] = editedRow;
+
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'anything',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: 'msg-gate-edit-001',
+          );
+          expect(result, SendChatMessageResult.invalidMessage);
+          expect(message, isNull);
+        });
+
+        expect(
+          messageRepo.wireEnvelopeUpdates,
+          isEmpty,
+          reason: 'the pre-race envelope overwrite must never run (EF-2)',
+        );
+        expect(messageRepo.saved, isEmpty);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        final blocked = events.singleWhere(
+          (e) => e['event'] == 'CHAT_MSG_SEND_ACTION_DOWNGRADE_BLOCKED',
+        );
+        expect(blocked['details']['reason'], 'edited_row_plain_send');
+      },
+    );
+
+    test('refuses a plain send under a deleted tombstone id', () async {
+      final tombstoneRow = ConversationMessage(
+        id: 'msg-gate-del-001',
+        contactPeerId: 'target-peer',
+        senderPeerId: 'my-peer',
+        text: '',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        deletedAt: '2026-01-01T00:01:00.000Z',
+        deletedByPeerId: 'my-peer',
+        wireEnvelope:
+            '{"type":"message_deletion","version":"2","encrypted":{}}',
+      );
+      messageRepo.existingMessages[tombstoneRow.id] = tombstoneRow;
+
+      final events = await captureFlowEvents(() async {
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          // Non-empty so the empty-text gate cannot mask the check: without
+          // the gate this would transmit a plain chat payload under a
+          // tombstone id (resurrection hazard).
+          text: 'non-empty so the empty-text gate does not mask the check',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'msg-gate-del-001',
+        );
+        expect(result, SendChatMessageResult.invalidMessage);
+        expect(message, isNull);
+      });
+
+      expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+      expect(messageRepo.saved, isEmpty);
+      expect(p2pService.sendCallCount, 0);
+      final blocked = events.singleWhere(
+        (e) => e['event'] == 'CHAT_MSG_SEND_ACTION_DOWNGRADE_BLOCKED',
+      );
+      expect(blocked['details']['reason'], 'deleted_row_plain_send');
     });
   });
 }
@@ -3377,6 +3919,8 @@ class _ThrowOnInboxP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -3499,6 +4043,8 @@ class _ThrowOnSendP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -3625,6 +4171,8 @@ class _FlakyDiscoverP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override
@@ -3750,6 +4298,8 @@ class _SlowLocalFastDirectP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
 
   @override

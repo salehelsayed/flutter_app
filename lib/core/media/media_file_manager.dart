@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -20,7 +22,7 @@ class MediaFileManager {
     required String mime,
   }) async {
     final dir = await _mediaDir(contactPeerId);
-    final ext = _extensionFromMime(mime);
+    final ext = MediaFilePathConvention.extensionFromMime(mime);
     return p.join(dir.path, '$blobId$ext');
   }
 
@@ -33,8 +35,11 @@ class MediaFileManager {
     required String blobId,
     required String mime,
   }) {
-    final ext = _extensionFromMime(mime);
-    return p.join('media', contactPeerId, '$blobId$ext');
+    return MediaFilePathConvention.relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
   }
 
   /// Returns the absolute local file path for a Posts attachment.
@@ -44,7 +49,7 @@ class MediaFileManager {
     required String mime,
   }) async {
     final dir = await _postMediaDir(postId);
-    final ext = _extensionFromMime(mime);
+    final ext = MediaFilePathConvention.extensionFromMime(mime);
     return p.join(dir.path, '$blobId$ext');
   }
 
@@ -54,8 +59,11 @@ class MediaFileManager {
     required String blobId,
     required String mime,
   }) {
-    final ext = _extensionFromMime(mime);
-    return p.join('post_media', postId, '$blobId$ext');
+    return MediaFilePathConvention.relativePathForPostAttachment(
+      postId: postId,
+      blobId: blobId,
+      mime: mime,
+    );
   }
 
   /// Copies a file to durable pending-upload storage.
@@ -68,7 +76,6 @@ class MediaFileManager {
     required String attachmentId,
     required String mime,
   }) async {
-    final ext = _extensionFromMime(mime);
     final appDir = await getApplicationDocumentsDirectory();
     final destDir = Directory(
       p.join(appDir.path, 'pending_uploads', messageId),
@@ -76,18 +83,27 @@ class MediaFileManager {
     if (!await destDir.exists()) {
       await destDir.create(recursive: true);
     }
-    final destPath = p.join(destDir.path, '$attachmentId$ext');
+    final relativePath = MediaFilePathConvention.relativePathForPendingUpload(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      mime: mime,
+    );
+    final destPath = p.join(appDir.path, relativePath);
     await File(sourceFilePath).copy(destPath);
-    return p.join('pending_uploads', messageId, '$attachmentId$ext');
+    return relativePath;
   }
 
   /// Deletes the pending-upload directory for a message after successful upload.
   Future<void> deletePendingUploadDir(String messageId) async {
     final appDir = await getApplicationDocumentsDirectory();
     final dir = Directory(p.join(appDir.path, 'pending_uploads', messageId));
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
-    }
+    await deleteAppOwnedMediaDirectoryIfExists(
+      directory: dir,
+      caller: 'MediaFileManager.deletePendingUploadDir',
+      reason: 'pending_upload_dir_cleanup',
+      recursive: true,
+      details: {'messageId': messageId},
+    );
   }
 
   /// Deletes only app-owned durable pending-upload files for [messageId].
@@ -109,7 +125,13 @@ class MediaFileManager {
         continue;
       }
       final resolvedPath = await resolveStoredPath(storedPath);
-      await deleteFile(resolvedPath);
+      await deleteFile(
+        resolvedPath,
+        caller: 'MediaFileManager.deleteOwnedPendingUploadFilesForMessage',
+        reason: 'owned_pending_upload_file_cleanup',
+        storedPath: storedPath,
+        details: {'messageId': messageId},
+      );
     }
   }
 
@@ -125,6 +147,8 @@ class MediaFileManager {
         storedPath.startsWith('pending_uploads\\') ||
         storedPath.startsWith('media/') ||
         storedPath.startsWith('media\\') ||
+        storedPath.startsWith('local_media/') ||
+        storedPath.startsWith('local_media\\') ||
         storedPath.startsWith('post_media/') ||
         storedPath.startsWith('post_media\\')) {
       final appDir = await getApplicationDocumentsDirectory();
@@ -134,6 +158,12 @@ class MediaFileManager {
     final mediaIndex = storedPath.indexOf('/media/');
     if (mediaIndex != -1) {
       final relativePortion = storedPath.substring(mediaIndex + 1);
+      final appDir = await getApplicationDocumentsDirectory();
+      return p.join(appDir.path, relativePortion);
+    }
+    final localMediaIndex = storedPath.indexOf('/local_media/');
+    if (localMediaIndex != -1) {
+      final relativePortion = storedPath.substring(localMediaIndex + 1);
       final appDir = await getApplicationDocumentsDirectory();
       return p.join(appDir.path, relativePortion);
     }
@@ -150,24 +180,41 @@ class MediaFileManager {
   /// Deletes all media files for a contact.
   Future<void> deleteMediaForContact(String contactPeerId) async {
     final dir = await _mediaDir(contactPeerId);
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
-    }
+    await deleteAppOwnedMediaDirectoryIfExists(
+      directory: dir,
+      caller: 'MediaFileManager.deleteMediaForContact',
+      reason: 'contact_media_dir_cleanup',
+      recursive: true,
+      details: {'contactPeerId': contactPeerId},
+    );
   }
 
   /// Deletes a single file at the given path.
-  Future<void> deleteFile(String localPath) async {
-    final file = File(localPath);
-    if (await file.exists()) {
-      await file.delete();
-    }
+  Future<void> deleteFile(
+    String localPath, {
+    String caller = 'MediaFileManager.deleteFile',
+    String reason = 'media_file_delete',
+    String? storedPath,
+    Map<String, Object?> details = const {},
+  }) async {
+    await deleteAppOwnedMediaFileIfExists(
+      file: File(localPath),
+      caller: caller,
+      reason: reason,
+      storedPath: storedPath,
+      details: details,
+    );
   }
 
   Future<void> deleteMediaForPost(String postId) async {
     final dir = await _postMediaDir(postId);
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
-    }
+    await deleteAppOwnedMediaDirectoryIfExists(
+      directory: dir,
+      caller: 'MediaFileManager.deleteMediaForPost',
+      reason: 'post_media_dir_cleanup',
+      recursive: true,
+      details: {'postId': postId},
+    );
   }
 
   Future<Directory> _mediaDir(String contactPeerId) async {
@@ -196,23 +243,5 @@ class MediaFileManager {
     final relativePrefix = 'pending_uploads/$messageId/';
     return normalized.startsWith(relativePrefix) ||
         normalized.contains('/$relativePrefix');
-  }
-
-  static String _extensionFromMime(String mime) {
-    const mimeToExt = {
-      'image/jpeg': '.jpg',
-      'image/png': '.png',
-      'image/gif': '.gif',
-      'image/webp': '.webp',
-      'image/heic': '.heic',
-      'video/mp4': '.mp4',
-      'video/quicktime': '.mov',
-      'audio/aac': '.aac',
-      'audio/mpeg': '.mp3',
-      'audio/mp4': '.m4a',
-      'audio/ogg': '.ogg',
-      'application/pdf': '.pdf',
-    };
-    return mimeToExt[mime] ?? '';
   }
 }

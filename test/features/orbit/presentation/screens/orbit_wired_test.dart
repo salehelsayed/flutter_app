@@ -648,6 +648,79 @@ void main() {
       expect(find.text('Archived'), findsOneWidget);
     });
 
+    testWidgets('All filter badge counts active friends plus active groups', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 1 active friend + 1 active group → badge must read 2 (both render in 'All').
+      final toggle = tester.widget<FriendsFilterToggle>(
+        find.byType(FriendsFilterToggle),
+      );
+      expect(toggle.activeCount, 2);
+      expect(find.text('Alpha Group'), findsOneWidget);
+    });
+
+    testWidgets('All badge equals merged active items for a groups-only roster', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-2',
+          name: 'Beta Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-2',
+          createdAt: DateTime.utc(2026, 3, 2),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        ),
+      );
+
+      await tester.pumpWidget(buildOrbitWired());
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 0 friends + 2 active groups → badge must read 2.
+      final toggle = tester.widget<FriendsFilterToggle>(
+        find.byType(FriendsFilterToggle),
+      );
+      expect(toggle.activeCount, 2);
+    });
+
     testWidgets('friends list header shows QR buttons', (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
@@ -695,7 +768,7 @@ void main() {
     });
 
     testWidgets(
-      'embedded close button switches the shell back to feed without popping',
+      'embedded feed nav switches the shell back to feed without popping',
       (tester) async {
         setLargeTestSurface(tester);
         suppressOverflowErrors();
@@ -718,7 +791,11 @@ void main() {
         );
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(find.byType(OrbitCloseButton));
+        // The redundant X close button is gone in persistent (embedded) mode;
+        // the Feed tab is the way back.
+        expect(find.byType(OrbitCloseButton), findsNothing);
+
+        await tester.tap(find.text('Feed'));
         await pumpOrbitFrames(tester, count: 4);
 
         expect(find.byType(OrbitWired), findsOneWidget);
@@ -2923,9 +3000,8 @@ void main() {
         );
         expect(find.text('Joined Writers Room'), findsOneWidget);
 
-        await tester.tap(find.text('All'));
-        await pumpOrbitFrames(tester, count: 4);
-
+        // B1: a successful accept auto-opens the joined group's conversation.
+        expect(find.byType(GroupConversationWired), findsOneWidget);
         expect(find.text('Writers Room'), findsOneWidget);
       },
     );
@@ -3008,9 +3084,8 @@ void main() {
         expect(find.text('Joined test 3'), findsOneWidget);
         expect(find.text('Joined test 2'), findsNothing);
 
-        await tester.tap(find.text('All'));
-        await pumpOrbitFrames(tester, count: 4);
-
+        // B1: accepting auto-opens the joined group's conversation ('test 3').
+        expect(find.byType(GroupConversationWired), findsOneWidget);
         expect(find.text('test 3'), findsOneWidget);
         expect(find.text('test 2'), findsNothing);
       },

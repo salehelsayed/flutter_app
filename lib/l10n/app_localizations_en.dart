@@ -33,6 +33,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get onboarding_load_desc => 'Restore from recovery phrase';
 
   @override
+  String get onboarding_move_from_old_phone => 'Move from old phone';
+
+  @override
+  String get onboarding_move_desc =>
+      'Bring your existing account to this device';
+
+  @override
   String get onboarding_privacy_1 => 'Only you can read your messages';
 
   @override
@@ -100,6 +107,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get qr_scan_subtitle => 'They\'ll be added to your circle';
 
   @override
+  String get account_migration_scan_title => 'Scan migration QR';
+
+  @override
+  String get account_migration_scan_instruction =>
+      'Point your camera at the Move Account QR on your new phone';
+
+  @override
+  String get account_migration_scan_subtitle =>
+      'Only Move Account QR codes are accepted here';
+
+  @override
   String get qr_my_code => 'My QR Code';
 
   @override
@@ -119,6 +137,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get qr_paste_button => 'Paste from Clipboard';
+
+  @override
+  String get account_migration_paste_title => 'Paste migration QR';
+
+  @override
+  String get account_migration_paste_hint =>
+      'Paste the Move Account QR payload shown on your new phone:';
+
+  @override
+  String get account_migration_paste_button =>
+      'Paste migration QR from Clipboard';
+
+  @override
+  String get account_migration_paste_payload_hint =>
+      'kind: account_migration_pairing, version: 1, sessionId: ...';
 
   @override
   String get posts_title => 'Posts';
@@ -378,6 +411,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get conversation_voice_fail => 'Failed to send voice message.';
+
+  @override
+  String get conversation_voice_limit_reached =>
+      'Recording reached the 5-minute limit.';
 
   @override
   String conversation_block(String username) {
@@ -703,6 +740,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settings_share_nearby_desc =>
       'Shares only an approximate location with direct friends. No live maps, and never strangers.';
+
+  @override
+  String get settings_move_account_title => 'Move account to new phone';
+
+  @override
+  String get settings_move_account_desc =>
+      'Scan the migration QR shown on your new phone to move this account.';
+
+  @override
+  String get settings_move_account_action => 'Start move';
 
   @override
   String get settings_recovery_title => 'RECOVERY PHRASE';

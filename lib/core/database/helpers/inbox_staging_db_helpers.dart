@@ -194,6 +194,61 @@ Future<int> dbMarkInboxStagingEntryRetryable(
   }
 }
 
+Future<int> dbMarkInboxStagingEntryQuarantined(
+  Database db,
+  String entryId, {
+  required String reasonCode,
+  String? reasonDetail,
+}) async {
+  final attemptedAt = DateTime.now().toUtc().toIso8601String();
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'INBOX_STAGING_DB_MARK_QUARANTINED_START',
+    details: {
+      'entryId': entryId.length > 8 ? entryId.substring(0, 8) : entryId,
+      'reasonCode': reasonCode,
+    },
+  );
+
+  try {
+    final updated = await db.rawUpdate(
+      '''
+      UPDATE inbox_staging_entries
+      SET status = ?,
+          attempt_count = attempt_count + 1,
+          last_attempted_at = ?,
+          reject_reason_code = ?,
+          reject_reason_detail = ?
+      WHERE entry_id = ?
+      ''',
+      ['quarantined', attemptedAt, reasonCode, reasonDetail, entryId],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'INBOX_STAGING_DB_MARK_QUARANTINED_SUCCESS',
+      details: {'updated': updated},
+    );
+
+    return updated;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'INBOX_STAGING_DB_MARK_QUARANTINED_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+Future<int> dbCountQuarantinedInboxStagingEntries(Database db) async {
+  final rows = await db.rawQuery(
+    "SELECT COUNT(*) AS total FROM inbox_staging_entries WHERE status = 'quarantined'",
+  );
+  return Sqflite.firstIntValue(rows) ?? 0;
+}
+
 Future<int> dbMarkInboxStagingEntryRejected(
   Database db,
   String entryId, {

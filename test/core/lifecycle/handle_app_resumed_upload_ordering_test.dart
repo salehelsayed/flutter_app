@@ -30,7 +30,7 @@ void main() {
 
   group('handleAppResumed -- retryIncompleteUploads ordering', () {
     test(
-      'calls retryIncompleteUploads AFTER recoverStuckSendingMessages but BEFORE retryFailedMessages',
+      'calls custody verification after retryUnackedMessages and before introduction retry',
       () async {
         final callOrder = <String>[];
 
@@ -54,6 +54,11 @@ void main() {
           return 0;
         }
 
+        Future<int> fakeVerifyInboxCustody() async {
+          callOrder.add('verifyInboxCustody');
+          return 0;
+        }
+
         Future<int> fakeRetryPendingIntroductions() async {
           callOrder.add('retryPendingIntroductionDeliveries');
           return 0;
@@ -66,6 +71,7 @@ void main() {
           retryIncompleteUploadsFn: fakeRetryIncompleteUploads, // Part G -- NEW
           retryFailedMessagesFn: fakeRetryFailed, // Parts B/C
           retryUnackedMessagesFn: fakeRetryUnacked, // existing
+          verifyInboxCustodyFn: fakeVerifyInboxCustody,
           retryPendingIntroductionDeliveriesFn: fakeRetryPendingIntroductions,
         );
 
@@ -74,6 +80,7 @@ void main() {
           'retryIncompleteUploads',
           'retryFailedMessages',
           'retryUnackedMessages',
+          'verifyInboxCustody',
           'retryPendingIntroductionDeliveries',
         ]);
       },
@@ -104,6 +111,11 @@ void main() {
           return 0;
         }
 
+        Future<int> fakeVerifyInboxCustody() async {
+          callOrder.add('verifyInboxCustody');
+          return 0;
+        }
+
         Future<int> fakeRetryPendingIntroductions() async {
           callOrder.add('retryPendingIntroductionDeliveries');
           return 0;
@@ -117,6 +129,7 @@ void main() {
           retryIncompleteUploadsFn: fakeRetryIncompleteUploadsThatThrows,
           retryFailedMessagesFn: fakeRetryFailed,
           retryUnackedMessagesFn: fakeRetryUnacked,
+          verifyInboxCustodyFn: fakeVerifyInboxCustody,
           retryPendingIntroductionDeliveriesFn: fakeRetryPendingIntroductions,
         );
 
@@ -127,6 +140,7 @@ void main() {
           'retryIncompleteUploads',
           'retryFailedMessages',
           'retryUnackedMessages',
+          'verifyInboxCustody',
           'retryPendingIntroductionDeliveries',
         ]);
       },
@@ -147,6 +161,11 @@ void main() {
           return 0;
         }
 
+        Future<int> fakeVerifyInboxCustody() async {
+          callOrder.add('verifyInboxCustody');
+          return 0;
+        }
+
         Future<int> fakeRetryPendingIntroductionsThatThrows() async {
           callOrder.add('retryPendingIntroductionDeliveries');
           throw Exception('intro inbox unavailable');
@@ -162,6 +181,7 @@ void main() {
           p2pService: fakeP2PService,
           retryFailedMessagesFn: fakeRetryFailed,
           retryUnackedMessagesFn: fakeRetryUnacked,
+          verifyInboxCustodyFn: fakeVerifyInboxCustody,
           retryPendingIntroductionDeliveriesFn:
               fakeRetryPendingIntroductionsThatThrows,
           retryFailedGroupInboxStoresFn: fakeRetryFailedGroupInboxStores,
@@ -170,6 +190,7 @@ void main() {
         expect(callOrder, [
           'retryFailedMessages',
           'retryUnackedMessages',
+          'verifyInboxCustody',
           'retryPendingIntroductionDeliveries',
           'retryFailedGroupInboxStores',
         ]);

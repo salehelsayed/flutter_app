@@ -5,40 +5,20 @@
 /// Uses the Go CLI test peer to control which paths succeed or fail.
 ///
 /// Run: dart run integration_test/scripts/run_benchmark_suite.dart -d <DEVICE_ID> --scenarios R
-@Tags(['device'])
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 
 import '../test/shared/fakes/in_memory_message_repository.dart';
 
+import '_support/cli_peer_fixture.dart';
 import 'benchmark_helpers.dart';
-
-const _configuredCliPeerFixture = String.fromEnvironment(
-  'CLI_PEER_FIXTURE',
-  defaultValue: '',
-);
-
-Map<String, dynamic>? _loadCliPeerFixture() {
-  final path = _configuredCliPeerFixture.isNotEmpty
-      ? _configuredCliPeerFixture
-      : '${Directory.systemTemp.path}/cli_peer_fixture.json';
-  final file = File(path);
-  if (!file.existsSync()) return null;
-  try {
-    return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  } catch (e) {
-    print('[TEST] Failed to parse CLI peer fixture: $e');
-    return null;
-  }
-}
 
 /// Helper: send a message and return the CHAT_MSG_SEND_TIMING event details.
 Future<Map<String, dynamic>?> _sendAndCaptureTiming(
@@ -79,21 +59,18 @@ void _logSendDetails(String label, Map<String, dynamic> d) {
   );
 }
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runRoutingPathsBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('R-Sim-1: Connection reuse — warm send to connected peer',
-      (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: CONNECTION REUSE (R-Sim-1)');
     print('${'═' * 60}\n');
 
-    final fixture = _loadCliPeerFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture — run via orchestrator');
       return;
@@ -144,15 +121,14 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('R-Sim-2: Direct P2P — cold send to discoverable peer',
-      (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: DIRECT COLD (R-Sim-2)');
     print('${'═' * 60}\n');
 
-    final fixture = _loadCliPeerFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture');
       return;
@@ -189,11 +165,9 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets(
-      'R-Sim-3: Relay probe — peer behind relay, not directly discoverable',
-      (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: RELAY PROBE (R-Sim-3)');
     print('${'═' * 60}\n');
@@ -201,7 +175,7 @@ void main() {
     // This scenario requires the CLI peer to be online but NOT registered on
     // rendezvous. The orchestrator signals when the CLI peer has unregistered.
     // If no fixture, skip.
-    final fixture = _loadCliPeerFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture');
       return;
@@ -238,9 +212,9 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('R-Sim-4: Inbox fallback — peer offline', (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: INBOX FALLBACK (R-Sim-4)');
     print('${'═' * 60}\n');
@@ -268,10 +242,9 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('R-Sim-5: Budget starvation — slow relay, discover takes >1.5s',
-      (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: BUDGET STARVATION (R-Sim-5)');
     print('${'═' * 60}\n');
@@ -315,10 +288,9 @@ void main() {
     print('[PHASE] Wall-clock: ${sw.elapsedMilliseconds}ms');
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('R-Sim-6: Worst-case path cascade — total failure timing',
-      (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: WORST-CASE CASCADE (R-Sim-6)');
     print('${'═' * 60}\n');
@@ -352,15 +324,14 @@ void main() {
     print('[PHASE] Wall-clock: ${sw.elapsedMilliseconds}ms');
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('R-Sim-7: Routing path distribution over realistic workload',
-      (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: REALISTIC WORKLOAD (R-Sim-7)');
     print('${'═' * 60}\n');
 
-    final fixture = _loadCliPeerFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture');
       return;
@@ -500,10 +471,9 @@ void main() {
     print('[BENCHMARK] sim_routing_timeline:\n$timeline');
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('R-Sim-8: Before/after routing change comparison',
-      (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  ROUTING BENCHMARK: BEFORE/AFTER COMPARISON (R-Sim-8)');
     print('${'═' * 60}\n');
@@ -514,7 +484,7 @@ void main() {
         '${Directory.systemTemp.path}/routing_sim_baseline.json';
     final baselineFile = File(baselinePath);
 
-    final fixture = _loadCliPeerFixture();
+    final fixture = loadCliPeerFixture();
     if (fixture == null) {
       print('[SKIP] No CLI peer fixture');
       return;
@@ -584,5 +554,5 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 }

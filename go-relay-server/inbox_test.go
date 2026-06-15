@@ -1115,6 +1115,22 @@ func TestPushService_SendNotification_UnregistersInvalidToken(t *testing.T) {
 	}
 }
 
+func TestPushTokenStore_UnregisterIsIdempotent(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+
+	tokenStore.RegisterToken("peer-recipient", "token-1", "ios")
+	tokenStore.UnregisterToken("peer-recipient")
+	tokenStore.UnregisterToken("peer-recipient")
+	tokenStore.UnregisterToken("missing-peer")
+
+	if tokenStore.LookupToken("peer-recipient") != nil {
+		t.Fatal("expected token to remain removed after duplicate unregister")
+	}
+	if tokenStore.TokenCount() != 0 {
+		t.Fatalf("expected empty token store, got %d token(s)", tokenStore.TokenCount())
+	}
+}
+
 func TestPushService_SendNotification_LogsWhenTokenMissing(t *testing.T) {
 	tokenStore := newMemoryPushTokenStore()
 	push := NewPushServiceWithBackend(tokenStore)
@@ -1945,6 +1961,108 @@ func TestHandleInboxStream_StoreDuplicateReturnsOKWithoutSecondPendingMessage(t 
 	}
 	if resp.Messages[0].Message != message {
 		t.Fatalf("pending message = %q, want %q", resp.Messages[0].Message, message)
+	}
+}
+
+func TestHandleInboxStream_StoreRejectsWhenFull(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	push.RegisterToken("unused", "token", "ios")
+
+	backend := newMemoryInboxBackendWithLimits(1)
+	inbox := NewInboxStoreWithBackendAndCapacity(backend, push, 1)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+	push.RegisterToken(recipientPeer, "token", "ios")
+	senderPeer := env.sender.ID().String()
+
+	storeMessage := func(id string) inboxResponse {
+		t.Helper()
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open store stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "store",
+			To:      recipientPeer,
+			From:    senderPeer,
+			Message: fmt.Sprintf(`{"type":"chat_message","version":"1","payload":{"id":"%s","text":"hello"}}`, id),
+		})
+		return recvInboxResp(t, stream)
+	}
+
+	first := storeMessage("msg-full-001")
+	if first.Status != "OK" || first.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("first store response = %#v, want OK/stored", first)
+	}
+
+	second := storeMessage("msg-full-002")
+	if second.Status != "ERROR" {
+		t.Fatalf("overflow status = %q, want ERROR", second.Status)
+	}
+	if second.Error != "INBOX_FULL" {
+		t.Fatalf("overflow error = %q, want INBOX_FULL", second.Error)
+	}
+	if second.StoreStatus != string(InboxStoreResultRejectedFull) {
+		t.Fatalf("overflow storeStatus = %q, want rejected_full", second.StoreStatus)
+	}
+	if second.Occupancy != 1 || second.Capacity != 1 {
+		t.Fatalf("overflow occupancy/capacity = %d/%d, want 1/1", second.Occupancy, second.Capacity)
+	}
+	if second.ExpiresAtMs != 0 {
+		t.Fatalf("overflow expiresAtMs = %d, want 0", second.ExpiresAtMs)
+	}
+	if recorder.SendCallCount() > 1 {
+		t.Fatalf("reject should not fire push; push calls = %d", recorder.SendCallCount())
+	}
+
+	pending, _ := inbox.RetrievePendingWithMeta(recipientPeer, 10)
+	if len(pending) != 1 {
+		t.Fatalf("pending count = %d, want 1", len(pending))
+	}
+	if !strings.Contains(pending[0].Message, "msg-full-001") {
+		t.Fatalf("oldest accepted message was not retained: %q", pending[0].Message)
+	}
+}
+
+func TestHandleInboxStream_StoreReturnsExpiresAtAndOccupancy(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open store stream: %v", err)
+	}
+	defer stream.Close()
+
+	before := time.Now().Add(maxMessageAge).Add(-2 * time.Second).UnixMilli()
+	sendInboxReq(t, stream, inboxRequest{
+		Action:  "store",
+		To:      env.recipient.ID().String(),
+		From:    env.sender.ID().String(),
+		Message: `{"type":"chat_message","version":"1","payload":{"id":"msg-meta-001","text":"hello"}}`,
+	})
+	resp := recvInboxResp(t, stream)
+	after := time.Now().Add(maxMessageAge).Add(2 * time.Second).UnixMilli()
+
+	if resp.Status != "OK" || resp.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("store response = %#v, want OK/stored", resp)
+	}
+	if resp.ExpiresAtMs < before || resp.ExpiresAtMs > after {
+		t.Fatalf("expiresAtMs = %d, want between %d and %d", resp.ExpiresAtMs, before, after)
+	}
+	if resp.Occupancy != 1 {
+		t.Fatalf("occupancy = %d, want 1", resp.Occupancy)
+	}
+	if resp.Capacity != maxMessagesPerPeer {
+		t.Fatalf("capacity = %d, want %d", resp.Capacity, maxMessagesPerPeer)
 	}
 }
 

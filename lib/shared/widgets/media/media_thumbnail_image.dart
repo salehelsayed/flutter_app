@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 
+typedef VideoThumbnailResolver = Future<String?> Function(String mediaPath);
+
 class MediaThumbnailImage extends StatefulWidget {
   final String mediaPath;
   final String mediaType;
@@ -12,6 +14,7 @@ class MediaThumbnailImage extends StatefulWidget {
   final int? cacheHeight;
   final Widget? placeholder;
   final Widget? error;
+  final VideoThumbnailResolver? videoThumbnailResolver;
 
   const MediaThumbnailImage({
     super.key,
@@ -23,6 +26,7 @@ class MediaThumbnailImage extends StatefulWidget {
     this.cacheHeight,
     this.placeholder,
     this.error,
+    this.videoThumbnailResolver,
   });
 
   @override
@@ -43,7 +47,8 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.mediaPath != widget.mediaPath ||
         oldWidget.mediaType != widget.mediaType ||
-        oldWidget.thumbnailPath != widget.thumbnailPath) {
+        oldWidget.thumbnailPath != widget.thumbnailPath ||
+        oldWidget.videoThumbnailResolver != widget.videoThumbnailResolver) {
       _configureThumbnailFuture();
     }
   }
@@ -58,7 +63,9 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
       _videoThumbnailFuture = Future<String?>.value(explicitThumbnailPath);
       return;
     }
-    _videoThumbnailFuture = VideoThumbnailCache.resolve(widget.mediaPath);
+    final resolver =
+        widget.videoThumbnailResolver ?? VideoThumbnailCache.resolve;
+    _videoThumbnailFuture = resolver(widget.mediaPath);
   }
 
   @override
@@ -82,6 +89,9 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return widget.placeholder ?? const SizedBox.shrink();
         }
+        if (File(widget.mediaPath).existsSync()) {
+          return widget.placeholder ?? const SizedBox.shrink();
+        }
         return widget.error ?? widget.placeholder ?? const SizedBox.shrink();
       },
     );
@@ -95,8 +105,18 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
       fit: widget.fit,
       cacheWidth: isGifImage ? null : widget.cacheWidth,
       cacheHeight: isGifImage ? null : widget.cacheHeight,
-      errorBuilder: (context, error, stackTrace) =>
-          widget.error ?? widget.placeholder ?? const SizedBox.shrink(),
+      errorBuilder: (context, error, stackTrace) {
+        // 117 Session 1: a video whose derived thumbnail JPG fails to decode
+        // is NOT unavailable — the underlying video source is still present
+        // and playable. Fall back to the benign placeholder (paralleling the
+        // null-thumbnail + source-present branch in build()). Reserve `error`
+        // for a genuinely corrupt/missing non-video image.
+        if (widget.mediaType == 'video' &&
+            File(widget.mediaPath).existsSync()) {
+          return widget.placeholder ?? const SizedBox.shrink();
+        }
+        return widget.error ?? widget.placeholder ?? const SizedBox.shrink();
+      },
     );
   }
 }

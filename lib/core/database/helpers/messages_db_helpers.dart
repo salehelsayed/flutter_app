@@ -64,7 +64,8 @@ Future<List<Map<String, Object?>>> dbLoadMessagesPage(
     if (beforeTimestamp != null) {
       results = await db.query(
         'messages',
-        where: 'contact_peer_id = ? AND $_visibleMessageFilter AND timestamp < ?',
+        where:
+            'contact_peer_id = ? AND $_visibleMessageFilter AND timestamp < ?',
         whereArgs: [contactPeerId, beforeTimestamp],
         orderBy: 'timestamp DESC',
         limit: limit,
@@ -618,6 +619,82 @@ Future<List<Map<String, Object?>>> dbLoadUnackedOutgoingMessages(
     );
     rethrow;
   }
+}
+
+/// Loads outgoing inbox-custody rows that need a custody verification sweep.
+///
+/// Rows are selected only when they still have the original wire envelope, are
+/// non-terminal `inboxed`, and either have never been checked or were checked
+/// before [recheckOlderThan].
+Future<List<Map<String, Object?>>> dbLoadInboxCustodyOutgoingMessages(
+  Database db, {
+  required Duration recheckOlderThan,
+  int limit = 50,
+  DateTime? now,
+}) async {
+  final cutoff = (now ?? DateTime.now())
+      .toUtc()
+      .subtract(recheckOlderThan)
+      .toIso8601String();
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MESSAGES_DB_LOAD_INBOX_CUSTODY_START',
+    details: {'limit': limit},
+  );
+
+  try {
+    final results = await db.query(
+      'messages',
+      where: '''
+status = ?
+AND is_incoming = 0
+AND wire_envelope IS NOT NULL
+AND wire_envelope != ''
+AND (custody_checked_at IS NULL OR custody_checked_at < ?)
+''',
+      whereArgs: ['inboxed', cutoff],
+      orderBy: 'timestamp ASC',
+      limit: limit,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_INBOX_CUSTODY_SUCCESS',
+      details: {'count': results.length},
+    );
+    return results;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MESSAGES_DB_LOAD_INBOX_CUSTODY_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+Future<void> dbMarkInboxCustodyChecked(
+  Database db,
+  String id, {
+  int? relayExpiresAtMs,
+  DateTime? checkedAt,
+}) async {
+  final values = <String, Object?>{
+    'custody_checked_at': (checkedAt ?? DateTime.now())
+        .toUtc()
+        .toIso8601String(),
+  };
+  if (relayExpiresAtMs != null) {
+    values['relay_expires_at'] = relayExpiresAtMs;
+  }
+
+  await db.update(
+    'messages',
+    values,
+    where: 'id = ? AND status = ?',
+    whereArgs: [id, 'inboxed'],
+  );
 }
 
 /// Loads outgoing messages with status='sending' that are older than

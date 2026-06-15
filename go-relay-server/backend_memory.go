@@ -116,6 +116,7 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 	defer b.mu.Unlock()
 
 	entry = ensureInboxMessageID(entry)
+	messages := b.pruneExpiredForPeerLocked(toPeerId)
 
 	// Extract messageId for dedup.
 	msgId := extractMessageId(entry.Message)
@@ -126,13 +127,8 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 		}
 	}
 
-	messages := b.pruneExpired(b.store[toPeerId])
-
-	// Cap at max
 	if len(messages) >= maxMessagesPerPeer {
-		messages = messages[len(messages)-maxMessagesPerPeer+1:]
-		// Also prune messageIds for evicted messages
-		b.rebuildMessageIds(toPeerId, messages)
+		return InboxStoreResultRejectedFull, nil
 	}
 
 	messages = append(messages, entry)
@@ -153,7 +149,7 @@ func (b *memoryInboxBackend) RetrievePending(peerId string, limit int) ([]inboxM
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	messages := b.pruneExpired(b.store[peerId])
+	messages := b.pruneExpiredForPeerLocked(peerId)
 	if len(messages) == 0 {
 		delete(b.store, peerId)
 		delete(b.messageIds, peerId)
@@ -185,8 +181,7 @@ func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage,
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	messages := b.pruneExpired(b.store[peerId])
-	b.store[peerId] = messages
+	messages := b.pruneExpiredForPeerLocked(peerId)
 
 	if len(messages) == 0 {
 		delete(b.store, peerId)
@@ -221,7 +216,7 @@ func (b *memoryInboxBackend) Ack(peerId string, entryIDs []string) (int, error) 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	messages := b.pruneExpired(b.store[peerId])
+	messages := b.pruneExpiredForPeerLocked(peerId)
 	if len(messages) == 0 {
 		delete(b.store, peerId)
 		delete(b.messageIds, peerId)
@@ -278,7 +273,8 @@ func (b *memoryInboxBackend) rebuildMessageIds(peerId string, messages []inboxMe
 func (b *memoryInboxBackend) Count(peerId string) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return len(b.store[peerId])
+	messages := b.pruneExpiredForPeerLocked(peerId)
+	return len(messages)
 }
 
 func (b *memoryInboxBackend) Stats() (totalPeers int, totalMessages int) {
@@ -291,18 +287,31 @@ func (b *memoryInboxBackend) Stats() (totalPeers int, totalMessages int) {
 	return
 }
 
-func (b *memoryInboxBackend) pruneExpired(messages []inboxMessage) []inboxMessage {
+func (b *memoryInboxBackend) pruneExpiredForPeerLocked(peerId string) []inboxMessage {
+	messages, pruned := pruneExpiredInboxMessages(b.store[peerId])
+	if pruned > 0 {
+		recordInboxExpiredPruned(pruned)
+		b.store[peerId] = messages
+		b.rebuildMessageIds(peerId, messages)
+	}
+	return messages
+}
+
+func pruneExpiredInboxMessages(messages []inboxMessage) ([]inboxMessage, int) {
 	if len(messages) == 0 {
-		return messages
+		return messages, 0
 	}
 	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
 	var result []inboxMessage
+	pruned := 0
 	for _, m := range messages {
 		if m.Timestamp > cutoff {
 			result = append(result, m)
+		} else {
+			pruned++
 		}
 	}
-	return result
+	return result, pruned
 }
 
 // --- In-memory GroupInboxBackend ---

@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
@@ -211,6 +212,50 @@ void main() {
       );
     },
   );
+
+  test('pass upload advertises kOpaqueMediaTransportMime (G7a)', () async {
+    tempDir = await Directory.systemTemp.createTemp('pass-post-opaque-mime-');
+    final localFile = File('${tempDir!.path}/blob-1.jpg');
+    await localFile.writeAsBytes(const <int>[1, 2, 3, 4]);
+    await posts.savePost(_directPost(mediaKind: 'image'));
+    await posts.savePostMediaAttachment(
+      PostMediaAttachmentModel(
+        mediaId: 'media-1',
+        postId: 'post-1',
+        blobId: 'blob-1',
+        kind: 'image',
+        mime: 'image/jpeg',
+        sizeBytes: 4,
+        localPath: localFile.path,
+        downloadStatus: 'done',
+        createdAt: '2026-03-15T10:20:00.000Z',
+      ),
+    );
+
+    final (result, pass) = await passPostAlong(
+      p2pService: aliceService,
+      postRepo: posts,
+      contactRepo: contacts,
+      bridge: bridge,
+      postId: 'post-1',
+      senderPeerId: 'peer-alice',
+      senderUsername: 'Alice',
+      recipientPeerIds: const <String>['peer-cara'],
+    );
+
+    expect(result, PassPostAlongResult.success);
+    expect(pass, isNotNull);
+
+    final uploadPayload =
+        bridge.sentMessages
+                .map(
+                  (message) => jsonDecode(message) as Map<String, dynamic>,
+                )
+                .firstWhere((message) => message['cmd'] == 'media:upload')[
+            'payload']
+            as Map<String, dynamic>;
+    expect(uploadPayload['mime'], kOpaqueMediaTransportMime);
+  });
 
   test(
     'createLocalPostPass returns mediaPreparationFailed when blob crypto bridge support is missing',

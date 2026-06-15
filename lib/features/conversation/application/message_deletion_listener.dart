@@ -21,6 +21,15 @@ class MessageDeletionListener {
   final Bridge? bridge;
   final Future<String?> Function()? getOwnMlKemSecretKey;
 
+  /// 115 P2 (D-3): optional deletion-apply receipt sender — relay-inbox
+  /// deletions confirm durable apply back to the deleting sender so its
+  /// 'inboxed' tombstone can flip to 'delivered' and hide.
+  final Future<void> Function({
+    required String contactPeerId,
+    required List<String> messageIds,
+  })?
+  sendDeliveryReceipt;
+
   StreamSubscription<ChatMessage>? _subscription;
   final _deletionController = StreamController<ConversationMessage>.broadcast();
 
@@ -33,6 +42,7 @@ class MessageDeletionListener {
     this.mediaFileManager,
     this.bridge,
     this.getOwnMlKemSecretKey,
+    this.sendDeliveryReceipt,
   });
 
   Stream<ConversationMessage> get incomingDeletionStream =>
@@ -89,6 +99,12 @@ class MessageDeletionListener {
         mediaFileManager: mediaFileManager,
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
+        sendDeliveryReceipt: sendDeliveryReceipt == null
+            ? null
+            : (messageId) => sendDeliveryReceipt!(
+                contactPeerId: message.from,
+                messageIds: [messageId],
+              ),
       );
 
       if (result == HandleMessageDeletionResult.success &&

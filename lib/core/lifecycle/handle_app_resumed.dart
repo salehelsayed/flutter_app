@@ -3,6 +3,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/features/groups/application/drain_group_offline_inbo
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
@@ -54,9 +56,18 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryIncompleteUploadsFn, // Part G -- NEW
   Future<int> Function()? retryFailedMessagesFn, // Parts B/C
   Future<int> Function()? retryUnackedMessagesFn, // existing
+  Future<int> Function()? verifyInboxCustodyFn,
   Future<int> Function()? retryPendingIntroductionDeliveriesFn,
   Future<int> Function()? retryFailedGroupInboxStoresFn, // Section 4
   Future<void> Function()? retryPushRegistrationFn,
+  AccountMigrationNetworkGate accountMigrationNetworkGate =
+      allowAccountMigrationNetworkSideEffects,
+
+  /// Restores active authority when a Move Account export pause is stuck
+  /// (e.g. the restore write failed while the keychain was locked) and no
+  /// export run is in flight. Must run BEFORE the network gate check, because
+  /// the gate denies everything while the stale pause persists.
+  Future<bool> Function()? recoverInterruptedExportPause,
 }) async {
   final resumeStart = DateTime.now();
   final readinessProofRecorder = p2pService is ReadinessProofRecorder
@@ -75,6 +86,40 @@ Future<bool?> handleAppResumed({
   );
 
   emitFlowEvent(layer: 'FL', event: 'APP_LIFECYCLE_RESUME_BEGIN', details: {});
+
+  if (recoverInterruptedExportPause != null) {
+    try {
+      final recovered = await recoverInterruptedExportPause();
+      if (recovered) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'APP_LIFECYCLE_RESUME_EXPORT_PAUSE_RECOVERED',
+          details: {},
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_EXPORT_PAUSE_RECOVERY_FAILED',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  final migrationAllowsNetwork = await accountMigrationNetworkGate(
+    peerId: p2pService.currentState.peerId,
+    operation: 'app_resume',
+  );
+  if (!migrationAllowsNetwork) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'APP_LIFECYCLE_RESUME_ACCOUNT_MIGRATION_BLOCKED',
+      details: {'peerId': p2pService.currentState.peerId},
+    );
+    debugPrint('[RESUME] skipped by account migration runtime network gate');
+    return false;
+  }
+
   readinessProofRecorder?.markResumeStarted();
 
   try {
@@ -155,6 +200,7 @@ Future<bool?> handleAppResumed({
             ? RejoinReason.watchdogRestart
             : RejoinReason.inPlaceRecovery;
 
+        final identity = await identityRepo?.loadIdentity();
         debugPrint(
           '[RESUME] Step 3b: rejoinGroupTopics(reason=$reason, '
           'needsGroupRecovery=$needsGroupRecovery) starting...',
@@ -174,9 +220,22 @@ Future<bool?> handleAppResumed({
           'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
         );
 
+        // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
+        // group dissolved while backgrounded converges (and is left) instead of
+        // staying live. AFTER rejoin so active groups re-subscribe immediately
+        // (the inbox scan must not delay live-message reception — see IR-018).
+        final groupMsgListener = groupMessageListener;
+        if (groupMsgListener != null) {
+          await reconcileMissedGroupDissolves(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupMessageListener: groupMsgListener,
+            selfPeerId: identity?.peerId,
+          );
+        }
+
         final groupDrainStart = DateTime.now();
         debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
-        final identity = await identityRepo?.loadIdentity();
         final groupDrainResult = await drainGroupOfflineInbox(
           bridge: bridge,
           groupRepo: groupRepo,
@@ -248,6 +307,21 @@ Future<bool?> handleAppResumed({
         'skippedNoKey=${rejoinResult.skippedNoKeyCount}, '
         'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
       );
+
+      // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve (this
+      // branch has no group message repo, but the dissolve probe only needs the
+      // listener + bridge + group repo). AFTER rejoin so active groups
+      // re-subscribe immediately.
+      final groupMsgListener = groupMessageListener;
+      if (groupMsgListener != null) {
+        final identity = await identityRepo?.loadIdentity();
+        await reconcileMissedGroupDissolves(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupMessageListener: groupMsgListener,
+          selfPeerId: identity?.peerId,
+        );
+      }
 
       if (needsGroupRecovery && rejoinResult.canAcknowledgeGroupRecovery) {
         emitFlowEvent(
@@ -401,6 +475,7 @@ Future<bool?> handleAppResumed({
     //   2. retryIncompleteUploads       -- re-upload 'upload_pending' attachments
     //   3. retryFailedMessages          -- retry 'failed' messages (now with uploaded media)
     //   4. retryUnackedMessages         -- retry 'sent' but unacked messages
+    //   5. verifyInboxCustody           -- re-prove unconfirmed inbox custody
     //
     // Each step is fault-isolated: a throw in step N does not skip step N+1.
 
@@ -485,13 +560,32 @@ Future<bool?> handleAppResumed({
       }
     }
 
-    // Step 8e: Retry pending introduction deliveries
+    // Step 8e: Verify unconfirmed relay-inbox custody.
+    if (verifyInboxCustodyFn != null) {
+      try {
+        final count = await verifyInboxCustodyFn();
+        if (kDebugMode) {
+          debugPrint('[RESUME] Step 8e: verifyInboxCustody=$count');
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'INBOX_CUSTODY_VERIFY_RESUME_ERROR',
+          details: {'error': e.toString()},
+        );
+        if (kDebugMode) {
+          debugPrint('[RESUME] Step 8e: verifyInboxCustody ERROR: $e');
+        }
+      }
+    }
+
+    // Step 8f: Retry pending introduction deliveries
     if (retryPendingIntroductionDeliveriesFn != null) {
       try {
         final count = await retryPendingIntroductionDeliveriesFn();
         if (kDebugMode) {
           debugPrint(
-            '[RESUME] Step 8e: retryPendingIntroductionDeliveries=$count',
+            '[RESUME] Step 8f: retryPendingIntroductionDeliveries=$count',
           );
         }
       } catch (e) {
@@ -502,18 +596,18 @@ Future<bool?> handleAppResumed({
         );
         if (kDebugMode) {
           debugPrint(
-            '[RESUME] Step 8e: retryPendingIntroductionDeliveries ERROR: $e',
+            '[RESUME] Step 8f: retryPendingIntroductionDeliveries ERROR: $e',
           );
         }
       }
     }
 
-    // Step 8f: Retry failed group inbox stores (Section 4)
+    // Step 8g: Retry failed group inbox stores (Section 4)
     if (retryFailedGroupInboxStoresFn != null) {
       try {
         final count = await retryFailedGroupInboxStoresFn();
         if (kDebugMode) {
-          debugPrint('[RESUME] Step 8f: retryFailedGroupInboxStores=$count');
+          debugPrint('[RESUME] Step 8g: retryFailedGroupInboxStores=$count');
         }
       } catch (e) {
         emitFlowEvent(
@@ -522,7 +616,7 @@ Future<bool?> handleAppResumed({
           details: {'error': e.toString()},
         );
         if (kDebugMode) {
-          debugPrint('[RESUME] Step 8f: retryFailedGroupInboxStores ERROR: $e');
+          debugPrint('[RESUME] Step 8g: retryFailedGroupInboxStores ERROR: $e');
         }
       }
     }

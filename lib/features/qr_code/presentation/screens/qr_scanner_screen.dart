@@ -6,12 +6,46 @@ import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import '../widgets/scan_overlay.dart';
 
+class QRScannerScreenCopy {
+  final String title;
+  final String instruction;
+  final String subtitle;
+  final String pasteTitle;
+  final String pasteHint;
+  final String pasteButton;
+  final String pastePayloadHintText;
+
+  const QRScannerScreenCopy({
+    required this.title,
+    required this.instruction,
+    required this.subtitle,
+    required this.pasteTitle,
+    required this.pasteHint,
+    required this.pasteButton,
+    required this.pastePayloadHintText,
+  });
+
+  factory QRScannerScreenCopy.contactDefaults(AppLocalizations l10n) {
+    return QRScannerScreenCopy(
+      title: l10n.qr_scan_title,
+      instruction: l10n.qr_scan_instruction,
+      subtitle: l10n.qr_scan_subtitle,
+      pasteTitle: l10n.qr_paste_title,
+      pasteHint: l10n.qr_paste_hint,
+      pasteButton: l10n.qr_paste_button,
+      pastePayloadHintText:
+          '{"pk":"...","ns":"...","rv":"...","ts":"...","sig":"..."}',
+    );
+  }
+}
+
 /// QR code scanner screen with camera preview and overlay.
 class QRScannerScreen extends StatefulWidget {
   /// Callback when a QR code is successfully scanned.
   final void Function(String qrData) onScanned;
+  final QRScannerScreenCopy? copy;
 
-  const QRScannerScreen({super.key, required this.onScanned});
+  const QRScannerScreen({super.key, required this.onScanned, this.copy});
 
   @override
   State<QRScannerScreen> createState() => _QRScannerScreenState();
@@ -19,8 +53,10 @@ class QRScannerScreen extends StatefulWidget {
 
 class _QRScannerScreenState extends State<QRScannerScreen> {
   final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
+    cameraResolution: const Size(1280, 720),
+    detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
+    formats: const [BarcodeFormat.qrCode],
   );
 
   bool _hasScanned = false;
@@ -47,6 +83,8 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = _copyFor(context);
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -66,7 +104,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
                   _buildCloseButton(),
                   Expanded(
                     child: Text(
-                      AppLocalizations.of(context)!.qr_scan_title,
+                      copy.title,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Colors.white,
@@ -89,13 +127,13 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
             child: Column(
               children: [
                 Text(
-                  AppLocalizations.of(context)!.qr_scan_instruction,
+                  copy.instruction,
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white70, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  AppLocalizations.of(context)!.qr_scan_subtitle,
+                  copy.subtitle,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppColors.primaryAccent,
@@ -121,7 +159,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
                     size: 18,
                   ),
                   label: Text(
-                    AppLocalizations.of(context)!.qr_paste_title,
+                    copy.pasteTitle,
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ),
@@ -132,22 +170,28 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
     );
   }
 
+  QRScannerScreenCopy _copyFor(BuildContext context) {
+    return widget.copy ??
+        QRScannerScreenCopy.contactDefaults(AppLocalizations.of(context)!);
+  }
+
   void _showPasteDialog() {
     final controller = TextEditingController();
+    final copy = _copyFor(context);
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
         title: Text(
-          AppLocalizations.of(context)!.qr_paste_title,
+          copy.pasteTitle,
           style: const TextStyle(color: Colors.white),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              AppLocalizations.of(context)!.qr_paste_hint,
+              copy.pasteHint,
               style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -156,8 +200,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               maxLines: 5,
               style: const TextStyle(color: Colors.white, fontSize: 12),
               decoration: InputDecoration(
-                hintText:
-                    '{"pk":"...","ns":"...","rv":"...","ts":"...","sig":"..."}',
+                hintText: copy.pastePayloadHintText,
                 hintStyle: TextStyle(
                   color: Colors.white.withValues(alpha: 0.3),
                 ),
@@ -183,7 +226,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
                 }
               },
               child: Text(
-                AppLocalizations.of(context)!.qr_paste_button,
+                copy.pasteButton,
                 style: TextStyle(color: AppColors.primaryAccent),
               ),
             ),

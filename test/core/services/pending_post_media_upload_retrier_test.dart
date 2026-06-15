@@ -173,6 +173,67 @@ void main() {
   );
 
   test(
+    'account migration gate blocks media upload retry before recovery work',
+    () async {
+      final localFile = File('${tempDir.path}/blocked-photo.jpg');
+      await localFile.writeAsString('phase7');
+      contacts.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
+      await posts.savePost(_post(id: 'post-blocked', mediaKind: 'image'));
+      await posts.saveRecipientDelivery(
+        const PostRecipientDelivery(
+          postId: 'post-blocked',
+          recipientPeerId: 'peer-bob',
+          deliveryStatus: 'failed',
+          lastAttemptAt: '2026-03-16T10:00:01.000Z',
+          deliveryPath: 'failed',
+          lastError: 'direct_and_inbox_failed',
+          createdAt: '2026-03-16T10:00:01.000Z',
+          updatedAt: '2026-03-16T10:00:01.000Z',
+        ),
+      );
+      await posts.replacePostMediaUploadRecoveryItems(
+        'post-blocked',
+        <PostMediaUploadRecoveryItem>[
+          PostMediaUploadRecoveryItem(
+            postId: 'post-blocked',
+            position: 0,
+            localFilePath: localFile.path,
+            mime: 'image/jpeg',
+            kind: 'image',
+            createdAt: '2026-03-16T10:00:00.000Z',
+          ),
+        ],
+      );
+
+      var gateCalls = 0;
+      final retried = await retryPendingPostMediaUploads(
+        postRepo: posts,
+        contactRepo: contacts,
+        p2pService: p2pService,
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        bridge: FakeBridge(),
+        accountMigrationNetworkGate:
+            ({String? peerId, required String operation}) async {
+              gateCalls++;
+              expect(peerId, 'peer-self');
+              expect(operation, 'pending_post_media_upload_retry');
+              return false;
+            },
+      );
+
+      expect(retried, 0);
+      expect(gateCalls, 1);
+      expect(
+        await posts.loadPostMediaUploadRecoveryItems('post-blocked'),
+        hasLength(1),
+      );
+      expect(await posts.loadPostMediaAttachments('post-blocked'), isEmpty);
+      expect((await posts.getPost('post-blocked'))!.deliveryStatus, 'failed');
+    },
+  );
+
+  test(
     'missing local file becomes a terminal failed post instead of retrying forever',
     () async {
       contacts.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);

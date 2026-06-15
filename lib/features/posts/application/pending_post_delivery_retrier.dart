@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -14,6 +15,7 @@ class PendingPostDeliveryRetrier {
   final ContactRepository contactRepo;
   final Bridge? bridge;
   final Future<int> Function()? beforeRetry;
+  final AccountMigrationNetworkGate accountMigrationNetworkGate;
   final Duration retryDebounce;
   final Duration periodicRetryInterval;
 
@@ -29,6 +31,7 @@ class PendingPostDeliveryRetrier {
     required this.contactRepo,
     this.bridge,
     this.beforeRetry,
+    this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.retryDebounce = const Duration(seconds: 5),
     this.periodicRetryInterval = const Duration(minutes: 5),
   });
@@ -90,6 +93,14 @@ class PendingPostDeliveryRetrier {
     _isRetrying = true;
 
     try {
+      if (!await _allowsPostDeliveryNetworkSideEffects(
+        p2pService: p2pService,
+        accountMigrationNetworkGate: accountMigrationNetworkGate,
+        operation: 'pending_post_delivery_retry',
+        blockedEvent: 'PENDING_POST_RETRIER_ACCOUNT_MIGRATION_BLOCKED',
+      )) {
+        return 0;
+      }
       final runBeforeRetry = beforeRetry;
       if (runBeforeRetry != null) {
         await runBeforeRetry();
@@ -99,6 +110,7 @@ class PendingPostDeliveryRetrier {
         contactRepo: contactRepo,
         p2pService: p2pService,
         bridge: bridge,
+        accountMigrationNetworkGate: accountMigrationNetworkGate,
       );
       if (retried > 0) {
         emitFlowEvent(
@@ -138,7 +150,18 @@ Future<int> retryPendingPostDeliveries({
   required ContactRepository contactRepo,
   required P2PService p2pService,
   Bridge? bridge,
+  AccountMigrationNetworkGate accountMigrationNetworkGate =
+      allowAccountMigrationNetworkSideEffects,
 }) async {
+  if (!await _allowsPostDeliveryNetworkSideEffects(
+    p2pService: p2pService,
+    accountMigrationNetworkGate: accountMigrationNetworkGate,
+    operation: 'pending_post_delivery_retry',
+    blockedEvent: 'PENDING_POST_RETRIER_ACCOUNT_MIGRATION_BLOCKED',
+  )) {
+    return 0;
+  }
+
   final retryablePosts = await postRepo.loadRetryableOutgoingPosts();
   var retriedCount = 0;
 
@@ -328,4 +351,25 @@ Future<int> retryPendingPostDeliveries({
   }
 
   return retriedCount;
+}
+
+Future<bool> _allowsPostDeliveryNetworkSideEffects({
+  required P2PService p2pService,
+  required AccountMigrationNetworkGate accountMigrationNetworkGate,
+  required String operation,
+  required String blockedEvent,
+}) async {
+  final peerId = p2pService.currentState.peerId;
+  final allowed = await accountMigrationNetworkGate(
+    peerId: peerId,
+    operation: operation,
+  );
+  if (!allowed) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: blockedEvent,
+      details: {'operation': operation, if (peerId != null) 'peerId': peerId},
+    );
+  }
+  return allowed;
 }

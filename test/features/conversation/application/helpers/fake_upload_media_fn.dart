@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 /// A fake [UploadMediaFn] for testing.
@@ -32,6 +33,12 @@ class FakeUploadMediaFn {
     _resultsByPath[path] = result;
   }
 
+  bool? _lastDeleteSourceWhenDone;
+  bool? get lastDeleteSourceWhenDone => _lastDeleteSourceWhenDone;
+
+  EncryptedMediaArtifact? _lastPreparedArtifact;
+  EncryptedMediaArtifact? get lastPreparedArtifact => _lastPreparedArtifact;
+
   /// The callable to pass as `uploadMediaFn`.
   Future<MediaAttachment?> call({
     required Bridge bridge,
@@ -45,8 +52,12 @@ class FakeUploadMediaFn {
     List<double>? waveform,
     List<String>? allowedPeers,
     String? blobId,
+    bool deleteSourceWhenDone = false,
+    EncryptedMediaArtifact? preparedArtifact,
   }) async {
     _callCount++;
+    _lastDeleteSourceWhenDone = deleteSourceWhenDone;
+    _lastPreparedArtifact = preparedArtifact;
     _lastLocalPath = localFilePath;
     _lastMime = mime;
     _lastDurationMs = durationMs;

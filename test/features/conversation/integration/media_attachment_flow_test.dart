@@ -32,6 +32,8 @@ void main() {
     int size = 2048,
     String mediaType = 'image',
   }) {
+    // 112: outbound attachments carry full blob-encryption metadata —
+    // uploadMedia always populates these and the G5 send gate enforces it.
     return MediaAttachment(
       id: id,
       messageId: '', // will be set by send
@@ -40,6 +42,11 @@ void main() {
       mediaType: mediaType,
       downloadStatus: 'pending',
       createdAt: DateTime.now().toUtc().toIso8601String(),
+      contentHash:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      encryptionKeyBase64: 'key-$id',
+      encryptionNonce: 'nonce-$id',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     );
   }
 
@@ -189,6 +196,11 @@ void main() {
               localPath: '/tmp/final.jpg',
               downloadStatus: 'done',
               createdAt: DateTime.now().toUtc().toIso8601String(),
+              contentHash:
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              encryptionKeyBase64: 'key-final',
+              encryptionNonce: 'nonce-final',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             ),
           ],
           mediaAttachmentRepo: aliceMediaRepo,
@@ -472,6 +484,11 @@ void main() {
           localPath: '/tmp/large-video.mp4',
           downloadStatus: 'pending',
           createdAt: DateTime.now().toUtc().toIso8601String(),
+          contentHash:
+              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          encryptionKeyBase64: 'key-large-video',
+          encryptionNonce: 'nonce-large-video',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
 
         final bobReceived = <ConversationMessage>[];

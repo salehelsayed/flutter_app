@@ -1027,6 +1027,123 @@ void main() {
     },
   );
 
+  test(
+    'production send keeps sender account excluded for ordinary multi-device sends',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: testGroup.id,
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'peer-1-device-a',
+              transportPeerId: 'peer-1-device-a',
+              deviceSigningPublicKey: 'pk-1',
+              mlKemPublicKey: 'mlkem-peer-1-device-a',
+              keyPackageId: 'kp-peer-1-device-a',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'peer-1-device-b',
+              transportPeerId: 'peer-1-device-b',
+              deviceSigningPublicKey: 'pk-1',
+              mlKemPublicKey: 'mlkem-peer-1-device-b',
+              keyPackageId: 'kp-peer-1-device-b',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 1, 12),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: testGroup.id,
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: DateTime.utc(2026, 5, 1, 12, 1),
+        ),
+      );
+      bridge.responses['group:sendReliable'] = {
+        'ok': true,
+        'messageId': 'ordinary-multi-device-send',
+        'publishSucceeded': true,
+        'inboxStored': true,
+        'expectedRecipientCount': 1,
+        'topicPeerCount': 1,
+        'recipientPeerIds': <String>['peer-2'],
+        'deliveryMode': 'live_and_inbox',
+        'envelope': '{"kind":"native-reliable-envelope"}',
+      };
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Hello sibling device',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'ordinary-multi-device-send',
+        senderDeviceId: 'peer-1-device-a',
+        senderTransportPeerId: 'peer-1-device-a',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      final reliablePayload = _groupSendReliablePayloadForMessage(
+        bridge,
+        'ordinary-multi-device-send',
+      );
+      expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+      expect(
+        (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        <String>['peer-2'],
+      );
+    },
+  );
+
+  test('production send can opt into sender account durable replay', () async {
+    bridge.responses['group:sendReliable'] = {
+      'ok': true,
+      'messageId': 'explicit-sender-durable-replay',
+      'publishSucceeded': true,
+      'inboxStored': true,
+      'expectedRecipientCount': 1,
+      'topicPeerCount': 0,
+      'recipientPeerIds': <String>['peer-1'],
+      'deliveryMode': 'inbox_only',
+      'envelope': '{"kind":"native-reliable-envelope"}',
+    };
+
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Hello restored sibling',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+      messageId: 'explicit-sender-durable-replay',
+      includeSenderPeerIdInDurableRecipients: true,
+    );
+
+    expect(result, SendGroupMessageResult.successNoPeers);
+    expect(message, isNotNull);
+    final reliablePayload = _groupSendReliablePayloadForMessage(
+      bridge,
+      'explicit-sender-durable-replay',
+    );
+    expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+    expect(reliablePayload['recipientPeerIds'], <String>['peer-1']);
+  });
+
   test('emits GROUP_SEND_MSG_TIMING with group and media metadata', () async {
     bridge.responses['group:publish'] = {
       'ok': true,

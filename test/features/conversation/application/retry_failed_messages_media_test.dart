@@ -110,6 +110,8 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 // Test helpers
 // ---------------------------------------------------------------------------
 const _testTs = '2026-01-01T00:00:00.000Z';
+const _testContentHash =
+    'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 
 ConversationMessage _makeFailedMessage({
   String id = 'msg-failed-media-001',
@@ -146,6 +148,10 @@ MediaAttachment _makeDoneAttachment({
     downloadStatus: 'done',
     createdAt: _testTs,
     localPath: '/tmp/photo.jpg',
+    contentHash: _testContentHash,
+    encryptionKeyBase64: 'test-blob-key-base64',
+    encryptionNonce: 'test-blob-nonce',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
   );
 }
 

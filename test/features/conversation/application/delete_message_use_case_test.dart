@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -250,6 +251,26 @@ void main() {
     );
 
     test(
+      'buildDeletionWireEnvelope emits encrypted v2 deletion envelope',
+      () async {
+        final original = makeMessage();
+
+        final wireEnvelope = await buildDeletionWireEnvelope(
+          bridge: PassthroughCryptoBridge(),
+          originalMessage: original,
+          deletedAt: '2026-03-31T10:02:00.000Z',
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        final envelope = jsonDecode(wireEnvelope) as Map<String, dynamic>;
+        expect(envelope['type'], 'message_deletion');
+        expect(envelope['version'], '2');
+        expect(envelope['encrypted'], isA<Map<String, dynamic>>());
+        expect(envelope.containsKey('payload'), isFalse);
+      },
+    );
+
+    test(
       'deleteMessageForEveryone keeps a visible sent tombstone when live delivery is unacked and inbox fallback also fails',
       () async {
         final original = makeMessage();
@@ -295,6 +316,122 @@ void main() {
 
         p2pService.dispose();
         recipient.dispose();
+      },
+    );
+  });
+
+  // ─── 115 Phase 1 — deletion tombstones ride inbox custody honestly ──────
+  // A 'delivered' deletion whose relay entry was cap-evicted is exactly the
+  // original bug class: the sender hides the tombstone, the receiver never
+  // deletes (doc 115 D-3). Inbox custody persists 'inboxed' with the envelope
+  // retained, and the tombstone stays VISIBLE until receipt-driven delivery.
+  group('115 Phase 1 — deletion tombstone inbox custody', () {
+    test(
+      "delete-for-everyone via sequential inbox fallback persists tombstone status 'inboxed' and retains wire_envelope",
+      () async {
+        final original = makeMessage();
+        messageRepo.seed([original]);
+
+        // Recipient unreachable (not registered) → race fails; inbox enabled
+        // → the sequential inbox tail takes custody.
+        final network = FakeP2PNetwork();
+        final p2pService = FakeP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.status, 'inboxed');
+        expect(tombstone.transport, 'inbox');
+        expect(
+          tombstone.wireEnvelope,
+          contains('"type":"message_deletion"'),
+          reason: 'custody sweep re-store needs the envelope retained',
+        );
+        expect(
+          tombstone.isHidden,
+          isFalse,
+          reason:
+              'tombstone stays visible until receipt-confirmed delivery (D-3)',
+        );
+
+        final stored = await messageRepo.getMessage(original.id);
+        expect(stored!.status, 'inboxed');
+        expect(stored.isHidden, isFalse);
+        expect(stored.wireEnvelope, isNotNull);
+
+        p2pService.dispose();
+      },
+    );
+
+    test(
+      "unacked delete handoff persists 'inboxed', not 'delivered'",
+      () async {
+        final original = makeMessage();
+        messageRepo.seed([original]);
+
+        final network = FakeP2PNetwork();
+        final p2pService = _UnackedDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.status, 'inboxed');
+        expect(tombstone.transport, 'inbox');
+        expect(tombstone.wireEnvelope, contains('"type":"message_deletion"'));
+        expect(tombstone.isHidden, isFalse);
+
+        p2pService.dispose();
+        recipient.dispose();
+      },
+    );
+
+    // Green-on-arrival PIN (does not count toward the phase RED count):
+    // the pure visibility function already hides only on 'delivered'. This
+    // pin blocks anyone "fixing" lingering tombstones by widening that gate
+    // instead of landing 115 Phase 2's deletion receipts (D-3).
+    test(
+      "an 'inboxed' outgoing tombstone stays visible (hiddenAt null) until receipt-driven delivered",
+      () {
+        final tombstone = makeMessage().copyWith(
+          text: '',
+          status: 'inboxed',
+          deletedAt: '2026-06-13T10:00:00.000Z',
+          deletedByPeerId: 'peer-alice',
+        );
+
+        final normalized = normalizeOutgoingDeleteTombstoneVisibility(
+          tombstone,
+        );
+
+        expect(normalized.hiddenAt, isNull);
+        expect(
+          normalizeOutgoingDeleteTombstoneVisibility(
+            tombstone.copyWith(status: 'delivered'),
+          ).hiddenAt,
+          '2026-06-13T10:00:00.000Z',
+          reason: "only 'delivered' hides the tombstone",
+        );
       },
     );
   });

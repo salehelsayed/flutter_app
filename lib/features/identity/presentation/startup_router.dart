@@ -26,6 +26,15 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
+import 'package:flutter_app/features/account_migration/application/migration_secure_storage_cleanup.dart';
+import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
+import 'package:flutter_app/features/account_migration/application/migration_secure_storage_staging.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
+import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_blocked_screen.dart';
+import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -50,6 +59,7 @@ import 'package:flutter_app/features/push/application/push_registration_coordina
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
@@ -185,6 +195,12 @@ class StartupRouter extends StatefulWidget {
   final Future<void> Function()? clearDeliveredNotifications;
   final Future<void> Function(NotificationRouteTarget routeTarget)?
   onNotificationRouteTarget;
+  final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
+  final AccountMigrationSizeGate? accountMigrationSizeGate;
+  final AccountMigrationReceiverStartFn? accountMigrationStartReceiver;
+  final AccountMigrationReceiverStopFn? accountMigrationStopReceiver;
+  final AccountMigrationReceiverEvents? accountMigrationReceiverEvents;
+  final Future<void> Function()? onAccountMigrationReceiverActivated;
 
   const StartupRouter({
     super.key,
@@ -232,6 +248,12 @@ class StartupRouter extends StatefulWidget {
     this.shouldHandleInitialPushOpen,
     this.clearDeliveredNotifications,
     this.onNotificationRouteTarget,
+    this.accountMigrationRunTransfer,
+    this.accountMigrationSizeGate,
+    this.accountMigrationStartReceiver,
+    this.accountMigrationStopReceiver,
+    this.accountMigrationReceiverEvents,
+    this.onAccountMigrationReceiverActivated,
   });
 
   @override
@@ -242,6 +264,7 @@ class _StartupRouterState extends State<StartupRouter> {
   bool _hasError = false;
   String _errorMessage = '';
   String _startupStage = startupStageCheckingIdentity;
+  bool _accountMigrationActivationRerouteStarted = false;
 
   @override
   void initState() {
@@ -265,6 +288,10 @@ class _StartupRouterState extends State<StartupRouter> {
       final decision = await decideStartupRoute(
         identityRepo: widget.repository,
         contactRepo: widget.contactRepository,
+        migrationAuthorityRepository:
+            SecureKeyStoreAccountMigrationAuthorityRepository(
+              secureKeyStore: widget.secureKeyStore,
+            ),
       );
 
       if (!mounted) return;
@@ -283,6 +310,19 @@ class _StartupRouterState extends State<StartupRouter> {
       final transportMetrics = widget.transportMetrics;
 
       switch (decision) {
+        case StartupDecision.accountMigrationBlocked:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'ID_STARTUP_ROUTE_MIGRATION_BLOCKED',
+            details: {},
+          );
+          await _pushStartupReplacement(
+            builder: (_) => AccountMigrationBlockedScreen(
+              onEraseAccount: _eraseMigratedOutAccount,
+            ),
+          );
+          break;
+
         case StartupDecision.hasIdentityWithContacts:
           _setStartupStage(startupStageOpeningFeed);
           final navigator = Navigator.of(context);
@@ -325,6 +365,8 @@ class _StartupRouterState extends State<StartupRouter> {
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             nearbyLocationService: widget.nearbyLocationService,
+            accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+            accountMigrationSizeGate: widget.accountMigrationSizeGate,
           );
 
           final pendingIntent = widget.shareIntentService
@@ -456,8 +498,24 @@ class _StartupRouterState extends State<StartupRouter> {
               callIdentityRestore: (mnemonic) =>
                   callIdentityRestore(bridge, mnemonic),
               callMlKemKeygen: () => callMlKemKeygen(bridge),
+              secureKeyStore: widget.secureKeyStore,
+              contactRepo: contactRepository,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
+              moveFromOldPhoneBuilder: (migrationContext) =>
+                  AccountMigrationJourneyWired.newPhone(
+                    bridge: bridge,
+                    secureKeyStore: widget.secureKeyStore,
+                    startReceiver: widget.accountMigrationStartReceiver,
+                    stopReceiver: widget.accountMigrationStopReceiver,
+                    receiverEvents: widget.accountMigrationReceiverEvents,
+                    onReceiverActivated: () =>
+                        _handleAccountMigrationReceiverActivated(
+                          migrationContext,
+                        ),
+                    backgroundPreference:
+                        widget.appShellController.backgroundPreference,
+                  ),
               onNavigateToMain: (progressContext) async {
                 Navigator.of(progressContext).pushAndRemoveUntil(
                   buildStartupReplacementRoute<void>(
@@ -499,6 +557,9 @@ class _StartupRouterState extends State<StartupRouter> {
                           widget.contactPresenceSnapshotRepository,
                       nearbyLocationService: widget.nearbyLocationService,
                       transportMetrics: widget.transportMetrics,
+                      accountMigrationRunTransfer:
+                          widget.accountMigrationRunTransfer,
+                      accountMigrationSizeGate: widget.accountMigrationSizeGate,
                     ),
                   ),
                   (_) => false,
@@ -556,6 +617,11 @@ class _StartupRouterState extends State<StartupRouter> {
     final result = await startP2PNode(
       identityRepo: widget.repository,
       p2pService: widget.p2pService,
+      accountMigrationNetworkGate: AccountMigrationRuntimeNetworkGate(
+        authorityRepository: SecureKeyStoreAccountMigrationAuthorityRepository(
+          secureKeyStore: widget.secureKeyStore,
+        ),
+      ).allowsAccountNetworkSideEffects,
     );
 
     emitFlowEvent(
@@ -586,12 +652,26 @@ class _StartupRouterState extends State<StartupRouter> {
       if (groupRepo != null) {
         unawaited(
           runWithGroupRecoveryGate(() async {
+            final identity = await widget.repository.loadIdentity();
             await rejoinGroupTopics(
               bridge: widget.bridge,
               groupRepo: groupRepo,
             );
+            // 123 S1 — after rejoin, reconcile any missed TERMINAL dissolve so a
+            // group dissolved while we were offline converges (and is left)
+            // instead of staying live. Runs AFTER rejoin so active groups
+            // re-subscribe immediately — the cursor-independent inbox scan must
+            // not delay live-message reception (see IR-018).
+            final groupMsgListener = widget.groupMessageListener;
+            if (groupMsgListener != null) {
+              await reconcileMissedGroupDissolves(
+                bridge: widget.bridge,
+                groupRepo: groupRepo,
+                groupMessageListener: groupMsgListener,
+                selfPeerId: identity?.peerId,
+              );
+            }
             if (groupMsgRepo != null) {
-              final identity = await widget.repository.loadIdentity();
               await drainGroupOfflineInbox(
                 bridge: widget.bridge,
                 groupRepo: groupRepo,
@@ -609,6 +689,20 @@ class _StartupRouterState extends State<StartupRouter> {
         );
       }
     }
+  }
+
+  Future<void> _eraseMigratedOutAccount() async {
+    final staging = MigrationSecureStorageStaging(
+      primaryStore: widget.secureKeyStore,
+      sharedStore: widget.secureKeyStore,
+    );
+    await MigrationSecureStorageCleanup(staging: staging).eraseAccount(
+      registryKeys: MigrationSecureStorageRegistry.resolve(),
+      explicitLocalReset: true,
+    );
+    await SecureKeyStoreAccountMigrationAuthorityRepository(
+      secureKeyStore: widget.secureKeyStore,
+    ).clearAuthority();
   }
 
   Future<void> _handleInitialPushOpen() async {
@@ -707,9 +801,22 @@ class _StartupRouterState extends State<StartupRouter> {
       }
 
       final identity = await widget.repository.loadIdentity();
-      if (identity == null || identity.mlKemPublicKey != null) return;
+      final hasMlKemPublicKey =
+          identity?.mlKemPublicKey?.trim().isNotEmpty == true;
+      final hasMlKemSecretKey =
+          identity?.mlKemSecretKey?.trim().isNotEmpty == true;
+      if (identity == null || (hasMlKemPublicKey && hasMlKemSecretKey)) {
+        return;
+      }
 
-      emitFlowEvent(layer: 'FL', event: 'MLKEM_MIGRATION_START', details: {});
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MLKEM_MIGRATION_START',
+        details: {
+          'kemPublicPresent': hasMlKemPublicKey,
+          'kemDecapPresent': hasMlKemSecretKey,
+        },
+      );
 
       final mlKemResponse = await callMlKemKeygen(widget.bridge);
       if (mlKemResponse['ok'] != true) {
@@ -730,6 +837,7 @@ class _StartupRouterState extends State<StartupRouter> {
         mlKemSecretKey: mlKemResponse['secretKey'] as String,
         username: identity.username,
         avatarBlob: identity.avatarBlob,
+        avatarVersion: identity.avatarVersion,
         createdAt: identity.createdAt,
         updatedAt: identity.updatedAt,
       );
@@ -818,6 +926,8 @@ class _StartupRouterState extends State<StartupRouter> {
             widget.contactPresenceSnapshotRepository,
         nearbyLocationService: widget.nearbyLocationService,
         transportMetrics: widget.transportMetrics,
+        accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+        accountMigrationSizeGate: widget.accountMigrationSizeGate,
       ),
     );
 
@@ -888,6 +998,92 @@ class _StartupRouterState extends State<StartupRouter> {
       context,
     ).pushReplacement(buildStartupReplacementRoute(builder: builder));
     StartupTiming.instance.mark('route_pushed');
+  }
+
+  Future<void> _handleAccountMigrationReceiverActivated(
+    BuildContext navigationContext,
+  ) async {
+    if (_accountMigrationActivationRerouteStarted) {
+      return;
+    }
+    _accountMigrationActivationRerouteStarted = true;
+
+    await widget.onAccountMigrationReceiverActivated?.call();
+    if (!navigationContext.mounted) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ACCOUNT_MIGRATION_RECEIVER_ROUTE_RESET',
+      details: {},
+    );
+    Navigator.of(navigationContext).pushAndRemoveUntil(
+      buildStartupReplacementRoute<void>(
+        settings: const RouteSettings(
+          name: 'startup-router-after-account-migration',
+        ),
+        builder: (_) => _buildRestartedStartupRouter(),
+      ),
+      (_) => false,
+    );
+  }
+
+  StartupRouter _buildRestartedStartupRouter() {
+    return StartupRouter(
+      repository: widget.repository,
+      contactRepository: widget.contactRepository,
+      contactRequestRepository: widget.contactRequestRepository,
+      contactRequestListener: widget.contactRequestListener,
+      messageRepository: widget.messageRepository,
+      postRepository: widget.postRepository,
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+      chatMessageListener: widget.chatMessageListener,
+      bridge: widget.bridge,
+      p2pService: widget.p2pService,
+      transportMetrics: widget.transportMetrics,
+      mediaFileManager: widget.mediaFileManager,
+      secureKeyStore: widget.secureKeyStore,
+      imageProcessor: widget.imageProcessor,
+      conversationTracker: widget.conversationTracker,
+      audioRecorderService: widget.audioRecorderService,
+      reactionRepository: widget.reactionRepository,
+      reactionListener: widget.reactionListener,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      groupInviteDeliveryAttemptRepository:
+          widget.groupInviteDeliveryAttemptRepository,
+      groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+      groupHistoryGapRepairRepository: widget.groupHistoryGapRepairRepository,
+      groupReactionReplayOutboxRepository:
+          widget.groupReactionReplayOutboxRepository,
+      groupMessageListener: widget.groupMessageListener,
+      groupInviteListener: widget.groupInviteListener,
+      waitForGroupMembershipUpdateIdle: widget.waitForGroupMembershipUpdateIdle,
+      groupConversationTracker: widget.groupConversationTracker,
+      introductionRepository: widget.introductionRepository,
+      introductionListener: widget.introductionListener,
+      shareIntentService: widget.shareIntentService,
+      initialShareIntentCapture: widget.initialShareIntentCapture,
+      ensureRuntimeServicesReady: widget.ensureRuntimeServicesReady,
+      appShellController: widget.appShellController,
+      pendingPostTargetStore: widget.pendingPostTargetStore,
+      postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+      contactPresenceSnapshotRepository:
+          widget.contactPresenceSnapshotRepository,
+      nearbyLocationService: widget.nearbyLocationService,
+      pushRegistrationCoordinator: widget.pushRegistrationCoordinator,
+      contactRequestPresentationGate: widget.contactRequestPresentationGate,
+      getInitialRemoteMessage: widget.getInitialRemoteMessage,
+      shouldHandleInitialPushOpen: widget.shouldHandleInitialPushOpen,
+      clearDeliveredNotifications: widget.clearDeliveredNotifications,
+      onNotificationRouteTarget: widget.onNotificationRouteTarget,
+      accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+      accountMigrationSizeGate: widget.accountMigrationSizeGate,
+      accountMigrationStartReceiver: widget.accountMigrationStartReceiver,
+      accountMigrationStopReceiver: widget.accountMigrationStopReceiver,
+      accountMigrationReceiverEvents: widget.accountMigrationReceiverEvents,
+      onAccountMigrationReceiverActivated:
+          widget.onAccountMigrationReceiverActivated,
+    );
   }
 
   @override

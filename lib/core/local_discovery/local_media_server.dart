@@ -82,10 +82,13 @@ class LocalMediaServer {
       return false;
     }
 
-    // Validate MIME type.
-    final mimeAllowed = allowedMimePrefixes.any(
-      (prefix) => offer.mime.startsWith(prefix),
-    );
+    // Validate MIME type. Enc-flagged offers are exempt: their transport
+    // mime is opaque by design (112 G7a) — the real mime travels only
+    // inside the encrypted message envelope, and the payload is staged as
+    // an opaque ciphertext artifact, never rendered from this path.
+    final mimeAllowed =
+        offer.enc ||
+        allowedMimePrefixes.any((prefix) => offer.mime.startsWith(prefix));
     if (!mimeAllowed) {
       emitFlowEvent(
         layer: 'FL',
@@ -127,11 +130,23 @@ class LocalMediaServer {
     HttpRequest request,
     String mediaId,
   ) async {
+    void emitRejected({required String reason, required int statusCode}) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_UPLOAD_RECEIVE_REJECTED',
+        details: {'id': mediaId, 'reason': reason, 'statusCode': statusCode},
+      );
+    }
+
     if (!_isSafePathSegment(mediaId)) {
       request.response
         ..statusCode = HttpStatus.badRequest
         ..reasonPhrase = 'Invalid media ID'
         ..close();
+      emitRejected(
+        reason: 'invalid_media_id',
+        statusCode: HttpStatus.badRequest,
+      );
       return const MediaUploadResult(
         success: false,
         mediaId: '',
@@ -147,6 +162,7 @@ class LocalMediaServer {
         ..statusCode = HttpStatus.notFound
         ..reasonPhrase = 'No pending offer'
         ..close();
+      emitRejected(reason: 'no_pending_offer', statusCode: HttpStatus.notFound);
       return MediaUploadResult(
         success: false,
         mediaId: mediaId,
@@ -156,6 +172,16 @@ class LocalMediaServer {
     }
 
     final offer = pending.offer;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LOCAL_MEDIA_UPLOAD_RECEIVE_START',
+      details: {
+        'id': mediaId,
+        'mime': offer.mime,
+        'expectedSize': offer.size,
+        'contentLength': request.contentLength,
+      },
+    );
 
     // Validate Authorization header.
     final authHeader = request.headers.value('authorization');
@@ -164,6 +190,7 @@ class LocalMediaServer {
         ..statusCode = HttpStatus.unauthorized
         ..reasonPhrase = 'Missing Authorization'
         ..close();
+      emitRejected(reason: 'missing_auth', statusCode: HttpStatus.unauthorized);
       return MediaUploadResult(
         success: false,
         mediaId: mediaId,
@@ -178,6 +205,7 @@ class LocalMediaServer {
         ..statusCode = HttpStatus.forbidden
         ..reasonPhrase = 'Invalid token'
         ..close();
+      emitRejected(reason: 'invalid_token', statusCode: HttpStatus.forbidden);
       return MediaUploadResult(
         success: false,
         mediaId: mediaId,
@@ -192,6 +220,10 @@ class LocalMediaServer {
         ..statusCode = HttpStatus.conflict
         ..reasonPhrase = 'Upload already in progress'
         ..close();
+      emitRejected(
+        reason: 'already_uploading',
+        statusCode: HttpStatus.conflict,
+      );
       return MediaUploadResult(
         success: false,
         mediaId: mediaId,
@@ -202,8 +234,9 @@ class LocalMediaServer {
 
     pending.isUploading = true;
 
-    // Determine file extension from MIME type.
-    final ext = _extensionFromMime(offer.mime);
+    // Determine file extension from MIME type (or the opaque `.enc`
+    // staging suffix for encrypted artifacts).
+    final ext = _artifactExtension(offer);
     final tempFilePath = '$tempDir/$mediaId$ext';
 
     File? tempFile;
@@ -215,6 +248,15 @@ class LocalMediaServer {
 
       tempFile = File(tempFilePath);
       fileSink = tempFile.openWrite();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_UPLOAD_RECEIVE_STREAM_START',
+        details: {
+          'id': mediaId,
+          'expectedSize': offer.size,
+          'tempPathKind': 'absolute',
+        },
+      );
 
       // Stream body to file with incremental SHA-256.
       late Digest computedDigest;
@@ -237,6 +279,10 @@ class LocalMediaServer {
             ..statusCode = HttpStatus.requestEntityTooLarge
             ..reasonPhrase = 'Exceeded declared size'
             ..close();
+          emitRejected(
+            reason: 'size_exceeded',
+            statusCode: HttpStatus.requestEntityTooLarge,
+          );
 
           return MediaUploadResult(
             success: false,
@@ -254,6 +300,15 @@ class LocalMediaServer {
       await fileSink.flush();
       await fileSink.close();
       fileSink = null;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_UPLOAD_RECEIVE_STREAM_COMPLETE',
+        details: {
+          'id': mediaId,
+          'bytesWritten': bytesWritten,
+          'expectedSize': offer.size,
+        },
+      );
 
       // Must exactly match declared size.
       if (bytesWritten != offer.size) {
@@ -264,6 +319,10 @@ class LocalMediaServer {
           ..statusCode = HttpStatus.badRequest
           ..reasonPhrase = 'Body size mismatch'
           ..close();
+        emitRejected(
+          reason: 'size_mismatch',
+          statusCode: HttpStatus.badRequest,
+        );
 
         return MediaUploadResult(
           success: false,
@@ -293,6 +352,10 @@ class LocalMediaServer {
             'got': computedHex,
           },
         );
+        emitRejected(
+          reason: 'sha256_mismatch',
+          statusCode: HttpStatus.badRequest,
+        );
 
         return MediaUploadResult(
           success: false,
@@ -314,6 +377,8 @@ class LocalMediaServer {
         durationMs: offer.durationMs,
         waveform: offer.waveform,
         filename: offer.filename,
+        enc: offer.enc,
+        encScheme: offer.encScheme,
       );
 
       _mediaReadyController.add(mediaReady);
@@ -321,7 +386,7 @@ class LocalMediaServer {
       emitFlowEvent(
         layer: 'FL',
         event: 'LOCAL_MEDIA_UPLOAD_SUCCESS',
-        details: {'id': mediaId, 'size': bytesWritten},
+        details: {'id': mediaId, 'size': bytesWritten, 'sha256Verified': true},
       );
 
       request.response
@@ -349,6 +414,11 @@ class LocalMediaServer {
           ..statusCode = HttpStatus.internalServerError
           ..close();
       } catch (_) {}
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_UPLOAD_RECEIVE_ERROR',
+        details: {'id': mediaId, 'error': e.toString()},
+      );
 
       return MediaUploadResult(
         success: false,
@@ -375,7 +445,7 @@ class LocalMediaServer {
     if (pending == null) return null;
 
     final offer = pending.offer;
-    final ext = _extensionFromMime(offer.mime);
+    final ext = _artifactExtension(offer);
     final tempFilePath = '$tempDir/$mediaId$ext';
     final tempFile = File(tempFilePath);
 
@@ -402,7 +472,7 @@ class LocalMediaServer {
     final pending = _pendingTransfers.remove(mediaId);
     if (pending == null) return;
 
-    final ext = _extensionFromMime(pending.offer.mime);
+    final ext = _artifactExtension(pending.offer);
     final tempFilePath = '$tempDir/$mediaId$ext';
     try {
       File(tempFilePath).deleteSync();
@@ -439,6 +509,12 @@ class LocalMediaServer {
     _mediaReadyController.close();
   }
 
+  /// Staging suffix for an offer's bytes: encrypted artifacts always land
+  /// as opaque `.enc` (never a renderable media extension); plaintext
+  /// offers keep the mime-derived extension.
+  static String _artifactExtension(MediaOffer offer) =>
+      offer.enc ? '.enc' : _extensionFromMime(offer.mime);
+
   static String _extensionFromMime(String mime) {
     if (mime.startsWith('image/jpeg')) return '.jpg';
     if (mime.startsWith('image/png')) return '.png';
@@ -446,7 +522,13 @@ class LocalMediaServer {
     if (mime.startsWith('image/webp')) return '.webp';
     if (mime.startsWith('video/mp4')) return '.mp4';
     if (mime.startsWith('video/quicktime')) return '.mov';
-    if (mime.startsWith('audio/aac') || mime.startsWith('audio/m4a')) {
+    // Re-encode-fallback containers — keep a playable extension, never .bin.
+    if (mime.startsWith('video/x-m4v')) return '.m4v';
+    if (mime.startsWith('video/x-msvideo')) return '.avi';
+    if (mime.startsWith('video/x-matroska')) return '.mkv';
+    if (mime.startsWith('audio/aac') ||
+        mime.startsWith('audio/m4a') ||
+        mime.startsWith('audio/mp4')) {
       return '.m4a';
     }
     if (mime.startsWith('audio/mpeg')) return '.mp3';

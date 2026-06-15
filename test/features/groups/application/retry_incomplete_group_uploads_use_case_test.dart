@@ -294,6 +294,8 @@ void main() {
           List<double>? waveform,
           List<String>? allowedPeers,
           String? blobId,
+          bool deleteSourceWhenDone = false,
+          preparedArtifact,
         }) async {
           uploadCallCount++;
           if (!uploadStarted.isCompleted) {

@@ -88,4 +88,28 @@ class InMemoryInboxStagingRepository implements InboxStagingRepository {
       rejectReasonDetail: reasonDetail,
     );
   }
+
+  @override
+  Future<void> markQuarantined(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    final existing = _entries[entryId];
+    if (existing == null) return;
+    _entries[entryId] = existing.copyWith(
+      status: 'quarantined',
+      attemptCount: existing.attemptCount + 1,
+      lastAttemptedAt: '2026-04-01T00:00:00.000Z',
+      rejectReasonCode: reasonCode,
+      rejectReasonDetail: reasonDetail,
+    );
+  }
+
+  @override
+  Future<int> countQuarantinedEntries() async {
+    return _entries.values
+        .where((entry) => entry.status == 'quarantined')
+        .length;
+  }
 }

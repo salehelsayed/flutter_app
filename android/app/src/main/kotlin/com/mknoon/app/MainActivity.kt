@@ -1,8 +1,10 @@
 package com.mknoon.app
 
 import android.content.Intent
+import android.os.StatFs
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var goBridge: GoBridge? = null
@@ -10,6 +12,49 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         goBridge = GoBridge(flutterEngine)
+        // Move Account transfer keep-alive: Dart holds/releases a dataSync
+        // foreground service so backgrounding mid-transfer cannot freeze the
+        // segment upload or the local receiver (audit gap G7).
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mknoon/migration_keepalive",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    MigrationKeepAliveService.start(this)
+                    result.success(null)
+                }
+                "stop" -> {
+                    MigrationKeepAliveService.stop(this)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mknoon/disk_space",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getAvailableBytes" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank()) {
+                        result.error("bad_args", "path is required", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        result.success(StatFs(path).availableBytes)
+                    } catch (error: Exception) {
+                        result.error(
+                            "disk_space_unavailable",
+                            error.message ?: "disk space unavailable",
+                            null,
+                        )
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     /**

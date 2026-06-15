@@ -2,7 +2,6 @@
 ///
 /// GP-Sim-1 requires `run_group_publish_benchmark.dart`, which coordinates a
 /// real Go CLI test peer joining the group before this harness publishes.
-@Tags(['device'])
 library;
 
 import 'dart:async';
@@ -10,23 +9,18 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
+import '_support/cli_peer_fixture.dart';
 import 'benchmark_helpers.dart';
 import 'group_multi_device_real_harness.dart' as group_harness;
 
-const _configuredCliPeerFixture = String.fromEnvironment(
-  'CLI_PEER_FIXTURE',
-  defaultValue: '',
-);
 const _configuredSharedDir = String.fromEnvironment(
   'BENCHMARK_SHARED_DIR',
   defaultValue: '/tmp',
@@ -38,21 +32,6 @@ const _configuredRunId = String.fromEnvironment(
 
 String _sharedPath(String name) =>
     '$_configuredSharedDir/gp_${_configuredRunId}_$name';
-
-Map<String, dynamic>? _loadCliPeerFixture() {
-  if (_configuredCliPeerFixture.isEmpty) {
-    return null;
-  }
-  final file = File(_configuredCliPeerFixture);
-  if (!file.existsSync()) {
-    return null;
-  }
-  try {
-    return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  } catch (_) {
-    return null;
-  }
-}
 
 void _writeSharedJson(String name, Map<String, dynamic> value) {
   Directory(_configuredSharedDir).createSync(recursive: true);
@@ -99,46 +78,18 @@ Future<group_harness.GroupMultiDeviceTestStack> _createCliGroupNode(
   );
 }
 
-Future<group_harness.GroupMultiDeviceTestStack> _createZeroPeerGroupNode() {
-  final suffix = DateTime.now().millisecondsSinceEpoch;
-  return group_harness.setupGroupMultiDeviceStack(
-    dbName: 'benchmark_group_zero_peers_$suffix.db',
-    username: 'Bench Solo',
-    cliPeerFixture: null,
-  );
-}
-
-Future<String> _createSoloGroup(
-  group_harness.GroupMultiDeviceTestStack stack,
-) async {
-  final group = await createGroup(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    name: 'Solo Benchmark Group',
-    type: GroupType.chat,
-    creatorPeerId: stack.identity.peerId,
-    creatorPublicKey: stack.identity.publicKey,
-    creatorMlKemPublicKey: stack.identity.mlKemPublicKey ?? '',
-    creatorUsername: stack.identity.username,
-  );
-  await Future<void>.delayed(const Duration(seconds: 2));
-  return group.id;
-}
-
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runGroupPublishBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
 
-  testWidgets('GP-Sim-1: Group publish with peers connected', (tester) async {
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: GROUP PUBLISH — PEERS READY (GP-Sim-1)');
     print('${'═' * 60}\n');
 
-    final cliPeerFixture = _loadCliPeerFixture();
+    final cliPeerFixture = loadCliPeerFixture();
     if (cliPeerFixture == null || _configuredRunId == 'adhoc') {
       print(
         '[SKIP] GP-Sim-1 requires '
@@ -263,69 +214,5 @@ void main() {
     } finally {
       await stack.teardown();
     }
-  });
-
-  testWidgets('GP-Sim-2: Group publish with 0 peers (inbox fallback)', (
-    tester,
-  ) async {
-    print('\n${'═' * 60}');
-    print('  BENCHMARK: GROUP PUBLISH — 0 PEERS (GP-Sim-2)');
-    print('${'═' * 60}\n');
-
-    final stack = await _createZeroPeerGroupNode();
-
-    try {
-      final groupId = await _createSoloGroup(stack);
-      final events = await captureFlowEventsUntil(
-        () async {
-          final result = await sendGroupMessage(
-            bridge: stack.bridge,
-            groupRepo: stack.groupRepo,
-            msgRepo: stack.groupMsgRepo,
-            groupId: groupId,
-            text: 'Solo group message',
-            senderPeerId: stack.identity.peerId,
-            senderPublicKey: stack.identity.publicKey,
-            senderPrivateKey: stack.identity.privateKey,
-            senderUsername: stack.identity.username,
-            inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
-          );
-          expect(
-            result.$1,
-            anyOf(
-              SendGroupMessageResult.success,
-              SendGroupMessageResult.successNoPeers,
-            ),
-          );
-        },
-        postActionTimeout: const Duration(seconds: 2),
-        until: (captured) {
-          return filterEvents(captured, 'GROUP_SEND_MSG_TIMING').isNotEmpty;
-        },
-      );
-
-      final groupTimings = filterEvents(events, 'GROUP_SEND_MSG_TIMING');
-      expect(groupTimings, isNotEmpty, reason: 'Missing group send timing');
-      final details = groupTimings.first['details'] as Map<String, dynamic>;
-      printBenchmarkSingle(
-        'sim_group_publish_zero_peers_ms',
-        (details['elapsedMs'] as num).toInt(),
-      );
-      print(
-        '[BENCHMARK] sim_group_publish_zero_peers_outcome = '
-        '${details['outcome']}',
-      );
-
-      final publishDebug = filterEvents(events, 'group:publish_debug');
-      if (publishDebug.isNotEmpty) {
-        final debug = publishDebug.last['details'] as Map<String, dynamic>;
-        print(
-          '[BENCHMARK] sim_group_zero_peers_topic_peers = '
-          '${debug['topicPeers'] ?? 'n/a'}',
-        );
-      }
-    } finally {
-      await stack.teardown();
-    }
-  });
+  }
 }

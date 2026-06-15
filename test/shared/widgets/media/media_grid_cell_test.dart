@@ -57,6 +57,7 @@ const _tinyGifBytes = <int>[
 ];
 
 const _tinyJpgBytes = <int>[0xFF, 0xD8, 0xFF, 0xE0];
+const _tinyMp4Bytes = <int>[0, 0, 0, 18, 102, 116, 121, 112];
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -188,6 +189,37 @@ void main() {
     expect(find.text('GIF'), findsNothing);
   });
 
+  testWidgets('renders upload_pending media as an explicit upload state', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 180,
+          height: 180,
+          child: MediaGridCell(
+            attachment: _attachment(
+              id: 'pending-upload',
+              mime: 'image/jpeg',
+              mediaType: 'image',
+              downloadStatus: 'upload_pending',
+              localPath: jpgFile.path,
+              size: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Uploading media'), findsOneWidget);
+    expect(
+      find.text('Recipients will receive this after the upload finishes.'),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+  });
+
   testWidgets('renders failed placeholder for legacy invalid done media', (
     tester,
   ) async {
@@ -203,7 +235,13 @@ void main() {
               mediaType: 'image',
               downloadStatus: 'done',
               localPath: jpgFile.path,
+              // The group MIME allow-list gate only applies to verified group
+              // rendering (117 Session 2). Assert the disallowed-mime gate in
+              // that context (valid hash + encryption isolate it to the mime).
+              contentHash: _validContentHash,
+              withEncryption: true,
             ),
+            requireVerifiedContentHash: true,
           ),
         ),
       ),
@@ -230,7 +268,12 @@ void main() {
               downloadStatus: 'done',
               localPath: jpgFile.path,
               size: kGroupMediaPerAttachmentLimitBytes + 1,
+              // The group MIME/size gate only applies to verified group
+              // rendering (117 Session 2). Assert it in that context.
+              contentHash: _validContentHash,
+              withEncryption: true,
             ),
+            requireVerifiedContentHash: true,
           ),
         ),
       ),
@@ -240,6 +283,86 @@ void main() {
     expect(find.byType(MediaThumbnailImage), findsNothing);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
   });
+
+  testWidgets(
+    '1:1 cell renders present done media with a non-allowlisted mime',
+    (tester) async {
+      // 117 Session 2: a 1:1 video whose real mime is the re-encode-fallback
+      // container (video/x-matroska, outside the group allow-list) must still
+      // render and open — the group MIME allow-list must not gate 1:1.
+      final videoFile = File('${tempDir.path}/fallback-1to1.mkv')
+        ..writeAsBytesSync(_tinyMp4Bytes);
+      var tapped = false;
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 120,
+            height: 120,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: 'fallback-1to1',
+                mime: 'video/x-matroska',
+                mediaType: 'video',
+                downloadStatus: 'done',
+                localPath: videoFile.path,
+              ),
+              onTap: () => tapped = true,
+              videoThumbnailResolver: (_) async => null,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Media unavailable'), findsNothing);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.byType(VideoThumbnailOverlay), findsOneWidget);
+
+      await tester.tap(find.byType(MediaGridCell));
+      expect(tapped, isTrue);
+    },
+  );
+
+  testWidgets(
+    'group cell still gates a non-allowlisted mime (behavior preserved)',
+    (tester) async {
+      // Same non-allowlisted mime, but in verified group context the strict
+      // allow-list gate must remain — even with valid hash + encryption
+      // metadata, the disallowed mime keeps it unavailable.
+      final videoFile = File('${tempDir.path}/fallback-group.mkv')
+        ..writeAsBytesSync(_tinyMp4Bytes);
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 120,
+            height: 120,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: 'fallback-group',
+                mime: 'video/x-matroska',
+                mediaType: 'video',
+                downloadStatus: 'done',
+                localPath: videoFile.path,
+                contentHash: _validContentHash,
+                withEncryption: true,
+              ),
+              requireVerifiedContentHash: true,
+              onTap: () {},
+              videoThumbnailResolver: (_) async => null,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Media unavailable'), findsOneWidget);
+      expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+      expect(find.byType(MediaThumbnailImage), findsNothing);
+    },
+  );
 
   testWidgets('requires content hash before group media can render or open', (
     tester,
@@ -304,7 +427,7 @@ void main() {
     'group video thumbnails derive from verified content without remote thumbnail path',
     (tester) async {
       final videoFile = File('${tempDir.path}/clip.mp4')
-        ..writeAsBytesSync(const <int>[0, 0, 0, 18, 102, 116, 121, 112]);
+        ..writeAsBytesSync(_tinyMp4Bytes);
 
       await tester.pumpWidget(
         wrap(
@@ -335,6 +458,227 @@ void main() {
       expect(find.byType(VideoThumbnailOverlay), findsOneWidget);
     },
   );
+
+  testWidgets('video thumbnail failure shows video fallback, not unavailable', (
+    tester,
+  ) async {
+    final videoFile = File('${tempDir.path}/thumbnail-failure.mp4')
+      ..writeAsBytesSync(_tinyMp4Bytes);
+    var tapped = false;
+    var retryCount = 0;
+
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 120,
+          height: 120,
+          child: MediaGridCell(
+            attachment: _attachment(
+              id: 'video-thumbnail-failure',
+              mime: 'video/mp4',
+              mediaType: 'video',
+              downloadStatus: 'done',
+              localPath: videoFile.path,
+            ),
+            onTap: () => tapped = true,
+            onRetryUnavailableMedia: () => retryCount++,
+            videoThumbnailResolver: (_) async => null,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MediaThumbnailImage), findsOneWidget);
+    expect(find.byType(VideoThumbnailOverlay), findsOneWidget);
+    expect(find.text('Media unavailable'), findsNothing);
+    expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+    expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+
+    await tester.tap(find.byType(MediaGridCell));
+    expect(tapped, isTrue);
+    expect(retryCount, 0);
+  });
+
+  testWidgets(
+    '117: done video with undecodable thumbnail renders playable, not '
+    'unavailable',
+    (tester) async {
+      // A downloaded, intact, playable video whose derived thumbnail JPG is
+      // present-but-corrupt must render the video fallback + play overlay and
+      // stay tappable — never the "Media unavailable" broken-image placeholder.
+      final videoFile = File('${tempDir.path}/decode-failure.mp4')
+        ..writeAsBytesSync(_tinyMp4Bytes);
+      final corruptThumb = File('${tempDir.path}/decode-failure.thumb.jpg')
+        ..writeAsBytesSync(const [1, 2, 3, 4, 5, 6, 7, 8]);
+      var tapped = false;
+      var retryCount = 0;
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 120,
+            height: 120,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: 'video-decode-failure',
+                mime: 'video/mp4',
+                mediaType: 'video',
+                downloadStatus: 'done',
+                localPath: videoFile.path,
+              ),
+              onTap: () => tapped = true,
+              onRetryUnavailableMedia: () => retryCount++,
+              videoThumbnailResolver: (_) async => corruptThumb.path,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The cell does not short-circuit a present, done video to unavailable.
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.byType(VideoThumbnailOverlay), findsOneWidget);
+      expect(find.text('Media unavailable'), findsNothing);
+
+      // Drive the thumbnail-decode failure deterministically through the inner
+      // Image's errorBuilder (real Image.file decode does not run under
+      // testWidgets). The wired `error` widget is the "Media unavailable"
+      // placeholder; the fix must instead render the benign video placeholder.
+      final image = tester.widget<Image>(find.byType(Image));
+      final errorWidget = image.errorBuilder!(
+        tester.element(find.byType(Image)),
+        Exception('decode failed'),
+        StackTrace.empty,
+      );
+      await tester.pumpWidget(wrap(SizedBox(width: 120, height: 120, child: errorWidget)));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Media unavailable'), findsNothing);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+      expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+
+      expect(tapped, isFalse);
+      expect(retryCount, 0);
+    },
+  );
+
+  testWidgets('failed video media still shows unavailable retry', (
+    tester,
+  ) async {
+    final videoFile = File('${tempDir.path}/failed-video.mp4')
+      ..writeAsBytesSync(_tinyMp4Bytes);
+    var retryCount = 0;
+    var tapped = false;
+
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 160,
+          height: 160,
+          child: MediaGridCell(
+            attachment: _attachment(
+              id: 'failed-video',
+              mime: 'video/mp4',
+              mediaType: 'video',
+              downloadStatus: 'failed',
+              localPath: videoFile.path,
+            ),
+            onTap: () => tapped = true,
+            onRetryUnavailableMedia: () => retryCount++,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Media unavailable'), findsOneWidget);
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(find.byType(MediaThumbnailImage), findsNothing);
+    expect(find.byType(VideoThumbnailOverlay), findsNothing);
+    expect(find.bySemanticsLabel('Retry unavailable media'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('unavailable-media-retry-msg-1-failed-video')),
+    );
+    await tester.pump();
+
+    expect(retryCount, 1);
+    expect(tapped, isFalse);
+  });
+
+  testWidgets('missing-file done video is unavailable, not fallback', (
+    tester,
+  ) async {
+    final missingPath = '${tempDir.path}/missing-video.mp4';
+    var tapped = false;
+
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 120,
+          height: 120,
+          child: MediaGridCell(
+            attachment: _attachment(
+              id: 'missing-video',
+              mime: 'video/mp4',
+              mediaType: 'video',
+              downloadStatus: 'done',
+              localPath: missingPath,
+            ),
+            onTap: () => tapped = true,
+            onRetryUnavailableMedia: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Media unavailable'), findsOneWidget);
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(find.byType(MediaThumbnailImage), findsNothing);
+    expect(find.byType(VideoThumbnailOverlay), findsNothing);
+    expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+
+    await tester.tap(find.byType(MediaGridCell));
+    expect(tapped, isFalse);
+  });
+
+  testWidgets('pending video remains loading without retry or play', (
+    tester,
+  ) async {
+    var tapped = false;
+
+    await tester.pumpWidget(
+      wrap(
+        SizedBox(
+          width: 120,
+          height: 120,
+          child: MediaGridCell(
+            attachment: _attachment(
+              id: 'pending-video',
+              mime: 'video/mp4',
+              mediaType: 'video',
+              downloadStatus: 'pending',
+              localPath: null,
+            ),
+            onTap: () => tapped = true,
+            onRetryUnavailableMedia: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Media unavailable'), findsNothing);
+    expect(find.byType(MediaThumbnailImage), findsNothing);
+    expect(find.byType(VideoThumbnailOverlay), findsNothing);
+    expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+
+    await tester.tap(find.byType(MediaGridCell));
+    expect(tapped, isFalse);
+  });
 
   testWidgets('tapping a GIF cell fires onTap', (tester) async {
     var tapped = false;

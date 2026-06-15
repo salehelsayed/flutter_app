@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/foundation.dart' show DebugPrintCallback, debugPrint;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dar
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -32,6 +34,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_ke
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -368,6 +371,7 @@ class _FakeEventLog {
 
 class _DelayedMediaDownloadBridge extends FakeBridge {
   final Completer<void> downloadGate = Completer<void>();
+  List<int> downloadBytes = const <int>[1, 2, 3];
 
   @override
   Future<String> send(String message) async {
@@ -387,7 +391,7 @@ class _DelayedMediaDownloadBridge extends FakeBridge {
       if (outputPath != null) {
         final file = File(outputPath);
         await file.parent.create(recursive: true);
-        await file.writeAsBytes(const <int>[1, 2, 3]);
+        await file.writeAsBytes(downloadBytes);
       }
       return jsonEncode({'ok': true});
     }
@@ -3052,6 +3056,200 @@ void main() {
       );
     },
   );
+
+  group('creator re-key on remote member departure (forward secrecy)', () {
+    Future<void> saveBobWriter() {
+      return groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          joinedAt: initialMemberJoinedAt,
+        ),
+      );
+    }
+
+    // A member_removed for `removedPeerId`, authored by `senderId`, leaving
+    // peer-admin + peer-bob as the remaining roster.
+    Map<String, dynamic> memberRemovedEvent({
+      required String messageId,
+      required String senderId,
+      required String senderUsername,
+      String removedPeerId = 'peer-sender',
+      String removedUsername = 'Sender',
+      String removedAt = '2026-04-05T12:00:01.000Z',
+    }) {
+      return {
+        'groupId': 'group-1',
+        'senderId': senderId,
+        'senderUsername': senderUsername,
+        'keyEpoch': 0,
+        'messageId': messageId,
+        'text': jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': removedPeerId, 'username': removedUsername},
+          'removedAt': removedAt,
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'username': 'Admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-bob',
+                'username': 'Bob',
+                'role': 'writer',
+                'publicKey': 'pk-bob',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+          },
+        }),
+        'timestamp': removedAt,
+      };
+    }
+
+    test(
+      'remaining creator rotates group key on member_removed it did not author',
+      () async {
+        await saveBobWriter();
+        final rotateCalls = <String>[];
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-admin',
+          rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+            rotateCalls.add(groupId);
+            return true;
+          },
+        );
+        listener.start(sourceController.stream);
+
+        // peer-sender voluntarily leaves (authors its own member_removed).
+        sourceController.add(
+          memberRemovedEvent(
+            messageId: 'wl-self-leave',
+            senderId: 'peer-sender',
+            senderUsername: 'Sender',
+          ),
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+        expect(rotateCalls, ['group-1']);
+      },
+    );
+
+    test('creator does not double-rotate on a duplicate member_removed', () async {
+      await saveBobWriter();
+      final rotateCalls = <String>[];
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-admin',
+        rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+          rotateCalls.add(groupId);
+          return true;
+        },
+      );
+      listener.start(sourceController.stream);
+
+      sourceController.add(
+        memberRemovedEvent(
+          messageId: 'wl-dup-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // A redelivery of the same departure (different envelope id, peer already
+      // gone) must not trigger a second rotation.
+      sourceController.add(
+        memberRemovedEvent(
+          messageId: 'wl-dup-2',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          removedAt: '2026-04-05T12:00:05.000Z',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(rotateCalls, ['group-1']);
+    });
+
+    test('a non-creator member does not auto-rotate on member_removed', () async {
+      await saveBobWriter();
+      final rotateCalls = <String>[];
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        // Self is peer-bob — a remaining writer, NOT the group creator.
+        getSelfPeerId: () async => 'peer-bob',
+        rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+          rotateCalls.add(groupId);
+          return true;
+        },
+      );
+      listener.start(sourceController.stream);
+
+      sourceController.add(
+        memberRemovedEvent(
+          messageId: 'wl-noncreator',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+      expect(rotateCalls, isEmpty);
+    });
+
+    test('creator does not rotate on a removal it authored itself', () async {
+      await saveBobWriter();
+      final rotateCalls = <String>[];
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-admin',
+        rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+          rotateCalls.add(groupId);
+          return true;
+        },
+      );
+      listener.start(sourceController.stream);
+
+      // Admin (creator) removed peer-sender — the admin-removal path already
+      // rotated locally, so the echo must not double-rotate.
+      sourceController.add(
+        memberRemovedEvent(
+          messageId: 'wl-self-authored',
+          senderId: 'peer-admin',
+          senderUsername: 'Admin',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+      expect(rotateCalls, isEmpty);
+    });
+  });
 
   test(
     'DE-012 dispatcher overflow triggers one replay recovery and coalesces duplicates',
@@ -6194,6 +6392,74 @@ void main() {
       },
     );
 
+    test(
+      'member_joined delivered twice with different envelope timestamps saves '
+      'exactly one join row (note-1 dedup)',
+      () async {
+        listener.start(sourceController.stream);
+
+        final messages = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(messages.add);
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final sysText = jsonEncode({
+          '__sys': 'member_joined',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+        });
+
+        // Same logical join arriving over two transports (live GossipSub +
+        // offline-replay inbox) with DIFFERENT envelope timestamps -> two
+        // distinct sys-member_joined ids. Only one "joined the group" row/card
+        // must survive (note-1).
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-charlie',
+          'senderUsername': 'Charlie',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': '2026-04-05T12:05:00.000Z',
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-charlie',
+          'senderUsername': 'Charlie',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': '2026-04-05T12:05:09.000Z',
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        // FAILS on HEAD: two distinct ids -> two saved rows + two cards.
+        expect(msgRepo.count, 1);
+        final joinRows =
+            (await msgRepo.getMessagesPage('group-1', limit: 500, offset: 0))
+                .where(
+                  (m) => m.id.startsWith(
+                    'sys-member_joined:group-1:peer-charlie:',
+                  ),
+                )
+                .toList();
+        expect(joinRows, hasLength(1));
+        expect(
+          messages.where((m) => m.text == 'Charlie joined the group'),
+          hasLength(1),
+        );
+
+        await subscription.cancel();
+      },
+    );
+
     test('unauthorized members_added is ignored', () async {
       listener.start(sourceController.stream);
 
@@ -7146,7 +7412,7 @@ void main() {
     );
 
     test(
-      'self-removal calls leaveGroup and emits on groupRemovedStream',
+      'self-removal of a quiet group retains it read-only with a visible removal message and emits on groupRemovedStream',
       () async {
         final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
         final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
@@ -7206,15 +7472,19 @@ void main() {
         // Bridge should have received group:leave
         expect(bridge.commandLog, contains('group:leave'));
 
-        // Group should be deleted from local DB
+        // B3: a quiet group is retained read-only (NOT hard-deleted): the group
+        // row stays, self is removed, the admin remains.
         final group = await groupRepo.getGroup('group-1');
-        expect(group, isNull);
+        expect(group, isNotNull);
+        expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+        expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
 
-        // groupRemovedStream should have emitted the group ID
+        // groupRemovedStream still emits the soft "you were removed" signal.
         expect(removedGroups, ['group-1']);
 
-        // No regular message saved
-        expect(msgRepo.count, 0);
+        // A visible self-removal timeline message is written (not an empty cutoff).
+        final retained = await msgRepo.getMessagesPage('group-1');
+        expect(retained.map((message) => message.text), contains('Admin removed Me'));
 
         await sub.cancel();
         selfListener.dispose();
@@ -7656,12 +7926,23 @@ void main() {
         );
         expect(bridge.commandLog, isNot(contains('group:join')));
         expect(bridge.commandLog, isNot(contains('group:joinWithConfig')));
-        expect(await groupRepo.getGroup('group-1'), isNull);
-        expect(await groupRepo.getMembers('group-1'), isEmpty);
+        // B3: the group is retained read-only (not deleted); self is removed,
+        // the admin remains, keys are gone, and the stale post-leave envelope
+        // is ignored without resurrecting membership or rejoining.
+        expect(await groupRepo.getGroup('group-1'), isNotNull);
+        expect(await groupRepo.getMember('group-1', 'peer-self'), isNull);
+        expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
         expect(await groupRepo.getLatestKey('group-1'), isNull);
         expect(await msgRepo.getMessage('gm016-stale-post-leave'), isNull);
         expect(removedGroups, <String>['group-1']);
-        expect(emittedMessages, isEmpty);
+        expect(
+          emittedMessages.map((message) => message.text),
+          contains('Admin removed Me'),
+        );
+        expect(
+          emittedMessages.map((message) => message.text),
+          isNot(contains('GM-016 stale post-leave message')),
+        );
 
         await removedSub.cancel();
         await messageSub.cancel();
@@ -7733,8 +8014,14 @@ void main() {
           hasLength(1),
         );
         expect(removedGroups, ['group-1']);
-        expect(await groupRepo.getGroup('group-1'), isNull);
-        expect(msgRepo.count, 0);
+        // B3: the group is retained read-only; a duplicate member_removed is
+        // ignored (one leave, one signal) and the visible notice is written once.
+        expect(await groupRepo.getGroup('group-1'), isNotNull);
+        final retainedRows = await msgRepo.getMessagesPage('group-1');
+        expect(
+          retainedRows.where((message) => message.text == 'Admin removed Me'),
+          hasLength(1),
+        );
 
         await sub.cancel();
         selfListener.dispose();
@@ -7795,7 +8082,8 @@ void main() {
           bridge.commandLog.where((command) => command == 'group:leave'),
           hasLength(1),
         );
-        expect(await groupRepo.getGroup('group-1'), isNull);
+        // B3: self-removal retains the group read-only (leave path unchanged).
+        expect(await groupRepo.getGroup('group-1'), isNotNull);
         expect(removedGroups, ['group-1']);
 
         await sub.cancel();
@@ -10795,7 +11083,13 @@ void main() {
       'joins an in-flight shared media download for the same incoming attachment',
       () async {
         final mediaRepo = GateableMediaAttachmentRepository();
-        final delayedBridge = _DelayedMediaDownloadBridge();
+        // Bytes must survive the FULL group validation chain (hash check,
+        // decrypt via the byte-copying fake, plaintext size check, JPEG
+        // magic-byte mime validation) — both callers run the group policy.
+        final jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, ...List.filled(31, 0xff)];
+        final jpegBytesHash = sha256.convert(jpegBytes).toString();
+        final delayedBridge = _DelayedMediaDownloadBridge()
+          ..downloadBytes = jpegBytes;
         final mediaFileManager = FakeMediaFileManager();
         final mediaListener = GroupMessageListener(
           groupRepo: groupRepo,
@@ -10810,20 +11104,24 @@ void main() {
           bridge: delayedBridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: mediaFileManager,
-          attachment: const MediaAttachment(
+          attachment: MediaAttachment(
             id: 'blob-event-1',
             messageId: 'msg-group-1',
             mime: 'image/jpeg',
-            size: 12345,
+            size: jpegBytes.length,
             mediaType: 'image',
             downloadStatus: 'pending',
-            contentHash: _bytes123ContentHash,
+            contentHash: jpegBytesHash,
             encryptionKeyBase64: 'key-fixture',
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-03-26T10:00:00.000Z',
           ),
           contactPeerId: 'group-1',
+          // 112: the in-flight dedup key is policy-aware — only same-policy
+          // callers share a future. The listener below downloads with the
+          // group policy, so this pre-flight call must too.
+          enforceGroupMediaPolicy: true,
         );
         await Future<void>.delayed(Duration.zero);
 
@@ -10841,10 +11139,10 @@ void main() {
             {
               'id': 'blob-event-1',
               'mime': 'image/jpeg',
-              'size': 12345,
+              'size': jpegBytes.length,
               'mediaType': 'image',
               'downloadStatus': 'pending',
-              'contentHash': _bytes123ContentHash,
+              'contentHash': jpegBytesHash,
               'encryptionKeyBase64': 'key-fixture',
               'encryptionNonce': 'nonce-fixture',
               'encryptionScheme': 'blob_aes_256_gcm_v1',
@@ -10927,6 +11225,149 @@ void main() {
 
       notifListener.dispose();
     });
+
+    // 120 G4 — locks `toneTracker: _notificationToneTracker` at
+    // group_message_listener.dart:941. Removing that arg makes every group
+    // message audible; this guard catches the lost debounce.
+    test(
+      'toneTracker is wired: two group messages, same group, in-window → first audible, second silent',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+
+        // Single fixed clock so both messages fall inside the 30s window.
+        final fixedNow = DateTime.utc(2026, 6, 13, 12, 0, 0);
+        final toneTracker = NotificationToneTracker(
+          clock: () => fixedNow,
+          window: const Duration(seconds: 30),
+        );
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          notificationToneTracker: toneTracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'group-tone-wired-1',
+          'text': 'First',
+          'timestamp': DateTime.utc(2026, 6, 13, 12, 0, 1).toIso8601String(),
+        });
+
+        await expectNotificationCount(notifService, 1);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'group-tone-wired-2',
+          'text': 'Second',
+          'timestamp': DateTime.utc(2026, 6, 13, 12, 0, 2).toIso8601String(),
+        });
+
+        await expectNotificationCount(notifService, 2);
+        expect(notifService.shown[0].silent, isFalse);
+        expect(notifService.shown[1].silent, isTrue);
+
+        notifListener.dispose();
+      },
+    );
+
+    // 120 G4 — pins the intentional 118 asymmetry: the group call site
+    // (group_message_listener.dart:928-957) deliberately does NOT pass a
+    // markRecentRemoteNotificationAnnouncement closure. Adding one (to
+    // "symmetrize" with the direct path) must fail this guard.
+    test(
+      'group path is intentionally mark-free: gate.markAnnouncement is never called',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final spyGate = SpyRecentRemoteNotificationGate();
+        addTearDown(spyGate.clear);
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          remoteNotificationGate: spyGate,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'group-mark-free-1',
+          'text': 'Hello group!',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await expectNotificationCount(notifService, 1);
+        expect(spyGate.markCalls, isEmpty);
+
+        notifListener.dispose();
+      },
+    );
+
+    test(
+      'migration-blocked account suppresses live group message before persistence or notification',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final blockedListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          accountMigrationNetworkGate: ({peerId, required operation}) async =>
+              false,
+        );
+        final emitted = <GroupMessage>[];
+        final sub = blockedListener.groupMessageStream.listen(emitted.add);
+        blockedListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'migrated-out-group-msg',
+          'text': 'Should stay silent',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(emitted, isEmpty);
+        expect(await msgRepo.getMessage('migrated-out-group-msg'), isNull);
+        expect(notifService.shown, isEmpty);
+
+        await sub.cancel();
+        blockedListener.dispose();
+      },
+    );
 
     test(
       'live and replay delivery for one message id emit and notify once when raced',
@@ -11688,7 +12129,7 @@ void main() {
       notifListener.dispose();
     });
 
-    test('does not notify after self-removal deletes the group', () async {
+    test('does not notify after self-removal retains the group read-only', () async {
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();
       final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
@@ -11745,7 +12186,7 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(await groupRepo.getGroup('group-1'), isNull);
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
       expect(removedGroups, <String>['group-1']);
       expect(
         bridge.commandLog.where((command) => command == 'group:leave'),
@@ -11765,7 +12206,15 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
 
       expect(notifService.shown, isEmpty);
-      expect(msgRepo.count, 0);
+      // The retained group holds only the visible removal notice; the
+      // post-removal content message is dropped (a removed member sees no
+      // traffic after the cutoff) and the system notice does not notify.
+      final retained = await msgRepo.getMessagesPage('group-1');
+      expect(retained.map((message) => message.text), contains('Admin removed Me'));
+      expect(
+        retained.map((message) => message.text),
+        isNot(contains('After removal')),
+      );
 
       await sub.cancel();
       notifListener.dispose();
@@ -12154,6 +12603,178 @@ void main() {
         expect(saved!.id.startsWith('sys-group_dissolved:group-1:'), isTrue);
         expect(saved.text, 'Admin dissolved the group');
         expect(bridge.commandLog, contains('group:leave'));
+      },
+    );
+
+    test(
+      'B4 signed group_dissolved with a present matching binding but a DIVERGED '
+      'local pre-transition state is REJECTED on the current tree and APPLIED '
+      'after the terminal-dissolve relaxation',
+      () async {
+        // Recreates the field divergence: an admin-signed, correctly-bound
+        // group_dissolved whose signed preTransitionStateHash does NOT equal the
+        // receiver's locally-computed buildGroupTransitionStateHash (because the
+        // receiver rejected an upstream key_rotated/members_added and its
+        // transition state drifted). The binding is absent on both sides, so the
+        // verifier reaches the HASH check (previous_transition_hash_mismatch) —
+        // NOT device/transport_mismatch (Option A already fixed those). Wiring
+        // appendGroupEventLogEntry forces the signed-audit branch, de-masking
+        // the vacuous dissolve tests that carry no signed audit.
+        final eventLog = _FakeEventLog();
+        await saveTrustedAdminMember();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final dissolvedAt = DateTime.utc(2026, 4, 5, 12);
+        final signedPayload = await signedAuditSystemPayload(
+          transitionType: 'group_dissolved',
+          sourceEventId: 'dissolve-event-diverged-1',
+          eventAt: dissolvedAt,
+          preTransitionStateHash: 'diverged-pre-transition-state-hash',
+          systemPayload: {
+            '__sys': 'group_dissolved',
+            'dissolvedAt': dissolvedAt.toIso8601String(),
+            'dissolvedBy': 'peer-admin',
+          },
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'dissolve-event-diverged-1',
+          'text': jsonEncode(signedPayload),
+          'timestamp': dissolvedAt.toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updated = await groupRepo.getGroup('group-1');
+        expect(updated, isNotNull);
+        expect(
+          updated!.isDissolved,
+          isTrue,
+          reason:
+              'a terminal admin dissolve must converge despite an upstream '
+              'state-hash divergence',
+        );
+        expect(updated.dissolvedBy, 'peer-admin');
+      },
+    );
+
+    test(
+      'B4 forgery lock: a NON-ADMIN signed group_dissolved (even with a diverged '
+      'pre-transition state) is still REJECTED after the relaxation',
+      () async {
+        // The terminal-dissolve relaxation must not open a hole: only an
+        // authorized admin dissolve is relaxed. peer-sender is a writer, so the
+        // membership-authorization gate rejects the dissolve BEFORE the pre-hash
+        // relaxation is even reached.
+        final eventLog = _FakeEventLog();
+        await saveTrustedAdminMember();
+        // peer-sender (writer) is already saved by setUp.
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final dissolvedAt = DateTime.utc(2026, 4, 5, 12);
+        final signedPayload = await signedAuditSystemPayload(
+          transitionType: 'group_dissolved',
+          sourceEventId: 'dissolve-event-forged-1',
+          eventAt: dissolvedAt,
+          actorPeerId: 'peer-sender',
+          actorUsername: 'Sender',
+          actorPublicKey: 'pk-sender',
+          preTransitionStateHash: 'diverged-pre-transition-state-hash',
+          systemPayload: {
+            '__sys': 'group_dissolved',
+            'dissolvedAt': dissolvedAt.toIso8601String(),
+            'dissolvedBy': 'peer-sender',
+          },
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'dissolve-event-forged-1',
+          'text': jsonEncode(signedPayload),
+          'timestamp': dissolvedAt.toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updated = await groupRepo.getGroup('group-1');
+        expect(updated, isNotNull);
+        expect(
+          updated!.isDissolved,
+          isFalse,
+          reason: 'a non-admin dissolve must never converge',
+        );
+      },
+    );
+
+    test(
+      'B4 forgery lock: an ADMIN group_dissolved with an INVALID signature is '
+      'rejected even with the terminal relaxation (signature gate intact)',
+      () async {
+        // The terminal relaxation only skips the chain pre-transition STATE
+        // hash — it must NOT weaken the actor signature check. An admin-sent
+        // dissolve whose signature fails verification must still be rejected.
+        final eventLog = _FakeEventLog();
+        await saveTrustedAdminMember();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final dissolvedAt = DateTime.utc(2026, 4, 5, 12);
+        final signedPayload = await signedAuditSystemPayload(
+          transitionType: 'group_dissolved',
+          sourceEventId: 'dissolve-event-badsig-1',
+          eventAt: dissolvedAt,
+          preTransitionStateHash: 'diverged-pre-transition-state-hash',
+          systemPayload: {
+            '__sys': 'group_dissolved',
+            'dissolvedAt': dissolvedAt.toIso8601String(),
+            'dissolvedBy': 'peer-admin',
+          },
+        );
+        // Force signature verification to fail (forged/invalid signature).
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'dissolve-event-badsig-1',
+          'text': jsonEncode(signedPayload),
+          'timestamp': dissolvedAt.toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updated = await groupRepo.getGroup('group-1');
+        expect(updated, isNotNull);
+        expect(
+          updated!.isDissolved,
+          isFalse,
+          reason:
+              'an invalid-signature dissolve must reject despite the terminal '
+              'pre-hash relaxation',
+        );
       },
     );
 

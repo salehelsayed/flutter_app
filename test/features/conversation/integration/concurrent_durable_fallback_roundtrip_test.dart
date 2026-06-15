@@ -82,7 +82,8 @@ void main() {
           'Low-confidence durable',
         );
         expect(secondResult, SendChatMessageResult.success);
-        expect(secondMsg!.status, 'delivered');
+        // 115 P1 contract flip: inbox custody → 'inboxed'.
+        expect(secondMsg!.status, 'inboxed');
         expect(secondMsg.transport, 'inbox');
 
         // Both messages durably stored; the second send must NOT have produced

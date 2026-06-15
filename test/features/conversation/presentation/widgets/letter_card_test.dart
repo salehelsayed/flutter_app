@@ -225,6 +225,36 @@ void main() {
         expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       });
 
+      testWidgets('shows pending media delivery note while media is sending', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: false,
+            status: 'sending',
+            text: '',
+            media: const [
+              MediaAttachment(
+                id: 'sending-media',
+                messageId: 'sending-message',
+                mime: 'image/jpeg',
+                size: 1024,
+                mediaType: 'image',
+                localPath: '/tmp/sending.jpg',
+                downloadStatus: 'done',
+                createdAt: '2026-02-27T10:00:00.000Z',
+              ),
+            ],
+          ),
+        );
+
+        expect(find.text('Uploading media'), findsOneWidget);
+        expect(
+          find.text('Recipients will receive this after the upload finishes.'),
+          findsOneWidget,
+        );
+      });
+
       testWidgets('shows two ticks when status is delivered', (tester) async {
         await tester.pumpWidget(
           buildTestWidget(isIncoming: false, status: 'delivered'),
@@ -255,6 +285,30 @@ void main() {
 
           final iconFinder = find.byIcon(Icons.schedule_rounded);
           expect(iconFinder, findsOneWidget);
+
+          final icon = tester.widget<Icon>(iconFinder);
+          expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
+          expect(
+            find.bySemanticsLabel('Message status: pending delivery via inbox'),
+            findsOneWidget,
+          );
+        },
+      );
+
+      // 115 Phase 1.4 — 'inboxed' is relay CUSTODY, not delivery: render the
+      // pending visual family (schedule glyph, amber, pending-inbox
+      // semantics), never done_all (doc 115 G-B / D-1).
+      testWidgets(
+        "status 'inboxed' renders schedule icon with pending-inbox semantics, never done_all",
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'inboxed'),
+          );
+
+          final iconFinder = find.byIcon(Icons.schedule_rounded);
+          expect(iconFinder, findsOneWidget);
+          expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
 
           final icon = tester.widget<Icon>(iconFinder);
           expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));

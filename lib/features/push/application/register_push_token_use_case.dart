@@ -4,9 +4,15 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/push/domain/push_token_store.dart';
 
-enum RegisterPushTokenResult { success, noToken, failed }
+enum RegisterPushTokenResult {
+  success,
+  noToken,
+  failed,
+  accountMigrationBlocked,
+}
 
 /// Timeout for waiting on [FirebaseMessaging.getAPNSToken] on iOS.
 ///
@@ -41,11 +47,31 @@ Future<RegisterPushTokenResult> registerPushToken({
   Duration getTokenTimeout = _getTokenTimeout,
   DateTime Function()? nowFn,
   Future<void> Function(Duration duration)? delayFn,
+  AccountMigrationNetworkGate accountMigrationNetworkGate =
+      allowAccountMigrationNetworkSideEffects,
 }) async {
   final platform =
       (getPlatformFn ?? () => Platform.isIOS ? 'ios' : 'android')();
   logPushDiagnostic('register_token_begin', details: {'platform': platform});
   emitFlowEvent(layer: 'FL', event: 'PUSH_REGISTER_TOKEN_BEGIN', details: {});
+
+  final localPeerId = p2pService.currentState.peerId;
+  final migrationAllowsNetwork = await accountMigrationNetworkGate(
+    peerId: localPeerId,
+    operation: 'push_register_token',
+  );
+  if (!migrationAllowsNetwork) {
+    logPushDiagnostic(
+      'register_token_account_migration_blocked',
+      details: {'platform': platform, 'peerId': localPeerId},
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_REGISTER_TOKEN_ACCOUNT_MIGRATION_BLOCKED',
+      details: {'platform': platform, 'peerId': localPeerId},
+    );
+    return RegisterPushTokenResult.accountMigrationBlocked;
+  }
 
   final effectiveGetPlatform =
       getPlatformFn ?? () => Platform.isIOS ? 'ios' : 'android';

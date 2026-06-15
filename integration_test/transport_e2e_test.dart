@@ -50,10 +50,11 @@ import 'package:flutter_app/core/database/migrations/025_introduction_already_co
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
+import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
+import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -65,21 +66,9 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
-
-// ---------------------------------------------------------------------------
-// Test-only SecureKeyStore (in-memory)
-// ---------------------------------------------------------------------------
-class _FakeSecureKeyStore implements SecureKeyStore {
-  final Map<String, String> _store = {};
-  @override
-  Future<String?> read(String key) async => _store[key];
-  @override
-  Future<void> write(String key, String value) async => _store[key] = value;
-  @override
-  Future<void> delete(String key) async => _store.remove(key);
-  @override
-  Future<bool> containsKey(String key) async => _store.containsKey(key);
-}
+import '_support/cli_peer_fixture.dart';
+import '_support/fake_secure_key_store.dart';
+import '_support/test_db_seeder.dart';
 
 // ---------------------------------------------------------------------------
 // Temp directory + signal file paths (shared with orchestrator)
@@ -93,10 +82,6 @@ const _configuredWriteDir = String.fromEnvironment(
   'E2E_WRITE_DIR',
   defaultValue: '',
 );
-const _configuredCliPeerFixture = String.fromEnvironment(
-  'CLI_PEER_FIXTURE',
-  defaultValue: '',
-);
 
 String _tempDirPath() => _configuredTempDir.isNotEmpty
     ? _configuredTempDir
@@ -105,10 +90,6 @@ String _tempDirPath() => _configuredTempDir.isNotEmpty
 String _writeDirPath() => _configuredWriteDir.isNotEmpty
     ? _configuredWriteDir
     : Directory.systemTemp.path;
-
-String _cliPeerFixturePath() => _configuredCliPeerFixture.isNotEmpty
-    ? _configuredCliPeerFixture
-    : '${Directory.systemTemp.path}/cli_peer_fixture.json';
 
 /// Path for reading orchestrator→Flutter signals.
 String _readSignalPath(String name) => '${_tempDirPath()}/$name';
@@ -121,21 +102,26 @@ const _phase4Only = bool.fromEnvironment(
   defaultValue: false,
 );
 
-// ---------------------------------------------------------------------------
-// CLI peer fixture loader
-// ---------------------------------------------------------------------------
+// Multi-relay closure gate (folded in from the deleted multi_relay_failover_test
+// wrapper). When MKNOON_REQUIRE_MULTI_RELAY=true the run asserts that at least
+// two comma-separated MKNOON_RELAY_ADDRESSES entries are configured so the
+// failover path is actually exercised. The gate defaults OFF — when it is unset
+// the single-relay default behavior of this source test is unchanged.
+const _configuredRelayAddresses = String.fromEnvironment(
+  'MKNOON_RELAY_ADDRESSES',
+  defaultValue: '',
+);
+const _requireConfiguredMultiRelayAddresses = bool.fromEnvironment(
+  'MKNOON_REQUIRE_MULTI_RELAY',
+);
 
-Map<String, dynamic>? _loadCliPeerFixture() {
-  final fixturePath = _cliPeerFixturePath();
-
-  final file = File(fixturePath);
-  if (!file.existsSync()) return null;
-  try {
-    return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  } catch (e) {
-    print('[TEST] Failed to parse CLI peer fixture: $e');
-    return null;
-  }
+bool _hasConfiguredMultiRelayAddresses() {
+  final addresses = _configuredRelayAddresses
+      .split(',')
+      .map((entry) => entry.trim())
+      .where((entry) => entry.isNotEmpty)
+      .toList(growable: false);
+  return addresses.length >= 2;
 }
 
 void _writeFlutterPeerFixture({
@@ -193,32 +179,13 @@ Future<ContactModel> _generateUnreachableContact({
 
 var _testCounter = 0;
 
-Future<void> _deleteTestDatabase(String dbName) async {
-  try {
-    final dbPath = await sqlcipher.getDatabasesPath();
-    final fullPath = '$dbPath/$dbName';
-    for (final path in [
-      fullPath,
-      '$fullPath-wal',
-      '$fullPath-shm',
-      '$fullPath.encrypted',
-    ]) {
-      final file = File(path);
-      if (file.existsSync()) {
-        file.deleteSync();
-      }
-    }
-    await sqlcipher.deleteDatabase(fullPath);
-  } catch (_) {}
-}
-
 Future<_TestStack> _setupStack() async {
   _testCounter++;
   print('\n========================================');
   print('TRANSPORT E2E TEST — SETUP #$_testCounter');
   print('========================================\n');
 
-  final cliPeer = _loadCliPeerFixture();
+  final cliPeer = loadCliPeerFixture();
   String? cliPeerId;
   String? cliPublicKey;
   String? cliMlKemPublicKey;
@@ -232,14 +199,14 @@ Future<_TestStack> _setupStack() async {
     print('[TEST] No CLI peer fixture — running self-contained tests only');
   }
 
-  final secureKeyStore = _FakeSecureKeyStore();
+  final secureKeyStore = FakeSecureKeyStore();
   final dbName = 'transport_e2e_test_$_testCounter.db';
-  await _deleteTestDatabase(dbName);
+  await deleteTestDatabase(dbName);
 
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 44,
+    version: 77,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -268,6 +235,8 @@ Future<_TestStack> _setupStack() async {
       await runGroupQuotedMessageIdMigration(db);
       await runMessagesEditedAtMigration(db);
       await runMessagesDeletedStateMigration(db);
+      await runContactsMlKemKeyUpdatedTsMigration(db);
+      await runMessageRelayCustodyMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -296,9 +265,11 @@ Future<_TestStack> _setupStack() async {
       if (oldVersion < 26) await runGroupQuotedMessageIdMigration(db);
       if (oldVersion < 43) await runMessagesEditedAtMigration(db);
       if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
+      if (oldVersion < 75) await runContactsMlKemKeyUpdatedTsMigration(db);
+      if (oldVersion < 77) await runMessageRelayCustodyMigration(db);
     },
   );
-  print('[TEST] Database initialized (version 44)');
+  print('[TEST] Database initialized (version 77)');
 
   final contactRepo = ContactRepositoryImpl(
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -520,7 +491,7 @@ class _TestStack {
     p2pService.dispose();
     bridge.dispose();
     await db.close();
-    await _deleteTestDatabase(dbName);
+    await deleteTestDatabase(dbName);
     // Signal files live in the orchestrator's temp dir which it cleans up.
     // Only delete our own fixture as a courtesy.
     try {
@@ -559,8 +530,9 @@ class _FlowCapture {
   /// FLOW event names whose `details.id` matches the first 8 chars of [messageId]
   /// (the prefix the production send path emits, e.g. `resolvedMessageId[:8]`).
   List<String> namesForId(String messageId) {
-    final prefix =
-        messageId.length >= 8 ? messageId.substring(0, 8) : messageId;
+    final prefix = messageId.length >= 8
+        ? messageId.substring(0, 8)
+        : messageId;
     return events
         .where((e) => (e['details'] as Map?)?['id'] == prefix)
         .map((e) => e['event'] as String)
@@ -807,6 +779,24 @@ Future<void> _runPhase4LongRunningScenario(_TestStack stack) async {
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  // Multi-relay closure gate: when MKNOON_REQUIRE_MULTI_RELAY=true this run must
+  // have at least two MKNOON_RELAY_ADDRESSES entries configured (the failover
+  // path the deleted multi_relay_failover_test wrapper used to assert). Fail
+  // closed before any scenario runs if the requirement is not met. With the gate
+  // off (default) the rest of main() runs exactly as before.
+  if (_requireConfiguredMultiRelayAddresses &&
+      !_hasConfiguredMultiRelayAddresses()) {
+    testWidgets('multi-relay fixture is required for this closure run', (
+      _,
+    ) async {
+      fail(
+        'MKNOON_REQUIRE_MULTI_RELAY=true requires at least two comma-separated '
+        'MKNOON_RELAY_ADDRESSES entries via --dart-define.',
+      );
+    });
+    return;
+  }
+
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -1043,17 +1033,23 @@ void main() {
                 .where((m) => !m.isIncoming && m.text.contains('A6:'))
                 .toList();
             final a6Status = a6Out.isNotEmpty ? a6Out.last.status : 'none';
-            final a6Pass = m6 != null && a6Status == 'delivered';
+            final a6Transport = a6Out.isNotEmpty
+                ? a6Out.last.transport
+                : 'none';
+            final a6Pass =
+                m6 != null &&
+                (a6Status == 'delivered' ||
+                    (a6Status == 'inboxed' && a6Transport == 'inbox'));
             results.add(
               _ScenarioResult(
                 'A6',
                 a6Pass,
-                'connected=$isConnected status=$a6Status',
+                'connected=$isConnected status=$a6Status transport=$a6Transport',
               ),
             );
             print(
               '[TEST] A6 ${a6Pass ? 'PASS' : 'FAIL'}: '
-              'status=$a6Status connected=$isConnected',
+              'status=$a6Status transport=$a6Transport connected=$isConnected',
             );
           } catch (e) {
             results.add(_ScenarioResult('A6', false, 'error: $e'));
@@ -1523,7 +1519,7 @@ void main() {
                   : 'none';
               final c1Pass =
                   c1Msg != null &&
-                  c1Status == 'delivered' &&
+                  c1Status == 'inboxed' &&
                   c1Transport == 'inbox';
               results.add(
                 _ScenarioResult(
@@ -1734,7 +1730,7 @@ void main() {
                   : 'none';
               final b8Pass =
                   b8Msg != null &&
-                  b8Status == 'delivered' &&
+                  b8Status == 'inboxed' &&
                   b8Transport == 'inbox';
               results.add(
                 _ScenarioResult(
@@ -1971,11 +1967,11 @@ void main() {
           );
           final status = stored.isNotEmpty ? stored.last.status : 'none';
           final transport = stored.isNotEmpty ? stored.last.transport : 'none';
-          // B1 pass: message persisted; delivered via inbox OR failed is acceptable.
+          // B1 pass: message persisted; relay custody is pending until receipt.
           final b1Pass =
               msg != null &&
-              (status == 'delivered' || status == 'failed') &&
-              (status != 'delivered' || transport == 'inbox');
+              ((status == 'inboxed' && transport == 'inbox') ||
+                  status == 'failed');
           results.add(
             _ScenarioResult(
               'B1',
@@ -2116,7 +2112,9 @@ void main() {
         // Low-confidence sends to a fresh OFFLINE peer; time send->durable custody
         // (the concurrent inbox store completing). Reports median/p95 — the number
         // that finally SIZES the NET-REL-05 offline tail.
-        print('\n--- E2-B: offline send->custody sizing (median/p95, N>=30) ---');
+        print(
+          '\n--- E2-B: offline send->custody sizing (median/p95, N>=30) ---',
+        );
         try {
           final offlineB = await _generateUnreachableContact(
             bridge: stack.bridge,
@@ -2360,8 +2358,8 @@ void main() {
       expect(stored.first.isIncoming, false);
       expect(
         stored.first.status,
-        anyOf('delivered', 'failed'),
-        reason: 'Status should be delivered (inbox) or failed',
+        anyOf('inboxed', 'failed'),
+        reason: 'Status should be inboxed (relay custody) or failed',
       );
 
       print(

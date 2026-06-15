@@ -81,6 +81,57 @@ void main() {
     expect(p2pService.sendMessageWithReplyCallCount, 1);
   });
 
+  test('account migration gate blocks queued follow-on retry work', () async {
+    await postRepo.saveFollowOnOutboxEvent(
+      const PostFollowOnOutboxEvent(
+        eventId: 'evt-pin-blocked',
+        eventType: 'post_pin_remove',
+        postId: 'post-1',
+        senderPeerId: 'peer-self',
+        rawEnvelope: '{"type":"post_pin_remove"}',
+        createdAt: '2026-03-15T11:25:00.000Z',
+      ),
+    );
+    await postRepo.saveFollowOnOutboxRecipientDelivery(
+      const PostFollowOnOutboxRecipientDelivery(
+        eventId: 'evt-pin-blocked',
+        recipientPeerId: 'peer-bob',
+        deliveryStatus: 'failed',
+        deliveryPath: 'failed',
+        lastError: 'inbox_store_failed',
+        lastAttemptAt: '2026-03-15T11:25:10.000Z',
+        createdAt: '2026-03-15T11:25:00.000Z',
+        updatedAt: '2026-03-15T11:25:10.000Z',
+      ),
+    );
+    var gateCalls = 0;
+    retrier = PendingPostFollowOnRetrier(
+      p2pService: p2pService,
+      postRepo: postRepo,
+      retryDebounce: Duration.zero,
+      periodicRetryInterval: const Duration(hours: 1),
+      accountMigrationNetworkGate:
+          ({String? peerId, required String operation}) async {
+            gateCalls++;
+            expect(peerId, 'peer-self');
+            expect(operation, 'pending_post_follow_on_retry');
+            return false;
+          },
+    );
+
+    retrier.start();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    final deliveries = await postRepo.loadFollowOnOutboxRecipientDeliveries(
+      'evt-pin-blocked',
+    );
+    expect(gateCalls, 1);
+    expect(deliveries, hasLength(1));
+    expect(deliveries.single.deliveryStatus, 'failed');
+    expect(await postRepo.loadRetryableFollowOnOutboxJobs(), hasLength(1));
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+  });
+
   test(
     'start while already online ignores repost delivery state because repost no longer uses follow-on outbox jobs',
     () async {

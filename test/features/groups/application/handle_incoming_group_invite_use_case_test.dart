@@ -6,6 +6,7 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -594,6 +595,18 @@ void main() {
         myRole: GroupRole.admin,
       );
       await groupRepo.saveGroup(existingGroup);
+      // Genuine already-joined duplicate: self is an active member. (Contrast a
+      // B3 retained-removed shell where self is absent and a re-add invite
+      // re-joins instead — see the re-join test below.)
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'grp-abc123',
+          peerId: '12D3KooWBob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
 
       final (result, _) = await handleIncomingGroupInvite(
         message: _makeV1Message(),
@@ -614,6 +627,49 @@ void main() {
       expect(bridge.commandLog, contains('payload.verify'));
       expect(bridge.commandLog, isNot(contains('group:join')));
     });
+
+    // --- B3 re-join after removal ---
+    test(
+      're-joins a retained-removed group shell when self is no longer a member',
+      () async {
+        // B3 retains a removed member's group read-only (self absent, keyless)
+        // instead of hard-deleting it. A fresh re-add invite must RE-JOIN
+        // (re-materialize), not be rejected as a duplicate.
+        final retainedShell = GroupModel(
+          id: 'grp-abc123',
+          name: 'Original Name',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/grp-abc123',
+          createdAt: DateTime.utc(2026, 1, 1),
+          createdBy: '12D3KooWAlice',
+          myRole: GroupRole.member,
+        );
+        await groupRepo.saveGroup(retainedShell);
+        // Only the admin remains; self ('12D3KooWBob') is absent (removed).
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+
+        final (result, _) = await handleIncomingGroupInvite(
+          message: _makeV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        // Re-joins (success), re-materializes the key, and joins the topic.
+        expect(result, equals(HandleGroupInviteResult.success));
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(bridge.commandLog, contains('group:join'));
+      },
+    );
 
     // --- Cycle 4.4 ---
     test('returns invalidPayload for missing groupId', () async {

@@ -32,6 +32,7 @@ class IncomingMessageRouter {
   final _postPassController = StreamController<ChatMessage>.broadcast();
   final _postPinUpdateController = StreamController<ChatMessage>.broadcast();
   final _postPinRemoveController = StreamController<ChatMessage>.broadcast();
+  final _deliveryReceiptController = StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
   IncomingMessageRouter({required this.p2pService});
@@ -94,6 +95,11 @@ class IncomingMessageRouter {
   /// Stream of incoming post_pin_remove messages.
   Stream<ChatMessage> get postPinRemoveStream =>
       _postPinRemoveController.stream;
+
+  /// Stream of incoming delivery_receipt messages (115 P2 — receipts flip
+  /// sender-side 'inboxed' rows to 'delivered').
+  Stream<ChatMessage> get deliveryReceiptStream =>
+      _deliveryReceiptController.stream;
 
   /// Stream of messages with unknown or unparseable types.
   Stream<ChatMessage> get unknownMessageStream => _unknownController.stream;
@@ -213,9 +219,10 @@ class IncomingMessageRouter {
         case 'post_pin_remove':
           _postPinRemoveController.add(message);
         case 'delivery_receipt':
-          // Legacy envelope type kept for backward compatibility.
-          // Delivery status is now sender-side inbox/direct semantics only.
-          return;
+          // 115 P2: receipts are the receiver's durable-persist confirmation
+          // — the only thing that flips relay-inbox custody ('inboxed') to
+          // 'delivered' on the sender.
+          _deliveryReceiptController.add(message);
         default:
           emitFlowEvent(
             layer: 'FL',
@@ -268,6 +275,7 @@ class IncomingMessageRouter {
     _postPassController.close();
     _postPinUpdateController.close();
     _postPinRemoveController.close();
+    _deliveryReceiptController.close();
     _unknownController.close();
   }
 }

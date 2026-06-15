@@ -35,6 +35,13 @@ void main() {
     );
     debugSetRecentRemoteNotificationGate(remoteGate);
     addTearDown(remoteGate.clear);
+
+    debugSetBackgroundAccountMigrationNetworkGate(({
+      String? peerId,
+      required String operation,
+    }) async {
+      return true;
+    });
   });
 
   tearDown(() {
@@ -46,6 +53,7 @@ void main() {
     debugResetRecentRemoteNotificationGate();
     debugResetBackgroundPushNotificationResolver();
     debugResetBackgroundPushNotificationDisplayEligibilityResolver();
+    debugResetBackgroundAccountMigrationNetworkGate();
   });
 
   group('firebaseMessagingBackgroundHandler', () {
@@ -109,6 +117,42 @@ void main() {
           mknoonMessagesChannelDescription,
         );
         expect(platformSpecifics['playSound'], isTrue);
+      },
+    );
+
+    test(
+      'suppresses background fallback when account migration runtime gate blocks',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        final gateCalls = <String>[];
+        debugSetBackgroundAccountMigrationNetworkGate(({
+          String? peerId,
+          required String operation,
+        }) async {
+          gateCalls.add(operation);
+          return false;
+        });
+
+        const message = RemoteMessage(
+          messageId: 'msg-migration-blocked-1',
+          data: {'type': 'new_message', 'sender_id': '12D3KooWTestPeer'},
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(gateCalls, <String>['push_background_notification_display']);
+        expect(log.where((call) => call.method == 'show'), isEmpty);
       },
     );
 
@@ -470,6 +514,105 @@ void main() {
         expect(platformSpecifics['presentSound'], isTrue);
         expect(platformSpecifics['presentAlert'], isTrue);
         expect(platformSpecifics['presentBadge'], isTrue);
+      },
+    );
+
+    // 118 Phase 7 (VERIFICATION/CHARACTERIZATION): confirm the FCM background
+    // path is uncorrupted by the live-direct routing + foreground tone debounce.
+    test(
+      'background direct fallback stays audible and per-conversation — the '
+      'foreground tone debounce never reaches the FCM isolate (OQ-4)',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        // A suspended burst of two distinct messages from the SAME sender.
+        const first = RemoteMessage(
+          messageId: 'm-burst-a',
+          data: {'type': 'new_message', 'sender_id': '12D3KooWPeerBurst'},
+        );
+        const second = RemoteMessage(
+          messageId: 'm-burst-b',
+          data: {'type': 'new_message', 'sender_id': '12D3KooWPeerBurst'},
+        );
+
+        await firebaseMessagingBackgroundHandler(first);
+        await firebaseMessagingBackgroundHandler(second);
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(2));
+
+        final id0 = (shows[0].arguments as Map)['id'];
+        final id1 = (shows[1].arguments as Map)['id'];
+        // Direct background notifications coalesce per conversation.
+        expect(id0, '12D3KooWPeerBurst'.hashCode);
+        expect(id1, id0);
+
+        // Always audible (mknoonMessagesNotificationDetails) — the silent
+        // variant is foreground/live-only.
+        final ps0 = (shows[0].arguments as Map)['platformSpecifics'] as Map;
+        expect(ps0['channelId'], mknoonMessagesChannelId);
+        expect(ps0['playSound'], isTrue);
+      },
+    );
+
+    test(
+      'background GROUP fallback id is per-message so a suspended burst does '
+      'NOT coalesce — PRE-EXISTING calm gap flagged for OQ-4, not 118 scope',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        const first = RemoteMessage(
+          messageId: 'fcm-burst-a',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-burst',
+            'message_id': 'gmsg-a',
+          },
+        );
+        const second = RemoteMessage(
+          messageId: 'fcm-burst-b',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-burst',
+            'message_id': 'gmsg-b',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(first);
+        await firebaseMessagingBackgroundHandler(second);
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(2));
+
+        final id0 = (shows[0].arguments as Map)['id'];
+        final id1 = (shows[1].arguments as Map)['id'];
+        // Distinct ids: each group message is its own card in the background.
+        // This is a pre-existing gap (the live foreground path coalesces via
+        // contactPeerId.hashCode); documented in OQ-4, out of 118 scope.
+        expect(id0, isNot(id1));
       },
     );
   });

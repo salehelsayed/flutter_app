@@ -412,6 +412,116 @@ void main() {
       });
     });
 
+    group('encryption predicates', () {
+      const bare = MediaAttachment(
+        id: 'blob-pred-001',
+        messageId: 'msg-pred-001',
+        mime: 'image/jpeg',
+        size: 1000,
+        mediaType: 'image',
+        downloadStatus: 'pending',
+        createdAt: '2026-06-12T10:00:00.000Z',
+      );
+
+      test(
+        'hasEncryptionKeyMaterial: absent/empty key or nonce = false; '
+        'key+nonce non-empty = true regardless of scheme (null, v1, unknown)',
+        () {
+          expect(bare.hasEncryptionKeyMaterial, isFalse);
+          expect(
+            bare.copyWith(encryptionKeyBase64: 'k').hasEncryptionKeyMaterial,
+            isFalse,
+          );
+          expect(
+            bare.copyWith(encryptionNonce: 'n').hasEncryptionKeyMaterial,
+            isFalse,
+          );
+          expect(
+            bare
+                .copyWith(encryptionKeyBase64: '', encryptionNonce: 'n')
+                .hasEncryptionKeyMaterial,
+            isFalse,
+          );
+          expect(
+            bare
+                .copyWith(encryptionKeyBase64: 'k', encryptionNonce: '')
+                .hasEncryptionKeyMaterial,
+            isFalse,
+          );
+
+          final nullScheme = bare.copyWith(
+            encryptionKeyBase64: 'k',
+            encryptionNonce: 'n',
+          );
+          expect(nullScheme.encryptionScheme, isNull);
+          expect(nullScheme.hasEncryptionKeyMaterial, isTrue);
+
+          expect(
+            bare
+                .copyWith(
+                  encryptionKeyBase64: 'k',
+                  encryptionNonce: 'n',
+                  encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                )
+                .hasEncryptionKeyMaterial,
+            isTrue,
+          );
+
+          // Scheme-agnostic: an unknown (future) scheme still counts as key
+          // material — this is the ciphertext-custody discriminator, never a
+          // decryptability claim.
+          expect(
+            bare
+                .copyWith(
+                  encryptionKeyBase64: 'k',
+                  encryptionNonce: 'n',
+                  encryptionScheme: 'blob_aes_256_gcm_v2_future',
+                )
+                .hasEncryptionKeyMaterial,
+            isTrue,
+          );
+        },
+      );
+
+      test(
+        'hasEncryptionMetadata tri-state: absent keys=false, '
+        'key+nonce+null-scheme=true, key+nonce+v1-scheme=true, '
+        'unknown scheme=false',
+        () {
+          expect(bare.hasEncryptionMetadata, isFalse);
+
+          final nullScheme = bare.copyWith(
+            encryptionKeyBase64: 'k',
+            encryptionNonce: 'n',
+          );
+          expect(nullScheme.hasEncryptionMetadata, isTrue);
+
+          final v1 = bare.copyWith(
+            encryptionKeyBase64: 'k',
+            encryptionNonce: 'n',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          );
+          expect(v1.hasEncryptionMetadata, isTrue);
+
+          // Whitelist pin: hasEncryptionMetadata strictly means "decryptable
+          // with v1 logic" — any unknown scheme MUST stay false. Widening
+          // this whitelist would route future-scheme ciphertext into v1
+          // decrypt (see 112 plan, caveat 9.4).
+          final unknown = bare.copyWith(
+            encryptionKeyBase64: 'k',
+            encryptionNonce: 'n',
+            encryptionScheme: 'blob_aes_256_gcm_v2_future',
+          );
+          expect(unknown.hasEncryptionMetadata, isFalse);
+          expect(unknown.isEncrypted, isFalse);
+
+          // isEncrypted is an alias of hasEncryptionMetadata.
+          expect(v1.isEncrypted, v1.hasEncryptionMetadata);
+          expect(bare.isEncrypted, bare.hasEncryptionMetadata);
+        },
+      );
+    });
+
     group('equality', () {
       test('two attachments with same id are equal', () {
         final other = MediaAttachment(

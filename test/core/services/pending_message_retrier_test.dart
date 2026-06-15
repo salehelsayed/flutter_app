@@ -960,16 +960,22 @@ void main() {
         async.elapse(Duration.zero);
         async.flushMicrotasks();
 
+        // The publish-free group inbox-store confirm (retryFailedGroupInboxStores,
+        // which promotes a reconcilable pending row to sent without re-sending)
+        // MUST run BEFORE the re-publish retrier (retryFailedGroupMessages). Both
+        // touch 'pending' rows; confirm-first prevents re-publishing — and thus
+        // risking a duplicate delivery of — a pending row that custody already
+        // resolved (GAP 3a).
         expect(callOrder, <String>[
           'rejoinGroupTopics',
           'drainGroupOfflineInbox',
           'acknowledgeRecovery',
           'recoverStuckSendingGroupMessages',
           'retryIncompleteGroupUploads',
+          'retryFailedGroupInboxStores',
           'retryFailedGroupMessages',
           'retryFailedMessages',
           'retryUnackedMessages',
-          'retryFailedGroupInboxStores',
         ]);
       });
     });

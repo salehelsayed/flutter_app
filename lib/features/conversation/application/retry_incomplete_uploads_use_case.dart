@@ -209,22 +209,105 @@ Future<int> retryIncompleteUploads({
           break;
         }
 
+        final latestBeforeSave = await _latestAttachmentForMessage(
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          messageId: messageId,
+          attachmentId: attachment.id,
+        );
+        if (latestBeforeSave != null &&
+            latestBeforeSave.downloadStatus != 'upload_pending') {
+          if (latestBeforeSave.downloadStatus == 'done') {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_UPLOAD_SKIP_ALREADY_DONE',
+              details: {
+                'attachmentId': attachment.id.length > 8
+                    ? attachment.id.substring(0, 8)
+                    : attachment.id,
+              },
+            );
+            continue;
+          }
+          allUploadsSucceeded = false;
+          isNonRetryable = true;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_UPLOAD_ABORT_STALE_ATTACHMENT',
+            details: {
+              'attachmentId': attachment.id.length > 8
+                  ? attachment.id.substring(0, 8)
+                  : attachment.id,
+              'status': latestBeforeSave.downloadStatus,
+            },
+          );
+          break;
+        }
+
         final completedAttachment = uploaded.copyWith(
           messageId: msg.id,
           downloadStatus: 'done',
         );
         await mediaAttachmentRepo.saveAttachment(completedAttachment);
+
+        // KC-2 (112 Phase 3): the re-upload minted a fresh key/nonce, so a
+        // persisted wire envelope (the Section-4 crash-replay contract,
+        // replayed verbatim without re-encrypting) would reference the DEAD
+        // key — receivers could download the new blob but never decrypt it.
+        // Invalidate it; the send below (or any later retry path) rebuilds
+        // the envelope from the current attachment rows. KC-1 holds because
+        // this runs BEFORE the sendChatMessage call below.
+        final keyChanged =
+            uploaded.encryptionKeyBase64 != attachment.encryptionKeyBase64 ||
+            uploaded.encryptionNonce != attachment.encryptionNonce;
+        if (keyChanged) {
+          final staleMsg = await messageRepo.getMessage(messageId);
+          if (staleMsg != null && staleMsg.wireEnvelope != null) {
+            await messageRepo.saveMessage(staleMsg.copyWith(wireEnvelope: null));
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_UPLOAD_WIRE_ENVELOPE_INVALIDATED',
+              details: {
+                'messageId': messageId.length > 8
+                    ? messageId.substring(0, 8)
+                    : messageId,
+                'attachmentId': attachment.id.length > 8
+                    ? attachment.id.substring(0, 8)
+                    : attachment.id,
+              },
+            );
+          }
+        }
       }
 
       // Canonical failure handling (G.8.2): transient vs non-retryable
       if (!allUploadsSucceeded) {
         for (final att in pendingAttsForMessage) {
-          final newRetryCount = (att.uploadRetryCount ?? 0) + 1;
+          final latest = await _latestAttachmentForMessage(
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            messageId: messageId,
+            attachmentId: att.id,
+          );
+          final current = latest ?? att;
+          if (current.downloadStatus != 'upload_pending') {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_UPLOAD_SKIP_STALE_FAILURE_UPDATE',
+              details: {
+                'attachmentId': att.id.length > 8
+                    ? att.id.substring(0, 8)
+                    : att.id,
+                'status': current.downloadStatus,
+              },
+            );
+            continue;
+          }
+
+          final newRetryCount = (current.uploadRetryCount ?? 0) + 1;
 
           if (isNonRetryable || newRetryCount >= kMaxUploadRetries) {
             // Terminal: mark as permanently failed
             await mediaAttachmentRepo.saveAttachment(
-              att.copyWith(
+              current.copyWith(
                 downloadStatus: 'upload_failed',
                 uploadRetryCount: newRetryCount,
               ),
@@ -232,7 +315,7 @@ Future<int> retryIncompleteUploads({
           } else {
             // Transient: keep as upload_pending for next retry cycle
             await mediaAttachmentRepo.saveAttachment(
-              att.copyWith(
+              current.copyWith(
                 downloadStatus: 'upload_pending', // Still retryable
                 uploadRetryCount: newRetryCount,
               ),
@@ -355,6 +438,22 @@ Future<int> retryIncompleteUploads({
   );
 
   return successCount;
+}
+
+Future<MediaAttachment?> _latestAttachmentForMessage({
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required String messageId,
+  required String attachmentId,
+}) async {
+  final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+    messageId,
+  );
+  for (final attachment in attachments) {
+    if (attachment.id == attachmentId) {
+      return attachment;
+    }
+  }
+  return null;
 }
 
 String? _lateSendAbortReason({

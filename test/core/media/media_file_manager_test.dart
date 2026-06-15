@@ -5,6 +5,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../../shared/fakes/fake_media_file_manager.dart';
 
@@ -31,6 +32,7 @@ void main() {
   });
 
   tearDown(() async {
+    debugSetFlowEventSink(null);
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -197,6 +199,35 @@ void main() {
         expect(await Directory(File(path).parent.path).exists(), isFalse);
       });
 
+      test('emits caller and reason telemetry for directory cleanup', () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        final path = await fileManager.localPathForAttachment(
+          contactPeerId: 'contact-telemetry',
+          blobId: 'blob-1',
+          mime: 'image/jpeg',
+        );
+        await File(path).writeAsBytes([0xFF]);
+
+        await fileManager.deleteMediaForContact('contact-telemetry');
+
+        final success = events.singleWhere(
+          (event) => event['event'] == 'APP_OWNED_MEDIA_DELETE_SUCCESS',
+        );
+        expect(
+          success['details'],
+          allOf(
+            containsPair('caller', 'MediaFileManager.deleteMediaForContact'),
+            containsPair('reason', 'contact_media_dir_cleanup'),
+            containsPair('targetKind', 'directory'),
+            containsPair('contactPeerId', '[redacted]'),
+            containsPair('recursive', true),
+            containsPair('existsBefore', true),
+            containsPair('existsAfter', false),
+          ),
+        );
+      });
+
       test('does not throw when directory does not exist', () async {
         // Should not throw
         await fileManager.deleteMediaForContact('nonexistent-contact');
@@ -255,6 +286,26 @@ void main() {
         );
       });
 
+      test('resolves migrated local_media relative path to absolute', () async {
+        final resolved = await fileManager.resolveStoredPath(
+          'local_media/contact-A/blob-001.jpg',
+        );
+        expect(
+          resolved,
+          equals('${tempDir.path}/local_media/contact-A/blob-001.jpg'),
+        );
+      });
+
+      test('rebases legacy absolute path with /local_media/ segment', () async {
+        final legacyPath =
+            '/old-container-uuid/Documents/local_media/contact-A/blob-001.jpg';
+        final resolved = await fileManager.resolveStoredPath(legacyPath);
+        expect(
+          resolved,
+          equals('${tempDir.path}/local_media/contact-A/blob-001.jpg'),
+        );
+      });
+
       test('returns unknown absolute path as-is', () async {
         const unknownPath = '/some/random/path.jpg';
         final resolved = await fileManager.resolveStoredPath(unknownPath);
@@ -275,6 +326,41 @@ void main() {
         await fileManager.deleteFile(path);
 
         expect(await File(path).exists(), isFalse);
+      });
+
+      test('emits caller and reason telemetry when deleting a file', () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        final path = await fileManager.localPathForAttachment(
+          contactPeerId: 'c',
+          blobId: 'telemetry',
+          mime: 'image/jpeg',
+        );
+        await File(path).writeAsBytes([0xFF]);
+
+        await fileManager.deleteFile(
+          path,
+          caller: 'test.deleteFile',
+          reason: 'test_cleanup',
+          storedPath: 'media/c/telemetry.jpg',
+          details: {'messageId': 'msg-telemetry'},
+        );
+
+        final success = events.singleWhere(
+          (event) => event['event'] == 'APP_OWNED_MEDIA_DELETE_SUCCESS',
+        );
+        expect(
+          success['details'],
+          allOf(
+            containsPair('caller', 'test.deleteFile'),
+            containsPair('reason', 'test_cleanup'),
+            containsPair('targetKind', 'file'),
+            containsPair('storedPath', 'media/c/telemetry.jpg'),
+            containsPair('messageId', 'msg-telemetry'),
+            containsPair('existsBefore', true),
+            containsPair('existsAfter', false),
+          ),
+        );
       });
 
       test('does not throw when file does not exist', () async {
@@ -310,9 +396,7 @@ void main() {
           );
           expect(
             fakeFileManager.deletedFilePaths,
-            isNot(
-              contains(endsWith('pending_uploads/msg-other/other.jpg')),
-            ),
+            isNot(contains(endsWith('pending_uploads/msg-other/other.jpg'))),
           );
           expect(
             fakeFileManager.deletedFilePaths,

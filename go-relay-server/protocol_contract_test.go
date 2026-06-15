@@ -82,6 +82,9 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 		Status:        "OK",
 		Error:         "e",
 		StoreStatus:   "stored",
+		ExpiresAtMs:   1,
+		Occupancy:     2,
+		Capacity:      3,
 		Messages:      []inboxMessage{{}},
 		HasMore:       true,
 		Acked:         1,
@@ -112,7 +115,9 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 
 	frozen := []string{
 		"acked",
+		"capacity",
 		"error",
+		"expiresAtMs",
 		"gapId",
 		"groupId",
 		"groupMessages",
@@ -121,6 +126,7 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 		"historyGaps",
 		"messages",
 		"nextCursor",
+		"occupancy",
 		"rangeHash",
 		"sourcePeerId",
 		"status",

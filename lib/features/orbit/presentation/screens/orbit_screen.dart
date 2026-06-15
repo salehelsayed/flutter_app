@@ -261,25 +261,6 @@ class OrbitScreen extends StatelessWidget {
     return _persistentNavBottomOffset(context) + 64;
   }
 
-  double _closeButtonBottomOffset(
-    BuildContext context, {
-    required bool searchActive,
-  }) {
-    if (!_showsPersistentNav) {
-      return 36;
-    }
-
-    final reservedHeight = _persistentNavReservedHeight(context);
-    return searchActive ? reservedHeight + 112 : reservedHeight + 12;
-  }
-
-  double _searchTriggerBottomOffset(BuildContext context) {
-    if (!_showsPersistentNav) {
-      return 88;
-    }
-    return _persistentNavReservedHeight(context) + 64;
-  }
-
   double _searchDockBottomOffset(BuildContext context) {
     if (!_showsPersistentNav) {
       return 0;
@@ -462,42 +443,41 @@ class OrbitScreen extends StatelessWidget {
               ),
             ),
 
-            // Layer 2: Close button
-            ValueListenableBuilder<OrbitViewProjection>(
-              valueListenable: listProjectionListenable,
-              builder: (context, projection, child) => Positioned(
-                bottom: _closeButtonBottomOffset(
-                  context,
-                  searchActive: projection.searchActive,
-                ),
+            // Layer 2: Close button — standalone mode only. When the
+            // persistent Feed/Orbit nav is shown, the Feed tab is the way back,
+            // so the redundant X is omitted.
+            if (!_showsPersistentNav)
+              Positioned(
+                bottom: 36,
                 right: 16,
-                child: child!,
+                child: OrbitCloseButton(onTap: onClose),
               ),
-              child: OrbitCloseButton(onTap: onClose),
-            ),
 
-            // Layer 3: Search trigger
-            AnimatedBuilder(
-              animation: searchTriggerAnimation,
-              builder: (context, child) {
-                final t = searchTriggerAnimation.value;
-                return Positioned(
-                  bottom: _searchTriggerBottomOffset(context),
-                  right: 16,
-                  child: Opacity(
-                    opacity: t,
-                    child: Transform.scale(
-                      scale: 0.985 + 0.015 * t,
-                      child: Transform.translate(
-                        offset: Offset(0, (1 - t) * 14),
-                        child: IgnorePointer(ignoring: t < 0.5, child: child),
+            // Layer 3: Search trigger — standalone mode floats above the close
+            // button. In persistent mode the trigger sits inline with the
+            // Feed/Orbit nav bar (built below) instead.
+            if (!_showsPersistentNav)
+              AnimatedBuilder(
+                animation: searchTriggerAnimation,
+                builder: (context, child) {
+                  final t = searchTriggerAnimation.value;
+                  return Positioned(
+                    bottom: 88,
+                    right: 16,
+                    child: Opacity(
+                      opacity: t,
+                      child: Transform.scale(
+                        scale: 0.985 + 0.015 * t,
+                        child: Transform.translate(
+                          offset: Offset(0, (1 - t) * 14),
+                          child: IgnorePointer(ignoring: t < 0.5, child: child),
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
-              child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
-            ),
+                  );
+                },
+                child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
+              ),
 
             // Layer 4: Search dock (slides up from bottom)
             AnimatedBuilder(
@@ -532,7 +512,39 @@ class OrbitScreen extends StatelessWidget {
                 left: 0,
                 right: 0,
                 bottom: _persistentNavBottomOffset(context),
-                child: Center(child: _buildNavigationBar()),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      // Left spacer balances the search trigger on the right so
+                      // the Feed/Orbit nav bar stays horizontally centered.
+                      const Spacer(),
+                      _buildNavigationBar(),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: AnimatedBuilder(
+                            animation: searchTriggerAnimation,
+                            builder: (context, child) {
+                              final t = searchTriggerAnimation.value;
+                              return Opacity(
+                                opacity: t,
+                                child: Transform.scale(
+                                  scale: 0.985 + 0.015 * t,
+                                  child: IgnorePointer(
+                                    ignoring: t < 0.5,
+                                    child: child,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
 
             // Layer 5: ExpandableFab (create group)

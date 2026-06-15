@@ -219,6 +219,49 @@ void main() {
       expect(message.media.first.messageId, 'msg-media-001');
     });
 
+    test(
+        'returned message hydrates blob-encryption key fields from wire '
+        'payload (112)', () async {
+      final wireJson = '{"type":"chat_message","version":"1","payload":{'
+          '"id":"msg-enc-001","text":"","senderPeerId":"peer-sender",'
+          '"senderUsername":"Sender","timestamp":"2026-06-12T12:00:00.000Z",'
+          '"media":[{"id":"blob-enc-001","mime":"image/jpeg","size":204800,'
+          '"mediaType":"image",'
+          '"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+          'aaaaaaaaaaaaaaaa",'
+          '"encryptionKeyBase64":"key-hydrate","encryptionNonce":'
+          '"nonce-hydrate","encryptionScheme":"blob_aes_256_gcm_v1"}]}}';
+
+      final (result, message, _) = await handleIncomingChatMessage(
+        message: ChatMessage(
+          from: 'peer-sender',
+          to: 'peer-self',
+          content: wireJson,
+          timestamp: '2026-06-12T12:00:00.000Z',
+          isIncoming: true,
+        ),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+
+      expect(result, HandleChatMessageResult.chatMessage);
+      final hydrated = message!.media.single;
+      expect(hydrated.encryptionKeyBase64, 'key-hydrate');
+      expect(hydrated.encryptionNonce, 'nonce-hydrate');
+      expect(hydrated.encryptionScheme, 'blob_aes_256_gcm_v1');
+      expect(hydrated.contentHash, isNotNull);
+      expect(hydrated.hasEncryptionKeyMaterial, isTrue);
+      expect(hydrated.hasEncryptionMetadata, isTrue);
+
+      // And the persisted row carries them too (the download path keys off
+      // the ROW, not the in-memory message).
+      final persisted = mediaAttachmentRepo.saved.single;
+      expect(persisted.encryptionKeyBase64, 'key-hydrate');
+      expect(persisted.encryptionNonce, 'nonce-hydrate');
+      expect(persisted.encryptionScheme, 'blob_aes_256_gcm_v1');
+    });
+
     test('returned message carries audio attachment from wire payload',
         () async {
       final wireJson = '{"type":"chat_message","version":"1","payload":{'

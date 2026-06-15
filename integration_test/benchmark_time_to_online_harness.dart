@@ -3,13 +3,11 @@
 /// Measures the user-visible latency from app launch to:
 /// - the first truthful usable green badge (`Online`)
 /// - the dotted relay-ready upgrade (`Online.`), when different
-@Tags(['device'])
 library;
 
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
@@ -111,9 +109,7 @@ void _printPhase6Metrics(
   }
 }
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runTimeToOnlineBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -121,9 +117,8 @@ void main() {
 
   final relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
 
-  testWidgets('M-Sim-1: Cold start — wall-clock to sendable badge', (
-    tester,
-  ) async {
+  // M-Sim-1: Cold start — wall-clock to sendable badge
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: TIME-TO-SENDABLE BADGE (M-Sim-1)');
     print('${'═' * 60}\n');
@@ -163,11 +158,10 @@ void main() {
     );
 
     await node.dispose();
-  });
+  }
 
-  testWidgets('M-Sim-Hot: Hot restart — resync to sendable badge', (
-    tester,
-  ) async {
+  // M-Sim-Hot: Hot restart — resync to sendable badge
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: HOT RESTART TO SENDABLE BADGE (M-Sim-Hot)');
     print('${'═' * 60}\n');
@@ -202,11 +196,10 @@ void main() {
     _printPhase6Metrics('sim_hot_restart', events, phase: 'hot_restart');
 
     await node.dispose();
-  });
+  }
 
-  testWidgets('M-Sim-2: Recovery — wall-clock from degraded to usable badge', (
-    tester,
-  ) async {
+  // M-Sim-2: Recovery — wall-clock from degraded to usable badge
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: RECOVERY TO SENDABLE BADGE (M-Sim-2)');
     print('${'═' * 60}\n');
@@ -253,11 +246,10 @@ void main() {
     _printPhase6Metrics('sim_recovery', events, phase: 'recovery');
 
     await node.dispose();
-  });
+  }
 
-  testWidgets('M-Sim-3: 5 cold starts for sendable-source distribution', (
-    tester,
-  ) async {
+  // M-Sim-3: 5 cold starts for sendable-source distribution
+  {
     print('\n${'═' * 60}');
     print('  BENCHMARK: SENDABLE SOURCE DISTRIBUTION (M-Sim-3)');
     print('${'═' * 60}\n');
@@ -340,5 +332,5 @@ void main() {
         n: relayGaps.length,
       );
     }
-  });
+  }
 }

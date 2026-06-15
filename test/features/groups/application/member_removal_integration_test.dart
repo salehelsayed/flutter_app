@@ -549,11 +549,89 @@ void main() {
       );
 
       expect(await removed.timeout(const Duration(seconds: 1)), groupId);
-      expect(await receiverGroupRepo.getGroup(groupId), isNull);
+      // B3: the removed member retains the group read-only (not hard-deleted),
+      // with a visible removal notice; self is no longer an active member.
+      expect(await receiverGroupRepo.getGroup(groupId), isNotNull);
+      expect(await receiverGroupRepo.getMember(groupId, 'peer-alice'), isNull);
+      final retainedRows = await receiverMsgRepo.getMessagesPage(groupId);
+      expect(
+        retainedRows.any(
+          (message) => message.id.startsWith('sys-member_removed:'),
+        ),
+        isTrue,
+      );
 
       membershipListener.dispose();
       groupListener.dispose();
       await controller.close();
+    },
+  );
+
+  test(
+    'B2 fail-closed: a removed member on a QUIET (sys-only) retained shell '
+    'cannot send and nothing is published',
+    () async {
+      // The removed member's local view after self-removal: the group row is
+      // RETAINED read-only (B3), self is no longer an active member, and the
+      // send key was cleared — a content-free "quiet" shell. This locks the
+      // user's security question ("could a removed member still send?") at the
+      // send use-case layer.
+      final removedRepo = InMemoryGroupRepository();
+      final removedMsgRepo = InMemoryGroupMessageRepository();
+      final removedBridge = PassthroughCryptoBridge();
+      const selfPeerId = 'peer-bob';
+
+      await removedRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: adminPeerId,
+          myRole: GroupRole.member,
+        ),
+      );
+      // Only the admin remains; self (bob) was removed; no key retained.
+      await removedRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: adminPeerId,
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          mlKemPublicKey: 'mlkem-pk-admin',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      // Retained-shell invariants (the B3 retain doubles as this lock).
+      expect(await removedRepo.getGroup(groupId), isNotNull);
+      expect(await removedRepo.getMember(groupId, selfPeerId), isNull);
+      expect(await removedRepo.getLatestKey(groupId), isNull);
+
+      final (result, message) = await group_send.sendGroupMessage(
+        bridge: removedBridge,
+        groupRepo: removedRepo,
+        msgRepo: removedMsgRepo,
+        groupId: groupId,
+        text: 'let me back in',
+        senderPeerId: selfPeerId,
+        senderPublicKey: 'pk-bob',
+        senderPrivateKey: 'sk-bob',
+        senderUsername: 'Bob',
+        messageId: 'msg-removed-attempt',
+      );
+
+      // Fail-closed: unauthorized, nothing persisted, nothing published.
+      expect(result, group_send.SendGroupMessageResult.unauthorized);
+      expect(message, isNull);
+      expect(await removedMsgRepo.getMessagesPage(groupId), isEmpty);
+      final published = removedBridge.sentMessages.where(
+        (m) =>
+            (jsonDecode(m) as Map<String, dynamic>)['cmd'] == 'group:publish',
+      );
+      expect(published, isEmpty);
     },
   );
 
@@ -864,6 +942,126 @@ void main() {
       expect(leaveReplayEnvelope['signatureAlgorithm'], 'ed25519');
       expect(leaveReplayEnvelope['signedPayload'], isA<String>());
       expect(leaveReplayEnvelope['signature'], isA<String>());
+    },
+  );
+
+  test(
+    'non-creator writer voluntary leave broadcasts member_removed and does '
+    'NOT throw',
+    () async {
+      // Real field scenario: a plain writer (no rotateKeys override) whose
+      // group was created by someone else taps Leave. Both rotation gates
+      // (permission + creator-only) deny the leaver, so the departure rotation
+      // is best-effort: the leave must still broadcast and complete instead of
+      // dead-ending on the old `Failed to rotate group key before leaving`.
+      final createdAt = DateTime.now().toUtc();
+      // Local role is a plain member (the last-admin guard must not fire).
+      await groupRepo.saveGroup(
+        (await groupRepo.getGroup(groupId))!.copyWith(
+          myRole: GroupRole.member,
+        ),
+      );
+      // peer-alice is seeded in setUp as a writer with empty permissions
+      // (no rotateKeys), and createdBy is the admin — not the leaver.
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          IdentityModel(
+            peerId: 'peer-alice',
+            publicKey: 'pk-alice',
+            privateKey: 'sk-alice',
+            mnemonic12:
+                'one two three four five six seven eight nine ten eleven twelve',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            username: 'Alice',
+            createdAt: createdAt.toIso8601String(),
+            updatedAt: createdAt.toIso8601String(),
+          ),
+        );
+
+      final result = await broadcastVoluntaryLeaveAndRotateKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        group: (await groupRepo.getGroup(groupId))!,
+        identityRepo: identityRepo,
+        msgRepo: InMemoryGroupMessageRepository(),
+        sendP2PMessage: (_, _) async => true,
+      );
+
+      // The leave broadcasts and completes — it does not throw.
+      expect(result.didBroadcast, isTrue);
+      // The leaver could not rotate, but the group still owes a re-key.
+      expect(result.rotatedKey, isNull);
+      expect(result.rotationDeferred, isTrue);
+      // Not a skip — the member did leave (distinct from last-admin/not-found).
+      expect(result.skipReason, isNull);
+      // The signed member_removed was published to the topic ...
+      expect(bridge.commandLog, contains('group:publish'));
+      // ... and the offline-replay envelope reached the remaining members.
+      final leaveInboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        leaveInboxPayload['recipientPeerIds'],
+        unorderedEquals(<String>[adminPeerId, 'peer-bob']),
+      );
+      // No epoch was generated by the departing writer.
+      expect((await groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+    },
+  );
+
+  test(
+    'creator-admin voluntary leave still rotates to a new epoch',
+    () async {
+      // Regression lock for the privileged path: a creator + admin passes both
+      // rotation gates, so the departure rotation must still run and advance
+      // the epoch (rotationDeferred == false). This proves the best-effort
+      // change did not disable rotate-on-leave for those who can rotate.
+      final createdAt = DateTime.now().toUtc();
+      // Group created by the leaver (Gate B passes for self).
+      await groupRepo.saveGroup(
+        (await groupRepo.getGroup(groupId))!.copyWith(
+          createdBy: 'peer-alice',
+        ),
+      );
+      // Promote the leaver to admin (Gate A: admins rotate by default).
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-alice',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-pk-alice',
+          joinedAt: createdAt,
+        ),
+      );
+      // peer-admin stays admin too, so the leaver is not the last admin.
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          IdentityModel(
+            peerId: 'peer-alice',
+            publicKey: 'pk-alice',
+            privateKey: 'sk-alice',
+            mnemonic12:
+                'one two three four five six seven eight nine ten eleven twelve',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            username: 'Alice',
+            createdAt: createdAt.toIso8601String(),
+            updatedAt: createdAt.toIso8601String(),
+          ),
+        );
+
+      final result = await broadcastVoluntaryLeaveAndRotateKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        group: (await groupRepo.getGroup(groupId))!,
+        identityRepo: identityRepo,
+        msgRepo: InMemoryGroupMessageRepository(),
+        sendP2PMessage: (_, _) async => true,
+      );
+
+      expect(result.didBroadcast, isTrue);
+      expect(result.rotatedKey, isNotNull);
+      expect(result.rotationDeferred, isFalse);
+      expect((await groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
     },
   );
 

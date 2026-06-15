@@ -2,6 +2,14 @@ import 'dart:convert';
 
 const kMediaAttachmentEncryptionSchemeBlobAesGcmV1 = 'blob_aes_256_gcm_v1';
 
+/// Opaque mime advertised to the transport/relay for encrypted 1:1 uploads
+/// (112 G7a): the relay's plaintext metadata sidecar must not learn the real
+/// content type — it travels only inside the ML-KEM v2 envelope as
+/// `attachment.mime`. NEVER use this for group uploads: the group download
+/// path cross-checks the relay-returned mime (`relay_mime_mismatch`) and
+/// would quarantine opaque uploads. Shared home with doc 113.
+const kOpaqueMediaTransportMime = 'application/octet-stream';
+
 /// Model representing a media attachment on a conversation message.
 ///
 /// Maps to the `media_attachments` database table. Each attachment belongs
@@ -85,11 +93,23 @@ class MediaAttachment {
 
   bool get isAnimated => mime == 'image/gif';
 
-  bool get hasEncryptionMetadata =>
+  /// Scheme-agnostic ciphertext-custody discriminator: the blob bytes are
+  /// ciphertext whenever key material is present, regardless of whether THIS
+  /// app version can decrypt them. Routing (`.enc` staging, fail-closed
+  /// handling, no relay ack) must key on this — never on
+  /// [hasEncryptionMetadata], which is false for unknown schemes and would
+  /// route future-scheme ciphertext into the plaintext promote+ack path.
+  bool get hasEncryptionKeyMaterial =>
       encryptionKeyBase64 != null &&
       encryptionKeyBase64!.isNotEmpty &&
       encryptionNonce != null &&
-      encryptionNonce!.isNotEmpty &&
+      encryptionNonce!.isNotEmpty;
+
+  /// Strictly means "decryptable with v1 logic": key material present AND
+  /// the scheme is in the v1 whitelist (null tolerated on receive for
+  /// legacy/group compat; senders always write the scheme explicitly).
+  bool get hasEncryptionMetadata =>
+      hasEncryptionKeyMaterial &&
       (encryptionScheme == null ||
           encryptionScheme == kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
 

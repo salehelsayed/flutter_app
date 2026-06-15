@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
@@ -16,6 +17,7 @@ Future<SecureStoreIdentityRecoveryResult> recoverIdentityFromSecureStore({
   required IdentityRepository repo,
   required Future<Map<String, dynamic>> Function(String mnemonic) callRestore,
   required Future<Map<String, dynamic>> Function() callMlKemKeygen,
+  ContactRepository? contactRepo,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -44,6 +46,8 @@ Future<SecureStoreIdentityRecoveryResult> recoverIdentityFromSecureStore({
     callRestore: callRestore,
     callMlKemKeygen: callMlKemKeygen,
     repo: repo,
+    secureKeyStore: secureKeyStore,
+    contactRepo: contactRepo,
   );
 
   if (result == RestoreIdentityResult.success) {

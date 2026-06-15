@@ -563,5 +563,87 @@ void main() {
         expect((await messageRepo.getMessage('msg-1'))?.isDeleted, isFalse);
       },
     );
+
+    // ─── 115 Phase 2.5 — deletion-apply receipts (D-3) ───────────────────
+    // Without deletion receipts, an 'inboxed' delete-for-everyone tombstone
+    // would stay pending forever and the sender's tombstone would never
+    // hide. Same origin contract as the chat hook: relay-drain only.
+    test(
+      'inbox-originated message_deletion invokes sendDeliveryReceipt after the deletion is durably applied',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        messageRepo.seed([
+          makeMessage(
+            id: 'msg-del-rcpt-1',
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ]);
+
+        final receiptIds = <String>[];
+        Future<void> hook(String messageId) async {
+          receiptIds.add(messageId);
+        }
+
+        final payload = MessageDeletionPayload(
+          messageId: 'msg-del-rcpt-1',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+        final message = ChatMessage(
+          from: 'peer-alice',
+          to: 'peer-bob',
+          content: payload.toJson(),
+          timestamp: '2026-03-31T10:05:00.000Z',
+          isIncoming: true,
+          transport: 'inbox',
+        );
+
+        // Relay-drain origin → receipt after durable apply.
+        final (result, _) = await handleIncomingMessageDeletion(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          stagedEntryId: 'relay-uuid-del-1',
+          sendDeliveryReceipt: hook,
+        );
+        expect(result, HandleMessageDeletionResult.success);
+        expect(receiptIds, ['msg-del-rcpt-1']);
+        expect(
+          (await messageRepo.getMessage('msg-del-rcpt-1'))!.isDeleted,
+          isTrue,
+        );
+
+        // Duplicate re-application (already-deleted) → re-invoked.
+        final (again, _) = await handleIncomingMessageDeletion(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          stagedEntryId: 'relay-uuid-del-1',
+          sendDeliveryReceipt: hook,
+        );
+        expect(again, HandleMessageDeletionResult.success);
+        expect(receiptIds, ['msg-del-rcpt-1', 'msg-del-rcpt-1']);
+
+        // 'direct:' / 'lan:' origins skip (their acks own confirmation).
+        final (direct, _) = await handleIncomingMessageDeletion(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          stagedEntryId: 'direct:n9',
+          sendDeliveryReceipt: hook,
+        );
+        expect(direct, HandleMessageDeletionResult.success);
+        final (lan, _) = await handleIncomingMessageDeletion(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          stagedEntryId: 'lan:n9',
+          sendDeliveryReceipt: hook,
+        );
+        expect(lan, HandleMessageDeletionResult.success);
+        expect(receiptIds, hasLength(2));
+      },
+    );
   });
 }

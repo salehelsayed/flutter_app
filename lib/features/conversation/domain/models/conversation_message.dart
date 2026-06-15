@@ -58,6 +58,14 @@ class ConversationMessage {
   /// Serialized wire envelope (JSON) for retry. NULL once delivered.
   final String? wireEnvelope;
 
+  /// Relay-stamped custody expiry (ms epoch) for 'inboxed' rows. NULL when
+  /// the relay did not report one (old relay) or the row never rode inbox
+  /// custody.
+  final int? relayExpiresAt;
+
+  /// ISO-8601 timestamp of the last custody-sweep check on an 'inboxed' row.
+  final String? custodyCheckedAt;
+
   /// Transient media attachments — populated via copyWith() after batch-loading
   /// from media_attachments table. NOT serialized to DB.
   final List<MediaAttachment> media;
@@ -79,6 +87,8 @@ class ConversationMessage {
     this.hiddenAt,
     this.transport,
     this.wireEnvelope,
+    this.relayExpiresAt,
+    this.custodyCheckedAt,
     this.media = const [],
   });
 
@@ -101,6 +111,8 @@ class ConversationMessage {
       hiddenAt: map['hidden_at'] as String?,
       transport: map['transport'] as String?,
       wireEnvelope: map['wire_envelope'] as String?,
+      relayExpiresAt: map['relay_expires_at'] as int?,
+      custodyCheckedAt: map['custody_checked_at'] as String?,
     );
   }
 
@@ -123,6 +135,8 @@ class ConversationMessage {
       'hidden_at': hiddenAt,
       'transport': transport,
       'wire_envelope': wireEnvelope,
+      'relay_expires_at': relayExpiresAt,
+      'custody_checked_at': custodyCheckedAt,
     };
   }
 
@@ -147,6 +161,8 @@ class ConversationMessage {
     Object? hiddenAt = _sentinel,
     Object? transport = _sentinel,
     Object? wireEnvelope = _sentinel,
+    Object? relayExpiresAt = _sentinel,
+    Object? custodyCheckedAt = _sentinel,
     List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
@@ -172,6 +188,12 @@ class ConversationMessage {
       wireEnvelope: wireEnvelope == _sentinel
           ? this.wireEnvelope
           : wireEnvelope as String?,
+      relayExpiresAt: relayExpiresAt == _sentinel
+          ? this.relayExpiresAt
+          : relayExpiresAt as int?,
+      custodyCheckedAt: custodyCheckedAt == _sentinel
+          ? this.custodyCheckedAt
+          : custodyCheckedAt as String?,
       media: media ?? this.media,
     );
   }

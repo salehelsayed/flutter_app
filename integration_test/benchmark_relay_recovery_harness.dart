@@ -3,14 +3,12 @@
 /// Measures wall-clock time from relay failure to:
 /// - the usable sendable badge returning
 /// - the dotted relay-ready badge returning
-@Tags(['device'])
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
@@ -108,9 +106,7 @@ void _printPhase6Metrics(
   }
 }
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
+Future<void> runRelayRecoveryBenchmark(WidgetTester tester) async {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -118,9 +114,7 @@ void main() {
 
   final relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
 
-  testWidgets('C-Sim-1: Kill relay, measure usable and relay-ready recovery', (
-    tester,
-  ) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  BENCHMARK: RELAY RECOVERY (C-Sim-1)');
     print('${'═' * 60}\n');
@@ -270,9 +264,9 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 
-  testWidgets('C-Sim-2: Repeated recovery cycles (3 runs)', (tester) async {
+  await (() async {
     print('\n${'═' * 60}');
     print('  BENCHMARK: REPEATED RECOVERY (C-Sim-2)');
     print('${'═' * 60}\n');
@@ -364,5 +358,5 @@ void main() {
     }
 
     await node.dispose();
-  });
+  })();
 }

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/glassmorphism.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/brand_header.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/choice_card.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
-/// Onboarding screen presenting two identity initialization options.
+/// Onboarding screen presenting identity initialization options.
 ///
 /// Features Custom1 dark theme with glassmorphism effects,
 /// animated ambient backgrounds, and staggered entry animations.
@@ -16,13 +17,23 @@ class IdentityChoiceScreen extends StatefulWidget {
   final VoidCallback? onNewHere;
 
   /// Callback invoked when user chooses to restore from mnemonic.
+  ///
+  /// The "Load my key" entry is currently hidden from onboarding (Move
+  /// Account is the supported path for bringing an existing identity to a
+  /// new device), so this callback is retained for wiring compatibility but
+  /// not rendered.
   final VoidCallback? onLoadMyKey;
+
+  /// Callback invoked when user chooses to move an existing account.
+  final VoidCallback? onMoveFromOldPhone;
+
   final BackgroundPreference backgroundPreference;
 
   const IdentityChoiceScreen({
     super.key,
     required this.onNewHere,
     required this.onLoadMyKey,
+    this.onMoveFromOldPhone,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
@@ -98,7 +109,7 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
     _footerFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _animationController,
-        curve: const Interval(0.6, 1.0, curve: Curves.easeOut),
+        curve: const Interval(0.72, 1.0, curve: Curves.easeOut),
       ),
     );
 
@@ -160,17 +171,16 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(height: 16),
+                                    const SizedBox(height: 20),
                                     FadeTransition(
                                       opacity: _card2FadeAnimation,
                                       child: SlideTransition(
                                         position: _card2SlideAnimation,
-                                        child: ChoiceCard(
-                                          icon: Icons.key_outlined,
-                                          title: l10n.onboarding_load_key,
-                                          description:
-                                              l10n.onboarding_load_desc,
-                                          onTap: widget.onLoadMyKey,
+                                        child: _CompactChoiceButton(
+                                          icon: Icons.phone_iphone_outlined,
+                                          title: l10n
+                                              .onboarding_move_from_old_phone,
+                                          onTap: widget.onMoveFromOldPhone,
                                         ),
                                       ),
                                     ),
@@ -232,6 +242,56 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// A compact, centered pill for secondary onboarding choices — same glass
+/// look as [ChoiceCard] but without the description row, so it reads as a
+/// smaller alternative under the primary card. Mirrors [ChoiceCard]'s
+/// disabled contract (`choice-card-opacity-<title>` key, 0.5 opacity).
+class _CompactChoiceButton extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final VoidCallback? onTap;
+
+  const _CompactChoiceButton({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isDisabled = onTap == null;
+    return Center(
+      child: GestureDetector(
+        onTap: isDisabled ? null : onTap,
+        child: Opacity(
+          key: ValueKey('choice-card-opacity-$title'),
+          opacity: isDisabled ? 0.5 : 1.0,
+          child: GlassmorphicContainer(
+            borderRadius: 999,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: AppColors.primaryAccent, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: readableColors.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import '../../shared/fakes/fake_audio_recorder_service.dart';
 
 void main() {
@@ -98,6 +99,31 @@ void main() {
       expect(values, [0.5, 0.8]);
 
       await sub.cancel();
+    });
+
+    test('triggerAutoStop() stops recording and notifies onAutoStopped',
+        () async {
+      recorder.fakeDurationMs = 5000;
+      final captured = <AudioRecording?>[];
+      recorder.onAutoStopped = captured.add;
+
+      await recorder.start(outputPath: '/tmp/test.m4a');
+      await recorder.triggerAutoStop();
+
+      expect(recorder.isRecording, false);
+      expect(captured, hasLength(1));
+      expect(captured.single!.durationMs, 5000);
+    });
+
+    test('triggerAutoStop() when idle does not notify onAutoStopped',
+        () async {
+      var calls = 0;
+      recorder.onAutoStopped = (_) => calls += 1;
+
+      await recorder.triggerAutoStop();
+
+      expect(calls, 0);
+      expect(recorder.stopCallCount, 0);
     });
 
     test('amplitudeStream is a broadcast stream (multi-listener safe)',

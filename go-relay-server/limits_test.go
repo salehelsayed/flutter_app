@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -15,7 +16,7 @@ import (
 
 // --- Inbox limits ---
 
-func TestFiniteLimits_RejectExcessInboxMessages(t *testing.T) {
+func TestFiniteLimits_RejectNewWhenInboxFull(t *testing.T) {
 	cfg := DefaultServerLimits()
 	cfg.MaxInboxMessagesPerPeer = 10
 
@@ -27,7 +28,7 @@ func TestFiniteLimits_RejectExcessInboxMessages(t *testing.T) {
 	for i := 0; i < cfg.MaxInboxMessagesPerPeer; i++ {
 		requireInboxStoreResult(t, inbox, "peer-1", inboxMessage{
 			From:      "sender",
-			Message:   "msg",
+			Message:   "msg-" + strconv.Itoa(i),
 			Timestamp: time.Now().UnixMilli(),
 		}, InboxStoreResultStored)
 	}
@@ -37,16 +38,31 @@ func TestFiniteLimits_RejectExcessInboxMessages(t *testing.T) {
 		t.Errorf("expected %d messages, got %d", cfg.MaxInboxMessagesPerPeer, count)
 	}
 
-	// Store one more — the oldest should be evicted (bounded).
+	// Store one more — reject the new message instead of evicting an
+	// already-accepted entry. The sender is online now and still holds the
+	// envelope, so it can retry truthfully.
 	requireInboxStoreResult(t, inbox, "peer-1", inboxMessage{
 		From:      "sender",
 		Message:   "overflow-msg",
 		Timestamp: time.Now().UnixMilli(),
-	}, InboxStoreResultStored)
+	}, InboxStoreResultRejectedFull)
 
 	count = inbox.Count("peer-1")
 	if count != cfg.MaxInboxMessagesPerPeer {
 		t.Errorf("expected inbox to stay at %d after overflow, got %d", cfg.MaxInboxMessagesPerPeer, count)
+	}
+
+	messages, _ := inbox.RetrievePendingWithMeta("peer-1", cfg.MaxInboxMessagesPerPeer+1)
+	if len(messages) != cfg.MaxInboxMessagesPerPeer {
+		t.Fatalf("expected %d retained messages, got %d", cfg.MaxInboxMessagesPerPeer, len(messages))
+	}
+	if messages[0].Message != "msg-0" {
+		t.Fatalf("oldest accepted message = %q, want msg-0", messages[0].Message)
+	}
+	for _, message := range messages {
+		if message.Message == "overflow-msg" {
+			t.Fatal("overflow message must not be stored when inbox is full")
+		}
 	}
 }
 

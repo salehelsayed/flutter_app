@@ -59,6 +59,13 @@ class MessageRepositoryImpl
     required String toStatus,
   })
   dbConditionalTransitionStatus;
+  final Future<List<Map<String, Object?>>> Function({
+    required Duration recheckOlderThan,
+    int limit,
+  })?
+  dbLoadInboxCustodyOutgoingMessages;
+  final Future<void> Function(String id, {int? relayExpiresAtMs})?
+  dbMarkInboxCustodyChecked;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
   final Map<String, ConversationMessage> _messageSnapshots = {};
@@ -85,6 +92,8 @@ class MessageRepositoryImpl
     required this.dbLoadStuckSendingOutgoingMessages,
     required this.dbLoadSendingOutgoingMessages,
     required this.dbConditionalTransitionStatus,
+    this.dbLoadInboxCustodyOutgoingMessages,
+    this.dbMarkInboxCustodyChecked,
   });
 
   @override
@@ -363,6 +372,31 @@ class MessageRepositoryImpl
       }
     }
     return count;
+  }
+
+  Future<List<ConversationMessage>> getInboxCustodyOutgoingMessages({
+    required Duration recheckOlderThan,
+    int limit = 50,
+  }) async {
+    final loader = dbLoadInboxCustodyOutgoingMessages;
+    if (loader == null) return const [];
+    final rows = await loader(recheckOlderThan: recheckOlderThan, limit: limit);
+    return _rememberMessages(
+      rows.map((row) => ConversationMessage.fromMap(row)),
+    );
+  }
+
+  Future<void> markInboxCustodyChecked(
+    String id, {
+    int? relayExpiresAtMs,
+  }) async {
+    final marker = dbMarkInboxCustodyChecked;
+    if (marker == null) return;
+    await marker(id, relayExpiresAtMs: relayExpiresAtMs);
+    final updated = await _loadAndRememberMessage(id);
+    if (updated != null) {
+      _messageChangeController.add(updated);
+    }
   }
 
   @override

@@ -32,6 +32,7 @@ void main() {
     ValueChanged<ImageQualityPreference>? onVideoQualityChanged,
     bool isNearbySharingEnabled = false,
     ValueChanged<bool>? onNearbySharingChanged,
+    VoidCallback? onMoveAccountToNewPhone,
     bool showNavigationBar = true,
   }) {
     return MaterialApp(
@@ -58,6 +59,7 @@ void main() {
           onVideoQualityChanged: onVideoQualityChanged,
           isNearbySharingEnabled: isNearbySharingEnabled,
           onNearbySharingChanged: onNearbySharingChanged,
+          onMoveAccountToNewPhone: onMoveAccountToNewPhone,
           onSwitchView: (_) {},
           activeTab: 'feed',
           showNavigationBar: showNavigationBar,
@@ -274,6 +276,39 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('renders move account action when callback is supplied', (
+    tester,
+  ) async {
+    var movePressed = false;
+
+    await tester.pumpWidget(
+      wrap(
+        peerId: '12D3KooWTestPeer123',
+        onMoveAccountToNewPhone: () => movePressed = true,
+      ),
+    );
+
+    expect(find.text('Move account to new phone'), findsOneWidget);
+    expect(
+      find.text(
+        'Scan the migration QR shown on your new phone to move this account.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Start move'), findsOneWidget);
+    expect(find.textContaining('Show a migration QR'), findsNothing);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('settings-move-account-action')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('settings-move-account-action')),
+    );
+    await tester.pump();
+
+    expect(movePressed, isTrue);
   });
 
   testWidgets('daylight full page handles optional Settings sections absent', (

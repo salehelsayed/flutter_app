@@ -89,7 +89,6 @@ import 'package:flutter_app/core/database/migrations/071_pending_introduction_re
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
@@ -103,6 +102,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/cli_peer_fixture.dart';
+import '_support/fake_secure_key_store.dart';
+import '_support/signal_files.dart';
 
 const _readDir = String.fromEnvironment('E2E_TEMP_DIR', defaultValue: '/tmp');
 const _writeDir = String.fromEnvironment('E2E_WRITE_DIR', defaultValue: '/tmp');
@@ -111,64 +113,11 @@ const _dbName = String.fromEnvironment(
   defaultValue: 'group_recovery_cli_e2e.db',
 );
 
-String _readSignalPath(String name) => '$_readDir/$name';
-String _writeSignalPath(String name) => '$_writeDir/$name';
-
-class _FakeSecureKeyStore implements SecureKeyStore {
-  final Map<String, String> _store = {};
-
-  @override
-  Future<String?> read(String key) async => _store[key];
-
-  @override
-  Future<void> write(String key, String value) async => _store[key] = value;
-
-  @override
-  Future<void> delete(String key) async => _store.remove(key);
-
-  @override
-  Future<bool> containsKey(String key) async => _store.containsKey(key);
-}
-
-Map<String, dynamic>? _loadCliPeerFixture() {
-  const fixturePath = String.fromEnvironment(
-    'CLI_PEER_FIXTURE',
-    defaultValue: '/tmp/cli_peer_fixture.json',
-  );
-
-  final file = File(fixturePath);
-  if (!file.existsSync()) return null;
-
-  try {
-    return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-  } catch (e) {
-    debugPrint('[GROUP-E2E] Failed to parse CLI fixture: $e');
-    return null;
-  }
-}
-
-void _writeJsonSignal(String name, Map<String, dynamic> value) {
-  Directory(_writeDir).createSync(recursive: true);
-  File(_writeSignalPath(name)).writeAsStringSync(jsonEncode(value));
-}
-
-void _writeTextSignal(String name, String value) {
-  Directory(_writeDir).createSync(recursive: true);
-  File(_writeSignalPath(name)).writeAsStringSync(value);
-}
-
-Future<void> _waitForSignal(
-  String name, {
-  Duration timeout = const Duration(seconds: 60),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  final file = File(_readSignalPath(name));
-  while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-  }
-  fail('Timed out waiting for signal: $name');
-}
+// Flat (non-prefixed, non-run-keyed) signal families with SEPARATE read/write
+// dirs. The reader polls files dropped by the CLI orchestrator in `_readDir`;
+// the writer drops fixtures the orchestrator consumes in `_writeDir`.
+final _readSignals = SignalDir.flat(_readDir, role: 'group-recovery-cli');
+final _writeSignals = SignalDir.flat(_writeDir, role: 'group-recovery-cli');
 
 Future<void> _waitForIncomingGroupCount(
   GroupMessageRepositoryImpl repo,
@@ -233,15 +182,15 @@ class _TestStack {
       'e2e_group_live_received',
     ]) {
       try {
-        File(_writeSignalPath(name)).deleteSync();
+        _writeSignals.delete(name);
       } catch (_) {}
     }
   }
 }
 
 Future<_TestStack> _setupStack() async {
-  final cliPeer = _loadCliPeerFixture();
-  final secureKeyStore = _FakeSecureKeyStore();
+  final cliPeer = loadCliPeerFixture();
+  final secureKeyStore = FakeSecureKeyStore();
 
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
@@ -569,12 +518,12 @@ Future<_TestStack> _setupStack() async {
     await contactRepo.addContact(cliContact);
   }
 
-  _writeJsonSignal('flutter_peer_fixture.json', {
+  _writeSignals.writeJson('flutter_peer_fixture.json', {
     'peerId': identity.peerId,
     'publicKey': identity.publicKey,
     if (identity.mlKemPublicKey != null)
       'mlKemPublicKey': identity.mlKemPublicKey,
-  });
+  }, createDir: true);
 
   final p2pService = P2PServiceImpl(
     bridge: bridge,
@@ -642,7 +591,7 @@ void main() {
   testWidgets('real CLI peer drives live and inbox group recovery', (
     tester,
   ) async {
-    if (_loadCliPeerFixture() == null) {
+    if (loadCliPeerFixture() == null) {
       debugPrint(
         '[GROUP-E2E] No accessible CLI peer fixture. Skipping CLI-backed scenario.',
       );
@@ -680,17 +629,24 @@ void main() {
           )
           .toList(growable: false);
 
-      _writeJsonSignal('group_recovery_fixture.json', {
+      _writeSignals.writeJson('group_recovery_fixture.json', {
         'groupId': result.group.id,
         'groupKey': keyInfo!.encryptedKey,
         'keyEpoch': keyInfo.keyGeneration,
         'groupConfig': _groupConfigFromModel(result.group, memberMaps),
-      });
+      }, createDir: true);
 
       await _waitForIncomingGroupCount(stack.groupMsgRepo, result.group.id, 1);
-      _writeTextSignal('e2e_group_live_received', 'ok');
+      _writeSignals.writeSignal(
+        'e2e_group_live_received',
+        content: 'ok',
+        createDir: true,
+      );
 
-      await _waitForSignal('e2e_group_cli_inbox_stored');
+      await _readSignals.waitForSignal(
+        'e2e_group_cli_inbox_stored',
+        timeout: const Duration(seconds: 60),
+      );
       await drainGroupOfflineInbox(
         bridge: stack.bridge,
         groupRepo: stack.groupRepo,

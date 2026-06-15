@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -200,6 +203,28 @@ func TestHandleCommandGroupInboxStoreMissingRecipients(t *testing.T) {
 	}
 	if result["errorMessage"] != "missing recipientPeerIds" {
 		t.Fatalf("errorMessage = %v, want missing recipientPeerIds", result["errorMessage"])
+	}
+}
+
+func TestInboxStoreOutcomeResultExposesDetailedFields(t *testing.T) {
+	result := inboxStoreOutcomeResult(node.InboxStoreOutcome{
+		StoreStatus: "stored",
+		ErrorCode:   "INBOX_FULL",
+		ExpiresAtMs: 12345,
+		Occupancy:   2,
+		Capacity:    100,
+	})
+
+	if result["storeStatus"] != "stored" {
+		t.Fatalf("storeStatus = %v, want stored", result["storeStatus"])
+	}
+	if result["errorCode"] != "INBOX_FULL" {
+		t.Fatalf("errorCode = %v, want INBOX_FULL", result["errorCode"])
+	}
+	if result["expiresAtMs"] != int64(12345) ||
+		result["occupancy"] != 2 ||
+		result["capacity"] != 100 {
+		t.Fatalf("metadata = %#v", result)
 	}
 }
 
@@ -622,5 +647,68 @@ func TestCommandResponseFormat(t *testing.T) {
 		if _, ok := parsed["ok"]; !ok {
 			t.Errorf("cmd=%s: missing ok field", tc.cmd)
 		}
+	}
+}
+
+// TestHandleCommandBlobRoundTrip — 112 Phase 5.2 harness pin: ciphertext
+// from blob_encrypt is opaque (≠ plaintext) until blob_decrypt is applied,
+// and a wrong key fails closed. This is what lets the two-device script
+// prove relay-at-rest opacity through real media_upload/media_download.
+func TestHandleCommandBlobRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	plaintext := []byte("testpeer blob harness round trip")
+	srcPath := filepath.Join(dir, "fixture.bin")
+	if err := os.WriteFile(srcPath, plaintext, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	keygen := handleCommand("blob_keygen", nil)
+	if keygen["ok"] != true {
+		t.Fatalf("blob_keygen: %v", keygen)
+	}
+	key := keygen["keyBase64"].(string)
+
+	enc := handleCommand("blob_encrypt", map[string]interface{}{
+		"filePath":  srcPath,
+		"keyBase64": key,
+	})
+	if enc["ok"] != true {
+		t.Fatalf("blob_encrypt: %v", enc)
+	}
+	encryptedPath := enc["encryptedPath"].(string)
+	nonce := enc["nonce"].(string)
+
+	ciphertext, err := os.ReadFile(encryptedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(ciphertext, plaintext) {
+		t.Fatal("encrypted artifact equals plaintext — cannot prove relay opacity")
+	}
+
+	dec := handleCommand("blob_decrypt", map[string]interface{}{
+		"filePath":  encryptedPath,
+		"keyBase64": key,
+		"nonce":     nonce,
+	})
+	if dec["ok"] != true {
+		t.Fatalf("blob_decrypt: %v", dec)
+	}
+	roundTripped, err := os.ReadFile(dec["decryptedPath"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(roundTripped, plaintext) {
+		t.Fatal("decrypted bytes differ from plaintext")
+	}
+
+	wrongKey := handleCommand("blob_keygen", nil)["keyBase64"].(string)
+	badDec := handleCommand("blob_decrypt", map[string]interface{}{
+		"filePath":  encryptedPath,
+		"keyBase64": wrongKey,
+		"nonce":     nonce,
+	})
+	if badDec["ok"] == true {
+		t.Fatal("blob_decrypt succeeded with the wrong key")
 	}
 }

@@ -112,7 +112,7 @@ void main() {
   );
 
   testWidgets(
-    'closing intro notification orbit while still on orbit restores the prior shell tab',
+    'intro notification orbit route omits the redundant close button and restores via feed nav',
     (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
@@ -129,9 +129,12 @@ void main() {
       await pumpRouteTransition(tester);
 
       expect(appShellController.activeTab, AppShellTab.orbit);
-      expect(find.byType(OrbitCloseButton), findsOneWidget);
+      // The Feed/Orbit nav bar is present, so the redundant X is omitted.
+      expect(find.byType(FeedNavigationBar), findsOneWidget);
+      expect(find.byType(OrbitCloseButton), findsNothing);
 
-      await tester.tap(find.byType(OrbitCloseButton));
+      // Tapping Feed restores the prior shell tab and pops the route.
+      await tester.tap(find.text('Feed'));
       await pumpRouteTransition(tester);
 
       expect(appShellController.activeTab, AppShellTab.feed);

@@ -20,7 +20,8 @@ final _testIdentity = IdentityModel(
   peerId: 'peer-start-node-001',
   publicKey: 'pub-key-base64',
   privateKey: 'priv-key-base64',
-  mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+  mnemonic12:
+      'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
   mlKemPublicKey: 'mlkem-pub',
   mlKemSecretKey: 'mlkem-sec',
   username: 'TestUser',
@@ -64,10 +65,7 @@ void main() {
     test('passes privateKey to service', () async {
       identityRepo.seed(_testIdentity);
 
-      await startP2PNode(
-        identityRepo: identityRepo,
-        p2pService: p2pService,
-      );
+      await startP2PNode(identityRepo: identityRepo, p2pService: p2pService);
 
       expect(p2pService.lastStartNodePrivateKey, _testIdentity.privateKey);
     });
@@ -75,10 +73,7 @@ void main() {
     test('passes peerId to service', () async {
       identityRepo.seed(_testIdentity);
 
-      await startP2PNode(
-        identityRepo: identityRepo,
-        p2pService: p2pService,
-      );
+      await startP2PNode(identityRepo: identityRepo, p2pService: p2pService);
 
       expect(p2pService.lastStartNodePeerId, _testIdentity.peerId);
     });
@@ -106,6 +101,23 @@ void main() {
 
       expect(result, StartNodeResult.bridgeError);
       expect(throwingService.startNodeCallCount, 1);
+    });
+
+    test('returns accountMigrationBlocked without starting service', () async {
+      identityRepo.seed(_testIdentity);
+
+      final result = await startP2PNode(
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        accountMigrationNetworkGate: ({peerId, required operation}) async {
+          expect(peerId, _testIdentity.peerId);
+          expect(operation, 'p2p_start');
+          return false;
+        },
+      );
+
+      expect(result, StartNodeResult.accountMigrationBlocked);
+      expect(p2pService.startNodeCallCount, 0);
     });
   });
 }

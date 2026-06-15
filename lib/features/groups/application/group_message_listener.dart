@@ -10,8 +10,10 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -41,6 +43,16 @@ import 'package:flutter_app/features/push/application/show_notification_use_case
 
 typedef RecoverGroupDispatcherOverflow =
     Future<void> Function(Map<String, dynamic> diagnostic);
+
+/// Re-keys a group after a remote member departure that the local device did
+/// not author. Returns `true` if a new key epoch was generated and distributed.
+///
+/// Wired in [main] to [rotateAndDistributeGroupKey] with the local identity;
+/// the use case is creator-gated, so only the group creator's device produces a
+/// rotation (a single deterministic rotator — see [GroupMessageListener]
+/// member_removed handling). Defaults to a no-op when not injected (tests / the
+/// non-creator path).
+typedef RotateGroupKeyAfterRemoteRemoval = Future<bool> Function(String groupId);
 
 const _maxPendingMembershipDependentMessagesPerGroup = 50;
 
@@ -99,6 +111,9 @@ class GroupMessageListener {
   final MediaFileManager? _mediaFileManager;
   final NotificationService? _notificationService;
   final ActiveConversationTracker? _groupConversationTracker;
+  // 118 Phase 4: shared per-conversation tone debounce (the same tracker the
+  // direct listener uses; group + direct keys are disjoint).
+  final NotificationToneTracker? _notificationToneTracker;
   final AppLifecycleState Function()? _getAppLifecycleState;
   final RecentRemoteNotificationGate _remoteNotificationGate;
   final ReactionRepository? _reactionRepo;
@@ -110,6 +125,8 @@ class GroupMessageListener {
   final GroupPendingMembershipMessageRepository? _pendingMembershipMessageRepo;
   final RequestGroupKeyRepair _requestGroupKeyRepair;
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
+  final RotateGroupKeyAfterRemoteRemoval? _rotateGroupKeyAfterRemoteRemoval;
+  final AccountMigrationNetworkGate _accountMigrationNetworkGate;
 
   StreamSubscription<void>? _subscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
@@ -141,6 +158,7 @@ class GroupMessageListener {
     MediaFileManager? mediaFileManager,
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
+    NotificationToneTracker? notificationToneTracker,
     AppLifecycleState Function()? getAppLifecycleState,
     RecentRemoteNotificationGate? remoteNotificationGate,
     ReactionRepository? reactionRepo,
@@ -152,6 +170,9 @@ class GroupMessageListener {
     GroupPendingMembershipMessageRepository? pendingMembershipMessageRepo,
     RequestGroupKeyRepair? requestGroupKeyRepair,
     RecoverGroupDispatcherOverflow? recoverFromDispatcherOverflow,
+    RotateGroupKeyAfterRemoteRemoval? rotateGroupKeyAfterRemoteRemoval,
+    AccountMigrationNetworkGate accountMigrationNetworkGate =
+        allowAccountMigrationNetworkSideEffects,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -160,6 +181,7 @@ class GroupMessageListener {
        _mediaFileManager = mediaFileManager,
        _notificationService = notificationService,
        _groupConversationTracker = groupConversationTracker,
+       _notificationToneTracker = notificationToneTracker,
        _getAppLifecycleState = getAppLifecycleState,
        _remoteNotificationGate =
            remoteNotificationGate ?? recentRemoteNotificationGate,
@@ -172,7 +194,9 @@ class GroupMessageListener {
        _pendingMembershipMessageRepo = pendingMembershipMessageRepo,
        _requestGroupKeyRepair =
            requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
-       _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow;
+       _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow,
+       _rotateGroupKeyAfterRemoteRemoval = rotateGroupKeyAfterRemoteRemoval,
+       _accountMigrationNetworkGate = accountMigrationNetworkGate;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -196,7 +220,13 @@ class GroupMessageListener {
     GroupMessageRepository? msgRepoOverride,
     bool rethrowOnError = false,
     bool allowMembershipBuffer = false,
-  }) {
+  }) async {
+    if (!await _allowsInboundAccountSideEffects(
+      operation: 'group_replay_message',
+      data: data,
+    )) {
+      return;
+    }
     return _handleQueuedUserMessage(
       data,
       msgRepoOverride: msgRepoOverride,
@@ -323,21 +353,84 @@ class GroupMessageListener {
   }
 
   Future<void> _handleLiveMessage(Map<String, dynamic> data) {
-    return _trackInFlight(
-      _handleQueuedUserMessage(
+    return _trackInFlight(() async {
+      if (!await _allowsInboundAccountSideEffects(
+        operation: 'group_live_message',
+        data: data,
+      )) {
+        return;
+      }
+      await _handleQueuedUserMessage(
         data,
         requestRecoveryOnError: true,
         deliverySource: 'live',
-      ),
-    );
+      );
+    }());
   }
 
   void _handleLiveReaction(Map<String, dynamic> data) {
-    _trackInFlight(_handleReaction(data));
+    _trackInFlight(() async {
+      if (!await _allowsInboundAccountSideEffects(
+        operation: 'group_live_reaction',
+        data: data,
+      )) {
+        return;
+      }
+      await _handleReaction(data);
+    }());
   }
 
   void _handleLiveDiagnosticEvent(Map<String, dynamic> event) {
-    _trackInFlight(_handleGroupDiagnosticEvent(event));
+    _trackInFlight(() async {
+      if (!await _allowsInboundAccountSideEffects(
+        operation: 'group_live_diagnostic',
+        data: event,
+      )) {
+        return;
+      }
+      await _handleGroupDiagnosticEvent(event);
+    }());
+  }
+
+  Future<bool> _allowsInboundAccountSideEffects({
+    required String operation,
+    Map<String, dynamic>? data,
+  }) async {
+    try {
+      final peerId = await _resolveSelfPeerId();
+      final allowed = await _accountMigrationNetworkGate(
+        peerId: peerId,
+        operation: operation,
+      );
+      if (!allowed) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ACCOUNT_MIGRATION_INBOUND_EVENT_BLOCKED',
+          details: {
+            'operation': operation,
+            'family': 'group',
+            'peerId': ?peerId,
+            if (data?['groupId'] != null)
+              'groupId': data!['groupId'].toString().length > 8
+                  ? data['groupId'].toString().substring(0, 8)
+                  : data['groupId'].toString(),
+          },
+        );
+      }
+      return allowed;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_INBOUND_EVENT_BLOCKED',
+        details: {
+          'operation': operation,
+          'family': 'group',
+          'reason': 'gate_error',
+          'error': e.toString(),
+        },
+      );
+      return false;
+    }
   }
 
   Future<void> _trackInFlight(Future<void> work) {
@@ -858,12 +951,21 @@ class GroupMessageListener {
               messageText:
                   '$senderUsername: ${notificationBodyForMessage(text, persistedAttachments)}',
               messageId: result.id,
+              toneTracker: _notificationToneTracker,
               consumeRecentRemoteNotificationAnnouncement:
                   ({required payload, String? messageId}) =>
                       _remoteNotificationGate.consumeIfRecentAnnouncement(
                         payload: payload,
                         messageId: messageId,
                       ),
+              // 118: the group path keeps only the shared tone debounce (above)
+              // — it does NOT write a live-wins dedup marker. That handshake is
+              // a direct-path requirement (to make un-silencing live 1:1 safe);
+              // group FCM dedup already runs through the background handler's
+              // markVisibleRemoteAnnouncement. Keeping the group path mark-free
+              // also avoids the group double-alert being a 118 scope change
+              // (plan Risk: "group path untouched except for the shared
+              // debounce").
               backgroundDuplicateGuardDelay: Duration.zero,
             );
           }
@@ -1697,7 +1799,26 @@ class GroupMessageListener {
               sysType: sysType,
               parsed: parsed,
             );
-        final preTransitionStateHash = relaxSnapshotBackedPreTransitionHash
+        // B4 terminal-dissolve relaxation: group_dissolved is a TERMINAL
+        // transition — no subsequent transition's chain integrity depends on it
+        // — so for an authenticated admin dissolve we skip the pre-transition
+        // STATE hash equality check, which otherwise rejects with
+        // previous_transition_hash_mismatch whenever the receiver's local
+        // transition state diverged from the signer's (e.g. after a rejected
+        // upstream key_rotated/members_added). This is SAFE because, by the time
+        // we reach here, a group_dissolved has ALREADY passed the membership
+        // authorization gate (_requiresMembershipEventAuthorization +
+        // _isAuthorizedMembershipEventSender → admin-role), and the actor
+        // signature plus device/transport binding are still verified by
+        // verifyGroupTransitionAudit below (Option A). Only the chain STATE hash
+        // — meaningless for a terminal event — is relaxed. (The snapshot-backed
+        // relaxation machinery cannot help here: a dissolve carries no
+        // groupConfig, so it short-circuits to false.)
+        final relaxTerminalDissolvePreTransitionHash = sysType ==
+            'group_dissolved';
+        final preTransitionStateHash =
+            relaxSnapshotBackedPreTransitionHash ||
+                relaxTerminalDissolvePreTransitionHash
             ? null
             : await buildGroupTransitionStateHash(_groupRepo, groupId);
         final auditCheck = await verifyGroupTransitionAudit(
@@ -1952,11 +2073,21 @@ class GroupMessageListener {
         });
       } else if (sysType == 'group_dissolved') {
         await _enqueueGroupConfigWork(groupId, () async {
-          if (await _shouldIgnoreStaleMembershipEvent(
-            groupId,
-            sysType: sysType,
-            eventAt: membershipVersion.eventAt,
-          )) {
+          // 123 S1/T4 — a group_dissolved is a GLOBAL, TERMINAL transition, so
+          // it must apply even when the local membership watermark is AHEAD of
+          // the dissolve eventAt (e.g. a stale-but-keyed device that missed the
+          // live publish and whose last applied membership event post-dates the
+          // dissolve). Once the group is ALREADY dissolved locally we fall back
+          // to the stale-event gate so a replayed dissolve is idempotently
+          // ignored — preserving the single-timeline-row invariant.
+          final alreadyDissolved =
+              (await _groupRepo.getGroup(groupId))?.isDissolved ?? false;
+          if (alreadyDissolved &&
+              await _shouldIgnoreStaleMembershipEvent(
+                groupId,
+                sysType: sysType,
+                eventAt: membershipVersion.eventAt,
+              )) {
             return;
           }
           await appendSystemEventLog();
@@ -2151,6 +2282,24 @@ class GroupMessageListener {
       deviceId: _trimToNull(senderDeviceId),
       transportPeerId: _trimToNull(transportPeerId),
     );
+    // Self-authored voluntary leave: a `member_removed` whose removed peer IS the
+    // signer can only remove the signer and is authenticated by the signer's own
+    // signing key (still verified in verifyGroupTransitionAudit). Over a relay the
+    // leaver's OBSERVED transport peer legitimately differs from the self-peerId it
+    // signed, so enforcing the device/transport binding here wrongly rejects the
+    // leave with transport_mismatch — blocking roster exclusion on every remaining
+    // member and, with it, the creator's forward-secrecy re-key. Relax the binding
+    // for THIS case only; admin-authored removals (removed != signer) keep the
+    // strict binding so a removed/foreign device cannot spoof a removal.
+    if (sysType == 'member_removed' && senderId.isNotEmpty) {
+      final removedPeerId =
+          (parsed?['member'] as Map<String, dynamic>?)?['peerId'] as String?;
+      if (removedPeerId != null &&
+          removedPeerId.isNotEmpty &&
+          removedPeerId == senderId) {
+        return const _SignedTransitionAuditActorBinding();
+      }
+    }
     if (!_allowsSnapshotBackedSystemSender(sysType) || senderId.isEmpty) {
       return defaultBinding;
     }
@@ -2922,6 +3071,39 @@ class GroupMessageListener {
       joinedUsername: memberData?['username'] as String?,
       eventAt: eventAt ?? DateTime.now().toUtc(),
     );
+    // note-1 idempotency: the same join can arrive over two transports (live
+    // GossipSub + offline-replay inbox) with DIFFERENT envelope timestamps,
+    // which yield different `sys-member_joined:` ids. Render at most one join
+    // card per (groupId, peerId). Exact-id re-delivery still flows through
+    // _saveTimelineMessagePreservingReadState below (preserves readAt + re-emits
+    // per existing replay semantics); only a SECOND join under a DIFFERENT id is
+    // dropped here.
+    if (await msgRepo.getMessage(timelineMessage.id) == null) {
+      final existingJoinAt = await msgRepo.getLatestSystemEventTimestampForTarget(
+        groupId,
+        eventType: 'member_joined',
+        targetId: joinedPeerId,
+      );
+      if (existingJoinAt != null) {
+        await _inviteDeliveryAttemptRepo?.markJoined(
+          groupId: groupId,
+          peerId: joinedPeerId,
+          username: memberData?['username'] as String?,
+          joinedAt: eventAt,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_MEMBER_JOINED_DUPLICATE_IGNORED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'memberPeerId': joinedPeerId.length > 8
+                ? joinedPeerId.substring(0, 8)
+                : joinedPeerId,
+          },
+        );
+        return;
+      }
+    }
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
       msgRepo,
@@ -2973,7 +3155,17 @@ class GroupMessageListener {
     if (removedPeerId != null && getSelfPeerId != null && bridge != null) {
       final selfPeerId = await getSelfPeerId();
       if (selfPeerId != null && selfPeerId == removedPeerId) {
-        if (await _groupRepo.getGroup(groupId) == null) {
+        // Idempotency: B3 now RETAINS a quiet group on self-removal instead of
+        // deleting it, so the previous "group is gone" dedup no longer fires.
+        // Treat a repeat (or stale post-leave) member_removed as a duplicate
+        // when the group is gone OR self is no longer an active member — this
+        // keeps self-removal to a single leave/emit and stops a stale envelope
+        // from resurrecting membership on the retained read-only group.
+        final existingGroup = await _groupRepo.getGroup(groupId);
+        final selfStillActiveMember = existingGroup == null
+            ? null
+            : await _groupRepo.getMember(groupId, selfPeerId);
+        if (existingGroup == null || selfStillActiveMember == null) {
           emitFlowEvent(
             layer: 'FL',
             event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED_DUPLICATE_IGNORED',
@@ -2992,64 +3184,32 @@ class GroupMessageListener {
           },
         );
 
-        final shouldRetainHistory = await _hasRetainableSelfRemovalHistory(
+        // B3: always retain the group locally as a read-only shell with a
+        // visible "Admin removed you" timeline message. Previously a quiet
+        // group (no non-`sys-` content) was hard-deleted, so a removed
+        // member's chat silently vanished (the only artifact was an empty
+        // `status:'cutoff'` placeholder purged with the group).
+        // `_retainSelfRemovedLocalHistory` keeps the group row (removeMember
+        // (self) + removeAllKeys, NO deleteGroup), writes the visible removal
+        // message, and purges post-removal content. The composer then
+        // auto-gates read-only via `_canWriteForGroup` (self no longer an
+        // active member + no send key) with no new flag or migration.
+        final selfRemovalCompleted = await _retainSelfRemovedLocalHistory(
           groupId,
-          msgRepo,
-        );
-        if (shouldRetainHistory) {
-          final selfRemovalCompleted = await _retainSelfRemovedLocalHistory(
-            groupId,
-            parsed,
-            selfPeerId: selfPeerId,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            removedUsername: removedUsername,
-            eventAt: eventAt,
-            msgRepo: msgRepo,
-            appendSystemEventLog: appendSystemEventLog,
-          );
-          if (selfRemovalCompleted) {
-            _emitGroupRemoved(groupId);
-          }
-          return;
-        }
-
-        final resolvedEventAt = eventAt ?? DateTime.now().toUtc();
-        await msgRepo.saveMessage(
-          GroupMessage(
-            id: buildGroupRemovalCutoffMessageId(
-              groupId: groupId,
-              senderPeerId: removedPeerId,
-              removedAt: resolvedEventAt,
-            ),
-            groupId: groupId,
-            senderPeerId: senderId.isNotEmpty ? senderId : removedPeerId,
-            senderUsername: senderUsername,
-            text: '',
-            timestamp: resolvedEventAt,
-            status: 'cutoff',
-            isIncoming: false,
-            readAt: resolvedEventAt,
-            createdAt: DateTime.now().toUtc(),
-          ),
-        );
-        await _recordMembershipEventWatermark(groupId, resolvedEventAt);
-
-        final selfRemovalCompleted = await _deleteSelfRemovedLocalGroup(
-          groupId: groupId,
-          bridge: bridge,
+          parsed,
           selfPeerId: selfPeerId,
-          removedAt: resolvedEventAt,
+          senderId: senderId,
+          senderUsername: senderUsername,
+          removedUsername: removedUsername,
+          eventAt: eventAt,
+          msgRepo: msgRepo,
+          appendSystemEventLog: appendSystemEventLog,
         );
-
-        await appendSystemEventLog();
-
-        if (!selfRemovalCompleted) {
-          return;
+        if (selfRemovalCompleted) {
+          // Soft "you were removed" signal — the group row is retained
+          // read-only, not destroyed.
+          _emitGroupRemoved(groupId);
         }
-
-        // Notify UI that we were removed from this group
-        _emitGroupRemoved(groupId);
         return;
       }
     }
@@ -3060,8 +3220,13 @@ class GroupMessageListener {
 
     // Not self — retain the removed member's verification material for
     // historical replay before deleting the active membership row.
+    // Whether THIS delivery actually transitioned the member present -> removed
+    // is the idempotency anchor for the post-departure re-key below: a duplicate
+    // member_removed (peer already gone) must not trigger a second rotation.
+    var removedPeerWasActiveMember = false;
     if (removedPeerId != null && removedPeerId.isNotEmpty) {
       final removedMember = await _groupRepo.getMember(groupId, removedPeerId);
+      removedPeerWasActiveMember = removedMember != null;
       final snapshotRepo = _groupRepo is RemovedGroupMemberSnapshotRepository
           ? _groupRepo as RemovedGroupMemberSnapshotRepository
           : null;
@@ -3132,6 +3297,18 @@ class GroupMessageListener {
       msgRepo: msgRepo,
     );
 
+    // Forward secrecy: a remaining group creator re-keys when a member it did
+    // not itself remove departs (the voluntary leaver could not rotate). This
+    // closes the gap left by best-effort leave rotation, mirroring
+    // admin-removal's remover-driven rotation.
+    await _maybeRotateGroupKeyAfterRemoteRemoval(
+      groupId,
+      removedPeerId: removedPeerId,
+      removedPeerWasActiveMember: removedPeerWasActiveMember,
+      removalAuthorPeerId: senderId,
+      snapshotHasNoActiveMembers: snapshotHasNoActiveMembers,
+    );
+
     if (snapshotHasNoActiveMembers) {
       await _closeGroupForEmptyMembership(
         groupId,
@@ -3150,45 +3327,78 @@ class GroupMessageListener {
     );
   }
 
-  Future<bool> _deleteSelfRemovedLocalGroup({
-    required String groupId,
-    required Bridge bridge,
-    required String selfPeerId,
-    DateTime? removedAt,
+  /// Re-keys a group after a remote member departure the local device did not
+  /// author, preserving forward secrecy when the leaver could not rotate.
+  ///
+  /// All guards must hold; in particular only the group CREATOR auto-rotates.
+  /// That keeps a single deterministic rotator (matching
+  /// [rotateAndDistributeGroupKey]'s creator-only gate), so multiple remaining
+  /// admins never race, and other members converge via the creator's
+  /// distributed `key:update`.
+  Future<void> _maybeRotateGroupKeyAfterRemoteRemoval(
+    String groupId, {
+    required String? removedPeerId,
+    required bool removedPeerWasActiveMember,
+    required String removalAuthorPeerId,
+    required bool snapshotHasNoActiveMembers,
   }) async {
-    await callGroupLeave(bridge, groupId);
-    if (await _repairLateSelfRemovalLeaveIfReadded(
-      groupId,
-      selfPeerId: selfPeerId,
-      removedAt: removedAt,
-    )) {
-      return false;
+    final rotate = _rotateGroupKeyAfterRemoteRemoval;
+    if (rotate == null) return;
+    // Nothing to rotate toward once the group has emptied.
+    if (snapshotHasNoActiveMembers) return;
+    // Idempotency: only the delivery that actually removed an active member
+    // drives the re-key. A duplicate member_removed (peer already gone) is a
+    // no-op, so the epoch advances exactly once per departure.
+    if (removedPeerId == null ||
+        removedPeerId.isEmpty ||
+        !removedPeerWasActiveMember) {
+      return;
     }
-    await _groupRepo.removeAllMembers(groupId);
-    await _groupRepo.removeAllKeys(groupId);
-    await _groupRepo.deleteGroup(groupId);
-    return true;
-  }
 
-  Future<bool> _hasRetainableSelfRemovalHistory(
-    String groupId,
-    GroupMessageRepository msgRepo,
-  ) async {
-    const pageSize = 200;
-    var offset = 0;
-    while (true) {
-      final messages = await msgRepo.getMessagesPage(
-        groupId,
-        limit: pageSize,
-        offset: offset,
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null) return;
+    // Do not rotate on a removal this device authored: the remover already
+    // rotated locally (admin-removal path) and a voluntary leaver cannot.
+    if (removalAuthorPeerId == selfPeerId) return;
+
+    final group = await _groupRepo.getGroup(groupId);
+    if (group == null || group.createdBy != selfPeerId) return;
+
+    final remainingMembers = await _groupRepo.getMembers(groupId);
+    final hasOtherActiveMember = remainingMembers.any(
+      (member) => member.peerId != selfPeerId,
+    );
+    if (!hasOtherActiveMember) return;
+
+    if (!await _allowsInboundAccountSideEffects(
+      operation: 'group_creator_rekey_on_remote_removal',
+      data: {'groupId': groupId},
+    )) {
+      return;
+    }
+
+    final flowGroupId = groupId.length > 8 ? groupId.substring(0, 8) : groupId;
+    try {
+      final rotated = await rotate(groupId);
+      emitFlowEvent(
+        layer: 'FL',
+        event: rotated
+            ? 'GROUP_CREATOR_REKEY_AFTER_REMOTE_REMOVAL'
+            : 'GROUP_CREATOR_REKEY_AFTER_REMOTE_REMOVAL_SKIPPED',
+        details: {
+          'groupId': flowGroupId,
+          'removedPeerId': removedPeerId.length > 10
+              ? removedPeerId.substring(0, 10)
+              : removedPeerId,
+        },
       );
-      if (messages.any((message) => !message.id.startsWith('sys-'))) {
-        return true;
-      }
-      if (messages.length < pageSize) {
-        return false;
-      }
-      offset += messages.length;
+    } catch (e) {
+      // A re-key failure must not abort member_removed handling.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CREATOR_REKEY_AFTER_REMOTE_REMOVAL_FAILED',
+        details: {'groupId': flowGroupId, 'error': e.toString()},
+      );
     }
   }
 

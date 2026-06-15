@@ -273,6 +273,8 @@ class _IncomingProof {
   final String content;
   final String source;
   final String timestamp;
+  final String payloadText;
+  final List<dynamic> payloadMedia;
 
   const _IncomingProof({
     required this.from,
@@ -280,6 +282,8 @@ class _IncomingProof {
     required this.content,
     required this.source,
     required this.timestamp,
+    this.payloadText = '',
+    this.payloadMedia = const [],
   });
 }
 
@@ -336,6 +340,8 @@ class TestPeer {
             content: _stringValue(data['content']),
             source: 'event',
             timestamp: _stringValue(data['timestamp']),
+            payloadText: _stringValue(data['payloadText']),
+            payloadMedia: _listValue(data['payloadMedia']),
           );
         }
         _events.add(json);
@@ -383,6 +389,8 @@ class TestPeer {
     required String content,
     required String source,
     required String timestamp,
+    String payloadText = '',
+    List<dynamic> payloadMedia = const [],
   }) {
     if (content.isEmpty) {
       return;
@@ -405,6 +413,8 @@ class TestPeer {
         content: content,
         source: source,
         timestamp: timestamp,
+        payloadText: payloadText,
+        payloadMedia: payloadMedia,
       ),
     );
   }
@@ -424,6 +434,8 @@ class TestPeer {
         content: _stringValue(msg['content']),
         source: source,
         timestamp: _stringValue(msg['timestamp']),
+        payloadText: _stringValue(msg['payloadText']),
+        payloadMedia: _listValue(msg['payloadMedia']),
       );
     }
   }
@@ -442,6 +454,8 @@ class TestPeer {
         content: _stringValue(msg['message']),
         source: source,
         timestamp: _stringValue(msg['timestamp']),
+        payloadText: _stringValue(msg['payloadText']),
+        payloadMedia: _listValue(msg['payloadMedia']),
       );
     }
   }
@@ -587,6 +601,8 @@ String _proofSources(List<_IncomingProof> proof) {
 
 String _stringValue(dynamic value) => value?.toString() ?? '';
 
+List<dynamic> _listValue(dynamic value) => value is List ? value : const [];
+
 String _messageWireContent(Map<String, dynamic> message) =>
     _stringValue(message['content'] ?? message['message']);
 
@@ -620,6 +636,26 @@ bool _messageReferencesAttachment(
   required String mediaType,
 }) {
   for (final item in _messagePayloadMedia(message)) {
+    if (item is! Map) {
+      continue;
+    }
+    final attachment = Map<String, dynamic>.from(item);
+    if (attachment['id'] == blobId &&
+        attachment['mime'] == mime &&
+        attachment['mediaType'] == mediaType) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _proofReferencesAttachment(
+  _IncomingProof proof, {
+  required String blobId,
+  required String mime,
+  required String mediaType,
+}) {
+  for (final item in proof.payloadMedia) {
     if (item is! Map) {
       continue;
     }
@@ -1449,22 +1485,40 @@ Future<List<_OrchestratorResult>> _runScenarios(
         }
       }
 
+      final retainedE8Proof = e8Message == null
+          ? _matchingIncomingProof(
+              peer.incomingProofSnapshot(),
+              fromPeerId: flutterPeerId,
+              contentMatches: (_) => true,
+              proofMatches: (proof) =>
+                  proof.payloadText == 'E8: Media attachment test' &&
+                  _proofReferencesAttachment(
+                    proof,
+                    blobId: e8BlobIdVal,
+                    mime: 'image/png',
+                    mediaType: 'image',
+                  ),
+            )
+          : const <_IncomingProof>[];
       final payloadText = e8Message == null
-          ? ''
+          ? (retainedE8Proof.isEmpty ? '' : retainedE8Proof.first.payloadText)
           : _messagePayloadText(e8Message);
-      final attachmentReferenced =
-          e8Message != null &&
-          _messageReferencesAttachment(
-            e8Message,
-            blobId: e8BlobIdVal,
-            mime: 'image/png',
-            mediaType: 'image',
-          );
-      final messageSeen = e8Message != null;
+      final attachmentReferenced = e8Message == null
+          ? retainedE8Proof.isNotEmpty
+          : _messageReferencesAttachment(
+              e8Message,
+              blobId: e8BlobIdVal,
+              mime: 'image/png',
+              mediaType: 'image',
+            );
+      final messageSeen = e8Message != null || retainedE8Proof.isNotEmpty;
+      final proofSourceText = retainedE8Proof.isEmpty
+          ? ''
+          : ' retainedSources=${_proofSources(retainedE8Proof)}';
       _log(
         'ORCH',
         'E8: messageSeen=$messageSeen attachmentReferenced=$attachmentReferenced '
-            'text="$payloadText"',
+            'text="$payloadText"$proofSourceText',
       );
 
       final dlResult = await peer.commandOk('media_download', {
@@ -1494,7 +1548,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
           'E8',
           pass,
           'messageSeen=$messageSeen attachmentReferenced=$attachmentReferenced '
-              'downloaded size=$dlSize blobInList=$blobFound',
+              'downloaded size=$dlSize blobInList=$blobFound$proofSourceText',
         ),
       );
     }

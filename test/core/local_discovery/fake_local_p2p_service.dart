@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 
@@ -11,8 +12,10 @@ class FakeLocalP2PService implements LocalP2PService {
   final _peersController = StreamController<Map<String, LocalPeer>>.broadcast();
 
   bool sendWillSucceed = true;
+  LanSendAck? sendMessageAck;
   bool started = false;
   String? startedPeerId;
+  LanInboundChatCommitHandler? inboundChatCommitHandler;
 
   final sentMessages = <_SentMessage>[];
 
@@ -60,6 +63,11 @@ class FakeLocalP2PService implements LocalP2PService {
   Stream<LocalChatMessage> get localMessageStream => _messageController.stream;
 
   @override
+  void configureInboundChatCommitHandler(LanInboundChatCommitHandler handler) {
+    inboundChatCommitHandler = handler;
+  }
+
+  @override
   Stream<Map<String, LocalPeer>> get discoveredPeersStream =>
       _peersController.stream;
 
@@ -100,11 +108,27 @@ class FakeLocalP2PService implements LocalP2PService {
     String content,
     String fromPeerId, {
     int? timeoutMs,
+  }) async =>
+      await sendMessageDetailed(
+        peerId,
+        content,
+        fromPeerId,
+        timeoutMs: timeoutMs,
+      ) ==
+      LanSendAck.committed;
+
+  @override
+  Future<LanSendAck> sendMessageDetailed(
+    String peerId,
+    String content,
+    String fromPeerId, {
+    int? timeoutMs,
   }) async {
     sentMessages.add(
       _SentMessage(peerId: peerId, content: content, fromPeerId: fromPeerId),
     );
-    return sendWillSucceed;
+    return sendMessageAck ??
+        (sendWillSucceed ? LanSendAck.committed : LanSendAck.failed);
   }
 
   @override
@@ -120,6 +144,8 @@ class FakeLocalP2PService implements LocalP2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     return sendWillSucceed;
   }

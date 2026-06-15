@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -46,6 +47,9 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
       )
       .toList();
 }
+
+const _testContentHash =
+    'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 
 MediaAttachment _pendingAtt({
   String id = 'att-00001',
@@ -100,6 +104,10 @@ MediaAttachment _doneAttachment(
     localPath: '/tmp/recording.m4a',
     downloadStatus: 'done',
     createdAt: DateTime.now().toUtc().toIso8601String(),
+    contentHash: _testContentHash,
+    encryptionKeyBase64: 'test-blob-key-base64',
+    encryptionNonce: 'test-blob-nonce',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
   );
 }
 
@@ -289,6 +297,131 @@ void main() {
           0,
           reason: 'sendChatMessage must not be called on failed upload',
         );
+      },
+    );
+
+    test(
+      'transient upload failure does not downgrade an attachment completed concurrently',
+      () async {
+        final msg = _makeMsg(
+          'msg-00001',
+          status: 'failed',
+          contactPeerId: 'peer-bob',
+        );
+        final pending = _pendingAtt(
+          id: 'att-00001',
+          messageId: 'msg-00001',
+          localPath: '/tmp/img1.jpg',
+          mime: 'image/jpeg',
+          mediaType: 'image',
+        ).copyWith(uploadRetryCount: kMaxUploadRetries - 1);
+        messageRepo.seed([msg]);
+        mediaRepo.seed([pending]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                blobId,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                await mediaRepo.saveAttachment(
+                  pending.copyWith(downloadStatus: 'done'),
+                );
+                return null;
+              },
+        );
+
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          'msg-00001',
+        );
+        expect(count, 0);
+        expect(attachments.single.downloadStatus, 'done');
+        expect(
+          mediaRepo.allSavedAttachments
+              .where(
+                (attachment) =>
+                    attachment.id == 'att-00001' &&
+                    attachment.downloadStatus == 'upload_failed',
+              )
+              .isEmpty,
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'completed upload result does not overwrite a concurrently cancelled attachment',
+      () async {
+        final msg = _makeMsg(
+          'msg-00001',
+          status: 'failed',
+          contactPeerId: 'peer-bob',
+        );
+        final pending = _pendingAtt(
+          id: 'att-00001',
+          messageId: 'msg-00001',
+          localPath: '/tmp/img1.jpg',
+          mime: 'image/jpeg',
+          mediaType: 'image',
+        );
+        messageRepo.seed([msg]);
+        mediaRepo.seed([pending]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                blobId,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                await mediaRepo.saveAttachment(
+                  pending.copyWith(downloadStatus: 'upload_cancelled'),
+                );
+                return _doneAttachment('att-00001', 'msg-00001');
+              },
+        );
+
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          'msg-00001',
+        );
+        expect(count, 0);
+        expect(attachments.single.downloadStatus, 'upload_cancelled');
+        expect(p2pService.storeInInboxCallCount, 0);
       },
     );
 
@@ -1037,6 +1170,194 @@ void main() {
           0,
           reason: 'Retry must use relay, not local WiFi',
         );
+      },
+    );
+  });
+
+  // --- 112 Phase 3: retry/replay key coherence (KC-2) ---
+  // These wire the REAL uploadMedia (not the typedef stub): R6 — the
+  // stubbed suite above stays green while crypto behavior changes
+  // underneath and cannot observe key minting or envelope coherence.
+  group('KC-2 key coherence', () {
+    late Directory tempDir;
+    late File sourceFile;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('kc2_retry_');
+      sourceFile = File('${tempDir.path}/recording.m4a');
+      await sourceFile.writeAsBytes(List<int>.filled(4096, 0x42), flush: true);
+      identityRepo.seed(
+        FakeIdentityRepository.makeIdentity(peerId: 'peer-alice-001'),
+      );
+    });
+
+    tearDown(() async {
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    MediaAttachment seedOldKeyPending() =>
+        _pendingAtt(localPath: sourceFile.path).copyWith(
+          contentHash: _testContentHash,
+          encryptionKeyBase64: 'old-key',
+          encryptionNonce: 'old-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+
+    test(
+      'retry re-encrypts with a fresh key and persists updated metadata to '
+      'the attachment row',
+      () async {
+        // Green-on-arrival pin in plan order (1→2→3): after Phase 2 the
+        // real uploadMedia mints a fresh key per call and retry persists
+        // the re-uploaded attachment row.
+        await messageRepo.saveMessage(_makeMsg('msg-00001', status: 'failed'));
+        await mediaRepo.saveAttachment(seedOldKeyPending());
+
+        final realBridge = PassthroughCryptoBridge();
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: realBridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(count, 1);
+        expect(
+          realBridge.commandLog,
+          containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
+        );
+        final row = (await mediaRepo.getAttachmentsForMessage(
+          'msg-00001',
+        )).single;
+        expect(row.downloadStatus, 'done');
+        expect(row.encryptionKeyBase64, isNotNull);
+        expect(row.encryptionKeyBase64, isNot('old-key'));
+        expect(row.encryptionNonce, isNot('old-nonce'));
+      },
+    );
+
+    test('retry never reuses a prior key for a new blob:encrypt call', () async {
+      // Green-on-arrival pin (KC-2 defense-in-depth): distinct blobs get
+      // distinct keys even within one retry pass.
+      final secondFile = File('${tempDir.path}/second.m4a');
+      await secondFile.writeAsBytes(List<int>.filled(2048, 0x17), flush: true);
+      await messageRepo.saveMessage(_makeMsg('msg-00001', status: 'failed'));
+      await mediaRepo.saveAttachment(seedOldKeyPending());
+      await mediaRepo.saveAttachment(
+        _pendingAtt(
+          id: 'att-00002',
+          messageId: 'msg-00001',
+          localPath: secondFile.path,
+        ),
+      );
+
+      final realBridge = PassthroughCryptoBridge();
+      await retryIncompleteUploads(
+        mediaAttachmentRepo: mediaRepo,
+        messageRepo: messageRepo,
+        bridge: realBridge,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+      );
+
+      final rows = await mediaRepo.getAttachmentsForMessage('msg-00001');
+      final keys = rows
+          .map((row) => row.encryptionKeyBase64)
+          .whereType<String>()
+          .toSet();
+      expect(rows, hasLength(2));
+      expect(keys, hasLength(2), reason: 'each blob must get a fresh key');
+    });
+
+    test(
+      'successful re-upload with changed key invalidates the persisted wire '
+      'envelope of the parent message',
+      () async {
+        // THE genuine RED of this phase: the Section-4 replay contract
+        // persists the envelope verbatim while retry re-encrypts the blob
+        // under a new key — a replayed stale envelope would reference a
+        // dead key (undecryptable media). Node is STOPPED so the rebuild
+        // inside this use case cannot mask the invalidation.
+        await messageRepo.saveMessage(
+          _makeMsg(
+            'msg-00001',
+            status: 'failed',
+          ).copyWith(wireEnvelope: '{"stale":"envelope-with-old-key"}'),
+        );
+        await mediaRepo.saveAttachment(seedOldKeyPending());
+        p2pService.emitState(NodeState.stopped);
+
+        final realBridge = PassthroughCryptoBridge();
+        await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: realBridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+        );
+
+        final row = (await mediaRepo.getAttachmentsForMessage(
+          'msg-00001',
+        )).single;
+        expect(row.encryptionKeyBase64, isNot('old-key'));
+        final message = await messageRepo.getMessage('msg-00001');
+        expect(
+          message!.wireEnvelope,
+          isNull,
+          reason:
+              'the stale envelope referencing the dead key must be '
+              'invalidated so no replay path can ship it',
+        );
+      },
+    );
+
+    test(
+      're-sent message after media re-upload carries the attachment row\'s '
+      'current key in its envelope',
+      () async {
+        // End-to-end KC-2 contract: the envelope persisted after the
+        // retry's rebuild references the row's CURRENT key.
+        await messageRepo.saveMessage(
+          _makeMsg(
+            'msg-00001',
+            status: 'failed',
+          ).copyWith(wireEnvelope: '{"stale":"envelope-with-old-key"}'),
+        );
+        await mediaRepo.saveAttachment(seedOldKeyPending());
+
+        final realBridge = PassthroughCryptoBridge();
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: realBridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(count, 1);
+        final row = (await mediaRepo.getAttachmentsForMessage(
+          'msg-00001',
+        )).single;
+        final rebuiltEnvelope = messageRepo.lastWireEnvelopeValue;
+        expect(rebuiltEnvelope, isNotNull);
+        final envelope = jsonDecode(rebuiltEnvelope!) as Map<String, dynamic>;
+        final inner =
+            jsonDecode(
+                  (envelope['encrypted'] as Map<String, dynamic>)['ciphertext']
+                      as String,
+                )
+                as Map<String, dynamic>;
+        final media = inner['media'] as List<dynamic>;
+        final wireAttachment = media.single as Map<String, dynamic>;
+        expect(wireAttachment['encryptionKeyBase64'], row.encryptionKeyBase64);
+        expect(wireAttachment['encryptionNonce'], row.encryptionNonce);
       },
     );
   });

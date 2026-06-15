@@ -546,9 +546,10 @@ void main() {
     );
 
     test(
-      'does not emit when existing contact already has ML-KEM key',
+      'emits when an existing contact key rotates via a newer signed payload',
       () async {
-        // Seed a contact WITH an existing ML-KEM key
+        // P0-B contract: a verified contact_request carrying a DIFFERENT
+        // key with a newer signed ts rotates the stored key and broadcasts.
         contactRepo.addTestContact(
           ContactModel(
             peerId: _testPeerId,
@@ -568,7 +569,36 @@ void main() {
         streamController.add(_makeContactRequestMessage(mlkem: 'differentKey'));
         await Future.delayed(const Duration(milliseconds: 100));
 
-        // Should NOT emit — existing key is never overwritten
+        expect(updates, hasLength(1));
+        expect(updates.single.mlKemPublicKey, 'differentKey');
+      },
+    );
+
+    test(
+      'does not emit when the key change is a stale replay (anti-rollback)',
+      () async {
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+            mlKemPublicKey: 'existingKey',
+            // Last accepted key update is far in the future relative to any
+            // payload ts the fixture generates — the change must be ignored.
+            mlKemKeyUpdatedTs: '2099-01-01T00:00:00Z',
+          ),
+        );
+        listener.start();
+
+        final updates = <ContactModel>[];
+        listener.contactKeyUpdatedStream.listen(updates.add);
+
+        streamController.add(_makeContactRequestMessage(mlkem: 'staleKey'));
+        await Future.delayed(const Duration(milliseconds: 100));
+
         expect(updates, isEmpty);
       },
     );

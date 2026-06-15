@@ -17,6 +17,7 @@ class _FakeP2PService implements P2PService {
   bool registerResult = true;
   String? lastToken;
   String? lastPlatform;
+  NodeState state = const NodeState(isStarted: true, peerId: 'local-peer');
 
   @override
   Future<bool> registerPushToken(String token, String platform) async {
@@ -25,9 +26,8 @@ class _FakeP2PService implements P2PService {
     return registerResult;
   }
 
-  // Not needed for this test file
   @override
-  NodeState get currentState => throw UnimplementedError();
+  NodeState get currentState => state;
   @override
   Stream<NodeState> get stateStream => throw UnimplementedError();
   @override
@@ -59,7 +59,11 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async => true;
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
@@ -85,8 +89,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -107,6 +110,8 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async => false;
   @override
   String? get lastRecoveryMethod => null;
@@ -325,6 +330,34 @@ void main() {
       expect(result, equals(RegisterPushTokenResult.noToken));
       expect(p2pService.lastToken, isNull);
     });
+
+    test(
+      'account migration gate blocks token fetch, relay registration, and persistence',
+      () async {
+        var getTokenCalls = 0;
+
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
+          isIOSFn: () => false,
+          getTokenFn: () async {
+            getTokenCalls++;
+            return 'blocked-token';
+          },
+          getPlatformFn: () => 'android',
+          accountMigrationNetworkGate: ({peerId, required operation}) async {
+            expect(peerId, 'local-peer');
+            expect(operation, 'push_register_token');
+            return false;
+          },
+        );
+
+        expect(result, equals(RegisterPushTokenResult.accountMigrationBlocked));
+        expect(getTokenCalls, 0);
+        expect(p2pService.lastToken, isNull);
+        expect(pushTokenStore.writeCallCount, 0);
+      },
+    );
 
     // Note: iOS timeout path uses Future.timeout() which conflicts with
     // flutter_test's timer handling. The timeout works correctly on real

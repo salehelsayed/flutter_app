@@ -5,7 +5,6 @@ import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -18,13 +17,8 @@ import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 import 'package:flutter_app/shared/widgets/media/video_thumbnail_overlay.dart';
 
-void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  group('Report 89 group new-member media simulator proof', () {
-    testWidgets(
-      'new member video and voice rows render, play, and survive reopen on simulator',
-      (tester) async {
+void registerNewMemberMediaSim() {
+  testWidgets('NEW_MEMBER_MEDIA 1', (tester) async {
         final tempDir = await Directory.systemTemp.createTemp(
           'group_new_member_media_sim_',
         );
@@ -114,8 +108,6 @@ void main() {
         debugPrint('report89-proof: reopen voice playback verified');
         await _expectVideoViewerCanOpen(tester);
         debugPrint('report89-proof: reopen video viewer verified');
-      },
-    );
   });
 }
 

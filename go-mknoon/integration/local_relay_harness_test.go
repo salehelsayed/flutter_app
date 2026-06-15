@@ -42,6 +42,7 @@ type localRelaySharedState struct {
 	rendezvous                     map[string]map[string]localRelayRegistration
 	inbox                          map[string][]localRelayInboxMessage
 	registrationTTLOverrideSeconds uint64
+	inboxCapacity                  int
 }
 
 func newLocalRelaySharedState() *localRelaySharedState {
@@ -109,10 +110,30 @@ func (s *localRelaySharedState) discover(namespace, requester string, limit int)
 	return records
 }
 
-func (s *localRelaySharedState) storeInbox(toPeerID string, message localRelayInboxMessage) {
+type localRelayInboxStoreOutcome struct {
+	stored    bool
+	occupancy int
+	capacity  int
+}
+
+func (s *localRelaySharedState) storeInbox(toPeerID string, message localRelayInboxMessage) localRelayInboxStoreOutcome {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.inbox[toPeerID] = append(s.inbox[toPeerID], message)
+	queue := s.inbox[toPeerID]
+	if s.inboxCapacity > 0 && len(queue) >= s.inboxCapacity {
+		return localRelayInboxStoreOutcome{
+			stored:    false,
+			occupancy: len(queue),
+			capacity:  s.inboxCapacity,
+		}
+	}
+	queue = append(queue, message)
+	s.inbox[toPeerID] = queue
+	return localRelayInboxStoreOutcome{
+		stored:    true,
+		occupancy: len(queue),
+		capacity:  s.inboxCapacity,
+	}
 }
 
 func (s *localRelaySharedState) retrieveInbox(peerID string, limit int) ([]localRelayInboxMessage, bool) {
@@ -239,6 +260,19 @@ func startLocalRelayPairWithRegistrationTTL(
 	shared := newLocalRelaySharedState()
 	shared.registrationTTLOverrideSeconds = ttlSeconds
 	return startLocalRelayPairWithSharedState(t, shared)
+}
+
+func startLocalRelayWithInboxCapacity(t *testing.T, capacity int) *localRelayServer {
+	t.Helper()
+
+	shared := newLocalRelaySharedState()
+	shared.inboxCapacity = capacity
+	relay := newLocalRelayServer(t, shared)
+	relay.start()
+	t.Cleanup(func() {
+		relay.stop()
+	})
+	return relay
 }
 
 func startLocalRelayPairWithSharedState(
@@ -423,10 +457,14 @@ type localInboxRequest struct {
 }
 
 type localInboxResponse struct {
-	Status   string                   `json:"status"`
-	Error    string                   `json:"error,omitempty"`
-	Messages []localRelayInboxMessage `json:"messages,omitempty"`
-	HasMore  bool                     `json:"hasMore,omitempty"`
+	Status      string                   `json:"status"`
+	Error       string                   `json:"error,omitempty"`
+	ErrorCode   string                   `json:"errorCode,omitempty"`
+	StoreStatus string                   `json:"storeStatus,omitempty"`
+	Occupancy   int                      `json:"occupancy,omitempty"`
+	Capacity    int                      `json:"capacity,omitempty"`
+	Messages    []localRelayInboxMessage `json:"messages,omitempty"`
+	HasMore     bool                     `json:"hasMore,omitempty"`
 }
 
 func (s *localRelayServer) handleInboxStream(stream network.Stream) {
@@ -455,12 +493,28 @@ func (s *localRelayServer) handleInboxStream(stream network.Stream) {
 		if from == "" {
 			from = remotePeer
 		}
-		s.state.storeInbox(req.To, localRelayInboxMessage{
+		outcome := s.state.storeInbox(req.To, localRelayInboxMessage{
 			From:      from,
 			Message:   req.Message,
 			Timestamp: time.Now().UnixMilli(),
 		})
-		_ = writeLocalRelayResponse(stream, localInboxResponse{Status: "OK"})
+		if !outcome.stored {
+			_ = writeLocalRelayResponse(stream, localInboxResponse{
+				Status:      "ERROR",
+				Error:       "INBOX_FULL",
+				ErrorCode:   "INBOX_FULL",
+				StoreStatus: "rejected_full",
+				Occupancy:   outcome.occupancy,
+				Capacity:    outcome.capacity,
+			})
+			return
+		}
+		_ = writeLocalRelayResponse(stream, localInboxResponse{
+			Status:      "OK",
+			StoreStatus: "stored",
+			Occupancy:   outcome.occupancy,
+			Capacity:    outcome.capacity,
+		})
 	case "retrieve":
 		limit := req.Limit
 		if limit <= 0 {

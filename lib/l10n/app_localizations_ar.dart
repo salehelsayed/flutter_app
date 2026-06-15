@@ -33,6 +33,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get onboarding_load_desc => 'استعد هويتك باستخدام عبارة الاسترداد';
 
   @override
+  String get onboarding_move_from_old_phone => 'النقل من الهاتف القديم';
+
+  @override
+  String get onboarding_move_desc => 'انقل حسابك الحالي إلى هذا الجهاز';
+
+  @override
   String get onboarding_privacy_1 => 'أنت وحدك من يمكنه قراءة رسائلك';
 
   @override
@@ -98,6 +104,17 @@ class AppLocalizationsAr extends AppLocalizations {
   String get qr_scan_subtitle => 'سيتم إضافته إلى دائرتك';
 
   @override
+  String get account_migration_scan_title => 'امسح رمز QR للنقل';
+
+  @override
+  String get account_migration_scan_instruction =>
+      'وجّه الكاميرا إلى رمز Move Account QR على هاتفك الجديد';
+
+  @override
+  String get account_migration_scan_subtitle =>
+      'لا يتم قبول إلا رموز Move Account QR هنا';
+
+  @override
   String get qr_my_code => 'رمز QR الخاص بي';
 
   @override
@@ -117,6 +134,20 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get qr_paste_button => 'لصق من الحافظة';
+
+  @override
+  String get account_migration_paste_title => 'لصق رمز QR للنقل';
+
+  @override
+  String get account_migration_paste_hint =>
+      'ألصق حمولة رمز Move Account QR المعروضة على هاتفك الجديد:';
+
+  @override
+  String get account_migration_paste_button => 'لصق رمز QR للنقل من الحافظة';
+
+  @override
+  String get account_migration_paste_payload_hint =>
+      'kind: account_migration_pairing, version: 1, sessionId: ...';
 
   @override
   String get posts_title => 'المنشورات';
@@ -379,6 +410,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get conversation_voice_fail => 'فشل إرسال الرسالة الصوتية.';
+
+  @override
+  String get conversation_voice_limit_reached =>
+      'وصل التسجيل إلى الحد الأقصى وهو 5 دقائق.';
 
   @override
   String conversation_block(String username) {
@@ -701,6 +736,16 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get settings_share_nearby_desc =>
       'يشارك موقعًا تقريبيًا فقط مع الأصدقاء المباشرين. لا خرائط مباشرة، ولا غرباء أبدًا.';
+
+  @override
+  String get settings_move_account_title => 'نقل الحساب إلى هاتف جديد';
+
+  @override
+  String get settings_move_account_desc =>
+      'امسح رمز QR للنقل المعروض على هاتفك الجديد لنقل هذا الحساب.';
+
+  @override
+  String get settings_move_account_action => 'بدء النقل';
 
   @override
   String get settings_recovery_title => 'عبارة الاسترداد';

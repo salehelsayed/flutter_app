@@ -46,17 +46,17 @@ func TestRelayMediaUploadDownload(t *testing.T) {
 
 	// Node B downloads.
 	downloadPath := filepath.Join(dir, "media_download.jpg")
-	mime, size, err := nodeB.MediaDownload(blobID, downloadPath)
+	download, err := nodeB.MediaDownload(blobID, downloadPath)
 	if err != nil {
 		t.Fatalf("MediaDownload: %v", err)
 	}
-	t.Logf("downloaded: mime=%s size=%d", mime, size)
+	t.Logf("downloaded: mime=%s size=%d", download.Mime, download.Size)
 
-	if mime != "image/jpeg" {
-		t.Errorf("mime=%s, want image/jpeg", mime)
+	if download.Mime != "image/jpeg" {
+		t.Errorf("mime=%s, want image/jpeg", download.Mime)
 	}
-	if size != int64(len(originalData)) {
-		t.Errorf("size=%d, want %d", size, len(originalData))
+	if download.Size != int64(len(originalData)) {
+		t.Errorf("size=%d, want %d", download.Size, len(originalData))
 	}
 
 	downloadedData, err := os.ReadFile(downloadPath)
@@ -67,13 +67,31 @@ func TestRelayMediaUploadDownload(t *testing.T) {
 		t.Error("downloaded data does not match uploaded data")
 	}
 
-	// Verify auto-deleted (second download should fail).
+	// Ack-based lifecycle (requires relay >= the C-1 deploy): the blob
+	// survives the first download, a redownload succeeds, and only the
+	// explicit delete removes it.
 	downloadPath2 := filepath.Join(dir, "media_download2.jpg")
-	_, _, err = nodeB.MediaDownload(blobID, downloadPath2)
-	if err == nil {
-		t.Error("expected error on second download (blob should be auto-deleted)")
+	if _, err := nodeB.MediaDownload(blobID, downloadPath2); err != nil {
+		t.Errorf("second download must succeed until explicitly deleted: %v", err)
 	} else {
-		t.Logf("second download correctly failed: %v", err)
+		redownloaded, readErr := os.ReadFile(downloadPath2)
+		if readErr != nil {
+			t.Fatalf("ReadFile redownload: %v", readErr)
+		}
+		if !bytes.Equal(originalData, redownloaded) {
+			t.Error("redownloaded data does not match uploaded data")
+		}
+	}
+
+	if err := nodeB.MediaDelete(blobID); err != nil {
+		t.Errorf("explicit delete after commit: %v", err)
+	}
+
+	downloadPath3 := filepath.Join(dir, "media_download3.jpg")
+	if _, err := nodeB.MediaDownload(blobID, downloadPath3); err == nil {
+		t.Error("expected error downloading after explicit delete")
+	} else {
+		t.Logf("download after explicit delete correctly failed: %v", err)
 	}
 
 	t.Log("1:1 media upload/download verified successfully")
@@ -123,16 +141,16 @@ func TestRelayGroupMediaUploadDownload(t *testing.T) {
 
 	// --- Member B downloads ---
 	downloadPathB := filepath.Join(dir, "download_b.enc")
-	mime, size, err := nodeB.MediaDownload(blobID, downloadPathB)
+	downloadB, err := nodeB.MediaDownload(blobID, downloadPathB)
 	if err != nil {
 		t.Fatalf("MediaDownload (member B): %v", err)
 	}
-	t.Logf("member B download: mime=%s size=%d", mime, size)
-	if mime != "image/jpeg" {
-		t.Errorf("member B mime=%s, want image/jpeg", mime)
+	t.Logf("member B download: mime=%s size=%d", downloadB.Mime, downloadB.Size)
+	if downloadB.Mime != "image/jpeg" {
+		t.Errorf("member B mime=%s, want image/jpeg", downloadB.Mime)
 	}
-	if size != int64(len(originalData)) {
-		t.Errorf("member B size=%d, want %d", size, len(originalData))
+	if downloadB.Size != int64(len(originalData)) {
+		t.Errorf("member B size=%d, want %d", downloadB.Size, len(originalData))
 	}
 
 	downloadedB, err := os.ReadFile(downloadPathB)
@@ -147,16 +165,16 @@ func TestRelayGroupMediaUploadDownload(t *testing.T) {
 	// --- Blob should NOT be auto-deleted (group mode) ---
 	// Member D downloads the same blob — should still exist after member B.
 	downloadPathD := filepath.Join(dir, "download_d.enc")
-	mime2, size2, err := nodeD.MediaDownload(blobID, downloadPathD)
+	downloadD, err := nodeD.MediaDownload(blobID, downloadPathD)
 	if err != nil {
 		t.Fatalf("MediaDownload (member D, second non-sender download): %v — blob was auto-deleted but shouldn't be in group mode", err)
 	}
-	t.Logf("member D download: mime=%s size=%d", mime2, size2)
-	if mime2 != "image/jpeg" {
-		t.Errorf("member D mime=%s, want image/jpeg", mime2)
+	t.Logf("member D download: mime=%s size=%d", downloadD.Mime, downloadD.Size)
+	if downloadD.Mime != "image/jpeg" {
+		t.Errorf("member D mime=%s, want image/jpeg", downloadD.Mime)
 	}
-	if size2 != int64(len(originalData)) {
-		t.Errorf("member D size=%d, want %d", size2, len(originalData))
+	if downloadD.Size != int64(len(originalData)) {
+		t.Errorf("member D size=%d, want %d", downloadD.Size, len(originalData))
 	}
 
 	downloadedD, err := os.ReadFile(downloadPathD)
@@ -170,7 +188,7 @@ func TestRelayGroupMediaUploadDownload(t *testing.T) {
 
 	// --- Outsider C should be rejected ---
 	downloadPathC := filepath.Join(dir, "download_c.enc")
-	_, _, err = nodeC.MediaDownload(blobID, downloadPathC)
+	_, err = nodeC.MediaDownload(blobID, downloadPathC)
 	if err == nil {
 		t.Error("outsider download should have been rejected (not in allowedPeers)")
 	} else {
@@ -214,16 +232,16 @@ func TestRelayGroupMediaVoiceNote(t *testing.T) {
 
 	// Download and verify
 	downloadPath := filepath.Join(dir, "voice_download.m4a")
-	mime, size, err := nodeB.MediaDownload(blobID, downloadPath)
+	download, err := nodeB.MediaDownload(blobID, downloadPath)
 	if err != nil {
 		t.Fatalf("MediaDownload (voice): %v", err)
 	}
 
-	if mime != "audio/mp4" {
-		t.Errorf("mime=%s, want audio/mp4", mime)
+	if download.Mime != "audio/mp4" {
+		t.Errorf("mime=%s, want audio/mp4", download.Mime)
 	}
-	if size != int64(len(audioData)) {
-		t.Errorf("size=%d, want %d", size, len(audioData))
+	if download.Size != int64(len(audioData)) {
+		t.Errorf("size=%d, want %d", download.Size, len(audioData))
 	}
 
 	downloaded, err := os.ReadFile(downloadPath)

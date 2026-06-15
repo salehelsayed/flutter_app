@@ -143,7 +143,7 @@ void main() {
     );
 
     test(
-      'online sweep runs rejoin, drain, group retries, shared 1:1 retries, then group inbox retry',
+      'online sweep verifies inbox custody after 1:1 unacked retry',
       () async {
         final callOrder = <String>[];
 
@@ -189,6 +189,10 @@ void main() {
             callOrder.add('retryUnackedMessages');
             return 0;
           },
+          verifyInboxCustodyFn: () async {
+            callOrder.add('verifyInboxCustody');
+            return 0;
+          },
           retryFailedGroupInboxStoresFn: () async {
             callOrder.add('retryFailedGroupInboxStores');
             return 0;
@@ -208,6 +212,7 @@ void main() {
           'retryIncompleteUploads',
           'retryFailedMessages',
           'retryUnackedMessages',
+          'verifyInboxCustody',
           'retryFailedGroupInboxStores',
         ]);
       },

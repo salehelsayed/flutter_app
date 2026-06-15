@@ -103,6 +103,16 @@ typedef SendVoiceMessageFn =
       String? messageId,
       String? timestamp,
       String? blobId,
+      EncryptedMediaArtifact? preparedArtifact,
+    });
+
+typedef DownloadMediaFn =
+    Future<MediaAttachment?> Function({
+      required Bridge bridge,
+      required MediaAttachmentRepository mediaAttachmentRepo,
+      required MediaFileManager mediaFileManager,
+      required MediaAttachment attachment,
+      required String contactPeerId,
     });
 
 typedef EditChatMessageFn =
@@ -201,6 +211,12 @@ class ConversationWired extends StatefulWidget {
   final DeleteContactFn? deleteContactFn;
   final UploadMediaFn uploadMediaFn;
   final SendVoiceMessageFn sendVoiceMessageFn;
+  final DownloadMediaFn downloadMediaFn;
+
+  /// Injectable seam for the encrypt-once LAN artifact (112 Phase 4): the
+  /// real implementation does file I/O that cannot complete inside the
+  /// testWidgets fake-async zone, so LAN-path widget tests stub this.
+  final PrepareEncryptedMediaArtifactFn prepareEncryptedMediaArtifactFn;
   final DateTime? notificationTappedAt;
   final AppShellController? appShellController;
   final TransportMetrics? transportMetrics;
@@ -237,6 +253,8 @@ class ConversationWired extends StatefulWidget {
     this.deleteContactFn,
     this.uploadMediaFn = uploadMedia,
     this.sendVoiceMessageFn = sendVoiceMessage,
+    this.downloadMediaFn = downloadMedia,
+    this.prepareEncryptedMediaArtifactFn = prepareEncryptedMediaArtifact,
     this.notificationTappedAt,
     this.appShellController,
     this.transportMetrics,
@@ -274,6 +292,12 @@ class _ConversationWiredState extends State<ConversationWired> {
   List<double> _waveformSamples = [];
   bool _pendingRecorderAbort = false;
 
+  // 117 Session 3: a recording captured by the 5-minute auto-stop is held
+  // here (with its waveform) while the composer is in the `reviewing` state,
+  // so the user can send or discard it instead of it being silently dropped.
+  AudioRecording? _pendingReviewRecording;
+  List<double> _pendingReviewWaveform = const [];
+
   // Reaction state
   Map<String, List<MessageReaction>> _reactions = {};
   StreamSubscription<ReactionChange>? _reactionSubscription;
@@ -290,6 +314,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   String? _restoredFailedDraftText;
   String? _restoredFailedQuotedMessageId;
   bool _isTrackingRelayUpload = false;
+  final Set<String> _unavailableMediaRetriesInFlight = <String>{};
   int _trackedUploadTotalBytes = 0;
   int _trackedUploadCompletedBytes = 0;
   int _trackedCurrentUploadBytes = 0;
@@ -672,6 +697,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (activeUpload == null || !activeUpload.cancelRequested) {
       return false;
     }
+    final snackText = AppLocalizations.of(context)!.upload_cancelled;
     await _markUploadPendingAttachmentsCancelledForMessage(
       activeUpload.messageId,
     );
@@ -681,7 +707,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       activeUpload.composerSnapshot,
       optimisticMessageId: activeUpload.messageId,
       messenger: messenger,
-      snackText: AppLocalizations.of(context)!.upload_cancelled,
+      snackText: snackText,
     );
     return true;
   }
@@ -1066,7 +1092,9 @@ class _ConversationWiredState extends State<ConversationWired> {
       );
       if (mounted) {
         setState(() {
-          _messages = messages;
+          for (final message in messages) {
+            _upsertMessageById(_mergeLoadedMessageWithCurrentState(message));
+          }
           _hasMoreOlderMessages = messages.length >= _pageSize;
         });
         emitFlowEvent(
@@ -1163,7 +1191,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         if (_shouldRecoverVisibleAttachment(resolved)) {
           MediaAttachment? downloaded;
           try {
-            downloaded = await downloadMedia(
+            downloaded = await widget.downloadMediaFn(
               bridge: bridge,
               mediaAttachmentRepo: mediaAttachmentRepo,
               mediaFileManager: mediaFileManager,
@@ -1226,6 +1254,25 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
     final exists = await File(absolutePath).exists();
     if (!exists && attachment.downloadStatus == 'done') {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MEDIA_DURABILITY_DONE_PATH_MISSING',
+        details: {
+          'attachmentId': attachment.id,
+          'messageId': attachment.messageId,
+          'mime': attachment.mime,
+          'mediaType': attachment.mediaType,
+          'storedPath': attachment.localPath,
+          'resolvedPath': absolutePath,
+          'nextStatus': 'pending',
+        },
+      );
+      try {
+        await widget.mediaAttachmentRepo?.updateDownloadStatus(
+          attachment.id,
+          'pending',
+        );
+      } catch (_) {}
       return attachment.copyWith(
         localPath: absolutePath,
         downloadStatus: 'pending',
@@ -1317,18 +1364,81 @@ class _ConversationWiredState extends State<ConversationWired> {
   }
 
   bool _shouldRefreshFromRepositoryChange(String status) =>
-      status == 'sent' || status == 'delivered' || status == 'failed';
+      status == 'sent' ||
+      status == 'delivered' ||
+      status == 'failed' ||
+      status == 'inboxed';
 
   void _onIncomingMessage(ConversationMessage message) {
     if (!mounted) return;
+    var shouldScrollToMessage = false;
     setState(() {
       _upsertMessageById(message);
+      shouldScrollToMessage =
+          _messages.isNotEmpty && _messages.last.id == message.id;
     });
-    _scrollToBottom();
+    if (shouldScrollToMessage) {
+      _scrollToBottom();
+    }
     _markAsRead();
     // Auto-dismiss intro banner when message count reaches threshold
     if (_showIntroBanner && _messages.length >= 3) {
       _onMaybeLater();
+    }
+  }
+
+  Future<void> _onRetryUnavailableMedia(
+    String messageId,
+    String attachmentId,
+  ) async {
+    final bridge = widget.bridge;
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (bridge == null ||
+        mediaAttachmentRepo == null ||
+        mediaFileManager == null ||
+        !_unavailableMediaRetriesInFlight.add(attachmentId)) {
+      return;
+    }
+
+    try {
+      final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+        messageId,
+      );
+      final attachment = attachments
+          .where((candidate) => candidate.id == attachmentId)
+          .firstOrNull;
+      if (attachment == null) {
+        return;
+      }
+
+      final resolved = await _resolveAttachmentForDisplay(attachment);
+      final downloaded = await widget.downloadMediaFn(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        attachment: resolved,
+        contactPeerId: _contact.peerId,
+      );
+      final refreshedAttachment =
+          downloaded ?? resolved.copyWith(downloadStatus: 'failed');
+      await _refreshMessageWithMediaSnapshot(
+        messageId,
+        _replaceAttachmentById(attachments, refreshedAttachment),
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_UNAVAILABLE_MEDIA_RETRY_ERROR',
+        details: {
+          'messageId': messageId,
+          'attachmentId': attachmentId,
+          'error': e.toString(),
+        },
+      );
+      await _refreshMessageWithHydratedMedia(messageId);
+    } finally {
+      _unavailableMediaRetriesInFlight.remove(attachmentId);
     }
   }
 
@@ -1455,7 +1565,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (ownPeerId == null) return false;
     if (message.isIncoming || message.isDeleted) return false;
     if (message.senderPeerId != ownPeerId) return false;
-    return message.status == 'delivered';
+    // 'inboxed' rows already have a durable relay copy the receiver will
+    // drain — delete-for-everyone must stay available for them (doc 115).
+    return message.status == 'delivered' || message.status == 'inboxed';
   }
 
   Future<_DeleteMessageAction?> _showDeleteMessageSheet({
@@ -1630,7 +1742,7 @@ class _ConversationWiredState extends State<ConversationWired> {
             id: _uuid.v4(),
             messageId: '',
             mime: mime,
-            size: 0,
+            size: m.budgetBytes,
             mediaType: MediaAttachment.mediaTypeFromMime(mime),
             width: m.width,
             height: m.height,
@@ -1765,107 +1877,97 @@ class _ConversationWiredState extends State<ConversationWired> {
                   preparedUpload?.source.budgetBytes ??
                   File(sourcePath).lengthSync();
 
-              // Try local WiFi first.
-              bool localSuccess = false;
-              if (widget.p2pService.isLocalPeer(_contact.peerId)) {
-                localSuccess = await widget.p2pService.sendLocalMedia(
-                  peerId: _contact.peerId,
-                  filePath: sourcePath,
-                  mime: mime,
-                  mediaId: mediaId,
-                  fromPeerId: identity.peerId,
-                  durationMs: media.durationMs,
-                );
+              // Try local WiFi first, then keep relay upload as the durable
+              // recovery copy because local ACK does not prove DB persistence.
+              // 112 Phase 4: encrypt once — the LAN leg streams the SAME
+              // ciphertext artifact the relay upload below consumes, with an
+              // opaque transport mime (the real mime rides the envelope).
+              EncryptedMediaArtifact? preparedArtifact;
+              if (widget.p2pService.isLocalPeer(_contact.peerId) &&
+                  widget.bridge != null) {
+                try {
+                  preparedArtifact = await widget.prepareEncryptedMediaArtifactFn(
+                    bridge: widget.bridge!,
+                    localFilePath: sourcePath,
+                  );
+                  await widget.p2pService.sendLocalMedia(
+                    peerId: _contact.peerId,
+                    filePath: preparedArtifact.encryptedPath,
+                    mime: kOpaqueMediaTransportMime,
+                    mediaId: mediaId,
+                    fromPeerId: identity.peerId,
+                    durationMs: media.durationMs,
+                    enc: true,
+                    encScheme: preparedArtifact.scheme,
+                  );
+                } catch (_) {
+                  // Fail closed on the LAN leg — never fall back to raw
+                  // bytes; the relay upload below mints its own artifact.
+                  preparedArtifact = null;
+                }
               }
 
-              if (localSuccess) {
+              if (!relayTrackingStarted) {
+                final remainingBytes = mediaToUpload
+                    .skip(index)
+                    .fold<int>(0, (sum, item) => sum + item.budgetBytes);
+                await _startRelayUploadTracking(remainingBytes);
+                relayTrackingStarted = true;
+              }
+              _markRelayUploadStarted(mediaId);
+              final result = await widget.uploadMediaFn(
+                bridge: widget.bridge!,
+                localFilePath: sourcePath,
+                mime: mime,
+                recipientPeerId: _contact.peerId,
+                mediaFileManager: widget.mediaFileManager,
+                blobId: mediaId,
+                width: preparedUpload?.source.width ?? media.width,
+                height: preparedUpload?.source.height ?? media.height,
+                durationMs:
+                    preparedUpload?.source.durationMs ?? media.durationMs,
+                // Picker/camera temps are plaintext residue once the durable
+                // copy is the render source; uploadMedia skips the unlink
+                // when sourcePath IS the durable copy (prepared uploads).
+                // Safe: the LAN send above is awaited before this call.
+                deleteSourceWhenDone: true,
+                preparedArtifact: preparedArtifact,
+              );
+
+              if (await _cancelActiveAttachmentUploadIfRequested(
+                messenger: messenger,
+              )) {
+                return;
+              }
+
+              if (result == null) {
                 if (relayTrackingStarted) {
-                  _markRelayUploadCompleted(fileSize);
+                  await _stopRelayUploadTracking();
                 }
-                final localAttachment = preparedUpload != null
-                    ? await _buildLocalSuccessAttachmentFromPlan(
-                        messageId: optimisticMessage.id,
-                        plan: preparedUpload,
-                      )
-                    : MediaAttachment(
-                        id: mediaId,
-                        messageId: optimisticMessage.id,
-                        mime: mime,
-                        size: fileSize,
-                        mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                        localPath: media.file.path,
-                        downloadStatus: 'done',
-                        createdAt: DateTime.now().toUtc().toIso8601String(),
-                        width: media.width,
-                        height: media.height,
-                        durationMs: media.durationMs,
-                      );
-                if (widget.mediaAttachmentRepo != null) {
-                  await widget.mediaAttachmentRepo!.saveAttachment(
-                    localAttachment,
-                  );
-                }
-                uploadedAttachments.add(localAttachment);
-              } else {
-                if (!relayTrackingStarted) {
-                  final remainingBytes = mediaToUpload
-                      .skip(index)
-                      .fold<int>(0, (sum, item) => sum + item.budgetBytes);
-                  await _startRelayUploadTracking(remainingBytes);
-                  relayTrackingStarted = true;
-                }
-                _markRelayUploadStarted(mediaId);
-                final result = await widget.uploadMediaFn(
-                  bridge: widget.bridge!,
-                  localFilePath: sourcePath,
-                  mime: mime,
-                  recipientPeerId: _contact.peerId,
-                  mediaFileManager: widget.mediaFileManager,
-                  blobId: mediaId,
-                  width: preparedUpload?.source.width ?? media.width,
-                  height: preparedUpload?.source.height ?? media.height,
-                  durationMs:
-                      preparedUpload?.source.durationMs ?? media.durationMs,
-                );
-
-                if (await _cancelActiveAttachmentUploadIfRequested(
+                await _restoreComposerSnapshot(
+                  composerSnapshot,
+                  optimisticMessageId: optimisticMessage.id,
                   messenger: messenger,
-                )) {
-                  return;
-                }
-
-                if (result == null) {
-                  if (relayTrackingStarted) {
-                    await _stopRelayUploadTracking();
-                  }
-                  await _restoreComposerSnapshot(
-                    composerSnapshot,
-                    optimisticMessageId: optimisticMessage.id,
-                    messenger: messenger,
-                    snackText: 'Failed to upload media. Try again.',
-                  );
-                  return;
-                }
-                _markRelayUploadCompleted(fileSize);
-                if (preparedUpload != null &&
-                    widget.mediaAttachmentRepo != null) {
-                  final stableResult =
-                      await _finalizeUploadedAttachmentFromPlan(
-                        messageId: optimisticMessage.id,
-                        plan: preparedUpload,
-                        uploaded: result.copyWith(
-                          id: mediaId,
-                          messageId: optimisticMessage.id,
-                          downloadStatus: 'done',
-                        ),
-                      );
-                  await widget.mediaAttachmentRepo!.saveAttachment(
-                    stableResult,
-                  );
-                  uploadedAttachments.add(stableResult);
-                } else {
-                  uploadedAttachments.add(result);
-                }
+                  snackText: 'Failed to upload media. Try again.',
+                );
+                return;
+              }
+              _markRelayUploadCompleted(fileSize);
+              if (preparedUpload != null &&
+                  widget.mediaAttachmentRepo != null) {
+                final stableResult = await _finalizeUploadedAttachmentFromPlan(
+                  messageId: optimisticMessage.id,
+                  plan: preparedUpload,
+                  uploaded: result.copyWith(
+                    id: mediaId,
+                    messageId: optimisticMessage.id,
+                    downloadStatus: 'done',
+                  ),
+                );
+                await widget.mediaAttachmentRepo!.saveAttachment(stableResult);
+                uploadedAttachments.add(stableResult);
+              } else {
+                uploadedAttachments.add(result);
               }
 
               if (await _cancelActiveAttachmentUploadIfRequested(
@@ -2486,6 +2588,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       return;
     }
 
+    recorder.onAutoStopped = _onRecorderAutoStopped;
     _durationSub = recorder.durationStream.listen((d) {
       if (mounted) {
         _updateComposerState(recordingDuration: d);
@@ -2525,6 +2628,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       return;
     }
 
+    recorder.onAutoStopped = null;
     _updateComposerState(recordingState: VoiceRecordingState.stopping);
     final durationSub = _durationSub;
     _durationSub = null;
@@ -2567,6 +2671,17 @@ class _ConversationWiredState extends State<ConversationWired> {
       details: {'durationMs': recording.durationMs},
     );
 
+    await _sendVoiceRecording(recording, waveform);
+  }
+
+  /// Sends a captured voice [recording] (with its [waveform]) through the
+  /// optimistic → LAN → relay pipeline. Shared by the manual stop
+  /// ([_onRecordStop]) and the 5-minute auto-stop review-send
+  /// ([_onReviewSend]) so a reviewed recording follows the exact same path.
+  Future<void> _sendVoiceRecording(
+    AudioRecording recording,
+    List<double> waveform,
+  ) async {
     // Send the voice message
     final identity = _identity;
     if (identity == null) return;
@@ -2640,69 +2755,32 @@ class _ConversationWiredState extends State<ConversationWired> {
         : null;
 
     try {
-      // Try local WiFi first for voice messages.
-      if (widget.p2pService.isLocalPeer(_contact.peerId)) {
-        final localSuccess = await widget.p2pService.sendLocalMedia(
-          peerId: _contact.peerId,
-          filePath: recording.filePath,
-          mime: recording.mime,
-          mediaId: voiceAttachmentId,
-          fromPeerId: identity.peerId,
-          durationMs: recording.durationMs,
-          waveform: waveform,
-        );
-
-        if (localSuccess) {
-          // Voice transferred locally — send text-only message via local WS.
-          final voiceAttachment = MediaAttachment(
-            id: voiceAttachmentId,
-            messageId: optimisticMessage.id,
-            mime: recording.mime,
-            size: recording.sizeBytes,
-            mediaType: 'audio',
+      // Try local WiFi first for voice messages, then keep the relay upload
+      // fallback as the durable recovery copy.
+      // 112 Phase 4: encrypt once — the LAN leg streams the ciphertext
+      // artifact (opaque mime, no waveform in the cleartext offer; both
+      // ride the encrypted envelope) and the relay upload reuses it.
+      EncryptedMediaArtifact? voiceArtifact;
+      if (widget.p2pService.isLocalPeer(_contact.peerId) &&
+          widget.bridge != null) {
+        try {
+          voiceArtifact = await widget.prepareEncryptedMediaArtifactFn(
+            bridge: widget.bridge!,
+            localFilePath: recording.filePath,
+          );
+          await widget.p2pService.sendLocalMedia(
+            peerId: _contact.peerId,
+            filePath: voiceArtifact.encryptedPath,
+            mime: kOpaqueMediaTransportMime,
+            mediaId: voiceAttachmentId,
+            fromPeerId: identity.peerId,
             durationMs: recording.durationMs,
-            localPath: recording.filePath,
-            downloadStatus: 'done',
-            createdAt: optimisticMessage.timestamp,
-            waveform: waveform,
+            enc: true,
+            encScheme: voiceArtifact.scheme,
           );
-
-          final (result, voiceMessage) = await widget.sendChatMessageFn(
-            p2pService: widget.p2pService,
-            messageRepo: widget.messageRepo,
-            targetPeerId: _contact.peerId,
-            text: '',
-            senderPeerId: identity.peerId,
-            senderUsername: identity.username,
-            messageId: optimisticMessage.id,
-            timestamp: optimisticMessage.timestamp,
-            bridge: widget.bridge,
-            recipientMlKemPublicKey: _contact.mlKemPublicKey,
-            quotedMessageId: quotedMessageId,
-            mediaAttachments: [voiceAttachment],
-            mediaAttachmentRepo: widget.mediaAttachmentRepo,
-            transportMetrics: widget.transportMetrics,
-          );
-
-          if (mounted) {
-            _updateComposerState(isUploading: false);
-          }
-
-          if (result == SendChatMessageResult.success && voiceMessage != null) {
-            final messageWithMedia = voiceMessage.copyWith(
-              media: optimisticMessage.media,
-            );
-            if (mounted) {
-              setState(() => _upsertMessageById(messageWithMedia));
-            }
-          } else {
-            _updateLocalMessageStatus(optimisticMessage.id, 'failed');
-            await _persistMessageStatus(optimisticMessage.id, 'failed');
-            if (quotedMessageId != null && mounted) {
-              setState(() => _activeQuoteMessageId = quotedMessageId);
-            }
-          }
-          return;
+        } catch (_) {
+          // Fail closed on the LAN leg — never stream the raw recording.
+          voiceArtifact = null;
         }
       }
 
@@ -2751,6 +2829,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         timestamp: optimisticMessage.timestamp,
         quotedMessageId: quotedMessageId,
         blobId: voiceAttachmentId,
+        preparedArtifact: voiceArtifact,
       );
       if (result != SendVoiceMessageResult.uploadFailed) {
         _markRelayUploadCompleted(recording.sizeBytes);
@@ -2762,10 +2841,14 @@ class _ConversationWiredState extends State<ConversationWired> {
       }
 
       if (result == SendVoiceMessageResult.success && voiceMessage != null) {
-        // Replace optimistic with real message, preserving local media for playback.
+        // Replace optimistic with real message, preserving relay-backed media
+        // when the send use case returns it and falling back to local playback
+        // metadata for older/fake send paths.
         // DB already has correct data from sendChatMessage's saveMessage call.
         final messageWithMedia = voiceMessage.copyWith(
-          media: optimisticMessage.media,
+          media: voiceMessage.media.isNotEmpty
+              ? voiceMessage.media
+              : optimisticMessage.media,
         );
         if (mounted) {
           setState(() {
@@ -2817,6 +2900,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       return;
     }
 
+    recorder.onAutoStopped = null;
     _updateComposerState(recordingState: VoiceRecordingState.stopping);
     final durationSub = _durationSub;
     _durationSub = null;
@@ -2843,6 +2927,110 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
 
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_RECORD_CANCELLED', details: {});
+  }
+
+  void _onRecorderAutoStopped(AudioRecording? recording) {
+    // 117 Session 3: the recorder stopped itself at the max recording
+    // duration without any user gesture. A VALID captured recording must NOT
+    // be silently discarded — hold it in a `reviewing` composer state so the
+    // user can send or discard it, and surface a SnackBar. Auto-send is
+    // deliberately avoided (no surprise send). A sub-500ms clip (null) was
+    // already cleaned up by the recorder and is dropped like a too-short stop.
+    widget.audioRecorderService?.onAutoStopped = null;
+    _durationSub?.cancel();
+    _durationSub = null;
+    _amplitudeSub?.cancel();
+    _amplitudeSub = null;
+    final waveform = downsampleWaveform(_waveformSamples, 50);
+    _amplitudeBuffer.reset();
+    _waveformSamples = [];
+
+    if (recording == null) {
+      if (mounted) {
+        _pendingRecorderAbort = false;
+        _updateComposerState(
+          recordingState: VoiceRecordingState.idle,
+          recordingDuration: Duration.zero,
+          amplitudeValues: const [],
+        );
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_RECORD_AUTO_STOPPED',
+        details: {'tooShort': true, 'kept': false},
+      );
+      return;
+    }
+
+    _pendingReviewRecording = recording;
+    _pendingReviewWaveform = waveform;
+    if (mounted) {
+      _pendingRecorderAbort = false;
+      _updateComposerState(
+        recordingState: VoiceRecordingState.reviewing,
+        recordingDuration: Duration(milliseconds: recording.durationMs),
+        amplitudeValues: const [],
+      );
+      _showFloatingSnackBar(
+        AppLocalizations.of(context)!.conversation_voice_limit_reached,
+      );
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_RECORD_AUTO_STOPPED',
+      details: {
+        'tooShort': false,
+        'kept': true,
+        'durationMs': recording.durationMs,
+      },
+    );
+  }
+
+  /// User chose to send the auto-stopped recording held for review.
+  Future<void> _onReviewSend() async {
+    final recording = _pendingReviewRecording;
+    if (recording == null) return;
+    final waveform = _pendingReviewWaveform;
+    _pendingReviewRecording = null;
+    _pendingReviewWaveform = const [];
+    if (mounted) {
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_RECORD_REVIEW_SENT',
+      details: {'durationMs': recording.durationMs},
+    );
+    await _sendVoiceRecording(recording, waveform);
+  }
+
+  /// User chose to discard the auto-stopped recording held for review.
+  Future<void> _onReviewDiscard() async {
+    final recording = _pendingReviewRecording;
+    _pendingReviewRecording = null;
+    _pendingReviewWaveform = const [];
+    if (recording != null) {
+      try {
+        final file = File(recording.filePath);
+        if (file.existsSync()) file.deleteSync();
+      } catch (_) {}
+    }
+    if (mounted) {
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_RECORD_REVIEW_DISCARDED',
+      details: {'durationMs': recording?.durationMs},
+    );
   }
 
   void _startListeningForReactions() {
@@ -3070,12 +3258,98 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
     final index = _messages.indexWhere((m) => m.id == message.id);
     if (index == -1) {
-      _messages = [..._messages, message];
+      _messages = _sortMessagesForDisplay([..._messages, message]);
       return;
     }
     final updated = [..._messages];
     updated[index] = message;
-    _messages = updated;
+    _messages = _sortMessagesForDisplay(updated);
+  }
+
+  ConversationMessage _mergeLoadedMessageWithCurrentState(
+    ConversationMessage loaded,
+  ) {
+    final current = _messages
+        .where((message) => message.id == loaded.id)
+        .firstOrNull;
+    if (current == null) {
+      return loaded;
+    }
+    return loaded.copyWith(
+      media: _mergeLoadedMediaWithCurrentState(
+        loaded: loaded.media,
+        current: current.media,
+      ),
+    );
+  }
+
+  List<MediaAttachment> _mergeLoadedMediaWithCurrentState({
+    required List<MediaAttachment> loaded,
+    required List<MediaAttachment> current,
+  }) {
+    if (loaded.isEmpty && current.isNotEmpty) {
+      return current;
+    }
+    if (loaded.isEmpty || current.isEmpty) {
+      return loaded;
+    }
+
+    final currentById = {
+      for (final attachment in current) attachment.id: attachment,
+    };
+    return loaded
+        .map((loadedAttachment) {
+          final currentAttachment = currentById[loadedAttachment.id];
+          if (currentAttachment == null) {
+            return loadedAttachment;
+          }
+          if (_isResolvedAttachment(currentAttachment) &&
+              !_isResolvedAttachment(loadedAttachment)) {
+            return currentAttachment;
+          }
+          return loadedAttachment;
+        })
+        .toList(growable: false);
+  }
+
+  bool _isResolvedAttachment(MediaAttachment attachment) {
+    return attachment.downloadStatus == 'done' &&
+        attachment.localPath != null &&
+        attachment.localPath!.isNotEmpty;
+  }
+
+  List<MediaAttachment> _replaceAttachmentById(
+    List<MediaAttachment> attachments,
+    MediaAttachment replacement,
+  ) {
+    var replaced = false;
+    final next = attachments
+        .map((attachment) {
+          if (attachment.id != replacement.id) {
+            return attachment;
+          }
+          replaced = true;
+          return replacement;
+        })
+        .toList(growable: true);
+    if (!replaced) {
+      next.add(replacement);
+    }
+    return next;
+  }
+
+  List<ConversationMessage> _sortMessagesForDisplay(
+    List<ConversationMessage> messages,
+  ) {
+    final sorted = [...messages];
+    sorted.sort((a, b) {
+      final timestampCompare = a.timestamp.compareTo(b.timestamp);
+      if (timestampCompare != 0) return timestampCompare;
+      final createdAtCompare = a.createdAt.compareTo(b.createdAt);
+      if (createdAtCompare != 0) return createdAtCompare;
+      return a.id.compareTo(b.id);
+    });
+    return sorted;
   }
 
   void _updateLocalMessageStatus(String id, String status) {
@@ -3162,6 +3436,22 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (!mounted) return;
     setState(() {
       _upsertMessageById(refreshedMessage.copyWith(media: hydratedMedia));
+    });
+  }
+
+  Future<void> _refreshMessageWithMediaSnapshot(
+    String messageId,
+    List<MediaAttachment> media,
+  ) async {
+    final refreshedMessage = await widget.messageRepo.getMessage(messageId);
+    if (!mounted) return;
+    final currentMessage = _messages
+        .where((message) => message.id == messageId)
+        .firstOrNull;
+    final baseMessage = refreshedMessage ?? currentMessage;
+    if (baseMessage == null) return;
+    setState(() {
+      _upsertMessageById(baseMessage.copyWith(media: media));
     });
   }
 
@@ -3431,7 +3721,24 @@ class _ConversationWiredState extends State<ConversationWired> {
     _amplitudeSub?.cancel();
     // Cancel active recording on dispose
     if (_isRecording) {
-      widget.audioRecorderService?.cancel();
+      final recorder = widget.audioRecorderService;
+      // Only cancel a session this surface still owns — our recording state
+      // can be stale after another surface displaced the shared recorder.
+      if (recorder != null &&
+          recorder.onAutoStopped == _onRecorderAutoStopped) {
+        recorder.onAutoStopped = null;
+        recorder.cancel();
+      }
+    }
+    // 117 Session 3: a never-acted-on auto-stop review recording is the user's
+    // to keep only while the screen is open; clean up its temp on teardown.
+    final reviewRecording = _pendingReviewRecording;
+    _pendingReviewRecording = null;
+    if (reviewRecording != null) {
+      try {
+        final file = File(reviewRecording.filePath);
+        if (file.existsSync()) file.deleteSync();
+      } catch (_) {}
     }
     _composerState.dispose();
     _scrollController.dispose();
@@ -3484,6 +3791,12 @@ class _ConversationWiredState extends State<ConversationWired> {
           onRecordCancel: widget.audioRecorderService != null
               ? _onRecordCancel
               : null,
+          onReviewSend: widget.audioRecorderService != null
+              ? _onReviewSend
+              : null,
+          onReviewDiscard: widget.audioRecorderService != null
+              ? _onReviewDiscard
+              : null,
           composerStateListenable: _composerState,
           initialText: _draftText,
           onDraftChanged: _onDraftChanged,
@@ -3494,6 +3807,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           onRetryFailedMessage: _onRetryFailedMessage,
           onRetryFailedMedia: _onRetryFailedMedia,
           onDeleteFailedMedia: _onDeleteFailedMedia,
+          onRetryUnavailableMedia: _onRetryUnavailableMedia,
           showIntroBanner: _showIntroBanner,
           bannerContactUsername: _contact.username,
           uploadProgress: _uploadProgressViewState,

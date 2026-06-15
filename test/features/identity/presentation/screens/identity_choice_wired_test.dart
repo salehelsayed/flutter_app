@@ -214,7 +214,7 @@ void main() {
       await tester.pump();
 
       expect(findChoiceCardOpacity(tester, "I'm new here").opacity, 0.5);
-      expect(findChoiceCardOpacity(tester, 'Load my key').opacity, 0.5);
+      expect(findChoiceCardOpacity(tester, 'Move from old phone').opacity, 0.5);
     });
 
     testWidgets('progress route advances from generating_keys to saving', (
@@ -386,6 +386,52 @@ void main() {
         await tester.pump(const Duration(milliseconds: 200));
 
         expect(find.byType(IdentityProgressScreen), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'move from old phone navigates without identity generation or restore',
+      (tester) async {
+        final repo = _FakeIdentityRepo();
+        var generateCalls = 0;
+        var restoreCalls = 0;
+        var mlKemCalls = 0;
+
+        await tester.pumpWidget(
+          wrap(
+            IdentityChoiceWired(
+              repository: repo,
+              callIdentityGenerate: () async {
+                generateCalls += 1;
+                return {'ok': true, 'identity': _fakeIdentityJson};
+              },
+              callIdentityRestore: (_) async {
+                restoreCalls += 1;
+                return {'ok': true};
+              },
+              callMlKemKeygen: () async {
+                mlKemCalls += 1;
+                return _fakeMlKemResponse;
+              },
+              onNavigateToMain: (_) async {},
+              moveFromOldPhoneBuilder: (_) => const Scaffold(
+                body: Center(child: Text('Migration new phone flow')),
+              ),
+            ),
+          ),
+        );
+        await pumpPastAnimations(tester);
+
+        await tester.tap(find.text('Move from old phone'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(find.text('Migration new phone flow'), findsOneWidget);
+        expect(find.byType(IdentityProgressScreen), findsNothing);
+        expect(generateCalls, 0);
+        expect(restoreCalls, 0);
+        expect(mlKemCalls, 0);
+        expect(repo.savedIdentity, isNull);
       },
     );
   });

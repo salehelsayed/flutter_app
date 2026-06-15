@@ -1,19 +1,23 @@
 import 'dart:math';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
-/// Retries sending contact requests to all contacts missing their ML-KEM key.
+/// Retries sending contact requests to all contacts missing their ML-KEM key,
+/// plus any contacts in the post-restore re-announce marker (P0-B).
 ///
 /// The contacts table serves as an implicit outbox: a contact with
-/// `mlKemPublicKey == null` means the key exchange never completed.
-/// This function loads active non-blocked contacts, filters for those
-/// missing the key, and sequentially re-sends contact requests with
-/// jitter to avoid startup bursts.
+/// `mlKemPublicKey == null` means the key exchange never completed. The
+/// re-announce marker covers the inverse case — OUR key changed and contacts
+/// who already hold the old one must receive the new one. Marker entries are
+/// removed only after their send succeeds, so a partial failure keeps the
+/// remainder for the next trigger.
 ///
 /// Returns the count of successfully sent requests.
 Future<int> retryIncompleteKeyExchanges({
@@ -21,6 +25,7 @@ Future<int> retryIncompleteKeyExchanges({
   required IdentityRepository identityRepo,
   required P2PService p2pService,
   required Bridge bridge,
+  SecureKeyStore? secureKeyStore,
 }) async {
   // 1. Guard: own ML-KEM key must exist (resend would be pointless without it)
   final identity = await identityRepo.loadIdentity();
@@ -43,10 +48,18 @@ Future<int> retryIncompleteKeyExchanges({
     return 0;
   }
 
-  // 3. Get eligible contacts (active, not blocked, missing ML-KEM key)
+  // 3. Get eligible contacts: missing ML-KEM key, OR pending re-announcement
   final contacts = await contactRepo.getActiveContacts();
+  final markerStore = secureKeyStore;
+  var reannouncePending = markerStore != null
+      ? await readMlKemReannounceMarker(markerStore)
+      : const <String>[];
   final eligible = contacts
-      .where((c) => c.mlKemPublicKey == null && !c.isBlocked)
+      .where(
+        (c) =>
+            !c.isBlocked &&
+            (c.mlKemPublicKey == null || reannouncePending.contains(c.peerId)),
+      )
       .toList();
 
   if (eligible.isEmpty) return 0;
@@ -72,7 +85,27 @@ Future<int> retryIncompleteKeyExchanges({
         intent: ContactRequestSendIntent.keyExchangeRetry,
       );
 
-      if (result == SendContactRequestResult.success) sent++;
+      if (result == SendContactRequestResult.success) {
+        sent++;
+        // Drain the marker entry only on success — partial failure keeps
+        // the remainder for the next retry trigger.
+        if (markerStore != null && reannouncePending.contains(contact.peerId)) {
+          reannouncePending = reannouncePending
+              .where((peerId) => peerId != contact.peerId)
+              .toList();
+          await writeMlKemReannounceMarker(markerStore, reannouncePending);
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'KEY_REANNOUNCE_SENT',
+            details: {
+              'peerId': contact.peerId.length > 10
+                  ? contact.peerId.substring(0, 10)
+                  : contact.peerId,
+              'remaining': reannouncePending.length,
+            },
+          );
+        }
+      }
 
       final prefix = contact.peerId.length > 10
           ? contact.peerId.substring(0, 10)

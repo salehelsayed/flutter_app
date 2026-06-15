@@ -6,6 +6,13 @@ class ChatMessage {
   final String timestamp;
   final bool isIncoming;
   final String? transport;
+
+  /// WIRE CONTRACT (Go->Dart, doc 118 / plan 120 G5): set by Go on an incoming
+  /// direct `message:received` event (go-mknoon/node/node.go, attach site) when
+  /// `EnableDeferredDirectAck` is true (default). Drives the deferred-ack->notify
+  /// path; if Go renames/drops the key or flips the default this goes null and
+  /// live-direct notifications silently break. Go producer side is guarded by
+  /// transport_label_test.go TestHandleIncomingMessage_DirectAckContract_AttachesConfirmNonce.
   final String? confirmNonce;
 
   const ChatMessage({
@@ -39,6 +46,9 @@ class ChatMessage {
       timestamp: timestamp,
       isIncoming: json['isIncoming'] as bool? ?? true,
       transport: json['transport']?.toString(),
+      // Reads the shared `confirmNonce` wire key produced by Go (see the field
+      // doc above + go-mknoon/node/node.go). Must stay byte-identical to Go's
+      // msgData["confirmNonce"]; the existing parser pin is in chat_message_test.dart.
       confirmNonce: json['confirmNonce']?.toString(),
     );
   }
