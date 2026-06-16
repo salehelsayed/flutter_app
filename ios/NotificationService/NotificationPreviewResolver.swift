@@ -15,6 +15,12 @@ enum PushSharedKeyNames {
   static func groupKey(groupId: String, keyEpoch: Int) -> String {
     "group_key:\(groupId):\(keyEpoch)"
   }
+
+  // 04-P0 SI-1 NSE: the app mirrors a "group_muted:<groupId>" sentinel ("1")
+  // into the shared Keychain so the out-of-process NSE can honor mute.
+  static func groupMuted(groupId: String) -> String {
+    "group_muted:\(groupId)"
+  }
 }
 
 protocol PushKeyReading {
@@ -67,6 +73,9 @@ struct NotificationPreviewResult {
   let threadIdentifier: String?
   let didDecrypt: Bool
   let reason: String
+  // 04-P0 SI-1 NSE: a muted group keeps generic fallback content but asks
+  // NotificationService to deliver it silently (no sound, passive — no banner).
+  var suppress: Bool = false
 }
 
 enum NotificationPreviewError: Error {
@@ -249,6 +258,25 @@ final class NotificationPreviewResolver {
         )
       )
     }
+    // 04-P0 SI-1 NSE: honor group mute BEFORE decrypting. If the app mirrored a
+    // "group_muted:<groupId>" sentinel into the shared Keychain, suppress (no
+    // plaintext is touched, generic fallback content is kept, and
+    // NotificationService delivers it silently). Fail-open when absent.
+    if keyReader.readString(
+      key: PushSharedKeyNames.groupMuted(groupId: groupId)
+    ) == "1" {
+      eventEmitter.emit(
+        event: "PUSH_NSE_GROUP_MUTED",
+        details: ["reason": "group_muted"]
+      )
+      return fallback(
+        title: fallbackTitle,
+        body: fallbackBody,
+        threadIdentifier: fallbackThreadIdentifier,
+        reason: "group_muted",
+        suppress: true
+      )
+    }
     guard let groupKey = keyReader.readString(
       key: PushSharedKeyNames.groupKey(groupId: groupId, keyEpoch: keyEpoch)
     ) else {
@@ -317,7 +345,8 @@ final class NotificationPreviewResolver {
     threadIdentifier: String?,
     reason: String,
     eventKind: String? = nil,
-    eventDetails: [String: String] = [:]
+    eventDetails: [String: String] = [:],
+    suppress: Bool = false
   ) -> NotificationPreviewResult {
     if let eventKind {
       emitDecryptFail(kind: eventKind, reason: reason, details: eventDetails)
@@ -327,7 +356,8 @@ final class NotificationPreviewResolver {
       body: body,
       threadIdentifier: threadIdentifier,
       didDecrypt: false,
-      reason: reason
+      reason: reason,
+      suppress: suppress
     )
   }
 

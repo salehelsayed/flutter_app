@@ -11,6 +11,12 @@ import 'group_repository.dart';
 String sharedGroupPushKeyName(String groupId, int keyGeneration) =>
     'group_key:$groupId:$keyGeneration';
 
+/// 04-P0 SI-1 NSE: shared-Keychain key under which the app mirrors a group's
+/// mute state ('1' when muted, deleted otherwise) so the out-of-process iOS
+/// Notification Service Extension can honor mute. Read on the Swift side via
+/// PushSharedKeyNames.groupMuted(groupId:).
+String sharedGroupMutedKeyName(String groupId) => 'group_muted:$groupId';
+
 /// Implementation of GroupRepository using constructor-injected DB helper functions.
 class GroupRepositoryImpl
     implements
@@ -145,6 +151,9 @@ class GroupRepositoryImpl
   @override
   Future<void> updateGroup(GroupModel group) async {
     await dbUpdateGroup(group.toMap());
+    // 04-P0 SI-1 NSE: keep the shared-Keychain mute projection in sync so the
+    // iOS NSE honors mute (idempotent; no-op when pushSharedKeyStore is unset).
+    await _mirrorGroupMutedForPush(group.id, group.isMuted);
   }
 
   @override
@@ -380,6 +389,25 @@ class GroupRepositoryImpl
     }
   }
 
+  /// 04-P0 SI-1 NSE: launch-time backfill of the shared-Keychain mute
+  /// projection for groups that were muted before this feature shipped (their
+  /// mute state was never mirrored). Self-heals the projection from the DB.
+  Future<void> mirrorAllMutedGroups() async {
+    if (pushSharedKeyStore == null) {
+      return;
+    }
+
+    final groups = await dbLoadAllGroups();
+    for (final group in groups) {
+      final groupId = group['id'] as String?;
+      if (groupId == null) {
+        continue;
+      }
+      final isMuted = (group['is_muted'] as int? ?? 0) == 1;
+      await _mirrorGroupMutedForPush(groupId, isMuted);
+    }
+  }
+
   Future<void> _pruneObsoleteKeys(String groupId) async {
     final loadAllKeys = dbLoadAllGroupKeys;
     final deleteBeforeGeneration = dbDeleteGroupKeysBeforeGeneration;
@@ -483,6 +511,31 @@ class GroupRepositoryImpl
               ? key.groupId.substring(0, 8)
               : key.groupId,
           'keyGeneration': key.keyGeneration,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
+  Future<void> _mirrorGroupMutedForPush(String groupId, bool isMuted) async {
+    final store = pushSharedKeyStore;
+    if (store == null) {
+      return;
+    }
+
+    try {
+      if (isMuted) {
+        await store.write(sharedGroupMutedKeyName(groupId), '1');
+      } else {
+        await store.delete(sharedGroupMutedKeyName(groupId));
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REPO_PUSH_MUTE_MIRROR_ERROR',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'isMuted': isMuted,
           'error': e.toString(),
         },
       );

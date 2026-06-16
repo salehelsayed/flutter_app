@@ -11226,6 +11226,126 @@ void main() {
       notifListener.dispose();
     });
 
+    // 04-P0 / QW-1 — the OS banner body must use the SANITIZED, member-bound
+    // fields the timeline persists (result.senderUsername / result.text), not
+    // the raw wire `senderUsername`/`text` locals. Today the banner
+    // interpolates the raw bytes (group_message_listener.dart:951-952), so a
+    // bidi override in the name and a zero-width space in the body leak into
+    // the most-trusted surface even though the in-app timeline never shows
+    // them.
+    test(
+      'banner body uses the sanitized sender name and text, not raw wire bytes',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          // U+202E (RLO) in the name, U+200B (zero-width space) in the text:
+          // both stripped by sanitizeUsername / sanitizeMessageText.
+          'senderUsername': 'Mallory\u202E',
+          'keyEpoch': 0,
+          'text': 'gift\u200Bcard',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await expectNotificationCount(notifService, 1);
+        final body = notifService.shown.first.messageText;
+        expect(body, 'Mallory: giftcard');
+        expect(body.contains('\u202E'), isFalse);
+        expect(body.contains('\u200B'), isFalse);
+
+        notifListener.dispose();
+      },
+    );
+
+    // 04-P0 / QW-1 — an overlong sender name is capped at 30 chars in the
+    // sanitized form; the raw-wire banner would render the full 45 chars.
+    test(
+      'banner body truncates an overlong sender name to <=30 chars',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'N' * 45,
+          'keyEpoch': 0,
+          'text': 'Hi',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await expectNotificationCount(notifService, 1);
+        final body = notifService.shown.first.messageText;
+        expect(body.split(':').first.length, lessThanOrEqualTo(30));
+        expect(body, '${'N' * 30}: Hi');
+
+        notifListener.dispose();
+      },
+    );
+
+    // 04-P0 / QW-1 guard — the banner TITLE slot stays the group name even
+    // for a hostile wire sender name; it must never become the sender.
+    test(
+      'banner title stays the group name for a malicious wire sender name',
+      () async {
+        await saveSelfMember();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Imposter\u202E Admin',
+          'keyEpoch': 0,
+          'text': 'hello',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await expectNotificationCount(notifService, 1);
+        expect(notifService.shown.first.senderUsername, 'Test Group');
+
+        notifListener.dispose();
+      },
+    );
+
     // 120 G4 — locks `toneTracker: _notificationToneTracker` at
     // group_message_listener.dart:941. Removing that arg makes every group
     // message audible; this guard catches the lost debounce.

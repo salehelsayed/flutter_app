@@ -190,7 +190,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
   GroupKeyInfo? rotatedKey;
   var rotationDeferred = false;
   if (remainingMembers.isNotEmpty) {
-    rotatedKey = await rotateAndDistributeGroupKey(
+    final rotationOutcome = await rotateAndDistributeGroupKey(
       bridge: bridge,
       groupRepo: groupRepo,
       groupId: group.id,
@@ -201,6 +201,7 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
       sendP2PMessage: sendP2PMessage,
       storeP2PMessageInInbox: storeP2PMessageInInbox,
     );
+    rotatedKey = rotationOutcome.key;
 
     // Best-effort rotation: a privileged leaver (creator/admin) rotates here
     // exactly as before. A plain member fails the rotation gates and gets a

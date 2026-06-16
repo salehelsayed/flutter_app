@@ -14,6 +14,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -314,6 +315,38 @@ class InMemoryMessageRepository implements MessageRepository {
 
   @override
   Future<bool> messageExists(String id) async => _messages.containsKey(id);
+
+  @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async {
+    return _messages.values.any(
+      (m) =>
+          m.isIncoming &&
+          m.contactPeerId == contactPeerId &&
+          m.senderPeerId == senderPeerId &&
+          m.text == text &&
+          m.timestamp == timestamp,
+    );
+  }
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async {
+    return _messages.values.any(
+      (m) =>
+          m.isIncoming &&
+          m.contactPeerId == contactPeerId &&
+          m.senderPeerId == senderPeerId &&
+          m.dedupKey == dedupKey,
+    );
+  }
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async {
@@ -1255,6 +1288,109 @@ void main() {
         expect(delivered.senderPeerId, alice.peerId);
 
         offlineUser.dispose();
+      },
+    );
+  });
+
+  // ─── F8 tier-2: forward re-mint dedup over the REAL transport (§7.6) ───
+  // The only test proving the full loop: sendChatMessage → toInnerJson →
+  // PassthroughCryptoBridge v2 encrypt → FakeP2PNetwork wire → decrypt →
+  // ChatMessageListener → handleIncomingChatMessage → tier-2 existsByDedupKey
+  // over Bob's real store. Contacts carry an mlKemPublicKey so this is the v2
+  // (encrypted) leg — the prod-critical toInnerJson/fromDecryptedJson path.
+  group('F8 tier-2 forward re-mint dedup (§7.6)', () {
+    Future<void> waitUntil(
+      Future<bool> Function() cond, {
+      required String reason,
+    }) async {
+      for (var i = 0; i < 200; i++) {
+        if (await cond()) return;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      fail(reason);
+    }
+
+    Future<int> bobRowCount() async =>
+        (await bob.loadConversation(alice.peerId)).length;
+
+    // Drive a re-mint directly through the public send use case (no forward UI
+    // exists yet — D-LATENT): copy the source dedupKey, mint a fresh id + ts.
+    Future<void> forward(
+      String text, {
+      required String dedupKey,
+      required String messageId,
+      required String timestamp,
+    }) async {
+      final contact = await alice.contactRepo.getContact(bob.peerId);
+      await sendChatMessage(
+        p2pService: alice.p2pService,
+        messageRepo: alice.messageRepo,
+        targetPeerId: bob.peerId,
+        text: text,
+        senderPeerId: alice.peerId,
+        senderUsername: alice.username,
+        bridge: alice.bridge,
+        recipientMlKemPublicKey: contact?.mlKemPublicKey,
+        dedupKey: dedupKey,
+        messageId: messageId,
+        timestamp: timestamp,
+      );
+    }
+
+    test(
+      'a forward (copied dedupKey, re-minted id+timestamp) does not double-card '
+      'on the receiver, and a genuine repeat still persists',
+      () async {
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        // 1) Normal send → stamps dedupKey = own id; Bob persists exactly 1 row.
+        final (res1, sent1) = await alice.sendMessage(bob.peerId, 'Hello Bob!');
+        expect(res1, SendChatMessageResult.success);
+        await waitUntil(
+          () async => await bobRowCount() == 1,
+          reason: 'Bob should receive the first message',
+        );
+        final sourceKey = sent1!.dedupKey;
+        expect(
+          sourceKey,
+          isNotNull,
+          reason: 'a normal send stamps dedupKey = its own id',
+        );
+
+        flow.clear();
+
+        // 2) Forward of the SAME content: COPY dedupKey, RE-MINT id AND ts.
+        await forward(
+          'Hello Bob!',
+          dedupKey: sourceKey!,
+          messageId: 'forward-fresh-id-0001',
+          timestamp: '2099-01-01T00:00:00.000Z',
+        );
+        await waitUntil(
+          () async =>
+              flow.any((e) => e['event'] == 'CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY'),
+          reason: 'the forward must be deduped on the receiver via the key',
+        );
+
+        // Assertion 1: still exactly 1 row (no double-card on HEAD = 2).
+        expect(await bobRowCount(), 1);
+        // Assertion 2 (D1): deduped on the KEY, not content — proves the wire
+        // carried dedupKey through the v2 encrypt/decrypt leg and tier-2 (not
+        // tier-1) made the call.
+        final events = flow.map((e) => e['event']).toList();
+        expect(events, contains('CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY'));
+        expect(events, isNot(contains('CHAT_MSG_RECEIVE_DUPLICATE_CONTENT')));
+
+        // Assertion 4: no-false-positive — a genuine repeat of the SAME text
+        // (fresh own-id key) is NOT swallowed → Bob now shows 2 rows.
+        await alice.sendMessage(bob.peerId, 'Hello Bob!');
+        await waitUntil(
+          () async => await bobRowCount() == 2,
+          reason: 'a genuine repeat with a fresh dedupKey must persist',
+        );
+        expect(await bobRowCount(), 2);
       },
     );
   });

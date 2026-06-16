@@ -66,6 +66,12 @@ class ConversationMessage {
   /// ISO-8601 timestamp of the last custody-sweep check on an 'inboxed' row.
   final String? custodyCheckedAt;
 
+  /// F8 tier-2: wire-stamped, propagated source-message identifier (a normal
+  /// send stamps its own id; a forward copies the source's key). Survives a
+  /// forward's id+timestamp re-mint; the receiver dedups on
+  /// `(contact_peer_id, sender_peer_id, dedup_key)`. NULL for legacy rows.
+  final String? dedupKey;
+
   /// Transient media attachments — populated via copyWith() after batch-loading
   /// from media_attachments table. NOT serialized to DB.
   final List<MediaAttachment> media;
@@ -89,6 +95,7 @@ class ConversationMessage {
     this.wireEnvelope,
     this.relayExpiresAt,
     this.custodyCheckedAt,
+    this.dedupKey,
     this.media = const [],
   });
 
@@ -113,6 +120,7 @@ class ConversationMessage {
       wireEnvelope: map['wire_envelope'] as String?,
       relayExpiresAt: map['relay_expires_at'] as int?,
       custodyCheckedAt: map['custody_checked_at'] as String?,
+      dedupKey: map['dedup_key'] as String?,
     );
   }
 
@@ -137,6 +145,7 @@ class ConversationMessage {
       'wire_envelope': wireEnvelope,
       'relay_expires_at': relayExpiresAt,
       'custody_checked_at': custodyCheckedAt,
+      'dedup_key': dedupKey,
     };
   }
 
@@ -163,6 +172,7 @@ class ConversationMessage {
     Object? wireEnvelope = _sentinel,
     Object? relayExpiresAt = _sentinel,
     Object? custodyCheckedAt = _sentinel,
+    Object? dedupKey = _sentinel,
     List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
@@ -194,6 +204,7 @@ class ConversationMessage {
       custodyCheckedAt: custodyCheckedAt == _sentinel
           ? this.custodyCheckedAt
           : custodyCheckedAt as String?,
+      dedupKey: dedupKey == _sentinel ? this.dedupKey : dedupKey as String?,
       media: media ?? this.media,
     );
   }

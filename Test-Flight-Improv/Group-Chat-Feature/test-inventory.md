@@ -5,6 +5,65 @@
 
 ---
 
+## Finding 03 Removal-Rotation Fails-Closed — Slice 1 Addendum (2026-06-16)
+
+Slice 1 of the [03-P0-removal-rotation-fails-closed TDD plan](./Improvement-Review-2026-06/03-P0-removal-rotation-fails-closed-TDD-plan.md)
+(security core; Dart-only, no migration, no Go rebuild) makes admin member-removal
+**durable under a keyless remaining member**.
+
+- **`rotate_and_distribute_group_key_use_case_test.dart`** — `rotateAndDistributeGroupKey`
+  now returns `RotateGroupKeyOutcome` and is **promote-then-defer**: the six former
+  abort-on-incomplete-fanout cases (keyless member, missing transport, partial
+  distribution, per-member encrypt failure, in-flight/timed-out sends) now assert the
+  epoch is **promoted** and the undelivered members are recorded in `deferredPeerIds`
+  (the removed member loses the live key regardless). New cases: mixed cohort
+  (direct/inbox/keyless), deferred-distribution enqueue seam, and the INV-R4
+  genuine-failure-still-notRotated guard. NW-013 draft-reuse now exercises a
+  **promote**-failure (the only path that leaves an uncommitted draft).
+- **`member_removal_integration_test.dart`** — added the leave-path coupling regression:
+  a creator-admin leaver with a keyless bystander now **promotes** the epoch
+  (`rotationDeferred == false`), mirroring admin-removal.
+- **`group_info_wired_test.dart`** — `GCA-008` rewritten to the INV-R2 contract:
+  pre-broadcast failure still rolls back; **post-broadcast** failure (inbox-store or
+  re-key) leaves the removal standing (no rollback, no re-grant). New widget test:
+  removal with a keyless bystander stands and shows a non-fatal partial-distribution
+  notice while the epoch advances.
+- **Integration smoke** (`group_messaging_smoke_test.dart` GE-015/KE-015/NW-013,
+  `send_group_message_use_case_test.dart` MS-018/ST-007) rewritten to the
+  promote-then-defer end-state (delivered members converge to the new epoch; deferred
+  members stay behind until repaired).
+
+- **`integration_test/group_removal_rotation_keyless_proof_test.dart`** (NEW, `@Tags(['device'])`)
+  — real-`GoBridgeClient` device proof: a removal with a keyless remaining bystander promotes
+  a genuinely new real epoch (real ML-KEM keygen), records the bystander as deferred, and the
+  removed member's retained old key cannot decrypt a message published at the new epoch.
+
+Gate: `./scripts/run_test_gates.sh groups` / `flutter test test/features/groups/` green
+(`2070`), `flutter analyze` no new issues. **Device proof PASSED 2026-06-16** on iPhone 17 Pro
+simulator (`38FECA55-03C1-4907-BD9D-8E64BF8E3469`) and Pixel 6 (`21071FDF600CSC`) via
+`flutter test integration_test/group_removal_rotation_keyless_proof_test.dart -d <device>`
+(`All tests passed!` against the real Go bridge on both platforms).
+
+**Slice 2 (deferred-distribution convergence) IMPLEMENTED 2026-06-16** — TDD D-1..D-5:
+migration `078_group_pending_key_distributions` (DB v`79`); DB helpers/model/repository
+(mirroring `063`); `GroupPendingKeyDistributionRunner` re-distributing the *current* key
+once a deferred member regains a usable ML-KEM key; the enqueue + drain wired process-wide
+(the `debugSetFlowEventSink` pattern — covers all 3 rotate paths without threading the
+`GroupInfoWired` DI chain) plus app-resume + member-key-arrival triggers. New tests:
+`078_group_pending_key_distributions_test.dart`,
+`group_pending_key_distributions_db_helpers_test.dart`,
+`group_pending_key_distribution_repository_impl_test.dart`,
+`group_pending_key_distribution_service_test.dart` (INV-D1..D5),
+`handle_app_resumed_key_distribution_test.dart`, plus rotate-test additions for the global
+sink. Gate: full groups suite + Slice 2 units green (`2093`), `flutter analyze` no new issues.
+**Device proof PASSED** on iPhone 17 Pro simulator via
+`integration_test/group_removal_rotation_keyless_converge_proof_test.dart` (real
+`GoBridgeClient`: keyless Carol deferred → regains a real key → drain re-distributes the
+current key → Carol decrypts the key-update and reads new-epoch traffic; removed member's
+old key fails). Finding 03 is now fully closed (both slices implemented + device-verified).
+
+---
+
 ## Report 102 GIRD-007 Addendum
 
 Report 102 group image retry/duplicate notification/media closure is accepted

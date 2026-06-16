@@ -43,6 +43,26 @@ void main() {
         expect(map['created_at'], '2026-02-09T15:30:01.000Z');
       });
 
+      test('round-trips dedup_key (F8 tier-2)', () {
+        final keyed = testMessage.copyWith(dedupKey: 'src-key-1');
+        final map = keyed.toMap();
+        expect(map['dedup_key'], 'src-key-1');
+
+        final restored = ConversationMessage.fromMap(map);
+        expect(restored.dedupKey, 'src-key-1');
+
+        // Default (no key) round-trips as null.
+        expect(ConversationMessage.fromMap(testMessage.toMap()).dedupKey, isNull);
+      });
+
+      test('copyWith preserves vs clears dedupKey (sentinel)', () {
+        final keyed = testMessage.copyWith(dedupKey: 'src-key-1');
+        // copyWith() with no dedupKey arg preserves it.
+        expect(keyed.copyWith(text: 'edited').dedupKey, 'src-key-1');
+        // copyWith(dedupKey: null) explicitly clears it.
+        expect(keyed.copyWith(dedupKey: null).dedupKey, isNull);
+      });
+
       test('isIncoming true maps to is_incoming = 1', () {
         final incoming = testMessage.copyWith(isIncoming: true);
         final map = incoming.toMap();

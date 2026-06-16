@@ -28,6 +28,31 @@ abstract class MessageRepository {
   /// Checks if a message with the given ID exists.
   Future<bool> messageExists(String id);
 
+  /// Returns true if an incoming message with the same logical content already
+  /// exists (F8 content dedup — the 1:1 twin of the group-side check).
+  ///
+  /// Keyed on `(contactPeerId, senderPeerId, text, timestamp)` over incoming
+  /// rows. Catches a divergent-id re-delivery that PRESERVES the original wire
+  /// timestamp, which the id-only [getMessage]/[messageExists] gate misses and
+  /// which would otherwise persist a second row (two-stacked-card condition).
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  );
+
+  /// Returns true if an incoming message with the same wire-stamped `dedupKey`
+  /// already exists (F8 tier-2). Unlike [existsByContent] (timestamp-exact),
+  /// this survives a forward/share that re-mints BOTH id and timestamp, because
+  /// the `dedupKey` is a propagated source-message id. Keyed on
+  /// `(contactPeerId, senderPeerId, dedupKey)` over incoming rows.
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  );
+
   /// Returns the total number of messages for a contact.
   Future<int> getMessageCountForContact(String contactPeerId);
 

@@ -12,10 +12,18 @@ class InMemoryInboxStagingRepository implements InboxStagingRepository {
 
   @override
   Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
+    final ackableEntryIds = <String>[];
     for (final entry in entries) {
-      _entries.putIfAbsent(entry.entryId, () => entry);
+      // Mirror the real repo (F3): only report an entry ackable when this call
+      // actually inserted it. A re-stage of an already-present entry is a no-op
+      // and must NOT be re-reported as ackable.
+      final inserted = !_entries.containsKey(entry.entryId);
+      if (inserted) {
+        _entries[entry.entryId] = entry;
+        ackableEntryIds.add(entry.entryId);
+      }
     }
-    return entries.map((entry) => entry.entryId).toList();
+    return ackableEntryIds;
   }
 
   @override

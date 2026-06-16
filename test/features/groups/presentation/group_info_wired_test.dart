@@ -672,12 +672,18 @@ class _Gca008RemovalFailureCase {
     required this.responses,
     required this.expectInboxStore,
     required this.expectGenerateNextKey,
+    required this.expectMemberRemoved,
   });
 
   final String name;
   final Map<String, Map<String, dynamic>> responses;
   final bool expectInboxStore;
   final bool expectGenerateNextKey;
+
+  /// Whether the removal should STAND (no rollback). True for post-broadcast
+  /// failures (INV-R2: re-adding would re-grant the rotated-away key); false for
+  /// the pre-broadcast failure where rolling back is still correct.
+  final bool expectMemberRemoved;
 }
 
 Future<
@@ -4756,12 +4762,14 @@ void main() {
     );
 
     testWidgets(
-      'GCA-008 failed post-remove steps roll back local removal state',
+      'GCA-008 pre-broadcast failure rolls back; post-broadcast failure stands without re-grant',
       (tester) async {
         final preRemovalWatermark = DateTime.utc(2026, 5, 11, 10);
         const cases = [
+          // Pre-broadcast failure: member_removed never went out, so rolling
+          // back and re-adding Alice is still correct.
           _Gca008RemovalFailureCase(
-            name: 'publish ok false',
+            name: 'publish ok false (pre-broadcast)',
             responses: {
               'group:publish': {
                 'ok': false,
@@ -4770,9 +4778,13 @@ void main() {
             },
             expectInboxStore: false,
             expectGenerateNextKey: false,
+            expectMemberRemoved: false,
           ),
+          // Post-broadcast failure: member_removed already published. Re-adding
+          // Alice would re-grant the rotated-away key (INV-R2), so the removal
+          // must STAND.
           _Gca008RemovalFailureCase(
-            name: 'inbox store ok false',
+            name: 'inbox store ok false (post-broadcast)',
             responses: {
               'group:inboxStore': {
                 'ok': false,
@@ -4782,9 +4794,13 @@ void main() {
             },
             expectInboxStore: true,
             expectGenerateNextKey: false,
+            expectMemberRemoved: true,
           ),
+          // Post-broadcast re-key failure: rotation cannot promote. The removal
+          // stands (no throw, no rollback); the removed member keeps the OLD key
+          // until a later rotation, never re-granted the new one.
           _Gca008RemovalFailureCase(
-            name: 'key rotation returns null',
+            name: 'key rotation fails (post-broadcast)',
             responses: {
               'group:generateNextKey': {
                 'ok': false,
@@ -4794,6 +4810,7 @@ void main() {
             },
             expectInboxStore: true,
             expectGenerateNextKey: true,
+            expectMemberRemoved: true,
           ),
         ];
 
@@ -4811,48 +4828,64 @@ void main() {
 
           await _removeAliceFromGroupInfo(tester);
 
-          final restoredAlice = await fixture.groupRepo.getMember(
+          final aliceAfter = await fixture.groupRepo.getMember(
             'group-1',
             'peer-alice',
           );
-          expect(
-            restoredAlice,
-            isNotNull,
-            reason: '${failureCase.name} should restore Alice locally',
-          );
-          expect(restoredAlice!.username, 'Alice');
+          final configPeerIds = _lastUpdateConfigMemberPeerIds(fixture.bridge);
 
-          final restoredGroup = await fixture.groupRepo.getGroup('group-1');
-          expect(
-            restoredGroup?.lastMembershipEventAt?.toUtc(),
-            preRemovalWatermark,
-            reason:
-                '${failureCase.name} should restore the membership watermark',
-          );
-          expect(
-            await fixture.msgRepo.getLatestSystemEventTimestampForTarget(
-              'group-1',
-              eventType: 'member_removed',
-              targetId: 'peer-alice',
-            ),
-            isNull,
-            reason:
-                '${failureCase.name} should delete the failed removal timeline',
-          );
-          expect(await fixture.msgRepo.getMessageCount('group-1'), 0);
+          if (failureCase.expectMemberRemoved) {
+            // INV-R2: the removal stands; Alice is never re-added anywhere.
+            expect(
+              aliceAfter,
+              isNull,
+              reason:
+                  '${failureCase.name} must keep Alice removed (no re-grant)',
+            );
+            expect(
+              configPeerIds,
+              isNot(contains('peer-alice')),
+              reason:
+                  '${failureCase.name} must not re-publish a config with Alice',
+            );
+            expect(find.text('Alice'), findsNothing);
+          } else {
+            // Pre-broadcast: rollback restores Alice and the prior state.
+            expect(
+              aliceAfter,
+              isNotNull,
+              reason: '${failureCase.name} should restore Alice locally',
+            );
+            expect(aliceAfter!.username, 'Alice');
 
-          expect(find.text('Alice'), findsOneWidget);
-          expect(
-            find.byKey(const ValueKey('group-member-remove-peer-alice')),
-            findsOneWidget,
-          );
+            final restoredGroup = await fixture.groupRepo.getGroup('group-1');
+            expect(
+              restoredGroup?.lastMembershipEventAt?.toUtc(),
+              preRemovalWatermark,
+              reason:
+                  '${failureCase.name} should restore the membership watermark',
+            );
+            expect(
+              await fixture.msgRepo.getLatestSystemEventTimestampForTarget(
+                'group-1',
+                eventType: 'member_removed',
+                targetId: 'peer-alice',
+              ),
+              isNull,
+              reason:
+                  '${failureCase.name} should delete the failed removal timeline',
+            );
+            expect(await fixture.msgRepo.getMessageCount('group-1'), 0);
 
-          final restoredConfigPeerIds = _lastUpdateConfigMemberPeerIds(
-            fixture.bridge,
-          );
-          expect(restoredConfigPeerIds, contains('peer-admin'));
-          expect(restoredConfigPeerIds, contains('peer-alice'));
-          expect(restoredConfigPeerIds, contains('peer-bob'));
+            expect(find.text('Alice'), findsOneWidget);
+            expect(
+              find.byKey(const ValueKey('group-member-remove-peer-alice')),
+              findsOneWidget,
+            );
+            expect(configPeerIds, contains('peer-admin'));
+            expect(configPeerIds, contains('peer-alice'));
+            expect(configPeerIds, contains('peer-bob'));
+          }
 
           if (failureCase.expectInboxStore) {
             expect(fixture.bridge.commandLog, contains('group:inboxStore'));
@@ -4874,6 +4907,91 @@ void main() {
             );
           }
         }
+      },
+    );
+
+    testWidgets(
+      'removal stands with a keyless bystander and shows a partial-distribution notice',
+      (tester) async {
+        // Headline P0 (INV-R1/INV-R2): admin removes Alice while remaining
+        // member Bob is keyless. Promote-then-defer advances the epoch (Alice
+        // loses the live key), the removal is durable (no rollback), and a
+        // non-fatal partial-distribution notice is shown.
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-alice',
+            username: 'Alice',
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+          ),
+        );
+        // Bob is a keyless bystander (no ML-KEM key) — deferred, NOT a blocker.
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob', publicKey: 'pk-bob'),
+        );
+
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'msg-1'},
+            'group:inboxStore': {'ok': true},
+            'group:generateNextKey': {
+              'ok': true,
+              'groupKey': 'fake-rotated-key',
+              'keyEpoch': 2,
+            },
+          },
+        );
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Alice'), findsOneWidget);
+        await _removeAliceFromGroupInfo(tester);
+
+        // Removal is durable: Alice gone, no rollback, never re-added to config.
+        expect(await groupRepo.getMember('group-1', 'peer-alice'), isNull);
+        expect(find.text('Alice'), findsNothing);
+        expect(
+          _lastUpdateConfigMemberPeerIds(bridge),
+          isNot(contains('peer-alice')),
+        );
+        // Epoch advanced — the removed member loses the live key.
+        expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 2);
+        // A non-fatal partial-distribution notice is shown (Bob deferred); this
+        // is NOT the failure path.
+        expect(
+          find.text(
+            'Member removed. Some members will receive the new key '
+            'when they reconnect.',
+          ),
+          findsOneWidget,
+        );
       },
     );
 

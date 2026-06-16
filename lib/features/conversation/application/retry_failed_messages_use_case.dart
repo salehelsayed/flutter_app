@@ -244,9 +244,13 @@ Future<bool> _retryFailedMessageCandidate({
     // Prefer wire_envelope -> inbox-only (preserves media, no re-encrypt)
     if (msg.wireEnvelope != null && msg.wireEnvelope!.isNotEmpty) {
       if (msg.transport == 'inbox') {
+        // Already in the relay inbox — that is custody, not receiver delivery
+        // (F6). Keep it 'inboxed' (envelope retained) so the custody sweep +
+        // DeliveryReceiptListener flip it to 'delivered' only on the receiver's
+        // confirmation; a false terminal 'delivered' here is uncorrectable.
         await messageRepo.saveMessage(
           normalizeOutgoingDeleteTombstoneVisibility(
-            msg.copyWith(status: 'delivered', wireEnvelope: null),
+            msg.copyWith(status: 'inboxed'),
           ),
         );
         emitFlowEvent(
@@ -267,12 +271,15 @@ Future<bool> _retryFailedMessageCandidate({
             msg.wireEnvelope!,
           );
           if (stored) {
+            // Relay STORE success alone is custody, not receiver delivery (F6):
+            // no peer ack, no delivery receipt. Persist 'inboxed' and RETAIN the
+            // wire envelope so the custody sweep + receipt repair can advance it
+            // to 'delivered' on the receiver's confirmation.
             await messageRepo.saveMessage(
               normalizeOutgoingDeleteTombstoneVisibility(
                 msg.copyWith(
-                  status: 'delivered',
+                  status: 'inboxed',
                   transport: 'inbox',
-                  wireEnvelope: null,
                 ),
               ),
             );

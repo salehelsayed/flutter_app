@@ -11291,8 +11291,8 @@ void main() {
         },
       );
 
-      expect(rotatedKey, isNotNull);
-      expect(rotatedKey!.keyGeneration, 2);
+      expect(rotatedKey.key, isNotNull);
+      expect(rotatedKey.key!.keyGeneration, 2);
       expect(
         capturedKeyUpdatesByDevice.keys,
         unorderedEquals([bobDeviceId, charlieDeviceId]),
@@ -12078,8 +12078,8 @@ void main() {
         },
       );
 
-      expect(rotatedKey, isNotNull);
-      expect(rotatedKey!.keyGeneration, 2);
+      expect(rotatedKey.key, isNotNull);
+      expect(rotatedKey.key!.keyGeneration, 2);
       expect(capturedKeyUpdatesByDevice.keys, unorderedEquals([bobDeviceId]));
       expect(capturedKeyUpdatesByDevice.keys, isNot(contains(removedDeviceId)));
 

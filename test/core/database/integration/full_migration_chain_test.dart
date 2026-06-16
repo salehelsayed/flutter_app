@@ -72,6 +72,8 @@ import 'package:flutter_app/core/database/migrations/072_group_pending_membershi
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -167,6 +169,8 @@ void main() {
     await runGroupMessageLastSendAttemptAtMigration(db);
     await runGroupMessageLogicalDeliveryIdMigration(db);
     await runMessageRelayCustodyMigration(db);
+    await runGroupPendingKeyDistributionsMigration(db);
+    await runMessageDedupKeyMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -282,6 +286,8 @@ void main() {
     await runGroupMessageLastSendAttemptAtMigration(db);
     await runGroupMessageLogicalDeliveryIdMigration(db);
     await runMessageRelayCustodyMigration(db);
+    await runGroupPendingKeyDistributionsMigration(db);
+    await runMessageDedupKeyMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -306,6 +312,15 @@ void main() {
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
           dbLoadMessagesPage(
             db,
@@ -467,6 +482,7 @@ void main() {
           'removed_group_member_snapshots',
           'group_message_local_deletions',
           'group_key_rotation_drafts',
+          'group_pending_key_distributions',
         ]),
       );
 

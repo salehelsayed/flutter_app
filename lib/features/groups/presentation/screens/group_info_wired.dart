@@ -859,6 +859,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     GroupMember? preRemovalMember;
     String? removalTimelineMessageId;
     var localRemovalAccepted = false;
+    // Once the member_removed broadcast is committed, a later failure must NOT
+    // roll back / re-add the member (re-granting the key violates INV-R2).
+    var removalBroadcast = false;
 
     try {
       final removedAt = DateTime.now().toUtc();
@@ -993,6 +996,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                     )!.group_info_publish_member_removal_failed,
             );
           }
+          // member_removed is published: the removal is committed group-wide.
+          // From here, failures are surfaced as warnings, never rolled back.
+          removalBroadcast = true;
           final removalReplayEnvelope = await buildGroupOfflineReplayEnvelope(
             bridge: widget.bridge,
             groupRepo: widget.groupRepo,
@@ -1047,7 +1053,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           );
 
           // 3. Rotate group key and distribute to remaining members
-          final rotatedKey = await rotateAndDistributeGroupKey(
+          final rotationOutcome = await rotateAndDistributeGroupKey(
             bridge: widget.bridge,
             groupRepo: widget.groupRepo,
             groupId: widget.group.id,
@@ -1062,10 +1068,58 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
               return widget.p2pService.storeInInbox(peerId, message);
             },
           );
-          if (rotatedKey == null) {
-            throw StateError(
-              AppLocalizations.of(context)!.group_info_rotate_key_failed,
+          if (!rotationOutcome.rotated) {
+            // Genuine re-key failure AFTER the removal was broadcast. The
+            // removal stands; do NOT throw into the re-add rollback (INV-R2).
+            // The removed member keeps the OLD key until a later successful
+            // rotation (forward-secrecy delayed, never re-granted). Surface a
+            // retryable, non-fatal warning.
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_INFO_FL_REMOVE_REKEY_DEFERRED',
+              details: {
+                'groupId': widget.group.id.length > 8
+                    ? widget.group.id.substring(0, 8)
+                    : widget.group.id,
+                'removedPeerId': member.peerId.length > 10
+                    ? member.peerId.substring(0, 10)
+                    : member.peerId,
+              },
             );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    AppLocalizations.of(context)!.group_info_rotate_key_failed,
+                  ),
+                ),
+              );
+            }
+          } else if (!rotationOutcome.fullyDistributed) {
+            // Epoch promoted (removed member excluded) but some remaining
+            // members were keyless / undelivered and are deferred. The removal
+            // is durable; surface a non-fatal info notice.
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_INFO_FL_REMOVE_PARTIAL_DISTRIBUTION',
+              details: {
+                'groupId': widget.group.id.length > 8
+                    ? widget.group.id.substring(0, 8)
+                    : widget.group.id,
+                'deferredCount': rotationOutcome.deferredPeerIds.length,
+              },
+            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    AppLocalizations.of(
+                      context,
+                    )!.group_info_remove_member_partial_distribution,
+                  ),
+                ),
+              );
+            }
           }
         }
       }
@@ -1073,7 +1127,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       _didMutateGroup = true;
       await _loadGroupInfo();
     } catch (e) {
+      // Roll back ONLY when the removal was never broadcast (pre-broadcast
+      // failure). After the broadcast, re-adding the member would re-grant the
+      // rotated-away key (INV-R2), so the catch falls through to a warning only.
       if (localRemovalAccepted &&
+          !removalBroadcast &&
           preRemovalGroup != null &&
           preRemovalMember != null) {
         try {
@@ -1101,7 +1159,15 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         details: {'error': e.toString()},
       );
       if (!mounted) return;
-      final message = e is StateError
+      // Once the removal is broadcast it is durable (no rollback). A failure in
+      // a later sync step (inbox replay, etc.) must NOT be surfaced as "failed
+      // to remove" — that would imply the member is still present. Show the
+      // honest "removed, some sync deferred" notice instead.
+      final message = removalBroadcast
+          ? AppLocalizations.of(
+              context,
+            )!.group_info_remove_member_partial_distribution
+          : e is StateError
           ? e.message
           : AppLocalizations.of(context)!.group_info_remove_member_failed;
       ScaffoldMessenger.of(

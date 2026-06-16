@@ -5698,8 +5698,8 @@ void main() {
 
         distributionGate.complete(true);
         final rotatedKey = await rotationFuture;
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
 
         final latestAfterRotation = await groupRepo.getLatestKey('group-1');
         expect(latestAfterRotation, isNotNull);
@@ -5810,8 +5810,8 @@ void main() {
 
         distributionGate.complete(true);
         final rotatedKey = await rotationFuture;
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(distributionTargets, ['peer-bob']);
         expect(distributionTargets, isNot(contains('peer-charlie')));
         expect(
@@ -6003,12 +6003,36 @@ void main() {
           senderUsername: 'Alice',
           sendP2PMessage: (peerId, message) async => peerId == 'peer-bob',
         );
-        expect(failedDistribution, isNull);
+        // R-1 promote-then-defer: a partial fanout no longer ABORTS. The new
+        // epoch is generated and promoted locally regardless of distribution so
+        // the rotation boundary holds (removed members lose the live key). The
+        // member whose every send failed (peer-charlie) is recorded as deferred,
+        // not rolled back; peer-bob is delivered. The draft is consumed on
+        // promotion, so no pending rotation remains and getLatestKey is epoch 2.
+        expect(failedDistribution.rotated, isTrue);
+        expect(failedDistribution.key, isNotNull);
+        expect(failedDistribution.key!.keyGeneration, 2);
+        expect(
+          failedDistribution.key!.encryptedKey,
+          'st007-key-generation-draft',
+        );
+        expect(failedDistribution.distributedDeviceCount, 1);
+        expect(failedDistribution.deferredPeerIds, ['peer-charlie']);
+        expect(failedDistribution.fullyDistributed, isFalse);
         final pendingDraft = await groupRepo.getPendingKeyRotation('group-1');
-        expect(pendingDraft, isNotNull);
-        expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 1);
+        expect(pendingDraft, isNull);
+        expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 2);
 
+        // Resume: a follow-up rotation now converges the deferred member. With
+        // the epoch already at 2 and the draft consumed, this generates the next
+        // epoch (3) and delivers it to BOTH remaining members (transport up for
+        // all), so distribution is full and nobody is deferred.
         final retryBridge = FakeBridge();
+        retryBridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'st007-key-generation-redraft',
+          'keyEpoch': 3,
+        };
         retryBridge.responses['group:publish'] = {
           'ok': true,
           'messageId': 'st007-key-rotated',
@@ -6023,16 +6047,24 @@ void main() {
           senderUsername: 'Alice',
           sendP2PMessage: (peerId, message) async => true,
         );
-        expect(retryRotation, isNotNull);
-        expect(retryRotation!.encryptedKey, pendingDraft!.encryptedKey);
+        expect(retryRotation.rotated, isTrue);
+        expect(retryRotation.key, isNotNull);
+        expect(retryRotation.key!.keyGeneration, 3);
+        expect(
+          retryRotation.key!.encryptedKey,
+          'st007-key-generation-redraft',
+        );
+        expect(retryRotation.distributedDeviceCount, 2);
+        expect(retryRotation.deferredPeerIds, isEmpty);
+        expect(retryRotation.fullyDistributed, isTrue);
+        expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 3);
         final keyGenerationMessage = await sendCheckpointMessage(
           checkpoint: 'key_generation',
           sourceBridge: retryBridge,
           expectedRecipients: {'peer-bob', 'peer-charlie'},
         );
         checkpointEvidence['key_generation'] = <String, Object?>{
-          'reusedPendingDraft':
-              retryRotation.encryptedKey == 'st007-key-generation-draft',
+          'convergedAllMembersAfterPartial': retryRotation.fullyDistributed,
           'deliveryEpoch': keyGenerationMessage.keyGeneration,
         };
 

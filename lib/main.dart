@@ -72,6 +72,8 @@ import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.d
 import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
 import 'package:flutter_app/core/database/migrations/076_post_media_attachment_crypto_columns.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
@@ -107,6 +109,7 @@ import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
@@ -170,6 +173,8 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
     show sendDeliveryReceipt;
+import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
+import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
@@ -184,6 +189,8 @@ import 'package:flutter_app/features/groups/application/recover_stuck_sending_gr
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
@@ -195,6 +202,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
@@ -266,6 +274,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/group_missing_notification_feedback.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
@@ -451,6 +460,8 @@ void main() async {
       await runContactsMlKemKeyUpdatedTsMigration(db);
       await runPostMediaAttachmentCryptoColumnsMigration(db);
       await runMessageRelayCustodyMigration(db);
+      await runGroupPendingKeyDistributionsMigration(db);
+      await runMessageDedupKeyMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -679,6 +690,13 @@ void main() async {
       if (oldVersion < 77) {
         await runMessageRelayCustodyMigration(db);
       }
+      if (oldVersion < 78) {
+        await runGroupPendingKeyDistributionsMigration(db);
+      }
+      // F8 tier-2 message dedup key takes 079 with an additive guard.
+      if (oldVersion < 79) {
+        await runMessageDedupKeyMigration(db);
+      }
     },
   );
   StartupTiming.instance.mark('database_ready');
@@ -793,6 +811,10 @@ void main() async {
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
     dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+    dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
+        dbExistsMessageByContent(db, contactPeerId, senderPeerId, text, timestamp),
+    dbExistsMessageByDedupKey: (contactPeerId, senderPeerId, dedupKey) =>
+        dbExistsMessageByDedupKey(db, contactPeerId, senderPeerId, dedupKey),
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
         dbLoadMessagesPage(
           db,
@@ -1103,6 +1125,9 @@ void main() async {
     pushSharedKeyStore: sharedPushKeyStore,
   );
   await groupRepository.mirrorAllKeysToSecureStore();
+  // 04-P0 SI-1 NSE: backfill the shared-Keychain mute projection so the iOS NSE
+  // honors mute for groups muted before this feature shipped.
+  await groupRepository.mirrorAllMutedGroups();
 
   final pendingGroupInviteRepository = PendingGroupInviteRepositoryImpl(
     dbUpsertPendingGroupInvite: (row) => dbUpsertPendingGroupInvite(db, row),
@@ -1320,6 +1345,67 @@ void main() async {
               finalizedAt: finalizedAt,
             ),
   );
+
+  final groupPendingKeyDistributionRepository =
+      GroupPendingKeyDistributionRepositoryImpl(
+        dbUpsertGroupPendingKeyDistribution: (row) =>
+            dbUpsertGroupPendingKeyDistribution(db, row),
+        dbLoadGroupPendingKeyDistribution: (id) =>
+            dbLoadGroupPendingKeyDistribution(db, id),
+        dbLoadPendingGroupKeyDistributionsForPeer:
+            ({required peerId, groupId, int limit = 50}) =>
+                dbLoadPendingGroupKeyDistributionsForPeer(
+                  db,
+                  peerId: peerId,
+                  groupId: groupId,
+                  limit: limit,
+                ),
+        dbLoadPendingGroupKeyDistributionsForGroup:
+            ({required groupId, int limit = 50}) =>
+                dbLoadPendingGroupKeyDistributionsForGroup(
+                  db,
+                  groupId: groupId,
+                  limit: limit,
+                ),
+        dbRecordGroupPendingKeyDistributionAttempt:
+            (id, {required lastError, required updatedAt}) =>
+                dbRecordGroupPendingKeyDistributionAttempt(
+                  db,
+                  id,
+                  lastError: lastError,
+                  updatedAt: updatedAt,
+                ),
+        dbFinalizeGroupPendingKeyDistribution:
+            (id, {required status, required lastError, required finalizedAt}) =>
+                dbFinalizeGroupPendingKeyDistribution(
+                  db,
+                  id,
+                  status: status,
+                  lastError: lastError,
+                  finalizedAt: finalizedAt,
+                ),
+      );
+
+  // Slice 2 (Finding 03): persist deferred key distributions from EVERY rotate
+  // path (admin removal, voluntary leave, creator backstop) without threading a
+  // callback through the widget DI chain — mirrors debugSetFlowEventSink.
+  setDeferredGroupKeyDistributionSink(({
+    required groupId,
+    required peerId,
+    required keyEpoch,
+  }) async {
+    final now = DateTime.now().toUtc();
+    await groupPendingKeyDistributionRepository.enqueue(
+      GroupPendingKeyDistribution(
+        id: groupPendingKeyDistributionId(groupId, peerId),
+        groupId: groupId,
+        peerId: peerId,
+        keyEpoch: keyEpoch,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  });
 
   final groupPendingMembershipMessageRepository =
       GroupPendingMembershipMessageRepositoryImpl(
@@ -1620,6 +1706,22 @@ void main() async {
   // NET-REL-04: session-scoped, aggregate-only transport diagnostics.
   final transportMetrics = TransportMetrics();
 
+  // 115 P2: delivery-receipt sender bound to this device's transport.
+  // Receipts confirm durable persist of relay-inbox arrivals back to the
+  // message sender (live send first, inbox fallback inside the use case).
+  // F7: hoisted above the P2PServiceImpl construction so the deletion replay
+  // callback below can reference it.
+  Future<void> sendDeliveryReceiptForPeer({
+    required String contactPeerId,
+    required List<String> messageIds,
+  }) {
+    return sendDeliveryReceipt(
+      p2pService: p2pService,
+      targetPeerId: contactPeerId,
+      messageIds: messageIds,
+    );
+  }
+
   Future<RecoveredInboxReplayOutcome> replayInboxChatMessage(
     ChatMessage message, {
     required bool suppressNotification,
@@ -1658,6 +1760,99 @@ void main() async {
     }
 
     return mapChatReplayOutcomeToDisposition(outcome);
+  }
+
+  // F7: reactions/deletions get the same stage-before-ack/commit durability as
+  // chat. These replay closures call the use cases DIRECTLY (the listeners are
+  // constructed later and aren't needed here) and resolve the SAME deps + the
+  // same ML-KEM secret as the chat path (repository.loadIdentity()).
+  Future<RecoveredInboxReplayOutcome> replayInboxReaction(
+    ChatMessage message, {
+    String? stagedEntryId,
+  }) async {
+    final identity = await repository.loadIdentity();
+    final (result, _) = await handleIncomingReaction(
+      message: message,
+      messageRepo: messageRepository,
+      reactionRepo: reactionRepository,
+      contactRepo: contactRepository,
+      bridge: bridge,
+      ownMlKemSecretKey: identity?.mlKemSecretKey,
+    );
+    // OQ-7: targetUnavailable is a TERMINAL drop (commit, not retryable) — the
+    // target message is gone/deleted and will never reappear, so retrying would
+    // only churn toward quarantine.
+    switch (result) {
+      case HandleReactionResult.success:
+      case HandleReactionResult.targetUnavailable:
+        return (
+          disposition: RecoveredInboxChatDisposition.committed,
+          reasonCode: result.name,
+          reasonDetail: null,
+        );
+      case HandleReactionResult.decryptionFailed:
+      case HandleReactionResult.unknownSender:
+        return (
+          disposition: RecoveredInboxChatDisposition.retryable,
+          reasonCode: result.name,
+          reasonDetail: null,
+        );
+      case HandleReactionResult.senderMismatch:
+      case HandleReactionResult.notReaction:
+        return (
+          disposition: RecoveredInboxChatDisposition.rejected,
+          reasonCode: result.name,
+          reasonDetail: null,
+        );
+    }
+  }
+
+  Future<RecoveredInboxReplayOutcome> replayInboxMessageDeletion(
+    ChatMessage message, {
+    String? stagedEntryId,
+  }) async {
+    final identity = await repository.loadIdentity();
+    final (result, _) = await handleIncomingMessageDeletion(
+      message: message,
+      messageRepo: messageRepository,
+      contactRepo: contactRepository,
+      reactionRepo: reactionRepository,
+      mediaAttachmentRepo: mediaAttachmentRepository,
+      mediaFileManager: mediaFileManager,
+      bridge: bridge,
+      ownMlKemSecretKey: identity?.mlKemSecretKey,
+      sendDeliveryReceipt: (messageId) => sendDeliveryReceiptForPeer(
+        contactPeerId: message.from,
+        messageIds: [messageId],
+      ),
+      stagedEntryId: stagedEntryId,
+    );
+    // OQ-7: ignoredMissingMessage is a TERMINAL drop (commit, not retryable) —
+    // the use case already staged a tombstone for an unseen target, so there is
+    // nothing left to retry.
+    switch (result) {
+      case HandleMessageDeletionResult.success:
+      case HandleMessageDeletionResult.ignoredMissingMessage:
+        return (
+          disposition: RecoveredInboxChatDisposition.committed,
+          reasonCode: result.name,
+          reasonDetail: null,
+        );
+      case HandleMessageDeletionResult.decryptionFailed:
+      case HandleMessageDeletionResult.unknownSender:
+        return (
+          disposition: RecoveredInboxChatDisposition.retryable,
+          reasonCode: result.name,
+          reasonDetail: null,
+        );
+      case HandleMessageDeletionResult.unauthorized:
+      case HandleMessageDeletionResult.notMessageDeletion:
+        return (
+          disposition: RecoveredInboxChatDisposition.rejected,
+          reasonCode: result.name,
+          reasonDetail: null,
+        );
+    }
   }
 
   // Create P2P service (uses the same bridge + local P2P)
@@ -1722,6 +1917,12 @@ void main() async {
           );
       }
     },
+    // F7: stage-before-ack/commit durability for reactions/deletions across all
+    // 3 receive paths (relay-inbox, live-direct, LAN).
+    replayRecoveredInboxReaction: (message, {String? stagedEntryId}) =>
+        replayInboxReaction(message, stagedEntryId: stagedEntryId),
+    replayRecoveredInboxMessageDeletion: (message, {String? stagedEntryId}) =>
+        replayInboxMessageDeletion(message, stagedEntryId: stagedEntryId),
   );
   nearbyLocationService = NearbyLocationServiceImpl(
     settingsRepository: postsPrivacySettingsRepository,
@@ -1805,21 +2006,8 @@ void main() async {
   final appShellController = AppShellController();
   final pendingPostTargetStore = PendingPostTargetStore();
 
-  // Create chat message listener
-  // 115 P2: delivery-receipt sender bound to this device's transport.
-  // Receipts confirm durable persist of relay-inbox arrivals back to the
-  // message sender (live send first, inbox fallback inside the use case).
-  Future<void> sendDeliveryReceiptForPeer({
-    required String contactPeerId,
-    required List<String> messageIds,
-  }) {
-    return sendDeliveryReceipt(
-      p2pService: p2pService,
-      targetPeerId: contactPeerId,
-      messageIds: messageIds,
-    );
-  }
-
+  // Create chat message listener (sendDeliveryReceiptForPeer is hoisted above
+  // the P2PServiceImpl construction so the F7 deletion replay can reference it).
   chatMessageListener = ChatMessageListener(
     chatMessageStream: messageRouter.chatMessageStream,
     messageRepo: messageRepository,
@@ -1997,7 +2185,7 @@ void main() async {
       // gates and serializes per group, so this is fail-closed.
       final identity = await repository.loadIdentity();
       if (identity == null) return false;
-      final rotated = await rotateAndDistributeGroupKey(
+      final rotationOutcome = await rotateAndDistributeGroupKey(
         bridge: bridge,
         groupRepo: groupRepository,
         groupId: groupId,
@@ -2010,7 +2198,7 @@ void main() async {
         storeP2PMessageInInbox: (peerId, message) async =>
             p2pService.storeInInbox(peerId, message),
       );
-      return rotated != null;
+      return rotationOutcome.rotated;
     },
     recoverFromDispatcherOverflow: (_) async {
       await runAccountRuntimeNetworkVoidAction(
@@ -2075,6 +2263,29 @@ void main() async {
       allowMembershipBuffer: true,
     ),
   );
+
+  // Slice 2 (Finding 03): drainer for deferred key distributions + the prompt
+  // member-key-arrival trigger (drain a peer the moment its updated config with
+  // a usable ML-KEM key is applied), without threading callbacks through the UI.
+  final groupPendingKeyDistributionRunner = GroupPendingKeyDistributionRunner(
+    bridge: bridge,
+    groupRepo: groupRepository,
+    repository: groupPendingKeyDistributionRepository,
+    loadIdentity: repository.loadIdentity,
+    sendP2PMessage: (peerId, message) async =>
+        p2pService.sendMessage(peerId, message),
+    storeP2PMessageInInbox: (peerId, message) async =>
+        p2pService.storeInInbox(peerId, message),
+  );
+  setDeferredDistributionDrainSink(({
+    required groupId,
+    required peerId,
+  }) async {
+    await groupPendingKeyDistributionRunner.drainPendingForPeer(
+      groupId: groupId,
+      peerId: peerId,
+    );
+  });
 
   // Create group invite listener
   final groupIdentityCallbacks = buildGroupIdentityCallbacks(
@@ -2487,6 +2698,7 @@ void main() async {
       groupInviteDeliveryAttemptRepository:
           groupInviteDeliveryAttemptRepository,
       groupPendingKeyRepairRepository: groupPendingKeyRepairRepository,
+      groupPendingKeyDistributionRunner: groupPendingKeyDistributionRunner,
       groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
       groupMessageListener: groupMessageListener,
@@ -2673,6 +2885,7 @@ class MyApp extends StatefulWidget {
   final GroupInviteDeliveryAttemptRepositoryImpl
   groupInviteDeliveryAttemptRepository;
   final GroupPendingKeyRepairRepositoryImpl groupPendingKeyRepairRepository;
+  final GroupPendingKeyDistributionRunner groupPendingKeyDistributionRunner;
   final GroupHistoryGapRepairRepositoryImpl groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepositoryImpl
   groupReactionReplayOutboxRepository;
@@ -2703,6 +2916,10 @@ class MyApp extends StatefulWidget {
   final Future<void> Function()? onAppDetached;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
+
+  // 04-P0 / QW-2: app-level messenger so notification handlers (which run
+  // outside any Scaffold subtree) can surface SnackBar feedback.
+  static final scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
   const MyApp({
     super.key,
@@ -2750,6 +2967,7 @@ class MyApp extends StatefulWidget {
     required this.groupMessageRepository,
     required this.groupInviteDeliveryAttemptRepository,
     required this.groupPendingKeyRepairRepository,
+    required this.groupPendingKeyDistributionRunner,
     required this.groupHistoryGapRepairRepository,
     required this.groupReactionReplayOutboxRepository,
     required this.groupMessageListener,
@@ -3168,6 +3386,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           );
           if (resolution.hasPendingInvite) {
             await _openIntroOrbitRoute(navigator: navigator);
+          } else if (navigator.mounted) {
+            // 04-P0 / QW-2: the group can't be resolved and there is no pending
+            // invite — don't dead-tap silently. Show feedback (with a single
+            // user-driven Retry that re-runs this handler) and route home. The
+            // targeted drain already ran once inside
+            // resolveGroupNotificationRouteTarget; Retry is not an auto-loop.
+            final l10n = AppLocalizations.of(navigator.context);
+            showGroupMissingNotificationFeedback(
+              messenger: MyApp.scaffoldMessengerKey.currentState,
+              navigator: navigator,
+              message:
+                  l10n?.group_notification_catching_up ??
+                  'This group is still catching up — try again in a moment.',
+              retryLabel: l10n?.btn_retry,
+              onRetry: () =>
+                  unawaited(_handleNotificationRouteTarget(routeTarget)),
+            );
           }
           return;
         }
@@ -3519,6 +3754,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupMsgRepo: widget.groupMessageRepository,
         groupMessageListener: widget.groupMessageListener,
         pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+        drainPendingKeyDistributionsFn:
+            widget.groupPendingKeyDistributionRunner.drainAllPending,
         historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
         requestGroupKeyRepair: emitGroupKeyRepairRequest,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
@@ -3748,6 +3985,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     return MaterialApp(
       title: 'mknoon',
       navigatorKey: MyApp.navigatorKey,
+      scaffoldMessengerKey: MyApp.scaffoldMessengerKey,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       theme: AppTheme.darkTheme,

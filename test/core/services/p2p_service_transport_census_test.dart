@@ -207,6 +207,20 @@ class _FakeMessageRepository implements MessageRepository {
   @override
   Future<bool> messageExists(String id) async => false;
   @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async => false;
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async => false;
+  @override
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async => [];

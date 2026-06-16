@@ -1032,8 +1032,38 @@ Future<Map<String, dynamic>> callP2PMessageSend(
     },
   };
 
-  final responseJson = await bridge.send(jsonEncode(request));
-  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+  // F5: Go self-bounds the send via SetDeadline, but a MethodChannel/gomobile
+  // boundary stall or iOS suspension can freeze that deadline timer and leave
+  // this await pending forever, locking the composer (_isSending stuck true).
+  // Cap the await strictly LOOSER than the Go self-bound so it only fires on a
+  // true boundary hang, and surface it as a returned `BRIDGE_TIMEOUT` (sent:
+  // false) that degrades to the durable inbox fallback — NOT failed-and-lost.
+  // The wrap is null-safe: callers passing no timeoutMs (sendMessage) stay
+  // unbounded, exactly as before.
+  final timeout = timeoutMs != null
+      ? Duration(milliseconds: timeoutMs + 500)
+      : null;
+
+  final Map<String, dynamic> response;
+  try {
+    final responseJson = timeout != null
+        ? await bridge.send(jsonEncode(request)).timeout(timeout)
+        : await bridge.send(jsonEncode(request));
+    response = jsonDecode(responseJson) as Map<String, dynamic>;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_MESSAGE_SEND_RESPONSE',
+      details: {'ok': false, 'sent': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    return {
+      'ok': false,
+      'sent': false,
+      'errorCode': 'BRIDGE_TIMEOUT',
+      'errorMessage':
+          'Bridge message:send timed out after ${timeout?.inMilliseconds ?? 0}ms',
+    };
+  }
 
   emitFlowEvent(
     layer: 'FL',

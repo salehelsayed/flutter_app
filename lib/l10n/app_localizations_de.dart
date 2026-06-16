@@ -848,6 +848,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get edit_save_failed => 'Änderung konnte nicht gespeichert werden.';
 
   @override
+  String get sending_taking_longer => 'Senden dauert länger…';
+
+  @override
   String get intro_pass => 'Weitergeben';
 
   @override
@@ -1400,6 +1403,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Mitteilungen für diese Gruppe wieder aktiviert';
 
   @override
+  String get group_notification_catching_up =>
+      'Diese Gruppe wird noch synchronisiert – versuche es gleich erneut.';
+
+  @override
   String get group_info_delete_local_failed =>
       'Gruppe konnte lokal nicht gelöscht werden';
 
@@ -1410,6 +1417,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get group_info_rotate_key_failed =>
       'Gruppenschlüssel konnte nach dem Entfernen nicht rotiert werden';
+
+  @override
+  String get group_info_remove_member_partial_distribution =>
+      'Mitglied entfernt. Einige Mitglieder erhalten den neuen Schlüssel, sobald sie wieder verbunden sind.';
 
   @override
   String get group_info_remove_member_failed =>

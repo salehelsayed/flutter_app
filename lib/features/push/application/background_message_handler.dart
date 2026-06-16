@@ -268,6 +268,19 @@ Future<bool> _defaultBackgroundAccountMigrationNetworkGate({
   return gate.allowsAccountNetworkSideEffects(peerId: peerId, operation: operation);
 }
 
+/// 04-P0 / SI-1: a confirmed group member's background-FCM display eligibility,
+/// honoring mute. Pure decision over the loaded `groups` row so the is_muted
+/// read is unit-testable without standing up a SQLCipher identity.db fixture.
+/// Fails open (notifies) when the column is absent/null, matching the live path.
+GroupMessageNotificationDisplayEligibility groupMemberMessageDisplayEligibility(
+  Map<String, Object?> groupRow,
+) {
+  if ((groupRow['is_muted'] as int? ?? 0) == 1) {
+    return const GroupMessageNotificationDisplayEligibility.suppressed('muted');
+  }
+  return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+}
+
 Future<GroupMessageNotificationDisplayEligibility>
 _resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb(
   String groupId,
@@ -301,7 +314,10 @@ _resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb(
     if (groupRow != null) {
       final memberRow = await dbLoadGroupMember(db, groupId, localPeerId);
       if (memberRow != null) {
-        return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+        // 04-P0 / SI-1: honor mute on the Android background path too. The
+        // `groups` row carries is_muted (dbLoadGroup selects all columns), so
+        // no app-group projection is needed here.
+        return groupMemberMessageDisplayEligibility(groupRow);
       }
     }
 

@@ -4,7 +4,13 @@ import '../../utils/flow_event_emitter.dart';
 
 const _recoverableInboxStagingStatuses = ['pending', 'retryable'];
 
-Future<void> dbInsertInboxStagingEntry(
+/// Inserts a staged inbox row, ignoring `entry_id` conflicts.
+///
+/// Returns the inserted rowid, or `0` when the insert was a no-op because the
+/// `entry_id` already existed (`ConflictAlgorithm.ignore`). Callers MUST use
+/// this discriminator to avoid re-reporting an already-staged entry as ackable
+/// (F3): two concurrent drains otherwise both ack + both replay the same page.
+Future<int> dbInsertInboxStagingEntry(
   Database db,
   Map<String, Object?> row,
 ) async {
@@ -19,7 +25,7 @@ Future<void> dbInsertInboxStagingEntry(
   );
 
   try {
-    await db.insert(
+    final rowId = await db.insert(
       'inbox_staging_entries',
       row,
       conflictAlgorithm: ConflictAlgorithm.ignore,
@@ -30,8 +36,11 @@ Future<void> dbInsertInboxStagingEntry(
       event: 'INBOX_STAGING_DB_INSERT_SUCCESS',
       details: {
         'entryId': entryId.length > 8 ? entryId.substring(0, 8) : entryId,
+        'inserted': rowId != 0,
       },
     );
+
+    return rowId;
   } catch (e) {
     emitFlowEvent(
       layer: 'DB',

@@ -59,6 +59,38 @@ class InMemoryMessageRepository
   Future<bool> messageExists(String id) async => _messages.containsKey(id);
 
   @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async {
+    return _messages.values.any(
+      (m) =>
+          m.isIncoming &&
+          m.contactPeerId == contactPeerId &&
+          m.senderPeerId == senderPeerId &&
+          m.text == text &&
+          m.timestamp == timestamp,
+    );
+  }
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async {
+    return _messages.values.any(
+      (m) =>
+          m.isIncoming &&
+          m.contactPeerId == contactPeerId &&
+          m.senderPeerId == senderPeerId &&
+          m.dedupKey == dedupKey,
+    );
+  }
+
+  @override
   Future<int> getMessageCountForContact(String contactPeerId) async {
     return _visibleMessagesForContact(contactPeerId).length;
   }

@@ -4014,9 +4014,15 @@ void main() {
         const groupId = 'group-ge015-admin-restart-during-mutation';
         const initialKeyEpoch = 1;
         const removedKeyEpoch = 2;
-        const readdKeyEpoch = 3;
+        // Promote-then-defer: the interrupted remove already promotes epoch 2
+        // (boundary enforced, Bob deferred). The post-restart admin re-rotation
+        // therefore advances to epoch 3 when it converges Bob, and the re-add
+        // rotation advances to epoch 4.
+        const repairedKeyEpoch = 3;
+        const readdKeyEpoch = 4;
         const initialEncryptedKey = 'ge015-initial-key';
         const removedEncryptedKey = 'ge015-removed-key';
+        const repairedEncryptedKey = 'ge015-repaired-key';
         const readdEncryptedKey = 'ge015-readd-key';
         const aliceRemovedWindowId = 'ge015-alice-removed-window';
         const bobAfterRepairId = 'ge015-bob-after-remove-repair';
@@ -4153,7 +4159,17 @@ void main() {
           perRecipientTimeout: const Duration(milliseconds: 10),
           distributionTimeout: const Duration(milliseconds: 50),
         );
-        expect(interruptedRemoveRepair, isNull);
+        // Promote-then-defer: the failed fanout no longer aborts. The new epoch
+        // is promoted (so removed Charlie loses the live key unconditionally),
+        // but Bob — the only remaining member, whose every send failed — is
+        // recorded as deferred and is NOT counted as distributed. The honest
+        // invariant is "the boundary is enforced but distribution is incomplete",
+        // not "nothing happened".
+        expect(interruptedRemoveRepair.rotated, isTrue);
+        expect(interruptedRemoveRepair.key!.keyGeneration, removedKeyEpoch);
+        expect(interruptedRemoveRepair.distributedDeviceCount, 0);
+        expect(interruptedRemoveRepair.fullyDistributed, isFalse);
+        expect(interruptedRemoveRepair.deferredPeerIds, [bob.peerId]);
         expect(interruptedRemoveTargets.toSet(), {bob.peerId});
         expect(
           _bridgeCommandIndex(
@@ -4161,24 +4177,30 @@ void main() {
             'group:updateKey',
             keyEpoch: removedKeyEpoch,
           ),
-          -1,
-          reason: 'failed fanout must not promote Alice to a fake sent epoch',
+          isNot(-1),
+          reason:
+              'promote-then-defer commits the new epoch even when fanout failed',
         );
         expect(
           (await alice.groupRepo.getLatestKey(groupId))?.keyGeneration,
-          initialKeyEpoch,
-          reason: 'interrupted remove fanout remains visibly unrepaired',
+          removedKeyEpoch,
+          reason: 'interrupted remove fanout still promotes Alice to the new epoch',
         );
 
         alice = alice.restartWithPersistedState();
         alice.bridge.responses['group:generateNextKey'] = {
           'ok': true,
-          'groupKey': removedEncryptedKey,
-          'keyEpoch': removedKeyEpoch,
+          'groupKey': repairedEncryptedKey,
+          'keyEpoch': repairedKeyEpoch,
         };
         alice.start();
         alice.subscribeToGroup(groupId);
 
+        // After restart the admin re-rotates with a live transport. Bob — the
+        // member deferred by the interrupted attempt — is now reachable, so this
+        // rotation fully distributes the new epoch (3) and never targets removed
+        // Charlie. Because epoch 2 was already promoted, convergence advances the
+        // boundary to epoch 3.
         final repairedRemoveTargets = <String>[];
         final repairedRemoveKey = await rotateAndDistributeGroupKey(
           bridge: alice.bridge,
@@ -4196,11 +4218,13 @@ void main() {
           distributionAttemptCount: 1,
           distributionRetryDelay: Duration.zero,
         );
-        expect(repairedRemoveKey, isNotNull);
-        expect(repairedRemoveKey!.keyGeneration, removedKeyEpoch);
+        expect(repairedRemoveKey.rotated, isTrue);
+        expect(repairedRemoveKey.key!.keyGeneration, repairedKeyEpoch);
+        expect(repairedRemoveKey.fullyDistributed, isTrue);
+        expect(repairedRemoveKey.deferredPeerIds, isEmpty);
         expect(repairedRemoveTargets.toSet(), {bob.peerId});
         expect(repairedRemoveTargets, isNot(contains(charlie.peerId)));
-        await saveKey(bob, removedKeyEpoch, removedEncryptedKey, removedAt);
+        await saveKey(bob, repairedKeyEpoch, repairedEncryptedKey, removedAt);
 
         final (removedWindowResult, removedWindowMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -4211,7 +4235,7 @@ void main() {
             );
         expect(removedWindowResult.name, 'success');
         expect(removedWindowMessage, isNotNull);
-        expect(removedWindowMessage!.keyGeneration, removedKeyEpoch);
+        expect(removedWindowMessage!.keyGeneration, repairedKeyEpoch);
         expect(recipientPeerIdsForMessage(alice, aliceRemovedWindowId), {
           bob.peerId,
         });
@@ -4225,7 +4249,7 @@ void main() {
             );
         expect(bobAfterRepairResult.name, 'success');
         expect(bobAfterRepairMessage, isNotNull);
-        expect(bobAfterRepairMessage!.keyGeneration, removedKeyEpoch);
+        expect(bobAfterRepairMessage!.keyGeneration, repairedKeyEpoch);
         expect(recipientPeerIdsForMessage(bob, bobAfterRepairId), {
           alice.peerId,
         });
@@ -6682,7 +6706,7 @@ void main() {
         ).timeout(const Duration(seconds: 2));
 
         expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(delayedBobKeyUpdate, isNotNull);
         expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
         expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
@@ -6865,7 +6889,7 @@ void main() {
         ).timeout(const Duration(seconds: 2));
 
         expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(delayedCharlieKeyUpdate, isNotNull);
         expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
         expect(
@@ -7162,7 +7186,7 @@ void main() {
           },
         );
         expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(capturedBobKeyUpdate, isNotNull);
 
         bob.bridge.responses['group:updateKey'] = {
@@ -13380,7 +13404,7 @@ void main() {
         );
 
         expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(capturedKeyUpdates.keys, unorderedEquals([bob.deviceId]));
         expect(capturedKeyUpdates.keys, isNot(contains(charlie.deviceId)));
         expect(
@@ -13401,7 +13425,7 @@ void main() {
               .toSet(),
           {bob.deviceId},
         );
-        await saveKey(bob, rotatedKey.keyGeneration, rotatedKey.encryptedKey);
+        await saveKey(bob, rotatedKey.key!.keyGeneration, rotatedKey.key!.encryptedKey);
 
         final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
           groupId: groupId,
@@ -13958,7 +13982,7 @@ void main() {
           sendP2PMessage: (_, _) async => true,
         );
         expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
 
         final during = await bob.sendGroupMessageViaBridge(
@@ -14024,7 +14048,7 @@ void main() {
     );
 
     test(
-      'KE-015 partial key distribution failure blocks sender promotion and preserves fake-network delivery',
+      'KE-015 partial key distribution promotes the new epoch, defers the undelivered member, and preserves fake-network delivery',
       () async {
         final alice = GroupTestUser.create(
           peerId: 'ke015-alice-peer',
@@ -14113,15 +14137,27 @@ void main() {
           },
         );
 
-        expect(rotatedKey, isNull);
+        // Promote-then-defer: the partial fanout no longer aborts. Both devices
+        // are attempted (the new epoch is signed for each), but only Bob's send
+        // succeeds. The epoch is promoted regardless — Alice advances to 2 — and
+        // Charlie, whose only device send failed, is recorded as deferred. The
+        // updateKey at the new epoch IS issued and key_rotated IS published.
+        expect(rotatedKey.rotated, isTrue);
+        expect(rotatedKey.key!.keyGeneration, 2);
+        expect(rotatedKey.distributedDeviceCount, 1);
+        expect(rotatedKey.fullyDistributed, isFalse);
+        expect(rotatedKey.deferredPeerIds, [charlie.peerId]);
         expect(keyUpdateAttempts.keys.toSet(), {
           bob.deviceId,
           charlie.deviceId,
         });
         expect(keyUpdateAttempts[bob.deviceId]!['keyGeneration'], 2);
         expect(keyUpdateAttempts[charlie.deviceId]!['keyGeneration'], 2);
-        expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
-        expect(await alice.groupRepo.getKeyByGeneration(groupId, 2), isNull);
+        expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
+        expect(
+          await alice.groupRepo.getKeyByGeneration(groupId, 2),
+          isNotNull,
+        );
         expect(
           alice.bridge.sentMessages.any((raw) {
             final parsed = jsonDecode(raw) as Map<String, dynamic>;
@@ -14130,14 +14166,29 @@ void main() {
                 payload is Map<String, dynamic> &&
                 payload['keyEpoch'] == 2;
           }),
-          isFalse,
+          isTrue,
         );
-        expect(alice.bridge.commandLog, isNot(contains('group:publish')));
+        expect(alice.bridge.commandLog, contains('group:publish'));
+
+        // Bob received the key update (his send succeeded), so simulate the
+        // listener applying it on his side. Charlie was deferred — he never
+        // received epoch 2 and stays on epoch 1.
+        await bob.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 2,
+            encryptedKey: keyUpdateAttempts[bob.deviceId]!['encryptedKey']
+                as String,
+            createdAt: createdAt.add(const Duration(minutes: 2, seconds: 30)),
+          ),
+        );
 
         alice.start();
         bob.start();
         charlie.start();
 
+        // Alice now sends on the promoted epoch 2. Bob converged and reads it;
+        // Charlie, still deferred on epoch 1, cannot decrypt the new epoch yet.
         final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
           groupId: groupId,
           text: postFailureText,
@@ -14146,25 +14197,33 @@ void main() {
         );
         expect(sendResult.name, 'success');
         expect(sentMessage, isNotNull);
-        expect(sentMessage!.keyGeneration, 1);
+        expect(sentMessage!.keyGeneration, 2);
         await pump();
 
-        Future<void> expectDeliveredPreviousEpoch(GroupTestUser user) async {
+        Future<void> expectDeliveredAtEpochTwo(GroupTestUser user) async {
           final delivered = (await user.loadGroupMessages(
             groupId,
           )).where((message) => message.id == postFailureMessageId).toList();
           expect(delivered, hasLength(1), reason: user.username);
           expect(delivered.single.isIncoming, isTrue);
-          expect(delivered.single.keyGeneration, 1);
+          expect(delivered.single.keyGeneration, 2);
           expect(delivered.single.text, postFailureText);
         }
 
-        await expectDeliveredPreviousEpoch(bob);
-        await expectDeliveredPreviousEpoch(charlie);
-        expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+        // Both members receive the wire message at epoch 2 (the fake crypto is
+        // epoch-agnostic, so the message decrypts regardless of which key the
+        // receiver holds). The deferral is visible in KEY STATE, not in
+        // decryptability: Bob applied the rotation and is on epoch 2, while
+        // deferred Charlie never received the key update and stays on epoch 1
+        // until a later convergence.
+        await expectDeliveredAtEpochTwo(bob);
+        await expectDeliveredAtEpochTwo(charlie);
+
+        expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
         expect(
           (await charlie.groupRepo.getLatestKey(groupId))!.keyGeneration,
           1,
+          reason: 'deferred Charlie stays on the old epoch until convergence',
         );
       },
     );
@@ -14282,7 +14341,7 @@ void main() {
         ]).timeout(const Duration(seconds: 2));
 
         expect(results, everyElement(isNotNull));
-        expect(results.map((key) => key!.keyGeneration).toList(), [2, 3]);
+        expect(results.map((key) => key.key!.keyGeneration).toList(), [2, 3]);
         _expectNoSameEpochDifferentKeys(capturedPayloads);
         expect(
           capturedPayloads
@@ -14291,11 +14350,11 @@ void main() {
           {2, 3},
         );
 
-        final finalKey = results.last!;
+        final finalKey = results.last;
         expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 3);
         await Future.wait([
-          saveKey(bob, finalKey.keyGeneration, finalKey.encryptedKey),
-          saveKey(charlie, finalKey.keyGeneration, finalKey.encryptedKey),
+          saveKey(bob, finalKey.key!.keyGeneration, finalKey.key!.encryptedKey),
+          saveKey(charlie, finalKey.key!.keyGeneration, finalKey.key!.encryptedKey),
         ]);
 
         alice.start();
@@ -14335,6 +14394,11 @@ void main() {
           peerId: 'nw013-alice-peer',
           username: 'Alice',
           network: network,
+          // Promote-then-defer: a distribution failure no longer leaves an
+          // uncommitted draft. To exercise draft-reuse-on-restart the first
+          // attempt must instead fail at PROMOTE (one-shot), leaving the
+          // generated epoch-2 draft uncommitted for the retry to reuse.
+          bridge: _PromoteFailBridge(failEpoch: 2),
         );
         final bob = GroupTestUser.create(
           peerId: 'nw013-bob-peer',
@@ -14423,7 +14487,12 @@ void main() {
           },
         );
 
-        expect(firstAttempt, isNull);
+        // The first attempt generated and drafted epoch 2 but its PROMOTE
+        // `group:updateKey` failed, so it returns notRotated, leaves the local
+        // epoch at 1, and — crucially — does NOT clear the pending draft. The
+        // draft survives a stop-start for the retry to reuse.
+        expect(firstAttempt.rotated, isFalse);
+        expect(firstAttempt.key, isNull);
         expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
         expect(await alice.groupRepo.getKeyByGeneration(groupId, 2), isNull);
         final pendingDraft = await alice.groupRepo.getPendingKeyRotation(
@@ -14456,9 +14525,13 @@ void main() {
           },
         );
 
-        expect(retry, isNotNull);
-        expect(retry!.keyGeneration, 2);
-        expect(retry.encryptedKey, firstGeneratedKey);
+        // The retry reuses the surviving draft: same epoch (2) and same key
+        // (firstGeneratedKey, NOT the second generated key), with no second
+        // generate. The promote now succeeds (one-shot failure already spent),
+        // so the epoch commits and the draft is cleared.
+        expect(retry.rotated, isTrue);
+        expect(retry.key!.keyGeneration, 2);
+        expect(retry.key!.encryptedKey, firstGeneratedKey);
         expect(
           alice.bridge.commandLog,
           isNot(contains('group:generateNextKey')),
@@ -14467,8 +14540,8 @@ void main() {
         expect(await alice.groupRepo.getPendingKeyRotation(groupId), isNull);
 
         await Future.wait([
-          saveKey(bob, retry.keyGeneration, retry.encryptedKey),
-          saveKey(charlie, retry.keyGeneration, retry.encryptedKey),
+          saveKey(bob, retry.key!.keyGeneration, retry.key!.encryptedKey),
+          saveKey(charlie, retry.key!.keyGeneration, retry.key!.encryptedKey),
         ]);
 
         alice.start();
@@ -14568,7 +14641,7 @@ void main() {
           },
         );
         expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(capturedBobKeyUpdate, isNotNull);
         expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
 
@@ -14694,8 +14767,8 @@ void main() {
         };
         final capturedBobUpdates = <int, String>{};
 
-        Future<GroupKeyInfo?> rotateAndCapture() {
-          return rotateAndDistributeGroupKey(
+        Future<GroupKeyInfo?> rotateAndCapture() async {
+          final outcome = await rotateAndDistributeGroupKey(
             bridge: alice.bridge,
             groupRepo: alice.groupRepo,
             groupId: groupId,
@@ -14712,6 +14785,7 @@ void main() {
               return true;
             },
           );
+          return outcome.key;
         }
 
         final epochFour = await rotateAndCapture();
@@ -14872,7 +14946,7 @@ void main() {
           },
         );
         expect(epochFive, isNotNull);
-        expect(epochFive!.keyGeneration, 5);
+        expect(epochFive.key!.keyGeneration, 5);
         expect(capturedBobEpochFive, isNotNull);
         expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 4);
 
@@ -14914,7 +14988,7 @@ void main() {
         final bobEpochFive = await bob.groupRepo.getLatestKey(groupId);
         expect(bobEpochFive, isNotNull);
         expect(bobEpochFive!.keyGeneration, 5);
-        expect(bobEpochFive.encryptedKey, epochFive.encryptedKey);
+        expect(bobEpochFive.encryptedKey, epochFive.key!.encryptedKey);
         expect(
           bob.bridge.commandLog.where((c) => c == 'group:updateKey'),
           hasLength(1),
@@ -15046,7 +15120,7 @@ void main() {
           },
         );
         expect(epochFive, isNotNull);
-        expect(epochFive!.keyGeneration, 5);
+        expect(epochFive.key!.keyGeneration, 5);
         expect(capturedBobEpochFive, isNotNull);
         expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 4);
 
@@ -15101,7 +15175,7 @@ void main() {
         final bobEpochFive = await bob.groupRepo.getLatestKey(groupId);
         expect(bobEpochFive, isNotNull);
         expect(bobEpochFive!.keyGeneration, 5);
-        expect(bobEpochFive.encryptedKey, epochFive.encryptedKey);
+        expect(bobEpochFive.encryptedKey, epochFive.key!.encryptedKey);
         expect(
           bob.bridge.commandLog.where((c) => c == 'group:updateKey'),
           hasLength(1),
@@ -15612,10 +15686,10 @@ void main() {
         distributionGate.complete(true);
         final rotatedKey = await rotationFuture;
         expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(distributionTargets, [bob.deviceId]);
         expect(distributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rotatedKey);
+        await bob.groupRepo.saveKey(rotatedKey.key!);
 
         final aliceAfter = await alice.sendGroupMessageViaBridge(
           groupId: groupId,
@@ -16833,9 +16907,9 @@ Future<void> _runGe017Seed(
       },
     );
     expect(rotatedKey, isNotNull, reason: stateContext(op));
-    expect(rotatedKey!.keyGeneration, currentEpoch, reason: stateContext(op));
+    expect(rotatedKey.key!.keyGeneration, currentEpoch, reason: stateContext(op));
     for (final label in active) {
-      await user(label).groupRepo.saveKey(rotatedKey);
+      await user(label).groupRepo.saveKey(rotatedKey.key!);
     }
     expect(
       targets.toSet(),
@@ -17379,9 +17453,9 @@ Future<void> _runGe019Seed(
       },
     );
     expect(rotatedKey, isNotNull, reason: stateContext(op));
-    expect(rotatedKey!.keyGeneration, currentEpoch, reason: stateContext(op));
+    expect(rotatedKey.key!.keyGeneration, currentEpoch, reason: stateContext(op));
     for (final label in active) {
-      await user(label).groupRepo.saveKey(rotatedKey);
+      await user(label).groupRepo.saveKey(rotatedKey.key!);
     }
     expect(
       targets.toSet(),
@@ -17892,9 +17966,9 @@ Future<void> _runGe020Seed(
       },
     );
     expect(rotatedKey, isNotNull, reason: stateContext(op));
-    expect(rotatedKey!.keyGeneration, currentEpoch, reason: stateContext(op));
+    expect(rotatedKey.key!.keyGeneration, currentEpoch, reason: stateContext(op));
     for (final label in active) {
-      await user(label).groupRepo.saveKey(rotatedKey);
+      await user(label).groupRepo.saveKey(rotatedKey.key!);
     }
     expect(
       targets.toSet(),
@@ -19034,6 +19108,41 @@ class _CommittedEpochGenerateBridge extends PassthroughCryptoBridge {
       return response;
     }
 
+    return super.send(message);
+  }
+}
+
+/// A [FakeBridge] (matching the default [GroupTestUser] bridge) that fails the
+/// first PROMOTE `group:updateKey` for a specific new epoch, then passes every
+/// later one — including the resync `group:updateKey` issued at the current
+/// epoch, which is never matched. Under promote-then-defer a distribution
+/// failure no longer leaves an uncommitted draft (the epoch promotes), so the
+/// only way to leave a reusable pending draft for a retry is a genuine promote
+/// failure. The one-shot semantics let a single shared bridge model "first
+/// attempt fails at promote, retry succeeds". Mirrors `_PromoteFailBridge` in
+/// the sibling unit test.
+class _PromoteFailBridge extends FakeBridge {
+  _PromoteFailBridge({required this.failEpoch});
+
+  final int failEpoch;
+  bool _hasFailedPromote = false;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:updateKey' && !_hasFailedPromote) {
+      final payload = parsed['payload'] as Map<String, dynamic>?;
+      if (payload != null && payload['keyEpoch'] == failEpoch) {
+        _hasFailedPromote = true;
+        sendCallCount++;
+        lastSentMessage = message;
+        sentMessages.add(message);
+        lastCommand = cmd;
+        commandLog.add(cmd!);
+        return jsonEncode({'ok': false, 'errorCode': 'PROMOTE_FAILED'});
+      }
+    }
     return super.send(message);
   }
 }

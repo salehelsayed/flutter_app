@@ -182,9 +182,9 @@ void main() {
         },
       );
 
-      expect(rotatedKey, isNotNull);
-      expect(rotatedKey!.keyGeneration, 2);
-      expect(rotatedKey.encryptedKey, rotatedKeyValue);
+      expect(rotatedKey.key, isNotNull);
+      expect(rotatedKey.key!.keyGeneration, 2);
+      expect(rotatedKey.key!.encryptedKey, rotatedKeyValue);
       expect(keyDistributionTargets, contains(bob.deviceId));
       expect(
         keyDistributionTargets,
@@ -198,7 +198,7 @@ void main() {
       );
 
       // Bob adopts the rotated key (mirrors the key-update listener path).
-      await bob.groupRepo.saveKey(rotatedKey);
+      await bob.groupRepo.saveKey(rotatedKey.key!);
 
       // Remaining members are on epoch 2; the removed member has no rotated key.
       Future<void> expectRotatedRemainingMember(GroupTestUser user) async {

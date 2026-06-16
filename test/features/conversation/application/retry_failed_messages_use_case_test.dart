@@ -1018,12 +1018,13 @@ void main() {
       expect(count, 1);
       expect(p2pService.storeInInboxCallCount, 1);
 
-      // Verify the saved message has transport='inbox' and status='delivered'
+      // F6: relay STORE success is custody, not receiver delivery — 'inboxed'
+      // with the wire envelope retained for the custody sweep + receipt repair.
       final saved = messageRepo.lastSavedMessage;
       expect(saved, isNotNull);
-      expect(saved!.status, 'delivered');
+      expect(saved!.status, 'inboxed');
       expect(saved.transport, 'inbox');
-      expect(saved.wireEnvelope, isNull);
+      expect(saved.wireEnvelope, isNotNull);
     });
 
     test(
@@ -1078,11 +1079,12 @@ void main() {
           contains('"mime":"image/gif"'),
         );
 
+        // F6: 'inboxed' custody, envelope (incl GIF media metadata) retained.
         final saved = messageRepo.lastSavedMessage;
         expect(saved, isNotNull);
-        expect(saved!.status, 'delivered');
+        expect(saved!.status, 'inboxed');
         expect(saved.transport, 'inbox');
-        expect(saved.wireEnvelope, isNull);
+        expect(saved.wireEnvelope, isNotNull);
       },
     );
 
@@ -1122,12 +1124,13 @@ void main() {
 
       // storeInInbox should NOT be called — message already has transport='inbox'
       expect(p2pService.storeInInboxCallCount, 0);
-      // But the message should still be marked as delivered
+      // F6: already-inbox is custody, not delivery — settled 'inboxed' with the
+      // envelope retained (no send happened), riding the receipt repair.
       expect(count, 1);
       final saved = messageRepo.lastSavedMessage;
       expect(saved, isNotNull);
-      expect(saved!.status, 'delivered');
-      expect(saved.wireEnvelope, isNull);
+      expect(saved!.status, 'inboxed');
+      expect(saved.wireEnvelope, isNotNull);
     });
 
     test('calls getFailedOutgoingMessages on messageRepo', () async {
@@ -1261,13 +1264,14 @@ void main() {
         // Inbox-only re-store: exactly one store, ZERO live sends.
         expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.sendMessageWithReplyCallCount, 0);
-        // Settled terminal: delivered/inbox/null-envelope — now itself
-        // invisible to any future retry cycle.
+        // F6: settled custody — 'inboxed'/inbox/envelope-retained. Invisible to
+        // the FAILED retrier (status != 'failed'); rides the custody sweep +
+        // DeliveryReceiptListener for the receiver-confirmed 'delivered'.
         final saved = messageRepo.lastSavedMessage;
         expect(saved, isNotNull);
-        expect(saved!.status, 'delivered');
+        expect(saved!.status, 'inboxed');
         expect(saved.transport, 'inbox');
-        expect(saved.wireEnvelope, isNull);
+        expect(saved.wireEnvelope, isNotNull);
       },
     );
   });

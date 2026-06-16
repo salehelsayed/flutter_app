@@ -3,7 +3,7 @@ import 'package:flutter_app/core/inbox/inbox_staging_repository.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 class InboxStagingRepositoryImpl implements InboxStagingRepository {
-  final Future<void> Function(Map<String, Object?> row)
+  final Future<int> Function(Map<String, Object?> row)
   dbInsertInboxStagingEntry;
   final Future<List<Map<String, Object?>>> Function({
     int limit,
@@ -59,8 +59,14 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
           'messageType': entry.messageType,
         },
       );
-      await dbInsertInboxStagingEntry(entry.toMap());
-      ackableEntryIds.add(entry.entryId);
+      final insertedRowId = await dbInsertInboxStagingEntry(entry.toMap());
+      // Only ack an entry this drain actually inserted. A `ConflictAlgorithm
+      // .ignore` no-op (entry already staged by a prior/concurrent drain)
+      // returns 0 — re-acking it would let a second drain ack + replay the same
+      // entry the first drain already owns, double-delivering it (F3).
+      if (insertedRowId != 0) {
+        ackableEntryIds.add(entry.entryId);
+      }
     }
 
     return ackableEntryIds;

@@ -77,11 +77,11 @@ void main() {
         // (b′) the live deferred-ack acked branch of
         // _persistOutgoingDeleteResult — same durable-staging bar as (b).
         'lib/features/conversation/application/delete_message_use_case.dart': 1,
-        // PROGRAM-TEMPORARY (removed by 116): failed-message retry still
-        // mints 'delivered' from legacy direct-send success paths. Doc 115
-        // has already moved unacked inbox retry to 'inboxed' + receipt.
-        'lib/features/conversation/application/retry_failed_messages_use_case.dart':
-            2,
+        // (removed by 125, F6-residue): retry_failed_messages_use_case.dart no
+        // longer mints terminal 'delivered' on relay custody — both the
+        // store-success and already-inbox outcomes now write 'inboxed' (envelope
+        // retained), riding the custody sweep + DeliveryReceiptListener for the
+        // receiver-confirmed 'delivered'. Count is now 0 (entry dropped).
         // Receiver-side writers marking INCOMING rows 'delivered' — not
         // sender-side custody minting; G4 scopes to outgoing truthfulness.
         'lib/features/conversation/application/handle_incoming_chat_message_use_case.dart':

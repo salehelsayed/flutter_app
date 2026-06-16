@@ -1564,6 +1564,12 @@ abstract class AppLocalizations {
   /// **'Failed to save edit.'**
   String get edit_save_failed;
 
+  /// No description provided for @sending_taking_longer.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending is taking longer…'**
+  String get sending_taking_longer;
+
   /// No description provided for @intro_pass.
   ///
   /// In en, this message translates to:
@@ -2404,6 +2410,12 @@ abstract class AppLocalizations {
   /// **'Notifications restored for this group'**
   String get group_info_notifications_restored;
 
+  /// No description provided for @group_notification_catching_up.
+  ///
+  /// In en, this message translates to:
+  /// **'This group is still catching up — try again in a moment.'**
+  String get group_notification_catching_up;
+
   /// No description provided for @group_info_delete_local_failed.
   ///
   /// In en, this message translates to:
@@ -2421,6 +2433,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Failed to rotate group key after removal'**
   String get group_info_rotate_key_failed;
+
+  /// No description provided for @group_info_remove_member_partial_distribution.
+  ///
+  /// In en, this message translates to:
+  /// **'Member removed. Some members will receive the new key when they reconnect.'**
+  String get group_info_remove_member_partial_distribution;
 
   /// No description provided for @group_info_remove_member_failed.
   ///

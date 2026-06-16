@@ -948,8 +948,13 @@ class GroupMessageListener {
                 messageId: result.id,
               ).toPayload(),
               senderUsername: groupName,
+              // 04-P0 / QW-1: the OS banner body must use the sanitized,
+              // member-bound fields the timeline persists (result.*), not the
+              // raw wire `senderUsername`/`text` locals — otherwise bidi /
+              // zero-width / overlong content the timeline strips still renders
+              // in the most-trusted surface.
               messageText:
-                  '$senderUsername: ${notificationBodyForMessage(text, persistedAttachments)}',
+                  '${result.senderUsername ?? ''}: ${notificationBodyForMessage(result.text, persistedAttachments)}',
               messageId: result.id,
               toneTracker: _notificationToneTracker,
               consumeRecentRemoteNotificationAnnouncement:

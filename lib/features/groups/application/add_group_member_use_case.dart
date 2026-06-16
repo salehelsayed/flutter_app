@@ -2,6 +2,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -309,6 +310,16 @@ Future<void> addGroupMember({
 
       // 2. Save member to repo
       await groupRepo.saveMember(memberToAdd);
+
+      // Slice 2 (Finding 03): a (re-)added member with valid key material may be
+      // owed a deferred key distribution from an earlier rotation that deferred
+      // it while keyless — drain it promptly (fire-and-forget; the member passed
+      // key-material validation above, so it is deliverable; app resume is the
+      // catch-all for in-place key regenerations).
+      await triggerDeferredDistributionDrainForPeer(
+        groupId: groupId,
+        peerId: memberToAdd.peerId,
+      );
 
       if (!syncBridgeConfig) {
         emitFlowEvent(

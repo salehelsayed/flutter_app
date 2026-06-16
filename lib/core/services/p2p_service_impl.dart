@@ -81,6 +81,13 @@ class P2PServiceImpl
   final ReplayRecoveredInboxChatMessage? _replayLiveDirectChatMessage;
   final ReplayRecoveredInboxIntroductionMessage?
   _replayRecoveredInboxIntroductionMessage;
+  // F7: reactions/deletions get the SAME stage-before-ack/commit durability as
+  // chat. Both share the chat replay shape `(ChatMessage, {stagedEntryId})` →
+  // a `RecoveredInboxReplayOutcome`. Optional (nullable) so existing test
+  // constructors keep compiling; when absent the entry falls through to the
+  // legacy fire-and-forget emit (pre-F7 behavior).
+  final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxReaction;
+  final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxMessageDeletion;
   final TransportMetrics? _transportMetrics;
   StreamSubscription<LocalChatMessage>? _localMessageSub;
   StreamSubscription<Map<String, LocalPeer>>? _localPeersSub;
@@ -131,6 +138,17 @@ class P2PServiceImpl
   /// When non-null, a recovery is in progress and concurrent callers
   /// should await this instead of starting a new recovery.
   Completer<void>? _recoveryInProgress;
+
+  /// F3 step 2: when non-null, an offline-inbox drain is in progress. Concurrent
+  /// callers coalesce onto it instead of each fetching the SAME un-acked relay
+  /// page (`inbox:retrieve_pending` is a non-destructive read) and each running
+  /// the recoverable sweep — which would double-ack / double-replay / double-
+  /// notify the same entry across the multi-await gate→save window.
+  Completer<void>? _drainInProgress;
+
+  /// Whether the in-flight drain ([_drainInProgress]) drains ALL backlog pages.
+  /// A partial drain cannot satisfy a caller that needs the full guarantee.
+  bool _drainInProgressWaitsAllPages = false;
 
   /// Phase 5: Count of consecutive in-place refresh failures.
   /// Reset to 0 on successful recovery.
@@ -229,6 +247,8 @@ class P2PServiceImpl
     ReplayRecoveredInboxChatMessage? replayLiveDirectChatMessage,
     ReplayRecoveredInboxIntroductionMessage?
     replayRecoveredInboxIntroductionMessage,
+    ReplayRecoveredInboxChatMessage? replayRecoveredInboxReaction,
+    ReplayRecoveredInboxChatMessage? replayRecoveredInboxMessageDeletion,
     TransportMetrics? transportMetrics,
   }) : _bridge = bridge,
        _localP2P = localP2PService,
@@ -240,6 +260,9 @@ class P2PServiceImpl
        _replayLiveDirectChatMessage = replayLiveDirectChatMessage,
        _replayRecoveredInboxIntroductionMessage =
            replayRecoveredInboxIntroductionMessage,
+       _replayRecoveredInboxReaction = replayRecoveredInboxReaction,
+       _replayRecoveredInboxMessageDeletion =
+           replayRecoveredInboxMessageDeletion,
        _transportMetrics = transportMetrics {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
@@ -807,11 +830,21 @@ class P2PServiceImpl
     required String? envelopeType,
   }) {
     final nonce = message.confirmNonce;
-    return message.isIncoming &&
-        envelopeType == 'chat_message' &&
-        nonce != null &&
-        nonce.isNotEmpty &&
-        _replayRecoveredInboxChatMessage != null;
+    if (!message.isIncoming || nonce == null || nonce.isEmpty) {
+      return false;
+    }
+    // F7: reactions/deletions join chat in the live-direct stage-before-ack
+    // path when their replay callback is wired (else fall through to emit).
+    switch (envelopeType) {
+      case 'chat_message':
+        return _replayRecoveredInboxChatMessage != null;
+      case 'message_reaction':
+        return _replayRecoveredInboxReaction != null;
+      case 'message_deletion':
+        return _replayRecoveredInboxMessageDeletion != null;
+      default:
+        return false;
+    }
   }
 
   ChatMessage _messageWithoutConfirmNonce(ChatMessage message) {
@@ -830,12 +863,30 @@ class P2PServiceImpl
     required InboxStagingEntry entry,
   }) async {
     final repo = _inboxStagingRepository;
-    // 118: a LIVE direct message routes through the notify-capable callback,
+    // 118: a LIVE direct chat message routes through the notify-capable callback,
     // never the suppressing recovery callback. Deliberately NO `?? recovery`
     // fallback (unlike the LAN path) — if the live-direct callback is somehow
     // absent we emit the un-staged, notify-capable stream message rather than
     // silently re-suppressing via the recovery callback.
-    final replayLiveDirectChatMessage = _replayLiveDirectChatMessage;
+    // F7: reactions/deletions select their own recovery callback by messageType;
+    // the event-name suffix follows so flow logs stay disambiguable per family.
+    final ReplayRecoveredInboxChatMessage? selectedReplay;
+    final String eventSuffix;
+    switch (entry.messageType) {
+      case 'message_reaction':
+        selectedReplay = _replayRecoveredInboxReaction;
+        eventSuffix = 'REACTION';
+        break;
+      case 'message_deletion':
+        selectedReplay = _replayRecoveredInboxMessageDeletion;
+        eventSuffix = 'DELETION';
+        break;
+      default:
+        selectedReplay = _replayLiveDirectChatMessage;
+        eventSuffix = 'CHAT';
+        break;
+    }
+    final replayLiveDirectChatMessage = selectedReplay;
     if (replayLiveDirectChatMessage == null) {
       _emitIncomingMessage(message);
       return;
@@ -893,10 +944,10 @@ class P2PServiceImpl
         repo: repo,
         entry: entry,
         outcome: outcome,
-        committedEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_COMMITTED',
-        retryableEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_RETRYABLE',
-        rejectedEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_REJECTED',
-        quarantinedEvent: 'P2P_SERVICE_DIRECT_STAGED_CHAT_QUARANTINED',
+        committedEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_COMMITTED',
+        retryableEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_RETRYABLE',
+        rejectedEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_REJECTED',
+        quarantinedEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_QUARANTINED',
       );
     } catch (e) {
       await repo.markRetryable(
@@ -906,7 +957,7 @@ class P2PServiceImpl
       );
       emitFlowEvent(
         layer: 'FL',
-        event: 'P2P_SERVICE_DIRECT_STAGED_CHAT_EXCEPTION',
+        event: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_EXCEPTION',
         details: {
           'entryId': entry.entryId.length > 8
               ? entry.entryId.substring(0, 8)
@@ -922,8 +973,26 @@ class P2PServiceImpl
     required InboxStagingEntry entry,
   }) async {
     final repo = _inboxStagingRepository;
-    final replayLanChatMessage =
-        _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
+    // F7: select the replay callback + event-name suffix per family (mirrors the
+    // live-direct path). Chat keeps its `?? recovery` fallback; reaction/deletion
+    // use their dedicated recovery callbacks.
+    final ReplayRecoveredInboxChatMessage? replayLanChatMessage;
+    final String eventSuffix;
+    switch (entry.messageType) {
+      case 'message_reaction':
+        replayLanChatMessage = _replayRecoveredInboxReaction;
+        eventSuffix = 'REACTION';
+        break;
+      case 'message_deletion':
+        replayLanChatMessage = _replayRecoveredInboxMessageDeletion;
+        eventSuffix = 'DELETION';
+        break;
+      default:
+        replayLanChatMessage =
+            _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
+        eventSuffix = 'CHAT';
+        break;
+    }
     if (replayLanChatMessage == null) {
       _emitIncomingMessage(message);
       return;
@@ -938,10 +1007,10 @@ class P2PServiceImpl
         repo: repo,
         entry: entry,
         outcome: outcome,
-        committedEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_COMMITTED',
-        retryableEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_RETRYABLE',
-        rejectedEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_REJECTED',
-        quarantinedEvent: 'P2P_SERVICE_LAN_STAGED_CHAT_QUARANTINED',
+        committedEvent: 'P2P_SERVICE_LAN_STAGED_${eventSuffix}_COMMITTED',
+        retryableEvent: 'P2P_SERVICE_LAN_STAGED_${eventSuffix}_RETRYABLE',
+        rejectedEvent: 'P2P_SERVICE_LAN_STAGED_${eventSuffix}_REJECTED',
+        quarantinedEvent: 'P2P_SERVICE_LAN_STAGED_${eventSuffix}_QUARANTINED',
       );
     } catch (e) {
       await repo.markRetryable(
@@ -951,7 +1020,7 @@ class P2PServiceImpl
       );
       emitFlowEvent(
         layer: 'FL',
-        event: 'P2P_SERVICE_LAN_STAGED_CHAT_EXCEPTION',
+        event: 'P2P_SERVICE_LAN_STAGED_${eventSuffix}_EXCEPTION',
         details: {
           'entryId': entry.entryId.length > 8
               ? entry.entryId.substring(0, 8)
@@ -1044,6 +1113,77 @@ class P2PServiceImpl
             retryableEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_RETRYABLE',
             rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_REJECTED',
             quarantinedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_QUARANTINED',
+          )) {
+            replayed++;
+            entryStopwatch.stop();
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'INBOX_DELIVERY_TIMING',
+              details: {
+                'deliveryMs': entryStopwatch.elapsedMilliseconds,
+                'messageId': entry.entryId.length > 8
+                    ? entry.entryId.substring(0, 8)
+                    : entry.entryId,
+              },
+            );
+          }
+          continue;
+        }
+
+        // F7: reactions/deletions get the chat machinery — stage stays put until
+        // the listener's saveReaction / saveMessage(tombstone) commits. Without
+        // these arms the entry takes the generic fall-through below: a bare emit
+        // then immediate deleteEntry BEFORE the listener persisted, so a kill in
+        // that window loses the reaction/deletion permanently. When the callback
+        // is null we preserve the legacy fall-through (existing tests).
+        final replayRecoveredInboxReaction = _replayRecoveredInboxReaction;
+        if (entry.messageType == 'message_reaction' &&
+            replayRecoveredInboxReaction != null) {
+          final outcome = await replayRecoveredInboxReaction(
+            message,
+            stagedEntryId: entry.entryId,
+          );
+          if (await _applyRecoveredInboxOutcome(
+            repo: repo,
+            entry: entry,
+            outcome: outcome,
+            committedEvent: 'P2P_SERVICE_INBOX_STAGED_REACTION_COMMITTED',
+            retryableEvent: 'P2P_SERVICE_INBOX_STAGED_REACTION_RETRYABLE',
+            rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_REACTION_REJECTED',
+            quarantinedEvent: 'P2P_SERVICE_INBOX_STAGED_REACTION_QUARANTINED',
+          )) {
+            replayed++;
+            entryStopwatch.stop();
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'INBOX_DELIVERY_TIMING',
+              details: {
+                'deliveryMs': entryStopwatch.elapsedMilliseconds,
+                'messageId': entry.entryId.length > 8
+                    ? entry.entryId.substring(0, 8)
+                    : entry.entryId,
+              },
+            );
+          }
+          continue;
+        }
+
+        final replayRecoveredInboxMessageDeletion =
+            _replayRecoveredInboxMessageDeletion;
+        if (entry.messageType == 'message_deletion' &&
+            replayRecoveredInboxMessageDeletion != null) {
+          final outcome = await replayRecoveredInboxMessageDeletion(
+            message,
+            stagedEntryId: entry.entryId,
+          );
+          if (await _applyRecoveredInboxOutcome(
+            repo: repo,
+            entry: entry,
+            outcome: outcome,
+            committedEvent: 'P2P_SERVICE_INBOX_STAGED_DELETION_COMMITTED',
+            retryableEvent: 'P2P_SERVICE_INBOX_STAGED_DELETION_RETRYABLE',
+            rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_DELETION_REJECTED',
+            quarantinedEvent: 'P2P_SERVICE_INBOX_STAGED_DELETION_QUARANTINED',
           )) {
             replayed++;
             entryStopwatch.stop();
@@ -1390,7 +1530,33 @@ class P2PServiceImpl
   /// Retrieves the first page on the foreground budget, then continues in the
   /// background when the relay reports remaining backlog.
   Future<void> _drainOfflineInbox({bool waitForAllPages = false}) async {
-    await _drainOfflineInboxDurably(waitForAllPages: waitForAllPages);
+    // F3 step 2: coalesce concurrent drains onto a single in-flight drain.
+    // Loop so that a caller needing the all-pages guarantee, which an in-flight
+    // PARTIAL drain cannot satisfy, waits for it and then (re-checking for a
+    // newer in-flight drain) runs its own — never two drains in parallel.
+    while (true) {
+      final inFlight = _drainInProgress;
+      if (inFlight == null) break;
+      final inFlightCoversUs = _drainInProgressWaitsAllPages || !waitForAllPages;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_DRAIN_COALESCED',
+        details: {'waitForAllPages': waitForAllPages},
+      );
+      await inFlight.future;
+      if (inFlightCoversUs) return;
+    }
+
+    final completer = Completer<void>();
+    _drainInProgress = completer;
+    _drainInProgressWaitsAllPages = waitForAllPages;
+    try {
+      await _drainOfflineInboxDurably(waitForAllPages: waitForAllPages);
+    } finally {
+      _drainInProgress = null;
+      _drainInProgressWaitsAllPages = false;
+      completer.complete();
+    }
   }
 
   Future<void> _continueDrainingOfflineInboxDurably({
@@ -2983,12 +3149,26 @@ class P2PServiceImpl
     }
 
     final safeNonce = nonce?.trim();
-    final replayLanChatMessage =
-        _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
-    if (envelopeType != 'chat_message' ||
-        replayLanChatMessage == null ||
-        safeNonce == null ||
-        safeNonce.isEmpty) {
+    // F7: reactions/deletions join chat on the LAN stage-before-ack path. The
+    // replay callback is selected per family (see _replayDurablyStagedLanChat);
+    // here we only need to know one exists so we don't stage an undeliverable
+    // entry. Any other type (or a missing callback) takes the legacy emit.
+    final ReplayRecoveredInboxChatMessage? lanReplay;
+    switch (envelopeType) {
+      case 'chat_message':
+        lanReplay = _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
+        break;
+      case 'message_reaction':
+        lanReplay = _replayRecoveredInboxReaction;
+        break;
+      case 'message_deletion':
+        lanReplay = _replayRecoveredInboxMessageDeletion;
+        break;
+      default:
+        lanReplay = null;
+        break;
+    }
+    if (lanReplay == null || safeNonce == null || safeNonce.isEmpty) {
       _emitIncomingMessage(message);
       return const LanInboundDecision.accepted();
     }

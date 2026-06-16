@@ -69,6 +69,77 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(eventEmitter.events[0].details, ["kind": "group"])
   }
 
+  // 04-P0 SI-1 NSE — a muted group is suppressed BEFORE decryption: even with a
+  // valid group key seeded (decryption would otherwise succeed), the mute
+  // sentinel short-circuits to a silent generic fallback and never touches the
+  // plaintext.
+  func testSuppressesMutedGroupBeforeDecrypting() throws {
+    let fixture = try loadFixture("group_text")
+    let plaintext = try fixturePlaintextJSON(fixture)
+    let routeData = try XCTUnwrap(fixture["routeData"] as? [String: Any])
+    let keyReader = MemoryPushKeyReader([
+      PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7): "group-secret",
+      PushSharedKeyNames.groupMuted(groupId: "group-team"): "1",
+    ])
+    let decryptor = MemoryPushDecryptor(groupPlaintext: plaintext)
+    let eventEmitter = MemoryPushPreviewEventEmitter()
+    let resolver = NotificationPreviewResolver(
+      keyReader: keyReader,
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore(),
+      eventEmitter: eventEmitter
+    )
+
+    let result = resolver.resolve(
+      userInfo: routeData,
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(result.suppress)
+    XCTAssertFalse(result.didDecrypt)
+    XCTAssertEqual(result.reason, "group_muted")
+    // Mute short-circuits before decrypt — no plaintext is touched.
+    XCTAssertEqual(decryptor.groupCalls, 0)
+    // Generic fallback content (no decrypted preview leaks for a muted group).
+    XCTAssertEqual(result.title, "New Message")
+    XCTAssertEqual(result.body, "You have a new message")
+    XCTAssertTrue(
+      eventEmitter.events.contains { $0.event == "PUSH_NSE_GROUP_MUTED" }
+    )
+  }
+
+  // 04-P0 SI-2 NSE (security core) — a removed member's device deletes its
+  // group-key mirror (GroupRepositoryImpl.removeAllKeys -> _deleteGroupKeyMirror),
+  // so the out-of-process NSE has no key: it must keep the generic fallback and
+  // NEVER attempt to decrypt the group message (no preview leak after removal).
+  func testMissingGroupKeyKeepsFallbackWithoutDecrypting() throws {
+    let fixture = try loadFixture("group_text")
+    let routeData = try XCTUnwrap(fixture["routeData"] as? [String: Any])
+    // No group key seeded — models a removed/never-member device.
+    let keyReader = MemoryPushKeyReader([:])
+    let decryptor = MemoryPushDecryptor(groupPlaintext: "{}")
+    let eventEmitter = MemoryPushPreviewEventEmitter()
+    let resolver = NotificationPreviewResolver(
+      keyReader: keyReader,
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore(),
+      eventEmitter: eventEmitter
+    )
+
+    let result = resolver.resolve(
+      userInfo: routeData,
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertFalse(result.didDecrypt)
+    XCTAssertEqual(result.reason, "missing_group_key")
+    XCTAssertEqual(result.title, "New Message")
+    XCTAssertEqual(result.body, "You have a new message")
+    XCTAssertEqual(decryptor.groupCalls, 0)
+  }
+
   func testDecryptsNativeV3GroupPreviewFromEncryptedExtra() throws {
     let plaintext = try jsonString([
       "text": "Hello group",

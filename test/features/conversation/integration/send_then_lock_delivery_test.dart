@@ -1381,7 +1381,9 @@ void main() {
         );
 
         final recoveredMessage = await alice.messageRepo.getMessage(failedId);
-        expect(recoveredMessage?.status, 'delivered');
+        // F6: relay re-store on resume is custody, not delivery — 'inboxed'
+        // until Bob's drain triggers the delivery receipt back to Alice.
+        expect(recoveredMessage?.status, 'inboxed');
         expect(recoveredMessage?.transport, 'inbox');
 
         bob.setOnline(true);
@@ -1460,7 +1462,8 @@ void main() {
           sentMessage.id,
         );
         expect(recoveredMessage, isNotNull);
-        expect(recoveredMessage!.status, 'delivered');
+        // F6: relay re-store on resume is custody, not delivery — 'inboxed'.
+        expect(recoveredMessage!.status, 'inboxed');
         expect(recoveredMessage.transport, 'inbox');
         expect(recoveredMessage.text, 'Edited after lock');
         expect(recoveredMessage.editedAt, failedEdit.editedAt);

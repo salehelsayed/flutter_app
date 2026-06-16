@@ -116,6 +116,16 @@ resolveGroupMessageNotificationDisplayEligibility({
       normalizedLocalPeerId,
     );
     if (localMember != null) {
+      // 04-P0 / SI-1: a current member of a muted group must be suppressed on
+      // the FCM/foreground-drain fallback path, exactly as the live listener
+      // path honors mute (group_message_listener.dart's isMuted gate). DB is
+      // the source of truth and is read live, so there is no projection to
+      // drift.
+      if (existingGroup.isMuted) {
+        return const GroupMessageNotificationDisplayEligibility.suppressed(
+          'muted',
+        );
+      }
       return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
     }
   }

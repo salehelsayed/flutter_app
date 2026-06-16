@@ -16,6 +16,76 @@ String _diagnosticPrefix(String value) =>
 String _rotationOperationId(String groupId, String peerId) =>
     'rotate:${_diagnosticPrefix(groupId)}:${_diagnosticPrefix(peerId)}';
 
+/// Hook invoked once per remaining member that could NOT be delivered the new
+/// epoch during rotation (keyless at rotation time, or every device delivery
+/// failed). Slice 1 wires a no-op default; Slice 2 supplies a durable
+/// sender-side distribution queue so deferred members converge later.
+typedef EnqueueDeferredGroupKeyDistribution =
+    Future<void> Function({
+      required String groupId,
+      required String peerId,
+      required int keyEpoch,
+    });
+
+/// Process-wide fallback sink for deferred distributions. When a caller does not
+/// pass an explicit [EnqueueDeferredGroupKeyDistribution] (all production rotate
+/// call sites — admin removal, voluntary leave, and the creator backstop — do
+/// not), the rotation persists each deferred peer through this sink instead.
+///
+/// Wired once at startup (`main.dart`) to the `GroupPendingKeyDistribution`
+/// repository, mirroring the existing `debugSetFlowEventSink` pattern — so the
+/// Slice 2 queue is reached from every rotate path without threading a callback
+/// through the entire widget DI chain. Tests set it to an in-memory repo (and
+/// reset it to null in teardown) or pass the explicit param.
+EnqueueDeferredGroupKeyDistribution? _deferredGroupKeyDistributionSink;
+
+void setDeferredGroupKeyDistributionSink(
+  EnqueueDeferredGroupKeyDistribution? sink,
+) {
+  _deferredGroupKeyDistributionSink = sink;
+}
+
+/// Result of a [rotateAndDistributeGroupKey] attempt.
+///
+/// Distinguishes three outcomes that the old `GroupKeyInfo?` return conflated:
+/// - **rotated + fully distributed** ([rotated] true, [fullyDistributed] true):
+///   the new epoch was generated, promoted, and persisted locally, and every
+///   remaining member was delivered the key.
+/// - **rotated but partially distributed** ([rotated] true,
+///   [fullyDistributed] false): the epoch was promoted (so the removed member
+///   has lost the live key) but one or more remaining members are deferred —
+///   they were keyless at rotation time or their delivery failed. This is NOT a
+///   failure: forward secrecy for the boundary is intact; the deferred members
+///   converge later.
+/// - **not rotated** ([rotated] false): a genuine generate/promote failure;
+///   the epoch did not advance and nothing changed.
+class RotateGroupKeyOutcome {
+  /// Non-null iff a new epoch was promoted and saved locally.
+  final GroupKeyInfo? key;
+
+  /// Count of device targets that confirmed delivery (direct or inbox).
+  final int distributedDeviceCount;
+
+  /// Remaining members NOT delivered the new epoch now (keyless OR
+  /// delivery-failed). Empty when every remaining member received it.
+  final List<String> deferredPeerIds;
+
+  const RotateGroupKeyOutcome({
+    this.key,
+    this.distributedDeviceCount = 0,
+    this.deferredPeerIds = const <String>[],
+  });
+
+  /// True when a new epoch was promoted (the removed member lost the live key).
+  bool get rotated => key != null;
+
+  /// True when the rotated epoch reached every remaining member.
+  bool get fullyDistributed => deferredPeerIds.isEmpty;
+
+  /// Canonical "no epoch was promoted" result (genuine failure).
+  static const notRotated = RotateGroupKeyOutcome();
+}
+
 /// Generates the next group encryption key, distributes it to remaining
 /// members, then promotes the admin validator and local key last.
 ///
@@ -25,8 +95,11 @@ String _rotationOperationId(String groupId, String peerId) =>
 /// 3. Promotes the admin validator and saves the new key locally
 /// 4. Broadcasts a key_rotated system message on the group topic
 ///
-/// Returns the new [GroupKeyInfo] on success, null on failure.
-Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
+/// Returns a [RotateGroupKeyOutcome]: [RotateGroupKeyOutcome.rotated] is true
+/// whenever the epoch was promoted (even if some members are deferred);
+/// [RotateGroupKeyOutcome.notRotated] is returned only on a genuine
+/// generate/promote failure.
+Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required String groupId,
@@ -41,6 +114,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
   Duration distributionTimeout = const Duration(seconds: 15),
   int distributionAttemptCount = 5,
   Duration distributionRetryDelay = const Duration(milliseconds: 500),
+  EnqueueDeferredGroupKeyDistribution? enqueueDeferredDistribution,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -50,7 +124,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
     },
   );
 
-  return _withSerializedGroupRotation<GroupKeyInfo?>(groupId, () async {
+  return _withSerializedGroupRotation<RotateGroupKeyOutcome>(groupId, () async {
     final group = await groupRepo.getGroup(groupId);
     if (group == null) {
       emitFlowEvent(
@@ -60,7 +134,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         },
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     final selfMember = await groupRepo.getMember(groupId, selfPeerId);
@@ -78,7 +152,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         },
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     if (group.createdBy != selfPeerId) {
@@ -89,7 +163,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         },
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     final sourceDevice = _resolveSourceDevice(
@@ -105,7 +179,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         },
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     GroupKeyInfo? persistedKey;
@@ -117,7 +191,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         event: 'GROUP_ROTATE_KEY_NO_PERSISTED_KEY',
         details: {'error': e.toString()},
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     if (persistedKey == null) {
@@ -128,7 +202,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         },
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     try {
@@ -144,27 +218,33 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         event: 'GROUP_ROTATE_KEY_RESYNC_ERROR',
         details: {'error': e.toString()},
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     final members = await groupRepo.getMembers(groupId);
-    final undeliverableMembers = _undeliverableActiveMembers(
+    // Promote-then-defer: a remaining member with no deliverable device (keyless
+    // at rotation time) no longer ABORTS the rotation. Forward secrecy for the
+    // *boundary* (the removed member) outranks synchronous convergence for an
+    // already-broken insider. Keyless members are recorded as deferred; the
+    // epoch is still generated and promoted, so the removed member loses the
+    // live key unconditionally. Deferred members converge later (Slice 2 / a
+    // future rotation / the receiver decrypt-retry runner).
+    final keylessRemainingMembers = _undeliverableActiveMembers(
       members: members,
       selfPeerId: selfPeerId,
     );
-    if (undeliverableMembers.isNotEmpty) {
+    if (keylessRemainingMembers.isNotEmpty) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_UNDELIVERABLE_MEMBERS',
+        event: 'GROUP_ROTATE_KEY_KEYLESS_MEMBERS_DEFERRED',
         details: {
           'groupId': _diagnosticPrefix(groupId),
-          'undeliverableCount': undeliverableMembers.length,
-          'peerIds': undeliverableMembers
+          'keylessCount': keylessRemainingMembers.length,
+          'peerIds': keylessRemainingMembers
               .map((member) => _diagnosticPrefix(member.peerId))
               .toList(growable: false),
         },
       );
-      return null;
     }
 
     final distributionTargets = members
@@ -181,6 +261,10 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         .toList(growable: false);
 
     if (distributionTargets.isNotEmpty && sendP2PMessage == null) {
+      // No transport available: every reachable member is treated as deferred
+      // rather than aborting. The epoch is still generated and promoted below so
+      // the removed member loses the live key. (Production removal always
+      // supplies a transport via group_info_wired; this guards test/edge calls.)
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_ROTATE_KEY_TRANSPORT_UNAVAILABLE',
@@ -189,7 +273,6 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           'targetCount': distributionTargets.length,
         },
       );
-      return null;
     }
 
     final preTransitionStateHash = await buildGroupTransitionStateHash(
@@ -208,7 +291,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
       expectedEpoch: expectedEpoch,
     );
     if (pendingDraftResult.failedClosed) {
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
     final pendingDraft = pendingDraftResult.draft;
 
@@ -239,7 +322,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
             'errorCode': generateResult['errorCode'],
           },
         );
-        return null;
+        return RotateGroupKeyOutcome.notRotated;
       }
 
       newEpoch = generateResult['keyEpoch'] as int;
@@ -252,7 +335,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
             'generatedEpoch': newEpoch,
           },
         );
-        return null;
+        return RotateGroupKeyOutcome.notRotated;
       }
       newKey = generateResult['groupKey'] as String;
       generatedAt = DateTime.now().toUtc();
@@ -265,7 +348,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         createdAt: generatedAt,
       );
       if (!savedDraft) {
-        return null;
+        return RotateGroupKeyOutcome.notRotated;
       }
     }
     // The current pending-draft schema only persists epoch, key, and createdAt.
@@ -314,9 +397,32 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
       }
     }
 
-    final failedDistributionCount = distributionResults
-        .where((ok) => !ok)
+    final distributedDeviceCount = distributionResults
+        .where((ok) => ok)
         .length;
+    final failedDistributionCount =
+        distributionResults.length - distributedDeviceCount;
+
+    // A remaining member is "delivered" when at least one of its device targets
+    // received the key. Members whose every send failed, plus keyless members
+    // (no device targets at all), are DEFERRED — not a rotation failure. The
+    // epoch is promoted regardless so the removed member is excluded.
+    final memberDelivered = <String, bool>{};
+    for (var i = 0; i < distributionTargets.length; i++) {
+      final peerId = distributionTargets[i].member.peerId;
+      memberDelivered[peerId] =
+          (memberDelivered[peerId] ?? false) || distributionResults[i];
+    }
+    final deferredPeers = <String>[];
+    for (final member in members) {
+      if (member.peerId == selfPeerId) {
+        continue;
+      }
+      if (!(memberDelivered[member.peerId] ?? false)) {
+        deferredPeers.add(member.peerId);
+      }
+    }
+
     if (failedDistributionCount > 0) {
       emitFlowEvent(
         layer: 'FL',
@@ -328,7 +434,6 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           'failedCount': failedDistributionCount,
         },
       );
-      return null;
     }
 
     // 3. Promote the admin's own validator and local key only after
@@ -346,7 +451,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
         event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
         details: {'error': e.toString()},
       );
-      return null;
+      return RotateGroupKeyOutcome.notRotated;
     }
 
     final keyInfo = GroupKeyInfo(
@@ -363,6 +468,55 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
       event: 'GROUP_ROTATE_KEY_SAVED',
       details: {'newEpoch': newEpoch},
     );
+
+    // 3b. Enqueue deferred members for later distribution. The epoch is already
+    // promoted, so these members are temporarily on the old epoch (a degraded
+    // read for an already-broken member, NOT a security hole — the removed
+    // member is durably excluded). Slice 2 supplies the durable drain; the
+    // injected seam defaults to a no-op in Slice 1.
+    final deferredSink =
+        enqueueDeferredDistribution ?? _deferredGroupKeyDistributionSink;
+    if (deferredPeers.isNotEmpty) {
+      for (final peerId in deferredPeers) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_DEFERRED_REPAIR_QUEUED',
+          details: {
+            'groupId': _diagnosticPrefix(groupId),
+            'peerId': _diagnosticPrefix(peerId),
+            'newEpoch': newEpoch,
+          },
+        );
+        if (deferredSink != null) {
+          try {
+            await deferredSink(
+              groupId: groupId,
+              peerId: peerId,
+              keyEpoch: newEpoch,
+            );
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR',
+              details: {
+                'peerId': _diagnosticPrefix(peerId),
+                'error': e.toString(),
+              },
+            );
+          }
+        }
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_PARTIAL_DISTRIBUTION',
+        details: {
+          'groupId': _diagnosticPrefix(groupId),
+          'newEpoch': newEpoch,
+          'deferredCount': deferredPeers.length,
+          'distributedDeviceCount': distributedDeviceCount,
+        },
+      );
+    }
 
     // 4. Broadcast key_rotated system message after admin promotion.
     try {
@@ -419,8 +573,104 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
       },
     );
 
-    return keyInfo;
+    return RotateGroupKeyOutcome(
+      key: keyInfo,
+      distributedDeviceCount: distributedDeviceCount,
+      deferredPeerIds: deferredPeers,
+    );
   });
+}
+
+/// Slice 2 drainer entry: re-distributes the **current** persisted group key to
+/// one previously-deferred [peerId]'s now-deliverable devices, reusing the exact
+/// signed/encrypted direct key-update path a fresh rotation uses. Returns the
+/// number of device targets that confirmed delivery (0 = still keyless /
+/// undeliverable). It does NOT rotate the epoch, mutate group state, or touch
+/// the pending-distribution queue — the caller (the runner) records attempts and
+/// finalizes. INV-D2: always reads `getLatestKey`, never a stale epoch.
+Future<int> distributeCurrentGroupKeyToDeferredPeer({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String peerId,
+  required String selfPeerId,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required String senderUsername,
+  String? sourceDeviceId,
+  required Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  Future<bool> Function(String peerId, String message)? storeP2PMessageInInbox,
+  Duration perRecipientTimeout = const Duration(seconds: 5),
+  int attemptCount = 3,
+  Duration retryDelay = const Duration(milliseconds: 500),
+}) async {
+  final members = await groupRepo.getMembers(groupId);
+  final selfMatches = members.where((member) => member.peerId == selfPeerId);
+  final selfMember = selfMatches.isEmpty ? null : selfMatches.first;
+  final targetMatches = members.where((member) => member.peerId == peerId);
+  if (targetMatches.isEmpty) {
+    return 0;
+  }
+  final target = targetMatches.first;
+
+  final devices = _deliverableDevicesForRotation(target);
+  if (devices.isEmpty) {
+    // Still keyless on every active device.
+    return 0;
+  }
+
+  final latestKey = await groupRepo.getLatestKey(groupId);
+  if (latestKey == null) {
+    return 0;
+  }
+  final sourceDevice = _resolveSourceDevice(
+    selfMember: selfMember,
+    senderPublicKey: senderPublicKey,
+    sourceDeviceId: sourceDeviceId,
+  );
+  final preTransitionStateHash = await buildGroupTransitionStateHash(
+    groupRepo,
+    groupId,
+  );
+  final eventAt = DateTime.now().toUtc();
+
+  final maxAttempts = attemptCount < 1 ? 1 : attemptCount;
+  var delivered = 0;
+  for (final device in devices) {
+    try {
+      final sent = await _distributeRotatedKeyToDeviceWithRetry(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        sourcePeerId: selfPeerId,
+        sourceDevice: sourceDevice,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+        member: target,
+        device: device,
+        newEpoch: latestKey.keyGeneration,
+        newKey: latestKey.encryptedKey,
+        eventAt: eventAt,
+        preTransitionStateHash: preTransitionStateHash,
+        sendP2PMessage: sendP2PMessage,
+        storeP2PMessageInInbox: storeP2PMessageInInbox,
+        perRecipientTimeout: perRecipientTimeout,
+        attemptCount: maxAttempts,
+        retryDelay: retryDelay,
+      );
+      if (sent) {
+        delivered++;
+      }
+    } on Exception catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_DISTRIBUTION_REDISTRIBUTE_ERROR',
+        details: {'peerId': _diagnosticPrefix(peerId), 'error': e.toString()},
+      );
+    }
+  }
+  return delivered;
 }
 
 final Map<String, Future<void>> _groupRotationQueues = <String, Future<void>>{};

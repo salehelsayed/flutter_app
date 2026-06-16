@@ -11,41 +11,41 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 97179 | 38243 | -60.65% |
-| edges | 168478 | 59915 | -64.44% |
-| communities | 4160 | 830 | -80.05% |
-| source files | 5118 | 1917 | -62.54% |
-| avg edges per node | 1.7337 | 1.5667 | -9.63% |
-| avg nodes per community | 23.36 | 46.08 | +97.26% |
-| app-owned ratio | 0.4289 | 0.9628 | +124.48% |
-| noise ratio | 0.2245 | 0.0 | -100.00% |
-| unknown-source ratio | 0.0178 | 0.0372 | +108.99% |
+| nodes | 98307 | 38683 | -60.65% |
+| edges | 169817 | 60477 | -64.39% |
+| communities | 4241 | 833 | -80.36% |
+| source files | 5178 | 1945 | -62.44% |
+| avg edges per node | 1.7274 | 1.5634 | -9.49% |
+| avg nodes per community | 23.18 | 46.44 | +100.35% |
+| app-owned ratio | 0.429 | 0.9621 | +124.27% |
+| noise ratio | 0.222 | 0.0 | -100.00% |
+| unknown-source ratio | 0.0181 | 0.0379 | +109.39% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
 ## Top Hubs
 Full graph top hubs:
 - `sqlite3.c` (4359 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `sqlite3.c` (4359 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
-- `_` (1955 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
+- `_` (2022 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
 - `SQLITE_PRIVATE` (1036 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `SQLITE_PRIVATE` (1036 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
-- `package:flutter_test/flutter_test.dart` (889 edges, signal) ``
-- `group_multi_party_device_criteria.dart` (671 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
-- `app_localizations.dart` (628 edges, signal) `lib/l10n/app_localizations.dart`
-- `app_localizations_ar.dart` (610 edges, signal) `lib/l10n/app_localizations_ar.dart`
-- `app_localizations_de.dart` (610 edges, signal) `lib/l10n/app_localizations_de.dart`
+- `package:flutter_test/flutter_test.dart` (905 edges, signal) ``
+- `group_multi_party_device_criteria.dart` (685 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
+- `app_localizations.dart` (631 edges, signal) `lib/l10n/app_localizations.dart`
+- `app_localizations_ar.dart` (613 edges, signal) `lib/l10n/app_localizations_ar.dart`
+- `app_localizations_de.dart` (613 edges, signal) `lib/l10n/app_localizations_de.dart`
 
 Architecture graph top hubs:
-- `group_multi_party_device_real_harness.dart` (1922 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (889 edges, signal) ``
-- `group_multi_party_device_criteria.dart` (665 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
-- `main.dart` (505 edges, signal) `lib/main.dart`
+- `group_multi_party_device_real_harness.dart` (1989 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
+- `package:flutter_test/flutter_test.dart` (905 edges, signal) ``
+- `group_multi_party_device_criteria.dart` (679 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
+- `main.dart` (523 edges, signal) `lib/main.dart`
 - `group_multi_party_device_criteria_test.dart` (398 edges, signal) `test/integration/group_multi_party_device_criteria_test.dart`
-- `package:flutter/material.dart` (390 edges, signal) ``
-- `dart:convert` (386 edges, signal) ``
+- `package:flutter/material.dart` (391 edges, signal) ``
+- `dart:convert` (381 edges, signal) ``
 - `feed_wired.dart` (354 edges, signal) `lib/features/feed/presentation/screens/feed_wired.dart`
 - `group_conversation_wired.dart` (336 edges, signal) `lib/features/groups/presentation/screens/group_conversation_wired.dart`
-- `conversation_wired.dart` (322 edges, signal) `lib/features/conversation/presentation/screens/conversation_wired.dart`
+- `conversation_wired.dart` (327 edges, signal) `lib/features/conversation/presentation/screens/conversation_wired.dart`
 
 ## Method
 - Efficiency means fewer nodes, fewer edges, fewer communities, and lower average traversal breadth for the same app-level question.

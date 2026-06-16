@@ -27,6 +27,21 @@ class MessageRepositoryImpl
   final Future<int> Function() dbCountTotalUnreadExcludingArchived;
   final Future<int> Function(String contactPeerId) dbDeleteMessagesForContact;
   final Future<int> Function(String id) dbDeleteMessage;
+  final Future<bool> Function(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  )
+  dbExistsMessageByContent;
+  // F8 tier-2: optional/nullable (fail-open false) so the existing test ctor
+  // sites stay untouched; production (main.dart) wires the real helper.
+  final Future<bool> Function(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  )?
+  dbExistsMessageByDedupKey;
   final Future<List<Map<String, Object?>>> Function(
     String contactPeerId, {
     int limit,
@@ -83,6 +98,8 @@ class MessageRepositoryImpl
     required this.dbCountTotalUnreadExcludingArchived,
     required this.dbDeleteMessagesForContact,
     required this.dbDeleteMessage,
+    required this.dbExistsMessageByContent,
+    this.dbExistsMessageByDedupKey,
     required this.dbLoadMessagesPage,
     required this.dbLoadFailedOutgoingMessages,
     required this.dbLoadUnackedOutgoingMessages,
@@ -193,6 +210,32 @@ class MessageRepositoryImpl
       _rememberMessage(ConversationMessage.fromMap(row));
     }
     return row != null;
+  }
+
+  @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async {
+    return dbExistsMessageByContent(
+      contactPeerId,
+      senderPeerId,
+      text,
+      timestamp,
+    );
+  }
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async {
+    final fn = dbExistsMessageByDedupKey;
+    if (fn == null) return false; // fail-open when tier-2 helper is unwired
+    return fn(contactPeerId, senderPeerId, dedupKey);
   }
 
   @override

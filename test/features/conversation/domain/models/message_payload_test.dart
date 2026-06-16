@@ -66,6 +66,42 @@ void main() {
       });
     });
 
+    group('dedupKey (F8 tier-2)', () {
+      MessagePayload keyed({String dedupKey = 'src-1', List<Map<String, dynamic>>? media}) =>
+          MessagePayload(
+            id: 'msg-002',
+            text: 'Hello!',
+            senderPeerId: '12D3KooWSender123',
+            senderUsername: 'Alice',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            dedupKey: dedupKey,
+            media: media,
+          );
+
+      test('round-trips through v1 toJson/fromJson', () {
+        expect(MessagePayload.fromJson(keyed().toJson())!.dedupKey, 'src-1');
+        // No key on the wire → null (legacy sender).
+        expect(MessagePayload.fromJson(testPayload.toJson())!.dedupKey, isNull);
+      });
+
+      test('round-trips through v2 inner (toInnerJson/fromDecryptedJson) — PROD-CRITICAL', () {
+        final inner = keyed().toInnerJson();
+        expect(inner, contains('"dedupKey":"src-1"'));
+        expect(MessagePayload.fromDecryptedJson(inner)!.dedupKey, 'src-1');
+      });
+
+      test('survives the v2 inner leg alongside media (M3 media forward)', () {
+        final inner = keyed(
+          media: [
+            {'id': 'm1', 'mime': 'image/jpeg', 'size': 10, 'mediaType': 'image'},
+          ],
+        ).toInnerJson();
+        final restored = MessagePayload.fromDecryptedJson(inner)!;
+        expect(restored.dedupKey, 'src-1');
+        expect(restored.media!.single['mime'], 'image/jpeg');
+      });
+    });
+
     group('fromJson invalid input', () {
       test('returns null for non-JSON string', () {
         expect(MessagePayload.fromJson('not json'), isNull);

@@ -235,6 +235,7 @@ handleIncomingChatMessage({
     editedAt: payload.editedAt,
     quotedMessageId: payload.quotedMessageId,
     media: payload.media,
+    dedupKey: payload.dedupKey, // F8 tier-2: must survive the sanitize rebuild
   );
 
   final textPreview = buildTextPreview(payload.text);
@@ -367,6 +368,69 @@ handleIncomingChatMessage({
         details: {'id': payload.id.substring(0, 8)},
       );
       return (HandleChatMessageResult.ignoredEdit, null, null);
+    }
+  }
+
+  // 3b. Content-level duplicate (F8): a divergent-id re-delivery of the same
+  // logical message (e.g. a second delivery channel, or a re-minted id carrying
+  // the original wire timestamp) would otherwise persist a second row under a
+  // new id — the 1:1 twin of the group double-card. Only a brand-new, non-edit
+  // arrival can be a content duplicate; same-id edits, hidden-edit
+  // materialization and deleted-placeholder merges are intentional transitions
+  // (existingMessage != null) and must not be swallowed.
+  //
+  // Tier-2 (F8, wire-stamped `dedupKey`) takes PRECEDENCE: a propagated source
+  // id survives a forward/share that re-mints BOTH id and timestamp, which the
+  // timestamp-exact tier-1 below cannot catch. A keyed-but-UNMATCHED arrival is
+  // authoritatively new and does NOT fall back to tier-1. Tier-1
+  // (timestamp-exact `existsByContent`) remains the legacy / keyless-sender
+  // fallback, byte-identical to before.
+  if (existingMessage == null && !payload.isEdit) {
+    final dedupKey = payload.dedupKey;
+    if (dedupKey != null && dedupKey.isNotEmpty) {
+      final isDedupKeyDuplicate = await messageRepo.existsByDedupKey(
+        payload.senderPeerId,
+        payload.senderPeerId,
+        dedupKey,
+      );
+      if (isDedupKeyDuplicate) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY',
+          details: {
+            'id': payload.id.length > 8
+                ? payload.id.substring(0, 8)
+                : payload.id,
+          },
+        );
+        // Same logical content already durable under a different id+timestamp
+        // (a forward) — re-mint the receipt for the forward's fresh id so the
+        // sender's forward row is acknowledged, then drop the duplicate card.
+        await maybeSendDeliveryReceipt(payload.id);
+        return (HandleChatMessageResult.duplicate, null, null);
+      }
+    } else {
+      final isContentDuplicate = await messageRepo.existsByContent(
+        payload.senderPeerId,
+        payload.senderPeerId,
+        payload.text,
+        payload.timestamp,
+      );
+      if (isContentDuplicate) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_DUPLICATE_CONTENT',
+          details: {
+            'id': payload.id.length > 8
+                ? payload.id.substring(0, 8)
+                : payload.id,
+          },
+        );
+        // The content is already durable under a different id — re-mint the
+        // receipt so the sender's new-id send is still acknowledged, then drop.
+        await maybeSendDeliveryReceipt(payload.id);
+        return (HandleChatMessageResult.duplicate, null, null);
+      }
     }
   }
 

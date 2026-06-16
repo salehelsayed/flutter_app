@@ -616,4 +616,32 @@ void main() {
       },
     );
   });
+
+  // 04-P0 / SI-1 — the background (Android encrypted-DB) producer must honor
+  // mute. The is_muted read is unit-tested via the pure `groups`-row helper so
+  // it does not require a SQLCipher identity.db fixture.
+  group('groupMemberMessageDisplayEligibility (background mute, 04-P0)', () {
+    test('suppresses a muted group member with reason "muted"', () {
+      final eligibility = groupMemberMessageDisplayEligibility({'is_muted': 1});
+      expect(eligibility.shouldDisplay, isFalse);
+      expect(eligibility.reason, 'muted');
+    });
+
+    test('allows an un-muted group member', () {
+      final eligibility = groupMemberMessageDisplayEligibility({'is_muted': 0});
+      expect(eligibility.shouldDisplay, isTrue);
+      expect(eligibility.reason, 'current_member');
+    });
+
+    test('fails open (notifies) when the is_muted column is absent/null', () {
+      expect(
+        groupMemberMessageDisplayEligibility(<String, Object?>{}).shouldDisplay,
+        isTrue,
+      );
+      expect(
+        groupMemberMessageDisplayEligibility({'is_muted': null}).shouldDisplay,
+        isTrue,
+      );
+    });
+  });
 }

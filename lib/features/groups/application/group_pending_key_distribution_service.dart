@@ -1,0 +1,180 @@
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+
+String _safeId(String id) => id.length > 8 ? id.substring(0, 8) : id;
+
+/// Process-wide drain sink fired when a previously-keyless group member gains a
+/// usable ML-KEM key (the prompt member-key-arrival trigger), so its deferred
+/// distributions drain immediately instead of waiting for the next app resume.
+/// Wired by main.dart to the runner; a no-op until then (and in tests). Mirrors
+/// the rotate use case's deferred-distribution enqueue sink.
+Future<void> Function({required String groupId, required String peerId})?
+_deferredDistributionDrainSink;
+
+void setDeferredDistributionDrainSink(
+  Future<void> Function({required String groupId, required String peerId})? sink,
+) {
+  _deferredDistributionDrainSink = sink;
+}
+
+/// Fire-and-forget: drains any deferred distributions owed to [peerId] in
+/// [groupId] through the process-wide sink. Safe to call from member-config
+/// apply sites — never throws.
+Future<void> triggerDeferredDistributionDrainForPeer({
+  required String groupId,
+  required String peerId,
+}) async {
+  final sink = _deferredDistributionDrainSink;
+  if (sink == null) return;
+  try {
+    await sink(groupId: groupId, peerId: peerId);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_KEY_DISTRIBUTION_DRAIN_TRIGGER_ERROR',
+      details: {'peerId': _safeId(peerId), 'error': e.toString()},
+    );
+  }
+}
+
+/// Slice 2 of Finding 03 (removal-rotation fails-closed): drains the durable
+/// [GroupPendingKeyDistribution] queue by re-distributing the **current** group
+/// key to deferred members once they regain a usable ML-KEM key on an active
+/// device. Parallel to `GroupPendingKeyRepairRunner`, but it pushes a key
+/// (sender-side) instead of replaying a decrypt (receiver-side).
+///
+/// Invariants: convergence (INV-D1), epoch-monotonic — always the latest key,
+/// never the row's stale `key_epoch` (INV-D2), bounded by [attemptCap] →
+/// `unreachable` (INV-D3), finalize-once / idempotent (INV-D4).
+class GroupPendingKeyDistributionRunner {
+  final Bridge bridge;
+  final GroupRepository groupRepo;
+  final GroupPendingKeyDistributionRepository repository;
+  final Future<IdentityModel?> Function() loadIdentity;
+  final Future<bool> Function(String peerId, String message)? sendP2PMessage;
+  final Future<bool> Function(String peerId, String message)?
+  storeP2PMessageInInbox;
+  final int attemptCap;
+  final Duration perRecipientTimeout;
+
+  GroupPendingKeyDistributionRunner({
+    required this.bridge,
+    required this.groupRepo,
+    required this.repository,
+    required this.loadIdentity,
+    required this.sendP2PMessage,
+    this.storeP2PMessageInInbox,
+    this.attemptCap = 8,
+    this.perRecipientTimeout = const Duration(seconds: 5),
+  });
+
+  /// Drains every pending row for a single `(group, peer)` — the prompt
+  /// member-key-arrival trigger. Returns the count distributed.
+  Future<int> drainPendingForPeer({
+    required String groupId,
+    required String peerId,
+  }) async {
+    final rows = await repository.getPendingForPeer(
+      peerId: peerId,
+      groupId: groupId,
+    );
+    var distributed = 0;
+    for (final row in rows) {
+      if (await _drainOne(row)) distributed++;
+    }
+    return distributed;
+  }
+
+  /// Drains every pending row for a group — the app-resume catch-all sweep.
+  Future<int> drainPendingForGroup({required String groupId}) async {
+    final rows = await repository.getPendingForGroup(groupId: groupId);
+    var distributed = 0;
+    for (final row in rows) {
+      if (await _drainOne(row)) distributed++;
+    }
+    return distributed;
+  }
+
+  /// Drains pending distributions across every active group — the app-resume
+  /// catch-all that covers key arrivals while backgrounded or with the app dead.
+  Future<int> drainAllPending() async {
+    final groups = await groupRepo.getActiveGroups();
+    var distributed = 0;
+    for (final group in groups) {
+      distributed += await drainPendingForGroup(groupId: group.id);
+    }
+    return distributed;
+  }
+
+  Future<bool> _drainOne(GroupPendingKeyDistribution row) async {
+    final identity = await loadIdentity();
+    if (identity == null) {
+      // Transient local condition — retry on the next trigger without burning
+      // an attempt against the target.
+      return false;
+    }
+
+    try {
+      final delivered = await distributeCurrentGroupKeyToDeferredPeer(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: row.groupId,
+        peerId: row.peerId,
+        selfPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        sendP2PMessage: sendP2PMessage,
+        storeP2PMessageInInbox: storeP2PMessageInInbox,
+        perRecipientTimeout: perRecipientTimeout,
+      );
+
+      if (delivered > 0) {
+        await repository.finalizeDistributed(row.id);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_DISTRIBUTION_DISTRIBUTED',
+          details: {
+            'groupId': _safeId(row.groupId),
+            'peerId': _safeId(row.peerId),
+            'deviceCount': delivered,
+          },
+        );
+        return true;
+      }
+
+      // Still undeliverable (keyless or every send failed): record + maybe cap.
+      await repository.recordAttempt(row.id, lastError: 'undeliverable');
+      await _maybeFinalizeUnreachable(row, 'attempt cap reached');
+      return false;
+    } catch (e) {
+      await repository.recordAttempt(row.id, lastError: e.toString());
+      await _maybeFinalizeUnreachable(row, e.toString());
+      return false;
+    }
+  }
+
+  Future<void> _maybeFinalizeUnreachable(
+    GroupPendingKeyDistribution row,
+    String lastError,
+  ) async {
+    // row.attempts is the pre-drain count; recordAttempt above added one.
+    if (row.attempts + 1 >= attemptCap) {
+      await repository.finalizeUnreachable(row.id, lastError: lastError);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_DISTRIBUTION_UNREACHABLE',
+        details: {
+          'groupId': _safeId(row.groupId),
+          'peerId': _safeId(row.peerId),
+          'attempts': row.attempts + 1,
+        },
+      );
+    }
+  }
+}

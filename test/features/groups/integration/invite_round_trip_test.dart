@@ -772,9 +772,9 @@ void main() {
           sendP2PMessage: (_, _) async => true,
         );
 
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
-        expect(rotatedKey.encryptedKey, 'rotated-reinvite-key==');
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
+        expect(rotatedKey.key!.encryptedKey, 'rotated-reinvite-key==');
 
         await adminGroupRepo.saveMember(
           GroupMember(
@@ -816,9 +816,9 @@ void main() {
           bridge: adminBridge,
           groupRepo: await _repoFromConfig(
             rejoinConfig,
-            groupKey: rotatedKey.encryptedKey,
-            keyEpoch: rotatedKey.keyGeneration,
-            keyCreatedAt: rotatedKey.createdAt,
+            groupKey: rotatedKey.key!.encryptedKey,
+            keyEpoch: rotatedKey.key!.keyGeneration,
+            keyCreatedAt: rotatedKey.key!.createdAt,
           ),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
@@ -827,8 +827,8 @@ void main() {
           senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: _groupId,
-          groupKey: rotatedKey.encryptedKey,
-          keyEpoch: rotatedKey.keyGeneration,
+          groupKey: rotatedKey.key!.encryptedKey,
+          keyEpoch: rotatedKey.key!.keyGeneration,
           groupConfig: rejoinConfig,
         );
 
@@ -992,9 +992,9 @@ void main() {
           sendP2PMessage: (_, _) async => true,
         );
 
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
-        expect(rotatedKey.encryptedKey, 'rotated-offline-reinvite-key==');
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
+        expect(rotatedKey.key!.encryptedKey, 'rotated-offline-reinvite-key==');
 
         await adminGroupRepo.saveMember(
           GroupMember(
@@ -1037,9 +1037,9 @@ void main() {
           groupRepo: await _repoFromConfig(
             rejoinConfig,
             groupId: groupId,
-            groupKey: rotatedKey.encryptedKey,
-            keyEpoch: rotatedKey.keyGeneration,
-            keyCreatedAt: rotatedKey.createdAt,
+            groupKey: rotatedKey.key!.encryptedKey,
+            keyEpoch: rotatedKey.key!.keyGeneration,
+            keyCreatedAt: rotatedKey.key!.createdAt,
           ),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
@@ -1048,8 +1048,8 @@ void main() {
           senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: groupId,
-          groupKey: rotatedKey.encryptedKey,
-          keyEpoch: rotatedKey.keyGeneration,
+          groupKey: rotatedKey.key!.encryptedKey,
+          keyEpoch: rotatedKey.key!.keyGeneration,
           groupConfig: rejoinConfig,
         );
 

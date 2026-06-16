@@ -355,14 +355,14 @@ void _runAlice() {
     );
     g7RotSw.stop();
     print(
-      '[ALICE-G] G7: key rotated in ${g7RotSw.elapsedMilliseconds}ms (new key: ${newKey != null})',
+      '[ALICE-G] G7: key rotated in ${g7RotSw.elapsedMilliseconds}ms (new key: ${newKey.rotated})',
     );
 
     // Send a post-rotation message (uses new key)
     final g7Post = await sendGroup('G7: post-rotation msg');
     _signals.writeJson('g7_alice_sent', {
       'rotationMs': g7RotSw.elapsedMilliseconds,
-      'newKeyGeneration': newKey?.keyGeneration,
+      'newKeyGeneration': newKey.key?.keyGeneration,
       'preRotation': g7Pre,
       'postRotation': g7Post,
     });

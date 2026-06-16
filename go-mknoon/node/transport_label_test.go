@@ -470,6 +470,42 @@ func TestHandleIncomingMessage_DirectAckContract_AttachesConfirmNonce(t *testing
 	}
 }
 
+// F7: the stage-before-ack machinery must also defer the wire ack for
+// message_reaction / message_deletion, not only chat_message — otherwise Go
+// ACKs (and the relay deletes) the reaction/deletion before Dart durably
+// commits it, losing it on a kill in that window. There is NO existing test
+// asserting shouldDeferDirectAck==true for these types (the negative control
+// above only pins the FLAG for chat_message).
+func TestShouldDeferDirectAck_ReactionAndDeletion(t *testing.T) {
+	cb := &testEventCollector{}
+	n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)
+
+	envelopeOfType := func(typ string) []byte {
+		raw, err := json.Marshal(map[string]interface{}{"type": typ, "version": "1"})
+		if err != nil {
+			t.Fatalf("json.Marshal(%s): %v", typ, err)
+		}
+		return raw
+	}
+
+	cases := []struct {
+		typ  string
+		want bool
+	}{
+		{"chat_message", true},   // control: already deferred
+		{"message_reaction", true}, // F7: must now defer
+		{"message_deletion", true}, // F7: must now defer
+		{"introduction", false},    // legitimately fire-and-forget
+		{"contact_request", false}, // legitimately fire-and-forget
+	}
+	for _, tc := range cases {
+		got := n.shouldDeferDirectAck(envelopeOfType(tc.typ))
+		if got != tc.want {
+			t.Errorf("shouldDeferDirectAck(type=%q) = %v, want %v", tc.typ, got, tc.want)
+		}
+	}
+}
+
 func TestHandleIncomingMessage_DeferredDirectAck_IgnoresDuplicateConfirm(t *testing.T) {
 	cb := &directConfirmCallback{confirmResults: []bool{true, false}}
 	n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)

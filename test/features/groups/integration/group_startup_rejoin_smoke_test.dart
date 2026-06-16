@@ -200,9 +200,9 @@ void main() {
             },
           );
 
-          expect(result, isNotNull);
-          expect(result!.keyGeneration, 8);
-          expect(result.encryptedKey, 'epoch8Key==');
+          expect(result.key, isNotNull);
+          expect(result.key!.keyGeneration, 8);
+          expect(result.key!.encryptedKey, 'epoch8Key==');
           expect(
             _bridgeCommandIndex(rotationBridge, 'group:updateKey', keyEpoch: 7),
             lessThan(

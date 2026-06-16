@@ -153,6 +153,38 @@ class FakeMessageRepository implements MessageRepository {
       _existingIds.contains(id) || _existingMessages.containsKey(id);
 
   @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async {
+    return _existingMessages.values.any(
+      (m) =>
+          m.isIncoming &&
+          m.contactPeerId == contactPeerId &&
+          m.senderPeerId == senderPeerId &&
+          m.text == text &&
+          m.timestamp == timestamp,
+    );
+  }
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async {
+    return _existingMessages.values.any(
+      (m) =>
+          m.isIncoming &&
+          m.contactPeerId == contactPeerId &&
+          m.senderPeerId == senderPeerId &&
+          m.dedupKey == dedupKey,
+    );
+  }
+
+  @override
   Future<int> getMessageCountForContact(String contactPeerId) async => 0;
 
   @override
@@ -380,6 +412,8 @@ void main() {
     String? editedAt,
     String? quotedMessageId,
     List<Map<String, dynamic>>? media,
+    String? dedupKey,
+    String? timestamp,
   }) {
     return jsonEncode({
       'type': 'chat_message',
@@ -389,11 +423,12 @@ void main() {
         'text': text ?? 'Hello from sender!',
         'senderPeerId': senderPeerId,
         'senderUsername': 'Alice',
-        'timestamp': '2026-02-09T15:30:00.000Z',
+        'timestamp': timestamp ?? '2026-02-09T15:30:00.000Z',
         if (action != null) 'action': action,
         if (editedAt != null) 'editedAt': editedAt,
         if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
         if (media != null) 'media': media,
+        if (dedupKey != null) 'dedupKey': dedupKey,
       },
     });
   }
@@ -477,6 +512,266 @@ void main() {
       expect(result, HandleChatMessageResult.duplicate);
       expect(msg, isNull);
       expect(messageRepo.saved, isEmpty);
+    });
+
+    test(
+      'returns duplicate when SAME content arrives under a DIFFERENT id (F8 content dedup)',
+      () async {
+        // An already-durable incoming message under id 'msg-uuid-001'.
+        const existing = ConversationMessage(
+          id: 'msg-uuid-001',
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'Hello from sender!',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-uuid-001': existing},
+        );
+        // DIFFERENT id, SAME sender + SAME text + SAME timestamp — a divergent-
+        // id re-delivery of the same logical message. The id-only gate misses
+        // it; without content dedup a 2nd row persists.
+        final message = buildP2PMessage(buildValidChatJson(id: 'msg-uuid-002'));
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+
+    test(
+      'persists a DIFFERENT-content message under a different id (no false dedup)',
+      () async {
+        const existing = ConversationMessage(
+          id: 'msg-uuid-001',
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'Hello from sender!',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-uuid-001': existing},
+        );
+        // Different id AND different text — must NOT be deduped.
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            id: 'msg-uuid-002',
+            text: 'A genuinely different message',
+          ),
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(messageRepo.saved, hasLength(1));
+      },
+    );
+
+    group('F8 tier-2 (wire-stamped dedupKey)', () {
+      ConversationMessage existingIncoming({
+        String text = 'Hello from sender!',
+        String timestamp = '2026-02-09T15:30:00.000Z',
+        bool isIncoming = true,
+        String senderPeer = senderPeerId,
+        String? dedupKey,
+      }) => ConversationMessage(
+        id: 'existing-1',
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeer,
+        text: text,
+        timestamp: timestamp,
+        status: isIncoming ? 'delivered' : 'sent',
+        isIncoming: isIncoming,
+        createdAt: '2026-02-09T15:30:01.000Z',
+        dedupKey: dedupKey,
+      );
+
+      // Case 1 (D1): a forward — divergent id + DIVERGENT timestamp + SAME
+      // dedupKey — dedups via the KEY, and the event proves it was tier-2 (not
+      // tier-1, which cannot catch a re-minted timestamp).
+      test(
+        'dedups a forward (divergent id+timestamp, same dedupKey) via DEDUP_KEY not CONTENT',
+        () async {
+          final flow = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flow.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+          messageRepo = FakeMessageRepository(
+            existingMessages: {'existing-1': existingIncoming(dedupKey: 'src-1')},
+          );
+          final message = buildP2PMessage(
+            buildValidChatJson(
+              id: 'msg-uuid-002',
+              dedupKey: 'src-1',
+              timestamp: '2099-01-01T00:00:00.000Z', // T1 ≠ T0
+            ),
+          );
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+
+          expect(result, HandleChatMessageResult.duplicate);
+          expect(msg, isNull);
+          expect(messageRepo.saved, isEmpty);
+          final events = flow.map((e) => e['event']).toList();
+          expect(events, contains('CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY'));
+          expect(events, isNot(contains('CHAT_MSG_RECEIVE_DUPLICATE_CONTENT')));
+        },
+      );
+
+      // Case 2: no false-positive — same text, DIFFERENT dedupKey → persists.
+      test('does NOT dedup identical text under a different dedupKey', () async {
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'existing-1': existingIncoming(dedupKey: 'src-1')},
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            id: 'msg-uuid-002',
+            dedupKey: 'src-2',
+            timestamp: '2099-01-01T00:00:00.000Z',
+          ),
+        );
+        final (result, _, __) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(messageRepo.saved, hasLength(1));
+      });
+
+      // Case 3a: keyless + same timestamp → tier-1 fallback dedups (CONTENT).
+      test('keyless arrival still hits tier-1 (same content+timestamp)', () async {
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'existing-1': existingIncoming()},
+        );
+        final message = buildP2PMessage(buildValidChatJson(id: 'msg-uuid-002'));
+        final (result, _, __) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        expect(result, HandleChatMessageResult.duplicate);
+        final events = flow.map((e) => e['event']).toList();
+        expect(events, contains('CHAT_MSG_RECEIVE_DUPLICATE_CONTENT'));
+        expect(events, isNot(contains('CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY')));
+      });
+
+      // Case 3b: keyless + different timestamp → persists (tier-1 miss).
+      test('keyless arrival with a different timestamp persists', () async {
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'existing-1': existingIncoming()},
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            id: 'msg-uuid-002',
+            timestamp: '2099-01-01T00:00:00.000Z',
+          ),
+        );
+        final (result, _, __) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(messageRepo.saved, hasLength(1));
+      });
+
+      // Case 4: keyed but UNMATCHED → persists, authoritatively (does NOT fall
+      // back to tier-1 even though text+timestamp match the existing row).
+      test('keyed-but-unmatched persists even when text+timestamp match tier-1', () async {
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'existing-1': existingIncoming(dedupKey: 'src-1')},
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(id: 'msg-uuid-002', dedupKey: 'src-9'),
+        );
+        final (result, _, __) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        expect(
+          result,
+          HandleChatMessageResult.chatMessage,
+          reason: 'a keyed message is authoritative — no tier-1 fallback',
+        );
+        expect(messageRepo.saved, hasLength(1));
+      });
+
+      // Case 5 (D3): re-mint a receipt for the forward's FRESH id on a tier-2
+      // duplicate (so the sender's forward row reaches delivered).
+      test('re-mints a delivery receipt for the forward fresh id', () async {
+        final receiptIds = <String>[];
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'existing-1': existingIncoming(dedupKey: 'src-1')},
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            id: 'msg-uuid-002',
+            dedupKey: 'src-1',
+            timestamp: '2099-01-01T00:00:00.000Z',
+          ),
+        );
+        await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'inbox',
+          stagedEntryId: 'relay-1',
+          sendDeliveryReceipt: (id) async => receiptIds.add(id),
+        );
+        expect(receiptIds, ['msg-uuid-002']);
+      });
+
+      // Case 6 (D4): my OUTGOING row with the same key must NOT dedup the
+      // contact's genuine inbound — the sender_peer_id + is_incoming guards.
+      test('does NOT dedup the contact inbound against my own outgoing row', () async {
+        messageRepo = FakeMessageRepository(
+          existingMessages: {
+            'existing-1': existingIncoming(
+              isIncoming: false,
+              senderPeer: 'my-peer',
+              dedupKey: 'X',
+            ),
+          },
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            id: 'inbound-msg-001',
+            dedupKey: 'X',
+            timestamp: '2099-01-01T00:00:00.000Z',
+          ),
+        );
+        final (result, _, __) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(messageRepo.saved, hasLength(1));
+      });
     });
 
     test(
@@ -1752,8 +2047,12 @@ void main() {
           expect(receiptIds, ['msg-uuid-001', 'msg-uuid-001']);
 
           // Live-direct origin → NOT called (confirmNonce owns that ack).
+          // Distinct content so it is a genuinely new message, not an F8
+          // content-duplicate of the relay message saved above.
           final (third, _, __3) = await handleIncomingChatMessage(
-            message: buildP2PMessage(buildValidChatJson(id: 'msg-live-001')),
+            message: buildP2PMessage(
+              buildValidChatJson(id: 'msg-live-001', text: 'A live message'),
+            ),
             messageRepo: messageRepo,
             contactRepo: contactRepo,
             transport: 'direct',

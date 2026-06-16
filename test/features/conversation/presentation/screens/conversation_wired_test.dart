@@ -342,6 +342,21 @@ class FakeMessageRepository
   Future<bool> messageExists(String id) async => store.containsKey(id);
 
   @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async => false;
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async => false;
+
+  @override
   Future<void> saveMessage(ConversationMessage message) async {
     saveMessageCallCount++;
     store[message.id] = message;
@@ -1304,7 +1319,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
         await pumpUntil(
           tester,
-          () => messageRepo.store[failedMessageId]?.status == 'delivered',
+          // F6: relay re-store is custody, not delivery — settles 'inboxed'.
+          () => messageRepo.store[failedMessageId]?.status == 'inboxed',
         );
 
         expect(sendCalls, 1);
@@ -5877,11 +5893,13 @@ void main() {
       );
       await pumpUntil(
         tester,
-        () => messageRepo.store['failed-media-msg']?.status == 'delivered',
+        // F6: relay re-store is custody, not delivery — settles 'inboxed'.
+        () => messageRepo.store['failed-media-msg']?.status == 'inboxed',
       );
 
-      expect(messageRepo.store['failed-media-msg']?.status, 'delivered');
-      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      expect(messageRepo.store['failed-media-msg']?.status, 'inboxed');
+      // 'inboxed' renders the pending-family schedule icon, not done_all.
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
       expect(find.text('Could not retry media message.'), findsNothing);
     });
 

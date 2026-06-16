@@ -46,6 +46,21 @@ class ThrowAfterNMessageRepo implements MessageRepository {
   Future<bool> messageExists(String id) => _inner.messageExists(id);
 
   @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async => false;
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async => false;
+
+  @override
   Future<List<ConversationMessage>> getMessagesForContact(String cid) =>
       _inner.getMessagesForContact(cid);
 
@@ -155,6 +170,21 @@ class ThrowOnNthMessageRepo implements MessageRepository {
 
   @override
   Future<bool> messageExists(String id) => _inner.messageExists(id);
+
+  @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async => false;
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async => false;
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(String cid) =>

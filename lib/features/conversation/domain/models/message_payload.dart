@@ -26,6 +26,11 @@ class MessagePayload {
   final String? quotedMessageId;
   final List<Map<String, dynamic>>? media;
 
+  /// F8 tier-2: wire-stamped propagated source-message id (survives a forward's
+  /// id+timestamp re-mint). Rides the INNER (encrypted) JSON only. NULL for
+  /// legacy senders → receiver falls back to timestamp-exact tier-1.
+  final String? dedupKey;
+
   const MessagePayload({
     required this.id,
     required this.text,
@@ -36,6 +41,7 @@ class MessagePayload {
     this.editedAt,
     this.quotedMessageId,
     this.media,
+    this.dedupKey,
   });
 
   bool get isEdit => action == actionEdit;
@@ -69,6 +75,7 @@ class MessagePayload {
       final action = payload['action'] as String? ?? actionSend;
       final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
+      final dedupKey = payload['dedupKey'] as String?;
 
       final rawMedia = payload['media'] as List<dynamic>?;
       final media = rawMedia
@@ -85,6 +92,7 @@ class MessagePayload {
         editedAt: editedAt,
         quotedMessageId: quotedMessageId,
         media: media,
+        dedupKey: dedupKey,
       );
     } catch (_) {
       return null;
@@ -103,6 +111,7 @@ class MessagePayload {
       if (editedAt != null) 'editedAt': editedAt,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,
+      if (dedupKey != null) 'dedupKey': dedupKey,
     };
     final envelope = {
       'type': 'chat_message',
@@ -180,6 +189,7 @@ class MessagePayload {
       final action = payload['action'] as String? ?? actionSend;
       final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
+      final dedupKey = payload['dedupKey'] as String?;
 
       final rawMedia = payload['media'] as List<dynamic>?;
       final media = rawMedia
@@ -196,6 +206,7 @@ class MessagePayload {
         editedAt: editedAt,
         quotedMessageId: quotedMessageId,
         media: media,
+        dedupKey: dedupKey,
       );
     } catch (_) {
       return null;
@@ -216,6 +227,7 @@ class MessagePayload {
       if (editedAt != null) 'editedAt': editedAt,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,
+      if (dedupKey != null) 'dedupKey': dedupKey,
     });
   }
 
@@ -246,6 +258,7 @@ class MessagePayload {
       quotedMessageId: quotedMessageId,
       transport: transport,
       wireEnvelope: wireEnvelope,
+      dedupKey: dedupKey,
     );
   }
 }

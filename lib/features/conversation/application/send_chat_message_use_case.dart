@@ -178,6 +178,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? editedAt,
   String? messageId,
   String? timestamp,
+  // F8 tier-2: a normal send stamps `dedupKey = its own id` (the default
+  // below); a forward/share passes the SOURCE message's dedupKey so the
+  // receiver dedups the re-minted (fresh id+timestamp) copy.
+  String? dedupKey,
   String? createdAt,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
@@ -340,6 +344,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final resolvedMessageId = messageId ?? _uuid.v4();
   final resolvedTimestamp =
       timestamp ?? DateTime.now().toUtc().toIso8601String();
+  // F8 tier-2: default a normal send's dedupKey to its own id; a forward keeps
+  // the propagated source key so a re-minted id+timestamp still dedups.
+  final resolvedDedupKey = dedupKey ?? resolvedMessageId;
   final resolvedEditedAt = action == MessagePayload.actionEdit
       ? (editedAt ?? DateTime.now().toUtc().toIso8601String())
       : null;
@@ -366,6 +373,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     media: normalizedAttachments
         ?.map((attachment) => attachment.toJson())
         .toList(),
+    dedupKey: resolvedDedupKey,
   );
   logChatOutgoing(
     messageId: resolvedMessageId,

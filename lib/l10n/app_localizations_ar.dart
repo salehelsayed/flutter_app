@@ -824,6 +824,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get edit_save_failed => 'فشل حفظ التعديل.';
 
   @override
+  String get sending_taking_longer => 'الإرسال يستغرق وقتًا أطول…';
+
+  @override
   String get intro_pass => 'تمرير';
 
   @override
@@ -1375,6 +1378,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'تمت إعادة إشعارات هذه المجموعة';
 
   @override
+  String get group_notification_catching_up =>
+      'لا تزال هذه المجموعة قيد المزامنة — حاول مرة أخرى بعد لحظات.';
+
+  @override
   String get group_info_delete_local_failed => 'فشل حذف المجموعة محليًا';
 
   @override
@@ -1383,6 +1390,10 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get group_info_rotate_key_failed =>
       'فشل تدوير مفتاح المجموعة بعد الإزالة';
+
+  @override
+  String get group_info_remove_member_partial_distribution =>
+      'تمت إزالة العضو. سيتلقى بعض الأعضاء المفتاح الجديد عند إعادة الاتصال.';
 
   @override
   String get group_info_remove_member_failed => 'فشل إزالة العضو';

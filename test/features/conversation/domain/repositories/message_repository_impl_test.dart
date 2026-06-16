@@ -123,6 +123,7 @@ void main() {
       dbDeleteMessage: (id) async {
         return store.remove(id) == null ? 0 : 1;
       },
+      dbExistsMessageByContent: (_, __, ___, ____) async => false,
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) async {
         var rows = store.values
             .where(

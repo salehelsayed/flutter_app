@@ -36,6 +36,56 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
   }
 }
 
+/// Returns true if an incoming 1:1 message with the same logical content
+/// already exists (F8 content dedup — the 1:1 twin of
+/// [dbExistsGroupMessageByContent]).
+///
+/// Keyed on `(contact_peer_id, sender_peer_id, text, timestamp)` over incoming
+/// rows. Catches a divergent-id re-delivery that preserves the original wire
+/// timestamp, which the `id`-only gate misses.
+Future<bool> dbExistsMessageByContent(
+  Database db,
+  String contactPeerId,
+  String senderPeerId,
+  String text,
+  String timestamp,
+) async {
+  final rows = await db.query(
+    'messages',
+    columns: const ['id'],
+    where:
+        'contact_peer_id = ? AND sender_peer_id = ? AND text = ? AND timestamp = ? AND is_incoming = 1',
+    whereArgs: [contactPeerId, senderPeerId, text, timestamp],
+    limit: 1,
+  );
+  return rows.isNotEmpty;
+}
+
+/// Returns true if an incoming 1:1 message with the same wire-stamped
+/// `dedup_key` already exists (F8 tier-2).
+///
+/// `dedup_key` is a propagated source-message id, so this survives a
+/// forward/share that re-mints BOTH id and timestamp — which the timestamp-
+/// exact [dbExistsMessageByContent] cannot catch. Keyed on
+/// `(contact_peer_id, sender_peer_id, dedup_key)` over incoming rows.
+Future<bool> dbExistsMessageByDedupKey(
+  Database db,
+  String contactPeerId,
+  String senderPeerId,
+  String dedupKey,
+) async {
+  if (dedupKey.isEmpty) return false; // never dedup on an absent key
+  final rows = await db.query(
+    'messages',
+    columns: const ['id'],
+    where:
+        'contact_peer_id = ? AND sender_peer_id = ? AND dedup_key = ? AND is_incoming = 1',
+    whereArgs: [contactPeerId, senderPeerId, dedupKey],
+    limit: 1,
+  );
+  return rows.isNotEmpty;
+}
+
 /// Loads a page of messages for a contact, ordered by timestamp ASC.
 ///
 /// Returns at most [limit] messages. When [beforeTimestamp] is null,

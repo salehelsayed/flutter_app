@@ -24,6 +24,7 @@ MessageRepositoryImpl _buildRepo({
     dbCountTotalUnreadExcludingArchived: () async => 0,
     dbDeleteMessagesForContact: (cp) async => 0,
     dbDeleteMessage: (id) async => 0,
+    dbExistsMessageByContent: (_, __, ___, ____) async => false,
     dbLoadMessagesPage: (cp, {int limit = 50, String? beforeTimestamp}) async =>
         [],
     dbLoadFailedOutgoingMessages: () async => [],

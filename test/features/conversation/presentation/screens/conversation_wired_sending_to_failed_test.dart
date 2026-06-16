@@ -88,6 +88,21 @@ class _FakeMessageRepository
   Future<bool> messageExists(String id) async => store.containsKey(id);
 
   @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async => false;
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async => false;
+
+  @override
   Future<int> getMessageCountForContact(String contactPeerId) async =>
       store.values.where((m) => m.contactPeerId == contactPeerId).length;
 
@@ -224,6 +239,7 @@ ConversationMessage _makeSendingMessage() => ConversationMessage(
 Widget _buildTestWidget({
   required _FakeMessageRepository messageRepo,
   List<ConversationMessage>? initialMessages,
+  SendChatMessageFn? sendChatMessageFn,
 }) {
   final chatListener = ChatMessageListener(
     chatMessageStream: const Stream<ChatMessage>.empty(),
@@ -242,11 +258,36 @@ Widget _buildTestWidget({
       chatMessageListener: chatListener,
       p2pService: FakeP2PService(),
       bridge: FakeBridge(),
-      sendChatMessageFn: _noOpSendChatMessage,
+      sendChatMessageFn: sendChatMessageFn ?? _noOpSendChatMessage,
       initialMessages: initialMessages,
       audioRecorderService: FakeAudioRecorderService(),
     ),
   );
+}
+
+/// F5: a send that resolves only after [delay], mirroring the helper-capped
+/// degradation (a boundary-stalled send that the `callP2PMessageSend` timeout
+/// turns into a ~2.5s durable-inbox fallback rather than an instant ack).
+SendChatMessageFn _delayedSuccessSend(Duration delay) {
+  return ({
+    required P2PService p2pService,
+    required MessageRepository messageRepo,
+    required String targetPeerId,
+    required String text,
+    required String senderPeerId,
+    required String senderUsername,
+    String? messageId,
+    String? timestamp,
+    dynamic bridge,
+    String? recipientMlKemPublicKey,
+    String? quotedMessageId,
+    List<MediaAttachment>? mediaAttachments,
+    MediaAttachmentRepository? mediaAttachmentRepo,
+    TransportMetrics? transportMetrics,
+  }) async {
+    await Future<void>.delayed(delay);
+    return (SendChatMessageResult.success, null);
+  };
 }
 
 Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendChatMessage({
@@ -331,6 +372,53 @@ void main() {
           findsNothing,
           reason:
               'The sending/sent checkmark must no longer be visible after transition to failed',
+        );
+      },
+    );
+
+    testWidgets(
+      'F5: composer shows a "sending is taking longer" hint past ~1.5s and '
+      'clears it once the send resolves',
+      (tester) async {
+        final messageRepo = _FakeMessageRepository();
+
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            // Resolves after 2s — mirrors the helper-capped durable fallback.
+            sendChatMessageFn: _delayedSuccessSend(const Duration(seconds: 2)),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+
+        const hintText = 'Sending is taking longer…';
+
+        // Drive a real send: type text, tap the send button.
+        await tester.enterText(find.byType(TextField).first, 'hi there');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+
+        // Below the ~1.5s threshold: no hint yet.
+        await tester.pump(const Duration(milliseconds: 800));
+        expect(find.text(hintText), findsNothing);
+
+        // Past the threshold (~1.6s) but before the 2s resolution: hint shown.
+        await tester.pump(const Duration(milliseconds: 800));
+        expect(
+          find.text(hintText),
+          findsOneWidget,
+          reason: 'the "taking longer" hint must appear while still sending',
+        );
+
+        // Send resolves at 2s → the hint must clear.
+        await tester.pump(const Duration(milliseconds: 700));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(
+          find.text(hintText),
+          findsNothing,
+          reason: 'the hint must clear once the send resolves',
         );
       },
     );

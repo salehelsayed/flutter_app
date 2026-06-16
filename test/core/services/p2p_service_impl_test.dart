@@ -140,6 +140,28 @@ String _chatEnvelope({
   });
 }
 
+/// F7: a v1 message_reaction envelope (the wire shape that the relay-inbox
+/// retrieve path surfaces).
+String _reactionEnvelope({
+  String messageId = 'm1',
+  String emoji = '👍',
+  String action = 'add',
+  String senderPeerId = 'remote-peer',
+  String timestamp = '2026-04-01T00:00:00.000Z',
+}) {
+  return jsonEncode({
+    'type': 'message_reaction',
+    'version': '1',
+    'payload': {
+      'messageId': messageId,
+      'emoji': emoji,
+      'action': action,
+      'senderPeerId': senderPeerId,
+      'timestamp': timestamp,
+    },
+  });
+}
+
 LocalChatMessage _lanChatMessage({
   required String id,
   String from = 'remote-peer',
@@ -177,6 +199,18 @@ class _GateableInboxStagingRepository extends InMemoryInboxStagingRepository {
       await gate.future;
     }
     return ids;
+  }
+}
+
+/// F7: records every deleteEntry call so a test can assert the staged row is
+/// NOT deleted until the replay actually commits.
+class _DeleteSpyInboxStagingRepository extends InMemoryInboxStagingRepository {
+  final List<String> deletedEntryIds = [];
+
+  @override
+  Future<void> deleteEntry(String entryId) async {
+    deletedEntryIds.add(entryId);
+    await super.deleteEntry(entryId);
   }
 }
 
@@ -853,6 +887,168 @@ void main() {
         );
 
         await sub.cancel();
+      },
+    );
+
+    test(
+      'F3 step 2: two concurrent drains coalesce — the SAME un-acked relay page '
+      'is fetched exactly once',
+      () async {
+        service.dispose();
+        final repo = _GateableInboxStagingRepository();
+        var replayCount = 0;
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                replayCount++;
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        bridge.calledCommands.clear();
+
+        // Register the page + gate only AFTER startup, so startup does not
+        // drain it. retrieve_pending is a non-destructive read: it returns the
+        // same page on every call until the entry is acked.
+        final stageGate = Completer<void>();
+        repo.stageGate = stageGate;
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              _pendingInboxRow(
+                entryId: 'entry-coalesce-1',
+                from: 'remote-peer',
+                message: _chatEnvelope(
+                  id: 'm1',
+                  text: 'hi',
+                  senderPeerId: 'remote-peer',
+                ),
+              ),
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        // Drain A retrieves the page, then parks in stageEntries on the gate.
+        final a = service.drainOfflineInbox();
+        await _waitForCondition(
+          () => bridge.calledCommands.contains('inbox:retrieve_pending'),
+          reason: 'drain A should retrieve the pending page',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        // Drain B starts while A is still parked and the page is un-acked.
+        final b = service.drainOfflineInbox();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        stageGate.complete();
+        await Future.wait([a, b]);
+
+        final retrieveCount = bridge.calledCommands
+            .where((c) => c == 'inbox:retrieve_pending')
+            .length;
+        expect(
+          retrieveCount,
+          1,
+          reason:
+              'the second concurrent drain must coalesce onto the first, not '
+              'fetch the same un-acked relay page a second time',
+        );
+        // And the entry is delivered exactly once (no double notification /
+        // double receipt re-mint).
+        expect(replayCount, 1);
+      },
+    );
+
+    test(
+      'F3 step 2 lock: a drain interrupted before commit leaves the entry '
+      'recoverable — a later (serialized) drain still replays it',
+      () async {
+        service.dispose();
+        final repo = InMemoryInboxStagingRepository();
+        var attempt = 0;
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                attempt++;
+                // First replay is "interrupted" (retryable → row retained); a
+                // later drain must pick it back up and commit it.
+                if (attempt == 1) {
+                  return (
+                    disposition: RecoveredInboxChatDisposition.retryable,
+                    reasonCode: 'decryption_deferred',
+                    reasonDetail: null,
+                  );
+                }
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              _pendingInboxRow(
+                entryId: 'entry-recover-1',
+                from: 'remote-peer',
+                message: _chatEnvelope(
+                  id: 'm1',
+                  text: 'hi',
+                  senderPeerId: 'remote-peer',
+                ),
+              ),
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        await service.drainOfflineInbox();
+        // The first drain replayed once but did NOT commit → entry retained.
+        expect(attempt, greaterThanOrEqualTo(1));
+
+        await service.drainOfflineInbox();
+        // A later serialized drain re-replays the still-pending entry: the
+        // mutex + stage idempotency must never DROP an interrupted entry.
+        expect(
+          attempt,
+          greaterThanOrEqualTo(2),
+          reason: 'an interrupted-before-commit entry must be re-replayed',
+        );
       },
     );
 
@@ -2244,6 +2440,157 @@ void main() {
         await sub.cancel();
       },
     );
+
+    group('F7 reactions/deletions stage-before-ack', () {
+      // RED #1: a relay-inbox message_reaction must hold its staged row until
+      // the reaction replay COMMITS. On HEAD (no reaction arm) the entry takes
+      // the generic fall-through: a bare emit then immediate deleteEntry BEFORE
+      // the listener's saveReaction commits, so a kill in that window loses the
+      // reaction. With the F7 arm the row survives until committed.
+      test(
+        'relay-inbox reaction holds its staged row until replay commits',
+        () async {
+          service.dispose();
+          final repo = _DeleteSpyInboxStagingRepository();
+          final replayGate = Completer<RecoveredInboxReplayOutcome>();
+          final replayedStagedIds = <String?>[];
+
+          service = P2PServiceImpl(
+            bridge: bridge,
+            inboxStagingRepository: repo,
+            replayRecoveredInboxReaction:
+                (message, {String? stagedEntryId}) async {
+                  replayedStagedIds.add(stagedEntryId);
+                  // Park: do NOT return committed yet. The staged row must
+                  // remain until we release the gate below.
+                  return replayGate.future;
+                },
+          );
+          bridge.whenCommand(
+            'node:start',
+            (_) => jsonEncode({
+              'ok': true,
+              'peerId': 'self-peer',
+              'isStarted': true,
+              'listenAddresses': [],
+            }),
+          );
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          bridge.whenCommand(
+            'inbox:retrieve_pending',
+            (_) => jsonEncode({
+              'ok': true,
+              'messages': [
+                _pendingInboxRow(
+                  entryId: 'entry-reaction-1',
+                  from: 'remote-peer',
+                  message: _reactionEnvelope(messageId: 'm1'),
+                ),
+              ],
+              'hasMore': false,
+            }),
+          );
+
+          // Kick the drain (not awaited — the replay parks on the gate).
+          unawaited(service.drainOfflineInbox());
+
+          await _waitForCondition(
+            () => replayedStagedIds.contains('entry-reaction-1'),
+            reason: 'reaction replay callback should be invoked with the '
+                'staged entry id',
+          );
+
+          // While the replay is parked, the staged row must NOT be deleted.
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          expect(
+            repo.deletedEntryIds,
+            isNot(contains('entry-reaction-1')),
+            reason: 'the reaction row must survive until the replay commits — '
+                'deleting before commit loses the reaction on a kill',
+          );
+          expect(repo.entry('entry-reaction-1'), isNotNull);
+
+          // Release the gate with a committed disposition → row is deleted.
+          replayGate.complete((
+            disposition: RecoveredInboxChatDisposition.committed,
+            reasonCode: 'success',
+            reasonDetail: null,
+          ));
+          await _waitForCondition(
+            () => repo.deletedEntryIds.contains('entry-reaction-1'),
+            reason: 'committed reaction replay should delete the staged row',
+          );
+          expect(repo.entry('entry-reaction-1'), isNull);
+        },
+      );
+
+      // Preserved-behavior lock: a relay-inbox chat_message still stages,
+      // replays, and deletes the row exactly once on committed — proving the
+      // new reaction/deletion arms did not disturb the chat arm.
+      test(
+        'relay-inbox chat still deletes its row once on committed replay',
+        () async {
+          service.dispose();
+          final repo = _DeleteSpyInboxStagingRepository();
+          final replayedStagedIds = <String?>[];
+
+          service = P2PServiceImpl(
+            bridge: bridge,
+            inboxStagingRepository: repo,
+            replayRecoveredInboxChatMessage:
+                (message, {String? stagedEntryId}) async {
+                  replayedStagedIds.add(stagedEntryId);
+                  return (
+                    disposition: RecoveredInboxChatDisposition.committed,
+                    reasonCode: 'stored',
+                    reasonDetail: null,
+                  );
+                },
+          );
+          bridge.whenCommand(
+            'node:start',
+            (_) => jsonEncode({
+              'ok': true,
+              'peerId': 'self-peer',
+              'isStarted': true,
+              'listenAddresses': [],
+            }),
+          );
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          bridge.whenCommand(
+            'inbox:retrieve_pending',
+            (_) => jsonEncode({
+              'ok': true,
+              'messages': [
+                _pendingInboxRow(
+                  entryId: 'entry-chat-keep-1',
+                  from: 'remote-peer',
+                  message: _chatEnvelope(
+                    id: 'm1',
+                    text: 'hi',
+                    senderPeerId: 'remote-peer',
+                  ),
+                ),
+              ],
+              'hasMore': false,
+            }),
+          );
+
+          await service.drainOfflineInbox();
+
+          await _waitForCondition(
+            () => repo.entry('entry-chat-keep-1') == null,
+            reason: 'committed chat replay should delete the staged row',
+          );
+          expect(replayedStagedIds, ['entry-chat-keep-1']);
+          expect(
+            repo.deletedEntryIds.where((id) => id == 'entry-chat-keep-1'),
+            hasLength(1),
+            reason: 'the chat row must be deleted exactly once',
+          );
+        },
+      );
+    });
   });
 
   group('Phase 1 — startup and warm background', () {

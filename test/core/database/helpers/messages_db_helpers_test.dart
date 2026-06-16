@@ -14,6 +14,7 @@ import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.da
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -42,6 +43,7 @@ void main() {
     await runMessagesEditedAtMigration(db);
     await runMessagesDeletedStateMigration(db);
     await runMessageRelayCustodyMigration(db);
+    await runMessageDedupKeyMigration(db);
   });
 
   tearDown(() async {
@@ -65,6 +67,7 @@ void main() {
     String? hiddenAt,
     String? transport,
     String? wireEnvelope,
+    String? dedupKey,
   }) {
     return {
       'id': id,
@@ -83,6 +86,7 @@ void main() {
       'hidden_at': hiddenAt,
       'transport': transport,
       'wire_envelope': wireEnvelope,
+      'dedup_key': dedupKey,
     };
   }
 
@@ -111,6 +115,71 @@ void main() {
       'blocked_at': blockedAt,
     };
   }
+
+  group('dbExistsMessageByDedupKey (F8 tier-2)', () {
+    test('matches an incoming row by dedup_key; misses wrong/empty key', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'in-1',
+          contactPeerId: 'peer-a',
+          senderPeerId: 'peer-a',
+          isIncoming: 1,
+          dedupKey: 'k1',
+        ),
+      );
+
+      expect(
+        await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', 'k1'),
+        isTrue,
+      );
+      expect(
+        await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', 'k2'),
+        isFalse,
+      );
+      // Empty key never dedups (absent-key guard).
+      expect(
+        await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', ''),
+        isFalse,
+      );
+    });
+
+    test('does NOT match an OUTGOING row (is_incoming = 0)', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'out-1',
+          contactPeerId: 'peer-a',
+          senderPeerId: 'me',
+          isIncoming: 0,
+          dedupKey: 'k1',
+        ),
+      );
+
+      expect(
+        await dbExistsMessageByDedupKey(db, 'peer-a', 'me', 'k1'),
+        isFalse,
+      );
+    });
+
+    test('is scoped to the (contact, sender) pair', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'in-1',
+          contactPeerId: 'peer-a',
+          senderPeerId: 'peer-a',
+          isIncoming: 1,
+          dedupKey: 'k1',
+        ),
+      );
+      // Same key, different sender → no match (boomerang/cross-peer guard).
+      expect(
+        await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-b', 'k1'),
+        isFalse,
+      );
+    });
+  });
 
   group('dbInsertMessage', () {
     test('inserts a new message', () async {

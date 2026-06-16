@@ -4254,13 +4254,13 @@ void main() {
           },
         );
 
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
-        expect(rotatedKey.encryptedKey, rotatedKeyValue);
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
+        expect(rotatedKey.key!.encryptedKey, rotatedKeyValue);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
 
-        await bob.groupRepo.saveKey(rotatedKey);
+        await bob.groupRepo.saveKey(rotatedKey.key!);
 
         Future<void> expectRemainingMemberState(GroupTestUser user) async {
           final group = await user.groupRepo.getGroup(groupId);
@@ -4479,13 +4479,13 @@ void main() {
           },
         );
 
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
-        expect(rotatedKey.encryptedKey, rotatedKeyValue);
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
+        expect(rotatedKey.key!.encryptedKey, rotatedKeyValue);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
 
-        await bob.groupRepo.saveKey(rotatedKey);
+        await bob.groupRepo.saveKey(rotatedKey.key!);
 
         Future<void> expectRemainingMemberState(GroupTestUser user) async {
           final group = await user.groupRepo.getGroup(groupId);
@@ -4690,11 +4690,11 @@ void main() {
             return true;
           },
         );
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rotatedKey);
+        await bob.groupRepo.saveKey(rotatedKey.key!);
 
         final postRemovalTexts = <String>[
           'GM-005 Alice after offline Charlie removal 1',
@@ -4809,7 +4809,7 @@ void main() {
                 id: message.id,
                 text: message.text,
                 timestamp: message.timestamp,
-                keyInfo: rotatedKey,
+                keyInfo: rotatedKey.key!,
               ),
           ],
         );
@@ -4831,7 +4831,7 @@ void main() {
         final charlieLatestKey = await charlie.groupRepo.getLatestKey(groupId);
         expect(
           charlieLatestKey?.keyGeneration ?? 0,
-          lessThan(rotatedKey.keyGeneration),
+          lessThan(rotatedKey.key!.keyGeneration),
         );
         final charlieTexts = (await charlie.loadGroupMessages(
           groupId,
@@ -4977,12 +4977,12 @@ void main() {
             return true;
           },
         );
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
-        expect(rotatedKey.encryptedKey, rotatedKeyValue);
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
+        expect(rotatedKey.key!.encryptedKey, rotatedKeyValue);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rotatedKey);
+        await bob.groupRepo.saveKey(rotatedKey.key!);
 
         final (aliceSendResult, aliceMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -5094,14 +5094,14 @@ void main() {
               id: aliceMessage.id,
               text: aliceMessage.text,
               timestamp: aliceMessage.timestamp,
-              keyInfo: rotatedKey,
+              keyInfo: rotatedKey.key!,
             ),
             await signedReplay(
               sender: bob,
               id: bobMessage.id,
               text: bobMessage.text,
               timestamp: bobMessage.timestamp,
-              keyInfo: rotatedKey,
+              keyInfo: rotatedKey.key!,
             ),
           ],
         );
@@ -5123,7 +5123,7 @@ void main() {
         final charlieLatestKey = await charlie.groupRepo.getLatestKey(groupId);
         expect(
           charlieLatestKey?.keyGeneration ?? 0,
-          lessThan(rotatedKey.keyGeneration),
+          lessThan(rotatedKey.key!.keyGeneration),
         );
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
         final charlieTexts = (await charlie.loadGroupMessages(
@@ -5272,12 +5272,12 @@ void main() {
             return true;
           },
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
-        expect(rejoinKey.encryptedKey, rejoinKeyValue);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
+        expect(rejoinKey.key!.encryptedKey, rejoinKeyValue);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rejoinKey);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (duringRemovalResult, duringRemovalMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -5310,8 +5310,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -5541,11 +5541,11 @@ void main() {
             return true;
           },
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rejoinKey);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (duringResult, duringMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -5578,8 +5578,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -5803,8 +5803,8 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        await bob.groupRepo.saveKey(rejoinKey!);
+        expect(rejoinKey.key, isNotNull);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (removedWindowResult, removedWindowMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -5835,8 +5835,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -6066,8 +6066,8 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        await bob.groupRepo.saveKey(rejoinKey!);
+        expect(rejoinKey.key, isNotNull);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (removedWindowResult, removedWindowMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -6099,8 +6099,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -6371,8 +6371,8 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        await bob.groupRepo.saveKey(rejoinKey!);
+        expect(rejoinKey.key, isNotNull);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (removedResult, removedMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -6401,8 +6401,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(
@@ -6615,9 +6615,9 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
-        await bob.groupRepo.saveKey(rejoinKey);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         network.holdDeliveriesFor(bob.peerId);
         await alice.addMember(
@@ -6627,8 +6627,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -6812,11 +6812,11 @@ void main() {
             return true;
           },
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rejoinKey);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (removedWindowResult, removedWindowMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -6917,7 +6917,7 @@ void main() {
               id: removedWindowMessage.id,
               text: removedWindowMessage.text,
               timestamp: removedWindowMessage.timestamp,
-              keyInfo: rejoinKey,
+              keyInfo: rejoinKey.key!,
             ),
           ],
         );
@@ -6950,8 +6950,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -7319,11 +7319,11 @@ void main() {
             return true;
           },
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rejoinKey);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         for (var i = 0; i < removedWindowMessages.length; i++) {
           final text = removedWindowMessages[i];
@@ -7359,8 +7359,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -7611,12 +7611,12 @@ void main() {
             return true;
           },
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
-        expect(rejoinKey.encryptedKey, rejoinKeyValue);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
+        expect(rejoinKey.key!.encryptedKey, rejoinKeyValue);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rejoinKey);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (duringRemovalResult, duringRemovalMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -7649,8 +7649,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -7887,9 +7887,9 @@ void main() {
           },
         );
 
-        expect(rotatedKey, isNotNull);
-        expect(rotatedKey!.keyGeneration, 2);
-        expect(rotatedKey.encryptedKey, rotatedKeyValue);
+        expect(rotatedKey.key, isNotNull);
+        expect(rotatedKey.key!.keyGeneration, 2);
+        expect(rotatedKey.key!.encryptedKey, rotatedKeyValue);
         expect(
           alice.bridge.commandLog.where(
             (command) => command == 'group:generateNextKey',
@@ -7898,7 +7898,7 @@ void main() {
         );
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rotatedKey);
+        await bob.groupRepo.saveKey(rotatedKey.key!);
 
         Future<void> expectRemainingMemberState(GroupTestUser user) async {
           final group = await user.groupRepo.getGroup(groupId);
@@ -8144,12 +8144,12 @@ void main() {
             return true;
           },
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
-        expect(rejoinKey.encryptedKey, rejoinKeyValue);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
+        expect(rejoinKey.key!.encryptedKey, rejoinKeyValue);
         expect(keyDistributionTargets, contains(bob.deviceId));
         expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-        await bob.groupRepo.saveKey(rejoinKey);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final (duringRemovalResult, duringRemovalMessage) = await alice
             .sendGroupMessageViaBridge(
@@ -8175,8 +8175,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -8470,12 +8470,12 @@ void main() {
           return true;
         },
       );
-      expect(rotatedKey, isNotNull);
-      expect(rotatedKey!.keyGeneration, 2);
-      expect(rotatedKey.encryptedKey, rotatedKeyValue);
+      expect(rotatedKey.key, isNotNull);
+      expect(rotatedKey.key!.keyGeneration, 2);
+      expect(rotatedKey.key!.encryptedKey, rotatedKeyValue);
       expect(keyDistributionTargets, contains(bob.deviceId));
       expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-      await bob.groupRepo.saveKey(rotatedKey);
+      await bob.groupRepo.saveKey(rotatedKey.key!);
 
       await alice.groupMessageListener.handleReplayEnvelope(
         staleAddEnvelope,
@@ -8786,12 +8786,12 @@ void main() {
           return true;
         },
       );
-      expect(currentKey, isNotNull);
-      expect(currentKey!.keyGeneration, 2);
-      expect(currentKey.encryptedKey, currentKeyValue);
+      expect(currentKey.key, isNotNull);
+      expect(currentKey.key!.keyGeneration, 2);
+      expect(currentKey.key!.encryptedKey, currentKeyValue);
       expect(keyDistributionTargets, contains(bob.deviceId));
       expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-      await bob.groupRepo.saveKey(currentKey);
+      await bob.groupRepo.saveKey(currentKey.key!);
 
       final charlieMemberAfterReadd = GroupMember(
         groupId: groupId,
@@ -8821,8 +8821,8 @@ void main() {
       charlie.subscribeToGroup(groupId);
       await saveKey(
         charlie,
-        epoch: currentKey.keyGeneration,
-        encryptedKey: currentKey.encryptedKey,
+        epoch: currentKey.key!.keyGeneration,
+        encryptedKey: currentKey.key!.encryptedKey,
         createdAt: readdV3At,
       );
       final readdEnvelope = <String, dynamic>{
@@ -11904,9 +11904,9 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
-        await bob.groupRepo.saveKey(rejoinKey);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         await alice.addMember(
           groupId: groupId,
@@ -11915,8 +11915,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -12116,9 +12116,9 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
-        await bob.groupRepo.saveKey(rejoinKey);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         await alice.addMember(
           groupId: groupId,
@@ -12127,8 +12127,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(
@@ -12414,9 +12414,9 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        expect(rejoinKey!.keyGeneration, 2);
-        await bob.groupRepo.saveKey(rejoinKey);
+        expect(rejoinKey.key, isNotNull);
+        expect(rejoinKey.key!.keyGeneration, 2);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         await alice.addMember(
           groupId: groupId,
@@ -12425,8 +12425,8 @@ void main() {
         );
         await saveKey(
           activeCharlie,
-          epoch: rejoinKey.keyGeneration,
-          encryptedKey: rejoinKey.encryptedKey,
+          epoch: rejoinKey.key!.keyGeneration,
+          encryptedKey: rejoinKey.key!.encryptedKey,
           createdAt: rejoinKeyCreatedAt,
         );
         await alice.broadcastMemberAdded(
@@ -12865,8 +12865,8 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(rejoinKey, isNotNull);
-        await bob.groupRepo.saveKey(rejoinKey!);
+        expect(rejoinKey.key, isNotNull);
+        await bob.groupRepo.saveKey(rejoinKey.key!);
 
         final readdedCharlie = charlieMember(rejoinKeyCreatedAt);
         await addGroupMember(
@@ -12898,7 +12898,7 @@ void main() {
             device: charliePhone,
             inviteId: 'ra013-phone-readd',
             groupConfig: readdConfig,
-            keyInfo: rejoinKey,
+            keyInfo: rejoinKey.key!,
             receivedAt: inviteReceivedAt,
           ),
         );
@@ -12907,7 +12907,7 @@ void main() {
             device: charlieTablet,
             inviteId: 'ra013-tablet-readd',
             groupConfig: readdConfig,
-            keyInfo: rejoinKey,
+            keyInfo: rejoinKey.key!,
             receivedAt: inviteReceivedAt,
           ),
         );
@@ -13421,12 +13421,12 @@ void main() {
           sourceDeviceId: alice.deviceId,
           sendP2PMessage: (_, _) async => true,
         );
-        expect(currentKey, isNotNull);
+        expect(currentKey.key, isNotNull);
         await saveKey(
           bob,
-          epoch: currentKey!.keyGeneration,
-          encryptedKey: currentKey.encryptedKey,
-          createdAt: currentKey.createdAt,
+          epoch: currentKey.key!.keyGeneration,
+          encryptedKey: currentKey.key!.encryptedKey,
+          createdAt: currentKey.key!.createdAt,
         );
 
         await alice.addMember(
@@ -13436,8 +13436,8 @@ void main() {
         );
         await saveKey(
           charlie,
-          epoch: currentKey.keyGeneration,
-          encryptedKey: currentKey.encryptedKey,
+          epoch: currentKey.key!.keyGeneration,
+          encryptedKey: currentKey.key!.encryptedKey,
           createdAt: readdAt,
         );
         await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
@@ -13917,14 +13917,14 @@ void main() {
           return true;
         },
       );
-      expect(currentKey, isNotNull);
+      expect(currentKey.key, isNotNull);
       expect(keyDistributionTargets, contains(bob.deviceId));
       expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
       await saveKey(
         bob,
-        epoch: currentKey!.keyGeneration,
-        encryptedKey: currentKey.encryptedKey,
-        createdAt: currentKey.createdAt,
+        epoch: currentKey.key!.keyGeneration,
+        encryptedKey: currentKey.key!.encryptedKey,
+        createdAt: currentKey.key!.createdAt,
       );
 
       final (duringResult, duringMessage) = await alice
@@ -14010,8 +14010,8 @@ void main() {
       expect(await incomingTextCount(charlie, aliceAfterReadd), 0);
       await saveKey(
         charlie,
-        epoch: currentKey.keyGeneration,
-        encryptedKey: currentKey.encryptedKey,
+        epoch: currentKey.key!.keyGeneration,
+        encryptedKey: currentKey.key!.encryptedKey,
         createdAt: readdAt,
       );
 
@@ -14309,11 +14309,11 @@ void main() {
           return true;
         },
       );
-      expect(rotatedKey, isNotNull);
-      expect(rotatedKey!.keyGeneration, 2);
+      expect(rotatedKey.key, isNotNull);
+      expect(rotatedKey.key!.keyGeneration, 2);
       expect(keyDistributionTargets, contains(bob.deviceId));
       expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
-      await bob.groupRepo.saveKey(rotatedKey);
+      await bob.groupRepo.saveKey(rotatedKey.key!);
 
       await network.publish(groupId, charlie.peerId, {
         'groupId': groupId,

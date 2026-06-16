@@ -59,6 +59,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? verifyInboxCustodyFn,
   Future<int> Function()? retryPendingIntroductionDeliveriesFn,
   Future<int> Function()? retryFailedGroupInboxStoresFn, // Section 4
+  Future<int> Function()? drainPendingKeyDistributionsFn, // Finding 03 Slice 2
   Future<void> Function()? retryPushRegistrationFn,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
@@ -618,6 +619,23 @@ Future<bool?> handleAppResumed({
         if (kDebugMode) {
           debugPrint('[RESUME] Step 8g: retryFailedGroupInboxStores ERROR: $e');
         }
+      }
+    }
+
+    // Step 8h: Slice 2 (Finding 03) — drain deferred group key distributions so
+    // keyless bystanders that regained a key while backgrounded converge.
+    if (drainPendingKeyDistributionsFn != null) {
+      try {
+        final count = await drainPendingKeyDistributionsFn();
+        if (kDebugMode) {
+          debugPrint('[RESUME] Step 8h: drainPendingKeyDistributions=$count');
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DRAIN_PENDING_KEY_DISTRIBUTIONS_RESUME_ERROR',
+          details: {'error': e.toString()},
+        );
       }
     }
 

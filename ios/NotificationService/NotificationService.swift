@@ -34,6 +34,16 @@ final class NotificationService: UNNotificationServiceExtension {
     if let threadIdentifier = preview.threadIdentifier {
       bestAttemptContent.threadIdentifier = threadIdentifier
     }
+    if preview.suppress {
+      // 04-P0 SI-1 NSE: muted group — deliver silently (no sound, passive) so it
+      // does not buzz or banner; it lands quietly in Notification Center. iOS
+      // will not let the NSE fully drop an alert push, so this is the achievable
+      // "honor mute" on the out-of-process path.
+      bestAttemptContent.sound = nil
+      if #available(iOS 15.0, *) {
+        bestAttemptContent.interruptionLevel = .passive
+      }
+    }
 
     contentHandler(bestAttemptContent)
   }

@@ -1043,7 +1043,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         storeP2PMessageInInbox: (peerId, message) async =>
             p2pService.storeInInbox(peerId, message),
       );
-      return rotated != null;
+      return rotated.rotated;
     },
   );
   final groupMembershipUpdateListener = GroupMembershipUpdateListener(

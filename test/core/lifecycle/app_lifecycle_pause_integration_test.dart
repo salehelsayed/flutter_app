@@ -60,6 +60,15 @@ void main() {
       dbDeleteMessagesForContact: (peerId) =>
           dbDeleteMessagesForContact(db, peerId),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbLoadMessagesPage: (peerId, {limit = 50, beforeTimestamp}) =>
           dbLoadMessagesPage(
             db,

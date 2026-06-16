@@ -1511,7 +1511,13 @@ func messageEnvelopeType(msgBytes []byte) string {
 }
 
 func (n *Node) shouldDeferDirectAck(msgBytes []byte) bool {
-	if messageEnvelopeType(msgBytes) != "chat_message" {
+	// F7: defer the wire ack until Dart durably commits, for every envelope
+	// type whose receiver-side handling is durable (chat_message + reactions +
+	// deletions). Other types (introductions, contact requests, …) are
+	// legitimately fire-and-forget and ack immediately.
+	switch messageEnvelopeType(msgBytes) {
+	case "chat_message", "message_reaction", "message_deletion":
+	default:
 		return false
 	}
 	if !n.currentFeatureFlags().EnableDeferredDirectAck {

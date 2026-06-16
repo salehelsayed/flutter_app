@@ -78,6 +78,20 @@ class _FakeMessageRepository implements MessageRepository {
   @override
   Future<bool> messageExists(String id) async => store.containsKey(id);
   @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) async => false;
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) async => false;
+  @override
   Future<void> updateMessageStatus(String id, String status) async {}
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async =>

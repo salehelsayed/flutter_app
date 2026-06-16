@@ -729,5 +729,62 @@ void main() {
         );
       },
     );
+
+    // 04-P0 SI-1 NSE — the app mirrors group mute into the shared Keychain so
+    // the out-of-process iOS NSE can honor it.
+    test(
+      'updateGroup mirrors the mute projection; unmuting deletes it',
+      () async {
+        await repo.saveGroup(makeGroup());
+
+        await repo.updateGroup(makeGroup().copyWith(isMuted: true));
+        expect(
+          await sharedPushKeyStore.read(sharedGroupMutedKeyName('group-1')),
+          '1',
+        );
+
+        await repo.updateGroup(makeGroup().copyWith(isMuted: false));
+        expect(
+          await sharedPushKeyStore.read(sharedGroupMutedKeyName('group-1')),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'mirrorAllMutedGroups backfills a DB-muted group whose projection is missing',
+      () async {
+        // Recreate the pre-feature state: muted in the DB, mirror absent.
+        await repo.saveGroup(makeGroup());
+        await repo.updateGroup(makeGroup().copyWith(isMuted: true));
+        expect((await repo.getGroup('group-1'))!.isMuted, isTrue);
+        await sharedPushKeyStore.delete(sharedGroupMutedKeyName('group-1'));
+        expect(
+          await sharedPushKeyStore.read(sharedGroupMutedKeyName('group-1')),
+          isNull,
+        );
+
+        await repo.mirrorAllMutedGroups();
+
+        expect(
+          await sharedPushKeyStore.read(sharedGroupMutedKeyName('group-1')),
+          '1',
+        );
+      },
+    );
+
+    test(
+      'mirrorAllMutedGroups does not mirror an unmuted group',
+      () async {
+        await repo.saveGroup(makeGroup());
+
+        await repo.mirrorAllMutedGroups();
+
+        expect(
+          await sharedPushKeyStore.read(sharedGroupMutedKeyName('group-1')),
+          isNull,
+        );
+      },
+    );
   });
 }

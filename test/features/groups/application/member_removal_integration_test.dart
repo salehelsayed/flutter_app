@@ -281,9 +281,9 @@ void main() {
         },
       );
 
-      expect(rotatedKey, isNotNull);
-      expect(rotatedKey!.keyGeneration, 2);
-      expect(rotatedKey.encryptedKey, 'rotated-key-abc');
+      expect(rotatedKey.key, isNotNull);
+      expect(rotatedKey.key!.keyGeneration, 2);
+      expect(rotatedKey.key!.encryptedKey, 'rotated-key-abc');
 
       final savedLatestKey = await groupRepo.getLatestKey(groupId);
       expect(savedLatestKey, isNotNull);
@@ -800,8 +800,8 @@ void main() {
       sendP2PMessage: (_, _) async => true,
     );
 
-    expect(rotatedKey, isNotNull);
-    expect(rotatedKey!.keyGeneration, 2);
+    expect(rotatedKey.key, isNotNull);
+    expect(rotatedKey.key!.keyGeneration, 2);
 
     final (result, message) = await group_send.sendGroupMessage(
       bridge: bridge,
@@ -1034,6 +1034,73 @@ void main() {
         ),
       );
       // peer-admin stays admin too, so the leaver is not the last admin.
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          IdentityModel(
+            peerId: 'peer-alice',
+            publicKey: 'pk-alice',
+            privateKey: 'sk-alice',
+            mnemonic12:
+                'one two three four five six seven eight nine ten eleven twelve',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            username: 'Alice',
+            createdAt: createdAt.toIso8601String(),
+            updatedAt: createdAt.toIso8601String(),
+          ),
+        );
+
+      final result = await broadcastVoluntaryLeaveAndRotateKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        group: (await groupRepo.getGroup(groupId))!,
+        identityRepo: identityRepo,
+        msgRepo: InMemoryGroupMessageRepository(),
+        sendP2PMessage: (_, _) async => true,
+      );
+
+      expect(result.didBroadcast, isTrue);
+      expect(result.rotatedKey, isNotNull);
+      expect(result.rotationDeferred, isFalse);
+      expect((await groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
+    },
+  );
+
+  test(
+    'creator-admin leave still promotes the epoch when a remaining member is keyless',
+    () async {
+      // R-1 coupling regression: the leave path shares the rotation primitive.
+      // A keyless remaining bystander (peer-bob) must NOT force the departure
+      // rotation to defer — promote-then-defer advances the epoch
+      // (rotationDeferred == false) and the bystander is simply deferred,
+      // mirroring admin-removal. Pre-R-1 the keyless bystander aborted the
+      // rotation (rotatedKey == null, rotationDeferred == true).
+      final createdAt = DateTime.now().toUtc();
+      await groupRepo.saveGroup(
+        (await groupRepo.getGroup(groupId))!.copyWith(createdBy: 'peer-alice'),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-alice',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-pk-alice',
+          joinedAt: createdAt,
+        ),
+      );
+      // peer-bob is a keyless remaining bystander (no ML-KEM key on any device).
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          mlKemPublicKey: null,
+          joinedAt: createdAt,
+        ),
+      );
       final identityRepo = FakeIdentityRepository()
         ..seed(
           IdentityModel(

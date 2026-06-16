@@ -829,6 +829,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get edit_save_failed => 'Failed to save edit.';
 
   @override
+  String get sending_taking_longer => 'Sending is taking longer…';
+
+  @override
   String get intro_pass => 'Pass';
 
   @override
@@ -1366,6 +1369,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notifications restored for this group';
 
   @override
+  String get group_notification_catching_up =>
+      'This group is still catching up — try again in a moment.';
+
+  @override
   String get group_info_delete_local_failed => 'Failed to delete group locally';
 
   @override
@@ -1375,6 +1382,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get group_info_rotate_key_failed =>
       'Failed to rotate group key after removal';
+
+  @override
+  String get group_info_remove_member_partial_distribution =>
+      'Member removed. Some members will receive the new key when they reconnect.';
 
   @override
   String get group_info_remove_member_failed => 'Failed to remove member';

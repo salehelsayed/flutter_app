@@ -2,9 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 const Duration recentRemoteNotificationTtl = Duration(seconds: 30);
 const Duration recentRemoteNotificationMessageTtl = Duration(hours: 12);
+
+const String _recentRemoteNotificationFileName =
+    'mknoon_recent_remote_notifications.json';
 
 RecentRemoteNotificationGate recentRemoteNotificationGate =
     RecentRemoteNotificationGate();
@@ -19,23 +25,79 @@ void debugResetRecentRemoteNotificationGate() {
   recentRemoteNotificationGate = RecentRemoteNotificationGate();
 }
 
+void _defaultRecentRemoteGateLoadError(Object error, StackTrace stack) {
+  // 04-P0 / QW-3: a wiped/corrupt gate file silently bypassed dedupe and the
+  // 12h redelivery guard. Surface the decode failure instead of swallowing it.
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'RECENT_REMOTE_NOTIFICATION_GATE_DECODE_ERROR',
+    details: {'error': error.runtimeType.toString()},
+  );
+}
+
 class RecentRemoteNotificationGate {
-  final String filePath;
+  final String? _explicitFilePath;
   final Duration ttl;
   final Duration messageTtl;
   final DateTime Function() _now;
+  final Future<Directory> Function() _supportDirectoryProvider;
+  final void Function(Object error, StackTrace stack) _onLoadError;
+
+  // 04-P0 / SI-4: resolve the durable path once and cache the Future so
+  // concurrent _loadEntries/_writeEntries/clear calls never re-resolve (and
+  // never double-hit the platform channel).
+  Future<String>? _resolvedPathFuture;
 
   RecentRemoteNotificationGate({
     String? filePath,
     Duration? ttl,
     Duration? messageTtl,
     DateTime Function()? now,
-  }) : filePath =
-           filePath ??
-           '${Directory.systemTemp.path}/mknoon_recent_remote_notifications.json',
+    Future<Directory> Function()? supportDirectoryProvider,
+    void Function(Object error, StackTrace stack)? onLoadError,
+  }) : _explicitFilePath = filePath,
        ttl = ttl ?? recentRemoteNotificationTtl,
        messageTtl = messageTtl ?? recentRemoteNotificationMessageTtl,
-       _now = now ?? DateTime.now;
+       _now = now ?? DateTime.now,
+       _supportDirectoryProvider =
+           supportDirectoryProvider ?? getApplicationSupportDirectory,
+       _onLoadError = onLoadError ?? _defaultRecentRemoteGateLoadError;
+
+  /// Synchronous view of the configured path. When an explicit [filePath] was
+  /// provided (every test does) it is returned verbatim; otherwise the durable
+  /// app-support path is resolved lazily on first IO and this returns the
+  /// systemTemp fallback name. No production code reads this getter — IO uses
+  /// the lazily-resolved path via [resolveFilePath].
+  String get filePath =>
+      _explicitFilePath ??
+      '${Directory.systemTemp.path}/$_recentRemoteNotificationFileName';
+
+  @visibleForTesting
+  Future<String> resolveFilePath() => _resolveFilePath();
+
+  Future<String> _resolveFilePath() {
+    return _resolvedPathFuture ??= _doResolveFilePath();
+  }
+
+  Future<String> _doResolveFilePath() async {
+    final explicit = _explicitFilePath;
+    if (explicit != null) {
+      // Explicit path short-circuits before any platform-channel await so
+      // tests (and the per-test isolation bootstrap) stay synchronous-pathed.
+      return explicit;
+    }
+    try {
+      final dir = await _supportDirectoryProvider();
+      return '${dir.path}/$_recentRemoteNotificationFileName';
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RECENT_REMOTE_NOTIFICATION_GATE_DIR_FALLBACK',
+        details: {'error': error.runtimeType.toString()},
+      );
+      return '${Directory.systemTemp.path}/$_recentRemoteNotificationFileName';
+    }
+  }
 
   Future<void> markPayload(String payload) async {
     await markAnnouncement(payload: payload);
@@ -92,7 +154,7 @@ class RecentRemoteNotificationGate {
 
   Future<void> clear() async {
     try {
-      final file = File(filePath);
+      final file = File(await _resolveFilePath());
       if (await file.exists()) {
         await file.delete();
       }
@@ -101,7 +163,7 @@ class RecentRemoteNotificationGate {
 
   Future<Map<String, int>> _loadEntries() async {
     try {
-      final file = File(filePath);
+      final file = File(await _resolveFilePath());
       if (!await file.exists()) {
         return <String, int>{};
       }
@@ -113,6 +175,14 @@ class RecentRemoteNotificationGate {
 
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) {
+        // A corrupt-but-valid-JSON file (e.g. an array) is still a decode
+        // failure — surface it rather than silently treating it as empty.
+        _onLoadError(
+          const FormatException(
+            'recent-remote notification gate payload is not a JSON object',
+          ),
+          StackTrace.current,
+        );
         return <String, int>{};
       }
 
@@ -132,14 +202,15 @@ class RecentRemoteNotificationGate {
         entries[normalizedKey] = timestamp;
       }
       return entries;
-    } catch (_) {
+    } catch (error, stack) {
+      _onLoadError(error, stack);
       return <String, int>{};
     }
   }
 
   Future<void> _writeEntries(Map<String, int> entries) async {
     try {
-      final file = File(filePath);
+      final file = File(await _resolveFilePath());
       if (entries.isEmpty) {
         if (await file.exists()) {
           await file.delete();

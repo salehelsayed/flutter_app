@@ -6603,7 +6603,7 @@ Future<void> _runNw003Alice(
         return true;
       },
     );
-    if (rejoinKey == null) {
+    if (!rejoinKey.rotated) {
       throw StateError('NW-003 Alice key rotation failed');
     }
 
@@ -8589,8 +8589,8 @@ Future<GroupKeyInfo> _nw012RotateKeySkippingOfflineCharlie({
   final charliePeerId = identities['charlie']!['peerId'] as String;
   final charlieTransportPeerId =
       identities['charlie']!['transportPeerId'] as String? ?? charliePeerId;
-  Future<GroupKeyInfo?> rotate() {
-    return rotateAndDistributeGroupKey(
+  Future<GroupKeyInfo?> rotate() async {
+    final outcome = await rotateAndDistributeGroupKey(
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
       groupId: groupId,
@@ -8607,6 +8607,7 @@ Future<GroupKeyInfo> _nw012RotateKeySkippingOfflineCharlie({
         return true;
       },
     );
+    return outcome.key;
   }
 
   var key = await rotate();
@@ -10840,12 +10841,12 @@ Future<void> _runGe004Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('GE-004 Alice key rotation failed before re-add');
   }
   writeSharedJson(_signalName('ge004_rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_ge004_rotated_key'));
 
@@ -11184,8 +11185,8 @@ Future<GroupKeyInfo?> _rotateGroupKeyWithNativeGraceRetry({
   required String cycleTag,
   Future<bool> Function(String peerId, String message)? sendP2PMessage,
 }) async {
-  Future<GroupKeyInfo?> rotate() {
-    return rotateAndDistributeGroupKey(
+  Future<GroupKeyInfo?> rotate() async {
+    final outcome = await rotateAndDistributeGroupKey(
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
       groupId: groupId,
@@ -11200,6 +11201,7 @@ Future<GroupKeyInfo?> _rotateGroupKeyWithNativeGraceRetry({
             return stack.p2pService.sendMessage(peerId, message);
           },
     );
+    return outcome.key;
   }
 
   final rotatedKey = await rotate();
@@ -11749,12 +11751,12 @@ Future<void> _runGe006Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('GE-006 Alice key rotation failed before re-add');
   }
   writeSharedJson(_signalName('ge006_rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_ge006_rotated_key'));
 
@@ -17231,12 +17233,12 @@ Future<void> _runMl017Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('ML-017 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -17281,7 +17283,7 @@ Future<void> _runMl017Alice(
         'memberListExcludesCharlie': !memberPeerIds.contains(
           identities['charlie']!['peerId'] as String,
         ),
-        'rotatedEpoch': rotatedKey.keyGeneration,
+        'rotatedEpoch': rotatedKey.key!.keyGeneration,
       },
     },
   );
@@ -17656,12 +17658,12 @@ Future<void> _runMl018Alice(
       return true;
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('ML-018 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -17717,7 +17719,7 @@ Future<void> _runMl018Alice(
           identities['charlie']!['peerId'] as String,
         ),
         'terminalInviteePeerId': identities['charlie']!['peerId'] as String,
-        'rotatedEpoch': rotatedKey.keyGeneration,
+        'rotatedEpoch': rotatedKey.key!.keyGeneration,
       },
       'report106MixedInviteNotificationProof': <String, dynamic>{
         'rowId': 'INV-106',
@@ -18089,12 +18091,12 @@ Future<void> _runMl019Alice(
       return true;
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('ML-019 Alice key rotation failed');
   }
   writeSharedJson(_signalName('ml019_rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -18206,7 +18208,7 @@ Future<void> _runMl019Alice(
         'rowId': 'ML-019',
         'sentOldInvite': true,
         'removedCharlieAfterOldInvite': true,
-        'rotatedAfterRemoval': rotatedKey.keyGeneration >= 2,
+        'rotatedAfterRemoval': rotatedKey.key!.keyGeneration >= 2,
         'sentRemovedWindowMessage': true,
         'sentLatestInvite': true,
         'sentPostReaddMessage': true,
@@ -18221,7 +18223,7 @@ Future<void> _runMl019Alice(
       'ke016StaleReinviteProof': <String, dynamic>{
         'rowId': 'KE-016',
         'sentEpochNInvite': true,
-        'rotatedToNextEpochBeforeAccept': rotatedKey.keyGeneration >= 2,
+        'rotatedToNextEpochBeforeAccept': rotatedKey.key!.keyGeneration >= 2,
         'sentCurrentEpochInvite': true,
         'sentPostAcceptAtCurrentEpoch': true,
         'receivedBobPostAcceptAtCurrentEpoch': true,
@@ -18236,7 +18238,7 @@ Future<void> _runMl019Alice(
         'rowId': 'RA-004',
         'sentOldInvite': true,
         'removedCharlieBeforeOldAccept': true,
-        'rotatedAfterRemoval': rotatedKey.keyGeneration >= 2,
+        'rotatedAfterRemoval': rotatedKey.key!.keyGeneration >= 2,
         'revokedOldInviteBeforeCurrentInvite': true,
         'sentCurrentInviteAfterOldAcceptBlocked': true,
         'sentPostCurrentInviteMessage': true,
@@ -25857,15 +25859,15 @@ Future<void> _runGm004Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GM-004 Alice key rotation failed');
   }
   if (_scenario == 'private_online_remove' && !st006BoundaryPublishTriggered) {
     throw StateError('ST-006 boundary publish was not triggered');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
 
   Map<String, dynamic>? st006BobDuringRotationSent;
@@ -25940,7 +25942,7 @@ Future<void> _runGm004Alice(
           stack,
           groupId,
         )).contains(identities['charlie']!['peerId'] as String),
-        'rotatedEpoch': rotatedKey.keyGeneration,
+        'rotatedEpoch': rotatedKey.key!.keyGeneration,
       },
       if (_scenario == 'private_online_remove')
         'ml005OnlineRemovalProof': <String, dynamic>{
@@ -25953,7 +25955,7 @@ Future<void> _runGm004Alice(
             groupId,
           )).contains(identities['charlie']!['peerId'] as String),
           'receivedBobAfterRemoval': true,
-          'rotatedEpoch': rotatedKey.keyGeneration,
+          'rotatedEpoch': rotatedKey.key!.keyGeneration,
         },
       if (_scenario == 'private_online_remove')
         'ke006RemovalKeyRotationProof': <String, dynamic>{
@@ -25964,21 +25966,21 @@ Future<void> _runGm004Alice(
             stack,
             groupId,
           )).contains(identities['charlie']!['peerId'] as String),
-          'rotatedKeyGenerated': rotatedKey.keyGeneration > 1,
-          'rotatedEpoch': rotatedKey.keyGeneration,
+          'rotatedKeyGenerated': rotatedKey.key!.keyGeneration > 1,
+          'rotatedEpoch': rotatedKey.key!.keyGeneration,
           'distributedRotatedKeyToBob': true,
           'sentPostRemovalAtRotatedEpoch':
-              aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
+              aliceSent['keyEpoch'] == rotatedKey.key!.keyGeneration,
           'receivedBobAfterRemoval': true,
         },
       if (_scenario == 'private_online_remove')
         'ke007FirstPostRotationProof': <String, dynamic>{
           'rowId': 'KE-007',
-          'rotatedKeyGenerated': rotatedKey.keyGeneration > 1,
-          'rotatedEpoch': rotatedKey.keyGeneration,
+          'rotatedKeyGenerated': rotatedKey.key!.keyGeneration > 1,
+          'rotatedEpoch': rotatedKey.key!.keyGeneration,
           'waitedForBobRotatedKeyBeforeFirstPostRemovalSend': true,
           'sentFirstPostRemovalAtRotatedEpoch':
-              aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
+              aliceSent['keyEpoch'] == rotatedKey.key!.keyGeneration,
           'firstPostRemovalEpoch': aliceSent['keyEpoch'],
           'receivedBobAfterRemoval': true,
         },
@@ -25991,13 +25993,13 @@ Future<void> _runGm004Alice(
             stack,
             groupId,
           )).contains(identities['charlie']!['peerId'] as String),
-          'rotatedEpoch': rotatedKey.keyGeneration,
+          'rotatedEpoch': rotatedKey.key!.keyGeneration,
           'receivedBobDuringRotation': st006BobDuringRotationReceived != null,
           'bobDuringRotationEpoch': st006BobDuringRotationReceived?['keyEpoch'],
           'bobDuringRotationPersistedCount':
               st006BobDuringRotationReceived?['persistedCount'],
           'sentAlicePostRotationAtRotatedEpoch':
-              aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
+              aliceSent['keyEpoch'] == rotatedKey.key!.keyGeneration,
           'alicePostRotationEpoch': aliceSent['keyEpoch'],
           'receivedBobAfterRotation': true,
         },
@@ -26020,7 +26022,7 @@ Future<void> _runGm004Alice(
           'uploadAllowedPeersCount':
               pl006UploadProof?['uploadAllowedPeersCount'],
           'sentPostRemovalMediaAtRotatedEpoch':
-              aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
+              aliceSent['keyEpoch'] == rotatedKey.key!.keyGeneration,
           'bobReceiptSignalObserved': true,
         },
       if (_scenario == 'private_removed_notification_privacy')
@@ -26474,12 +26476,12 @@ Future<void> _runGm005Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GM-005 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -26527,7 +26529,7 @@ Future<void> _runGm005Alice(
           )).contains(identities['charlie']!['peerId'] as String),
           'sentPostRemovalAccepted': aliceSent['outcome'] == 'success',
           'receivedBobAfterRemoval': true,
-          'rotatedEpoch': rotatedKey.keyGeneration,
+          'rotatedEpoch': rotatedKey.key!.keyGeneration,
         },
         'ir004PostRemovalReplayProof': <String, dynamic>{
           'rowId': 'IR-004',
@@ -26540,7 +26542,7 @@ Future<void> _runGm005Alice(
           )).contains(identities['charlie']!['peerId'] as String),
           'sentAlicePostRemoval': aliceSent['outcome'] == 'success',
           'receivedBobPostRemoval': true,
-          'rotatedEpoch': rotatedKey.keyGeneration,
+          'rotatedEpoch': rotatedKey.key!.keyGeneration,
         },
       },
     );
@@ -26580,7 +26582,7 @@ Future<void> _runGm005Alice(
           stack,
           groupId,
         )).contains(identities['charlie']!['peerId'] as String),
-        'rotatedEpoch': rotatedKey.keyGeneration,
+        'rotatedEpoch': rotatedKey.key!.keyGeneration,
         'postRemovalMessageCount': sentMessages.length,
       },
     },
@@ -27090,7 +27092,7 @@ Future<void> _runGm006Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError(
       '${isRa003
           ? 'RA-003'
@@ -27102,8 +27104,8 @@ Future<void> _runGm006Alice(
     );
   }
   writeSharedJson(_signalName('rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -27561,9 +27563,9 @@ Future<void> _runGm006Alice(
       if (isMl007)
         'ke008ReaddActivationProof': <String, dynamic>{
           'rowId': 'KE-008',
-          'readdCurrentKeyAvailableBeforeFixture': rejoinKey.keyGeneration >= 2,
+          'readdCurrentKeyAvailableBeforeFixture': rejoinKey.key!.keyGeneration >= 2,
           'wroteReaddFixtureWithCurrentKey': true,
-          'readdEpoch': rejoinKey.keyGeneration,
+          'readdEpoch': rejoinKey.key!.keyGeneration,
           'waitedForCharlieCurrentKeyRejoinBeforePostReaddSends': true,
           'charlieAcknowledgedRejoinAtCurrentEpoch': true,
           'finalEpoch': finalEpoch,
@@ -29360,12 +29362,12 @@ Future<void> _runGm007Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('GM-007 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -29808,12 +29810,12 @@ Future<void> _runGe014Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('GE-014 Alice key rotation failed');
   }
   writeSharedJson(_signalName('ge014_rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_ge014_rotated_key'));
 
@@ -30675,12 +30677,12 @@ Future<void> _runGm008Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('GM-008 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
   await waitForSharedSignal(_signalName('charlie_restarted_after_removal'));
@@ -33252,12 +33254,12 @@ Future<void> _runMl009Alice(
       return true;
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('ML-009 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
 
   final removedSent = await _sendProofMessage(
@@ -33601,12 +33603,12 @@ Future<void> _runGm009Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GM-009 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -33855,12 +33857,12 @@ Future<void> _runGm010Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('GM-010 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -34290,12 +34292,12 @@ Future<void> _runGm011Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GM-011 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -34608,12 +34610,12 @@ Future<void> _runGm012Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('GM-012 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -35741,12 +35743,12 @@ Future<void> _runGm013Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GM-013 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -36113,12 +36115,12 @@ Future<void> _runGm014Alice(
       return peerId != charlieTransportPeerId;
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GM-014 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -36203,7 +36205,7 @@ Future<void> _runGm014Alice(
         'alicePostReaddSentAt': aliceSent['timestamp'] as String,
         'memberListIncludesCharlie': memberPeerIds.contains(charliePeerId),
         'validatorConfigIncludesCharlie': memberPeerIds.contains(charliePeerId),
-        'hasStaleEpochAfterCatchUp': finalEpoch < rotatedKey.keyGeneration,
+        'hasStaleEpochAfterCatchUp': finalEpoch < rotatedKey.key!.keyGeneration,
         'finalEpoch': finalEpoch,
         'readdedCharlie': true,
         'readdedPeerId': charliePeerId,
@@ -36779,12 +36781,12 @@ Future<void> _runMl015Alice(
       return true;
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('ML-015 Alice key rotation failed');
   }
   writeSharedJson(_signalName('rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
@@ -38278,12 +38280,12 @@ Future<void> _runGm018Alice(
         return stack.p2pService.sendMessage(peerId, message);
       },
     );
-    if (rotatedKey == null) {
+    if (!rotatedKey.rotated) {
       throw StateError('GM-018 Alice key rotation failed');
     }
     writeSharedJson(_signalName('rotated_key.json'), <String, dynamic>{
-      'keyEpoch': rotatedKey.keyGeneration,
-      'groupKey': rotatedKey.encryptedKey,
+      'keyEpoch': rotatedKey.key!.keyGeneration,
+      'groupKey': rotatedKey.key!.encryptedKey,
     });
     await waitForSharedSignal(_signalName('bob_gm018_rotated_key'));
 
@@ -42254,10 +42256,10 @@ Future<void> _runKe015Alice(
     },
   );
   final senderEpochAfterFailure = await _keyEpoch(stack, groupId);
-  if (rotatedKey != null || senderEpochAfterFailure != 1) {
+  if (rotatedKey.rotated || senderEpochAfterFailure != 1) {
     throw StateError(
       'KE-015 expected blocked rotation and sender epoch 1, got '
-      'rotatedKey=${rotatedKey?.keyGeneration} epoch=$senderEpochAfterFailure',
+      'rotatedKey=${rotatedKey.key?.keyGeneration} epoch=$senderEpochAfterFailure',
     );
   }
   writeSharedText(_signalName('alice_ke015_partial_rotation_attempted'), 'ok');
@@ -42289,9 +42291,9 @@ Future<void> _runKe015Alice(
         'attemptedMixedDistribution': true,
         'bobKeyUpdateSucceeded': bobKeyUpdateSucceeded,
         'charlieKeyUpdateFailed': charlieKeyUpdateFailed,
-        'rotationBlocked': rotatedKey == null,
+        'rotationBlocked': !rotatedKey.rotated,
         'keptSenderEpochAfterFailure': senderEpochAfterFailure == 1,
-        'blockedKeyRotatedPublish': rotatedKey == null,
+        'blockedKeyRotatedPublish': !rotatedKey.rotated,
         'sentPostFailureAtPreviousEpoch': sent['keyEpoch'] == 1,
         'attemptedEpoch': 2,
         'postFailureMessageEpoch': sent['keyEpoch'],
@@ -43687,12 +43689,12 @@ Future<void> _runGe020Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GE-020 Alice key rotation failed');
   }
   writeSharedJson(_signalName('ge020_rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_ge020_rotated_key'));
 
@@ -44282,12 +44284,12 @@ Future<void> _runGe021Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GE-021 Alice key rotation failed');
   }
   writeSharedJson(_signalName('ge021_rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_ge021_rotated_key'));
 
@@ -45609,12 +45611,12 @@ Future<void> _runGm035Alice(
       return stack.p2pService.sendMessage(peerId, message);
     },
   );
-  if (rotatedKey == null) {
+  if (!rotatedKey.rotated) {
     throw StateError('GM-035 Alice key rotation failed');
   }
   writeSharedJson(_signalName('gm035_rotated_key.json'), <String, dynamic>{
-    'keyEpoch': rotatedKey.keyGeneration,
-    'groupKey': rotatedKey.encryptedKey,
+    'keyEpoch': rotatedKey.key!.keyGeneration,
+    'groupKey': rotatedKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_gm035_rotated_key'));
 
@@ -46118,8 +46120,8 @@ Future<GroupKeyInfo> _st009RotateKeyForProof({
   required String groupId,
   required String phase,
 }) async {
-  Future<GroupKeyInfo?> rotate() {
-    return rotateAndDistributeGroupKey(
+  Future<GroupKeyInfo?> rotate() async {
+    final outcome = await rotateAndDistributeGroupKey(
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
       groupId: groupId,
@@ -46132,6 +46134,7 @@ Future<GroupKeyInfo> _st009RotateKeyForProof({
       perRecipientTimeout: const Duration(milliseconds: 250),
       distributionTimeout: const Duration(seconds: 5),
     );
+    return outcome.key;
   }
 
   var key = await rotate();
@@ -46674,12 +46677,12 @@ Future<void> _runSt007Alice(
       return true;
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('ST-007 Alice key rotation failed after remove restart');
   }
   writeSharedJson(_signalName('st007_rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
   await waitForSharedSignal(_signalName('bob_st007_rotated_key'));
 
@@ -47110,12 +47113,12 @@ Future<void> _runRa013Alice(
       return true;
     },
   );
-  if (rejoinKey == null) {
+  if (!rejoinKey.rotated) {
     throw StateError('RA-013 Alice key rotation failed');
   }
   writeSharedJson(_signalName('ra013_rejoin_key.json'), <String, dynamic>{
-    'keyEpoch': rejoinKey.keyGeneration,
-    'groupKey': rejoinKey.encryptedKey,
+    'keyEpoch': rejoinKey.key!.keyGeneration,
+    'groupKey': rejoinKey.key!.encryptedKey,
   });
 
   final charlieMember = _ra013CharlieMemberWithPhoneAndTablet(
