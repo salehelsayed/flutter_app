@@ -79,6 +79,42 @@ Future<List<Map<String, Object?>>> dbLoadPendingGroupKeyRepairsForEpoch(
   );
 }
 
+Future<List<Map<String, Object?>>> dbLoadAllPendingGroupKeyRepairs(
+  Database db, {
+  int limit = 200,
+}) {
+  return db.query(
+    'group_pending_key_repairs',
+    where: 'status = ?',
+    whereArgs: [groupPendingKeyRepairStatusPendingKey],
+    orderBy: 'created_at ASC, id ASC',
+    limit: limit,
+  );
+}
+
+Future<List<Map<String, Object?>>> dbLoadPendingGroupKeyRepairsForGroup(
+  Database db, {
+  required String groupId,
+  int limit = 100,
+}) {
+  return db.query(
+    'group_pending_key_repairs',
+    where: 'group_id = ? AND status = ?',
+    whereArgs: [groupId, groupPendingKeyRepairStatusPendingKey],
+    orderBy: 'created_at ASC, id ASC',
+    limit: limit,
+  );
+}
+
+Future<void> dbDeleteGroupPendingKeyRepair(Database db, String id) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_PENDING_KEY_REPAIR_DB_DELETE',
+    details: {'id': _safeId(id)},
+  );
+  await db.delete('group_pending_key_repairs', where: 'id = ?', whereArgs: [id]);
+}
+
 Future<void> dbRecordGroupPendingKeyRepairAttempt(
   Database db,
   String id, {

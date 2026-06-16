@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'fake_p2p_service.dart';
@@ -38,6 +40,10 @@ void main() {
   tearDown(() {
     retrier.dispose();
     p2pService.dispose();
+    // The retrier now opens the process-global group recovery gate during its
+    // group recovery pass and 30s continuity sweep; reset it so a test that
+    // leaves a pass mid-flight cannot leak gate state into the next test.
+    groupRecoveryGate.resetForTest();
   });
 
   group('PendingMessageRetrier', () {
@@ -1203,6 +1209,282 @@ void main() {
           expect(p2pService.storeInInboxCallCount, 0);
           expect(p2pService.sendMessageWithReplyCallCount, 0);
           expect(messageRepo.saveMessageCallCount, 0);
+        });
+      },
+    );
+  });
+
+  group('PendingMessageRetrier group recovery gate (P1.3)', () {
+    const onlineState = NodeState(
+      isStarted: true,
+      peerId: 'my-peer',
+      circuitAddresses: ['/addr'],
+    );
+
+    setUp(() => groupRecoveryGate.resetForTest());
+    tearDown(() => groupRecoveryGate.resetForTest());
+
+    test('group recovery + outbound repair steps run while the gate is held; '
+        '1:1 steps run after the gate releases', () {
+      fakeAsync((async) {
+        final gateDuring = <String, bool>{};
+
+        p2pService = FakeP2PService(initialState: onlineState);
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          rejoinGroupTopicsFn: () async {
+            gateDuring['rejoin'] = isGroupRecoveryInProgress();
+          },
+          drainGroupOfflineInboxFn: () async {
+            gateDuring['drain'] = isGroupRecoveryInProgress();
+          },
+          recoverStuckSendingGroupMessagesFn: () async {
+            gateDuring['recoverStuckGroup'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+          retryIncompleteGroupUploadsFn: () async {
+            gateDuring['uploadsGroup'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+          retryFailedGroupInboxStoresFn: () async {
+            gateDuring['inboxStores'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+          retryFailedGroupMessagesFn: () async {
+            gateDuring['failedMessagesGroup'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+          // A 1:1 step — must observe the gate released (scoped to group).
+          retryFailedMessagesOverride: () async {
+            gateDuring['failedMessages1to1'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+          retryUnackedMessagesOverride: () async => 0,
+        );
+        retrier.start();
+        async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+        async.flushMicrotasks();
+
+        // Every group step saw the gate held.
+        expect(gateDuring['rejoin'], isTrue);
+        expect(gateDuring['drain'], isTrue);
+        expect(gateDuring['recoverStuckGroup'], isTrue);
+        expect(gateDuring['uploadsGroup'], isTrue);
+        expect(gateDuring['inboxStores'], isTrue);
+        expect(gateDuring['failedMessagesGroup'], isTrue);
+        // The 1:1 step ran with the gate already released.
+        expect(gateDuring['failedMessages1to1'], isFalse);
+        // Gate fully released after the pass.
+        expect(isGroupRecoveryInProgress(), isFalse);
+      });
+    });
+
+    test('group pass preserves the 12-step order including GAP-3a '
+        '(inbox-store custody-confirm before re-publish)', () {
+      fakeAsync((async) {
+        final order = <String>[];
+
+        p2pService = FakeP2PService(initialState: onlineState);
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
+            order.add('rejoin');
+            return true;
+          },
+          acknowledgeGroupRecoveryFn: () async => order.add('ack'),
+          drainGroupOfflineInboxFn: () async => order.add('drain'),
+          recoverStuckSendingGroupMessagesFn: () async {
+            order.add('recoverStuckGroup');
+            return 0;
+          },
+          retryIncompleteGroupUploadsFn: () async {
+            order.add('uploadsGroup');
+            return 0;
+          },
+          retryFailedGroupInboxStoresFn: () async {
+            order.add('inboxStores');
+            return 0;
+          },
+          retryFailedGroupMessagesFn: () async {
+            order.add('failedMessagesGroup');
+            return 0;
+          },
+          recoverStuckSendingMessagesFn: () async {
+            order.add('recoverStuck1to1');
+            return 0;
+          },
+          retryIncompleteUploadsFn: () async {
+            order.add('uploads1to1');
+            return 0;
+          },
+          retryFailedMessagesOverride: () async {
+            order.add('failedMessages1to1');
+            return 0;
+          },
+          retryUnackedMessagesOverride: () async {
+            order.add('unacked1to1');
+            return 0;
+          },
+          retryPendingIntroductionDeliveriesFn: () async {
+            order.add('intro');
+            return 0;
+          },
+        );
+        retrier.start();
+        async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+        async.flushMicrotasks();
+
+        expect(order, <String>[
+          'rejoin',
+          'drain',
+          'ack',
+          'recoverStuckGroup',
+          'uploadsGroup',
+          'inboxStores',
+          'failedMessagesGroup',
+          'recoverStuck1to1',
+          'uploads1to1',
+          'failedMessages1to1',
+          'unacked1to1',
+          'intro',
+        ]);
+        // GAP-3a invariant: custody-confirm strictly precedes re-publish.
+        expect(
+          order.indexOf('inboxStores'),
+          lessThan(order.indexOf('failedMessagesGroup')),
+        );
+      });
+    });
+
+    test('retrier skips its pass while an external pass holds the recovery gate '
+        '(the main.dart provider OR-in path, _isResuming false)', () {
+      fakeAsync((async) {
+        var rejoinCalled = false;
+        var failed1to1Called = false;
+        final hold = Completer<void>();
+
+        // Simulate the startup/resume recovery pass holding the gate.
+        unawaited(runWithGroupRecoveryGate(() => hold.future));
+        expect(isGroupRecoveryInProgress(), isTrue);
+
+        p2pService = FakeP2PService(initialState: onlineState);
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          rejoinGroupTopicsFn: () async {
+            rejoinCalled = true;
+          },
+          drainGroupOfflineInboxFn: () async {},
+          retryFailedMessagesOverride: () async {
+            failed1to1Called = true;
+            return 0;
+          },
+          // Mirrors main.dart: _isResuming(false) || isGroupRecoveryInProgress().
+          isExternalRecoveryInProgressFn: () =>
+              false || isGroupRecoveryInProgress(),
+        );
+        retrier.start();
+        async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+        async.flushMicrotasks();
+
+        // Whole pass skipped — neither group nor 1:1 steps ran.
+        expect(rejoinCalled, isFalse);
+        expect(failed1to1Called, isFalse);
+
+        hold.complete();
+        async.flushMicrotasks();
+      });
+    });
+
+    test(
+      'continuity sweep skips (does not queue) and emits GATE_ACTIVE while an '
+      'external pass holds the recovery gate (P1.3b OrSkip path)',
+      () {
+        fakeAsync((async) {
+          final events = <String>[];
+          debugSetFlowEventSink((p) => events.add(p['event'] as String));
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          var rejoinCalled = false;
+          var drainCalled = false;
+          final hold = Completer<void>();
+
+          // An external recovery pass (startup/resume) holds the gate.
+          unawaited(runWithGroupRecoveryGate(() => hold.future));
+          expect(isGroupRecoveryInProgress(), isTrue);
+
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: false,
+            ),
+          );
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsFn: () async {
+              rejoinCalled = true;
+            },
+            drainGroupOfflineInboxFn: () async {
+              drainCalled = true;
+            },
+            // Entry guard must NOT short-circuit — we want to reach the
+            // gate-level OrSkip path, not the _isExternalRecoveryInProgressFn
+            // early return.
+            isExternalRecoveryInProgressFn: () => false,
+          );
+          retrier.start();
+
+          // needsGroupRecovery false->true while online triggers the immediate
+          // continuity sweep (no timer elapse needed).
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: true,
+            ),
+          );
+          async.flushMicrotasks();
+
+          // Skipped at the gate (OrSkip returned null), not run.
+          expect(rejoinCalled, isFalse);
+          expect(drainCalled, isFalse);
+          expect(
+            events,
+            contains('PENDING_RETRIER_GROUP_SWEEP_SKIPPED_GATE_ACTIVE'),
+          );
+          // It was the gate-level skip, not the entry-guard skip.
+          expect(
+            events,
+            isNot(
+              contains('PENDING_RETRIER_GROUP_SWEEP_SKIPPED_EXTERNAL_RECOVERY'),
+            ),
+          );
+
+          // Releasing the external pass must NOT retroactively run the skipped
+          // sweep — proves OrSkip (skip) instead of runWithGroupRecoveryGate
+          // (queue), which would dequeue and run the steps here.
+          hold.complete();
+          async.flushMicrotasks();
+          expect(rejoinCalled, isFalse);
+          expect(drainCalled, isFalse);
         });
       },
     );

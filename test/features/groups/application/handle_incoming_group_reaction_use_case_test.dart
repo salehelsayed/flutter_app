@@ -11,6 +11,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
 
 void main() {
@@ -125,6 +126,252 @@ void main() {
       expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
     },
   );
+
+  group('buffer (INV-R4) — reaction-before-message is retained', () {
+    test(
+      'absent target message buffers the reaction instead of dropping it',
+      () async {
+        final pendingRepo = InMemoryGroupPendingReactionRepository();
+
+        final (result, change) = await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          // Non-null msgRepo whose getMessage('absent-msg') returns null:
+          // without this the absent-message branch is unreachable.
+          msgRepo: msgRepo,
+          pendingReactionRepo: pendingRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            id: 'rxn-buf',
+            messageId: 'absent-msg',
+          ),
+        );
+
+        expect(result, HandleGroupReactionResult.bufferedPendingMessage);
+        expect(change, isNull);
+
+        final buffered = pendingRepo.reactions;
+        expect(buffered, hasLength(1));
+        expect(buffered.single.id, 'rxn-buf');
+        expect(buffered.single.messageId, 'absent-msg');
+        expect(buffered.single.senderPeerId, 'peer-sender');
+        // Not applied to visible reaction state yet.
+        expect(
+          await reactionRepo.getReactionsForMessage('absent-msg'),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'absent target message without a buffer still returns unknownMessage',
+      () async {
+        final (result, change) = await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(messageId: 'absent-msg'),
+        );
+
+        expect(result, HandleGroupReactionResult.unknownMessage);
+        expect(change, isNull);
+      },
+    );
+  });
+
+  group('LWW (INV-R7) — last-writer-wins for (messageId, senderPeerId)', () {
+    Future<void> seedStored({
+      required String emoji,
+      required String timestamp,
+    }) async {
+      await reactionRepo.saveReaction(
+        MessageReaction(
+          id: 'r-stored',
+          messageId: 'msg-1',
+          emoji: emoji,
+          senderPeerId: 'peer-sender',
+          timestamp: timestamp,
+          createdAt: timestamp,
+        ),
+      );
+    }
+
+    test('stale add is dropped and does not overwrite the newer stored reaction',
+        () async {
+      await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:05.000Z');
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          emoji: '👍',
+          timestamp: '2026-03-08T00:00:00.000Z',
+        ),
+      );
+
+      // Stale ⇒ success with no change emitted, stored reaction untouched.
+      expect(result, HandleGroupReactionResult.success);
+      expect(change, isNull);
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+      expect(stored.single.emoji, '❤️');
+    });
+
+    test('newer add overwrites the older stored reaction', () async {
+      await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:00.000Z');
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          emoji: '👍',
+          timestamp: '2026-03-08T00:00:05.000Z',
+        ),
+      );
+
+      expect(result, HandleGroupReactionResult.success);
+      expect(change!.type, ReactionChangeType.upserted);
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+      expect(stored.single.emoji, '👍');
+    });
+
+    test('stale remove is a no-op against the newer stored add', () async {
+      await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:05.000Z');
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          action: 'remove',
+          timestamp: '2026-03-08T00:00:00.000Z',
+        ),
+      );
+
+      expect(result, HandleGroupReactionResult.success);
+      expect(change, isNull);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+    });
+
+    test(
+      'INV-T2 remove-then-stale-add stays removed (tombstone closes residual)',
+      () async {
+        // 1. Apply an add at T1.
+        await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            emoji: '👍',
+            timestamp: '2026-03-08T00:00:00.000Z',
+          ),
+        );
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+
+        // 2. Apply a remove at T2 > T1 → tombstone (row retained, hidden).
+        await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            action: 'remove',
+            timestamp: '2026-03-08T00:00:05.000Z',
+          ),
+        );
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+
+        // 3. A STALE re-delivery of the original add (T1 < T2) must NOT
+        //    resurrect the reaction — the tombstone is the comparand.
+        final (result, change) = await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            emoji: '👍',
+            timestamp: '2026-03-08T00:00:00.000Z',
+          ),
+        );
+        expect(result, HandleGroupReactionResult.success);
+        expect(change, isNull);
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      },
+    );
+
+    test(
+      'INV-T3 a newer add after a remove resurrects the reaction',
+      () async {
+        await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            emoji: '👍',
+            timestamp: '2026-03-08T00:00:00.000Z',
+          ),
+        );
+        await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            action: 'remove',
+            timestamp: '2026-03-08T00:00:05.000Z',
+          ),
+        );
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+
+        // A NEWER add (T3 > remove's T2) clears the tombstone.
+        final (result, change) = await handleIncomingGroupReaction(
+          groupRepo: groupRepo,
+          reactionRepo: reactionRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          reactionJson: makeReactionJson(
+            emoji: '🔥',
+            timestamp: '2026-03-08T00:00:09.000Z',
+          ),
+        );
+        expect(result, HandleGroupReactionResult.success);
+        expect(change!.type, ReactionChangeType.upserted);
+        final stored = await reactionRepo.getReactionsForMessage('msg-1');
+        expect(stored, hasLength(1));
+        expect(stored.single.emoji, '🔥');
+      },
+    );
+
+    test('newer remove deletes the older stored add', () async {
+      await seedStored(emoji: '❤️', timestamp: '2026-03-08T00:00:00.000Z');
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          action: 'remove',
+          timestamp: '2026-03-08T00:00:05.000Z',
+        ),
+      );
+
+      expect(result, HandleGroupReactionResult.success);
+      expect(change!.type, ReactionChangeType.removed);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    });
+  });
 
   test(
     'PL-010 removed sender reaction is ignored without mutating visible state',

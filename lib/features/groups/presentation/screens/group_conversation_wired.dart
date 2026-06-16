@@ -48,6 +48,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/application/group_member_device_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
@@ -1180,9 +1181,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
         try {
           final contact = await widget.contactRepo.getContact(member.peerId);
-          final safety = GroupMemberIdentitySafety.compare(
+          final safety = await resolveGroupMemberDeviceSafety(
             member: member,
             savedContact: contact,
+            snapshotRepo: asGroupMemberDeviceSnapshotRepository(
+              widget.groupRepo,
+            ),
           );
           if (safety != null) {
             memberSafety.add(safety);
@@ -4482,7 +4486,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _restoreReactionState(messageId, previousReactions);
         return;
       }
-      if (result == RemoveGroupReactionResult.success) {
+      // queuedForRetry keeps the optimistic delete: the remove is durably
+      // staged and will be re-driven by the retry driver (INV-R1).
+      if (result == RemoveGroupReactionResult.success ||
+          result == RemoveGroupReactionResult.queuedForRetry) {
         return;
       }
       if (result == RemoveGroupReactionResult.groupDissolved) {
@@ -4533,7 +4540,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
 
     final confirmedReaction = reaction;
-    if (result == SendGroupReactionResult.success &&
+    // queuedForRetry keeps the emoji: swap the temp for the persisted reaction
+    // just like success. The reaction is durably staged and will be re-driven
+    // by the retry driver (INV-R1) instead of silently reverted.
+    if ((result == SendGroupReactionResult.success ||
+            result == SendGroupReactionResult.queuedForRetry) &&
         confirmedReaction != null) {
       if (!mounted) return;
       setState(() {

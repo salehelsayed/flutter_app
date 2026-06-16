@@ -11,15 +11,15 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 98307 | 38683 | -60.65% |
-| edges | 169817 | 60477 | -64.39% |
-| communities | 4241 | 833 | -80.36% |
-| source files | 5178 | 1945 | -62.44% |
-| avg edges per node | 1.7274 | 1.5634 | -9.49% |
-| avg nodes per community | 23.18 | 46.44 | +100.35% |
-| app-owned ratio | 0.429 | 0.9621 | +124.27% |
-| noise ratio | 0.222 | 0.0 | -100.00% |
-| unknown-source ratio | 0.0181 | 0.0379 | +109.39% |
+| nodes | 98466 | 38806 | -60.59% |
+| edges | 170044 | 60653 | -64.33% |
+| communities | 4269 | 836 | -80.42% |
+| source files | 5190 | 1956 | -62.31% |
+| avg edges per node | 1.7269 | 1.563 | -9.49% |
+| avg nodes per community | 23.07 | 46.42 | +101.21% |
+| app-owned ratio | 0.4312 | 0.962 | +123.10% |
+| noise ratio | 0.2216 | 0.0 | -100.00% |
+| unknown-source ratio | 0.0181 | 0.038 | +109.94% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
 ## Top Hubs
@@ -29,7 +29,7 @@ Full graph top hubs:
 - `_` (2022 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
 - `SQLITE_PRIVATE` (1036 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `SQLITE_PRIVATE` (1036 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
-- `package:flutter_test/flutter_test.dart` (905 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (911 edges, signal) ``
 - `group_multi_party_device_criteria.dart` (685 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
 - `app_localizations.dart` (631 edges, signal) `lib/l10n/app_localizations.dart`
 - `app_localizations_ar.dart` (613 edges, signal) `lib/l10n/app_localizations_ar.dart`
@@ -37,12 +37,12 @@ Full graph top hubs:
 
 Architecture graph top hubs:
 - `group_multi_party_device_real_harness.dart` (1989 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (905 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (911 edges, signal) ``
 - `group_multi_party_device_criteria.dart` (679 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
-- `main.dart` (523 edges, signal) `lib/main.dart`
+- `main.dart` (529 edges, signal) `lib/main.dart`
 - `group_multi_party_device_criteria_test.dart` (398 edges, signal) `test/integration/group_multi_party_device_criteria_test.dart`
 - `package:flutter/material.dart` (391 edges, signal) ``
-- `dart:convert` (381 edges, signal) ``
+- `dart:convert` (385 edges, signal) ``
 - `feed_wired.dart` (354 edges, signal) `lib/features/feed/presentation/screens/feed_wired.dart`
 - `group_conversation_wired.dart` (336 edges, signal) `lib/features/groups/presentation/screens/group_conversation_wired.dart`
 - `conversation_wired.dart` (327 edges, signal) `lib/features/conversation/presentation/screens/conversation_wired.dart`

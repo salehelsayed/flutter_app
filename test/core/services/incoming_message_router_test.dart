@@ -222,6 +222,33 @@ void main() {
       },
     );
 
+    // Slice 2 / UDM-G — the active key-pull a behind-epoch member sends to the
+    // admin. Old peers without this case route the type to unknownMessageStream
+    // (harmless drop); the admin's responder needs it on its own typed stream.
+    test(
+      'routes group_key_repair_request to groupKeyRepairRequestStream',
+      () async {
+        final repairRequests = <ChatMessage>[];
+        final unknowns = <ChatMessage>[];
+        final keyUpdates = <ChatMessage>[];
+
+        router.groupKeyRepairRequestStream.listen(repairRequests.add);
+        router.unknownMessageStream.listen(unknowns.add);
+        router.groupKeyUpdateStream.listen(keyUpdates.add);
+
+        p2pService.inject(_makeMessage('group_key_repair_request'));
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(repairRequests, hasLength(1));
+        expect(
+          repairRequests.single.content,
+          contains('"type":"group_key_repair_request"'),
+        );
+        expect(unknowns, isEmpty);
+        expect(keyUpdates, isEmpty);
+      },
+    );
+
     test('routes unknown types to unknownMessageStream', () async {
       final received = router.unknownMessageStream.first;
 

@@ -22,6 +22,11 @@ enum SendGroupReactionResult {
   ///
   /// This is not a remote delivery confirmation.
   success,
+
+  /// Live publish failed or threw, but the reaction was durably staged in the
+  /// replay outbox and optimistically persisted locally. The existing retry
+  /// driver will re-drive it — it is NOT a hard drop. (INV-R1)
+  queuedForRetry,
   groupNotFound,
   groupDissolved,
   messageNotFound,
@@ -150,7 +155,30 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     timestamp: timestamp,
   );
 
-  // 5. Publish via bridge (Go encrypts + signs)
+  // 5. Stage durable custody + relay store BEFORE publishing, so a live publish
+  //    failure still leaves a retryable replay-outbox row (INV-R1/INV-R2). The
+  //    reaction id is deterministic, so any later retry re-publish stays
+  //    idempotent at the receiver (INV-R3).
+  await _stageReactionInboxStore(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+    groupId: groupId,
+    payload: payload,
+    senderPublicKey: senderDevice.deviceSigningPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    senderDevice: senderDevice,
+  );
+
+  // 6. Persist locally (optimistic) regardless of the publish outcome.
+  final reaction = payload.toMessageReaction();
+  await reactionRepo.saveReaction(reaction);
+
+  // 7. Attempt live publish (Go encrypts + signs). A failure downgrades the
+  //    result to queuedForRetry but never discards the custody/optimistic
+  //    state staged above — the wired layer keeps the emoji and the retry
+  //    driver re-drives the durable row.
+  var publishOk = false;
   try {
     final result = await callGroupPublishReaction(
       bridge,
@@ -165,13 +193,14 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
       reactionPayload: payload.toInnerJson(),
     );
 
-    if (result['ok'] != true) {
+    if (result['ok'] == true) {
+      publishOk = true;
+    } else {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_REACTION_SEND_PUBLISH_FAILED',
         details: {'errorCode': result['errorCode']},
       );
-      return (SendGroupReactionResult.publishFailed, null);
     }
   } catch (e) {
     emitFlowEvent(
@@ -179,24 +208,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
       event: 'GROUP_REACTION_SEND_ERROR',
       details: {'error': e.toString()},
     );
-    return (SendGroupReactionResult.publishFailed, null);
   }
-
-  // 6. Store in relay inbox for offline members
-  await _stageReactionInboxStore(
-    bridge: bridge,
-    groupRepo: groupRepo,
-    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-    groupId: groupId,
-    payload: payload,
-    senderPublicKey: senderDevice.deviceSigningPublicKey,
-    senderPrivateKey: senderPrivateKey,
-    senderDevice: senderDevice,
-  );
-
-  // 7. Persist locally
-  final reaction = payload.toMessageReaction();
-  await reactionRepo.saveReaction(reaction);
 
   emitFlowEvent(
     layer: 'FL',
@@ -208,10 +220,16 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
       'deliveryConfirmed': false,
       'localState': 'optimistic',
       'replayStatus': 'pending',
+      'publishOk': publishOk,
     },
   );
 
-  return (SendGroupReactionResult.success, reaction);
+  return (
+    publishOk
+        ? SendGroupReactionResult.success
+        : SendGroupReactionResult.queuedForRetry,
+    reaction,
+  );
 }
 
 String _deterministicAddReactionId({

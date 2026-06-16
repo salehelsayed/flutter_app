@@ -4,6 +4,11 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart'
+    show
+        groupMembershipMutationDissolvedMessage,
+        removeGroupMember,
+        staleGroupMembershipEventMessage;
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -761,4 +766,219 @@ void main() {
     expect(writer!.role, MemberRole.writer);
     expect(bridge.commandLog, isEmpty);
   });
+
+  test(
+    'ROLE-STALE rejects an explicit older-or-equal role event before any write or sync',
+    () async {
+      final watermark = DateTime.utc(2030);
+      await groupRepo.updateGroup(
+        adminGroup.copyWith(lastMembershipEventAt: watermark),
+      );
+
+      for (final staleEventAt in <DateTime>[
+        watermark.subtract(const Duration(minutes: 1)), // older
+        watermark, // equal == stale
+      ]) {
+        await expectLater(
+          updateGroupMemberRole(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: 'group-1',
+            memberPeerId: 'peer-writer',
+            role: MemberRole.admin,
+            selfPeerId: 'peer-admin',
+            eventAt: staleEventAt,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains(staleGroupMembershipEventMessage),
+            ),
+          ),
+        );
+      }
+
+      final writer = await groupRepo.getMember('group-1', 'peer-writer');
+      expect(writer, isNotNull);
+      expect(writer!.role, MemberRole.writer);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test(
+    'ROLE-MONOTONIC mints past a future watermark instead of self-blocking the local toggle',
+    () async {
+      final watermark = DateTime.utc(2030);
+      await groupRepo.updateGroup(
+        adminGroup.copyWith(lastMembershipEventAt: watermark),
+      );
+
+      // The live local-admin path passes no eventAt; the use case mints from
+      // the wall clock, which here trails the (clock-skewed) future watermark.
+      await updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-writer',
+        role: MemberRole.admin,
+        selfPeerId: 'peer-admin',
+      );
+
+      final expectedEventAt = watermark.add(const Duration(microseconds: 1));
+
+      final group = await groupRepo.getGroup('group-1');
+      expect(group, isNotNull);
+      expect(group!.lastMembershipEventAt, expectedEventAt);
+
+      final writer = await groupRepo.getMember('group-1', 'peer-writer');
+      expect(writer, isNotNull);
+      expect(writer!.role, MemberRole.admin);
+
+      expect(bridge.commandLog, contains('group:updateConfig'));
+      final updateConfigMessage = bridge.sentMessages.firstWhere((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final payload =
+          (jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      expect(groupConfig['configVersion'], expectedEventAt.toIso8601String());
+    },
+  );
+
+  test('ROLE-NOOP short-circuits inside the lock without any sync', () async {
+    // Target already holds the requested role: no write, no send, lock released.
+    await updateGroupMemberRole(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-writer',
+      role: MemberRole.writer,
+      selfPeerId: 'peer-admin',
+    );
+
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+
+    // The lock is released, so a subsequent real toggle still proceeds.
+    await updateGroupMemberRole(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-writer',
+      role: MemberRole.admin,
+      selfPeerId: 'peer-admin',
+    );
+    final writer = await groupRepo.getMember('group-1', 'peer-writer');
+    expect(writer!.role, MemberRole.admin);
+    expect(bridge.commandLog, contains('group:updateConfig'));
+  });
+
+  test('ROLE-DISSOLVED rejects a role change on a dissolved group', () async {
+    await groupRepo.updateGroup(
+      adminGroup.copyWith(
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 5, 24, 11),
+        dissolvedBy: 'peer-admin',
+      ),
+    );
+
+    await expectLater(
+      updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-writer',
+        role: MemberRole.admin,
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains(groupMembershipMutationDissolvedMessage),
+        ),
+      ),
+    );
+
+    final writer = await groupRepo.getMember('group-1', 'peer-writer');
+    expect(writer, isNotNull);
+    expect(writer!.role, MemberRole.writer);
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+  });
+
+  test(
+    'ROLE-SERIALIZE serializes a concurrent remove through the shared membership lock',
+    () async {
+      // A second admin so the remove target math is exercised without tripping
+      // the last-admin guard.
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-other-admin',
+          username: 'Other Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-other-admin',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final lockedBridge = _BlockingUpdateConfigBridge();
+
+      // First mutation (role promote) holds the lock, blocked inside its
+      // group:updateConfig.
+      final roleFuture = updateGroupMemberRole(
+        bridge: lockedBridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-writer',
+        role: MemberRole.admin,
+        selfPeerId: 'peer-admin',
+      );
+      await lockedBridge.updateConfigStarted.future;
+
+      // Second mutation (remove) on the same group must queue behind the lock
+      // and not reach its own updateConfig yet.
+      final removeFuture = removeGroupMember(
+        bridge: lockedBridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-writer',
+        selfPeerId: 'peer-admin',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(lockedBridge.updateConfigAttempts, 1);
+      // The promotion's optimistic write already landed.
+      final promoted = await groupRepo.getMember('group-1', 'peer-writer');
+      expect(promoted!.role, MemberRole.admin);
+
+      lockedBridge.releaseUpdateConfig.complete();
+      await Future.wait([roleFuture, removeFuture]);
+
+      // Remove observed the committed promotion and ran after it.
+      expect(lockedBridge.updateConfigAttempts, 2);
+      expect(await groupRepo.getMember('group-1', 'peer-writer'), isNull);
+    },
+  );
+}
+
+class _BlockingUpdateConfigBridge extends FakeBridge {
+  final Completer<void> updateConfigStarted = Completer<void>();
+  final Completer<void> releaseUpdateConfig = Completer<void>();
+  int updateConfigAttempts = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:updateConfig') {
+      updateConfigAttempts++;
+      if (!updateConfigStarted.isCompleted) {
+        updateConfigStarted.complete();
+      }
+      await releaseUpdateConfig.future;
+    }
+    return super.send(message);
+  }
 }

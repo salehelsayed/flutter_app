@@ -35,11 +35,13 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
@@ -55,6 +57,7 @@ Future<drain_use_case.GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   required dynamic msgRepo,
   dynamic mediaAttachmentRepo,
   dynamic reactionRepo,
+  GroupPendingReactionRepository? pendingReactionRepo,
   GroupMessageListener? groupMessageListener,
   dynamic pendingKeyRepairRepo,
   dynamic historyGapRepairRepo,
@@ -73,6 +76,7 @@ Future<drain_use_case.GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
     msgRepo: msgRepo,
     mediaAttachmentRepo: mediaAttachmentRepo,
     reactionRepo: reactionRepo,
+    pendingReactionRepo: pendingReactionRepo,
     groupMessageListener: groupMessageListener,
     pendingKeyRepairRepo: pendingKeyRepairRepo,
     historyGapRepairRepo: historyGapRepairRepo,
@@ -319,6 +323,49 @@ class _InMemoryGroupPendingKeyRepairRepository
             .toList()
           ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return pending.take(limit).toList();
+  }
+
+  @override
+  Future<List<GroupPendingKeyRepair>> getAllPendingRepairs({
+    int limit = 200,
+  }) async {
+    final pending =
+        repairs.values
+            .where(
+              (repair) =>
+                  repair.status == groupPendingKeyRepairStatusPendingKey,
+            )
+            .toList()
+          ..sort((a, b) {
+            final byCreated = a.createdAt.compareTo(b.createdAt);
+            return byCreated != 0 ? byCreated : a.id.compareTo(b.id);
+          });
+    return pending.take(limit).toList();
+  }
+
+  @override
+  Future<List<GroupPendingKeyRepair>> getPendingRepairsForGroup({
+    required String groupId,
+    int limit = 100,
+  }) async {
+    final pending =
+        repairs.values
+            .where(
+              (repair) =>
+                  repair.groupId == groupId &&
+                  repair.status == groupPendingKeyRepairStatusPendingKey,
+            )
+            .toList()
+          ..sort((a, b) {
+            final byCreated = a.createdAt.compareTo(b.createdAt);
+            return byCreated != 0 ? byCreated : a.id.compareTo(b.id);
+          });
+    return pending.take(limit).toList();
+  }
+
+  @override
+  Future<void> deleteRepair(String id) async {
+    repairs.remove(id);
   }
 
   @override
@@ -3183,6 +3230,98 @@ void main() {
       expect(repair.status, groupHistoryGapRepairStatusRepaired);
       expect(repair.repairedMessageIds, ['gi026-repaired-head']);
       expect(await msgRepo.getMessage('gi026-repaired-head'), isNotNull);
+    },
+  );
+
+  test(
+    'GI-026b range-hash gate ignores a top-level id on repair messages '
+    '(locks 1A projection THROUGH the drain flow, finding 06)',
+    () async {
+      await saveDefaultReplayKey();
+      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-good',
+          username: 'Good Source',
+          role: MemberRole.reader,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      // The relay/peer stamps expectedRangeHash over the projected
+      // {from,message,timestamp} form — it never carries a top-level id.
+      final baseMessages = [
+        await signedRelayMessage(
+          id: 'gi026b-repaired-head',
+          text: 'Recovered GI-026b',
+          timestamp: DateTime.utc(2026, 5, 1, 12, 27),
+        ),
+      ];
+      final expectedRangeHash = computeGroupHistoryRangeHash(baseMessages);
+
+      // But the repair SOURCE delivers the SAME messages WITH a top-level id +
+      // recipientPeerIds (a future bridge serializer could forward them). 1A's
+      // projection must make the drain hash gate ignore those keys; a regression
+      // to full-map hashing would diverge from expectedRangeHash ->
+      // range_hash_mismatch (so this test is a through-flow canary for 1A).
+      final deliveredMessages = baseMessages
+          .map((m) => <String, dynamic>{
+                ...m,
+                'id': 'relay-seq-77',
+                'recipientPeerIds': const ['peer-good', 'peer-sender'],
+              })
+          .toList();
+      expect(
+        computeGroupHistoryRangeHash(deliveredMessages),
+        expectedRangeHash,
+        reason: '1A projection must hash delivered (with-id) == base (no-id)',
+      );
+
+      bridge.addPage(
+        'group-1',
+        '',
+        const <Map<String, dynamic>>[],
+        '',
+        historyGaps: [
+          {
+            'groupId': 'group-1',
+            'gapId': 'gap-gi026b-idproj',
+            'missingAfterMessageId': 'gi026b-before',
+            'missingBeforeMessageId': 'gi026b-after',
+            'expectedRangeHash': expectedRangeHash,
+            'expectedHeadMessageId': 'gi026b-repaired-head',
+            'candidateSourcePeerIds': const ['peer-good', 'peer-sender'],
+          },
+        ],
+      );
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        requestHistoryRepairRange:
+            ({required gap, required sourcePeerId, int limit = 50}) async {
+              return GroupHistoryRepairRangeResult(
+                groupId: gap.groupId,
+                gapId: gap.gapId,
+                sourcePeerId: sourcePeerId,
+                rangeHash: gap.expectedRangeHash,
+                headMessageId: gap.expectedHeadMessageId,
+                messages: deliveredMessages,
+              );
+            },
+      );
+
+      final repair = await historyRepo.getRepair(
+        groupId: 'group-1',
+        gapId: 'gap-gi026b-idproj',
+      );
+      expect(repair, isNotNull);
+      expect(repair!.status, groupHistoryGapRepairStatusRepaired);
+      expect(repair.repairedMessageIds, ['gi026b-repaired-head']);
+      expect(await msgRepo.getMessage('gi026b-repaired-head'), isNotNull);
     },
   );
 
@@ -12691,6 +12830,49 @@ void main() {
   });
 
   test(
+    'INV-R4 buffers a drained reaction whose target message is absent',
+    () async {
+      final reactionRepo = FakeReactionRepository();
+      final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+
+      // Target message is intentionally NOT saved.
+      final innerReaction = jsonEncode({
+        'id': 'rxn-drain-buffered',
+        'messageId': 'late-msg',
+        'emoji': '\u{1F44D}',
+        'action': 'add',
+        'senderPeerId': 'peer-sender',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+      final inboxMessage = jsonEncode({
+        'type': 'group_reaction',
+        'senderId': 'peer-sender',
+        'reaction': innerReaction,
+      });
+
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        pendingReactionRepo: pendingReactionRepo,
+      );
+
+      // The second drop site is closed: the reaction is buffered, not lost.
+      expect(pendingReactionRepo.reactions, hasLength(1));
+      expect(pendingReactionRepo.reactions.single.id, 'rxn-drain-buffered');
+      expect(pendingReactionRepo.reactions.single.messageId, 'late-msg');
+      // Not applied to visible state, and not stored as a message.
+      expect(reactionRepo.saveReactionCallCount, 0);
+      expect(msgRepo.count, 0);
+    },
+  );
+
+  test(
     'ignores replayed group_reaction items with mismatched sender identity',
     () async {
       final reactionRepo = FakeReactionRepository();
@@ -13043,4 +13225,136 @@ void main() {
       expect(await msgRepo.getInboxCursor('group-1'), isNull);
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // Finding 06 — Phase 1: range-hash parity by construction + golden vector.
+  //
+  // computeGroupHistoryRangeHash projects every message to exactly
+  // {from, message, timestamp} (absent/null timestamp -> bare int 0) before
+  // hashing, so it matches the relay's 3-field hash BY CONSTRUCTION rather than
+  // by the accident of the gomobile bridge happening to strip `id`.
+  //
+  // Canonical spec — MUST stay byte-identical to the Go relay
+  // computeGroupHistoryRangeHash (go-relay-server/inbox.go):
+  //   - field set exactly {from, message, timestamp}
+  //   - keys alphabetical (from < message < timestamp)
+  //   - timestamp is a bare JSON integer (Dart int / Go int64); absent -> 0
+  //   - UTF-8; messages joined with "\n"; SHA-256; lowercase hex
+  // ---------------------------------------------------------------------------
+  group('computeGroupHistoryRangeHash parity (finding 06 Phase 1)', () {
+    test(
+      'ignores extra keys (id and others) — projects to {from,message,timestamp}',
+      () {
+        final projected = <String, dynamic>{
+          'from': 'peer-sender',
+          'message': 'opaque-envelope',
+          'timestamp': 1717243200000,
+        };
+        final withExtras = <String, dynamic>{
+          'id': 'relay-seq-57',
+          'from': 'peer-sender',
+          'message': 'opaque-envelope',
+          'timestamp': 1717243200000,
+          'recipientPeerIds': ['peer-a', 'peer-b'],
+        };
+
+        expect(
+          computeGroupHistoryRangeHash([withExtras]),
+          computeGroupHistoryRangeHash([projected]),
+          reason:
+              'extra keys like id must not change the range hash — the hash is '
+              'a projection of {from,message,timestamp} only',
+        );
+      },
+    );
+
+    test('absent timestamp hashes identically to an explicit integer 0', () {
+      final absent = <String, dynamic>{
+        'from': 'peer-sender',
+        'message': 'opaque-envelope',
+      };
+      final zero = <String, dynamic>{
+        'from': 'peer-sender',
+        'message': 'opaque-envelope',
+        'timestamp': 0,
+      };
+
+      expect(
+        computeGroupHistoryRangeHash([absent]),
+        computeGroupHistoryRangeHash([zero]),
+        reason:
+            'absent timestamp must coerce to the bare integer 0 to match the '
+            "relay's int64 zero value (never null, never an absent key)",
+      );
+    });
+
+    test('null timestamp also coerces to integer 0', () {
+      final nullTs = <String, dynamic>{
+        'from': 'peer-sender',
+        'message': 'opaque-envelope',
+        'timestamp': null,
+      };
+      final zero = <String, dynamic>{
+        'from': 'peer-sender',
+        'message': 'opaque-envelope',
+        'timestamp': 0,
+      };
+
+      expect(
+        computeGroupHistoryRangeHash([nullTs]),
+        computeGroupHistoryRangeHash([zero]),
+      );
+    });
+
+    test(
+      'cross-language golden vector — must equal the Go relay golden hash',
+      () {
+        // Shared fixture asserted byte-for-byte against
+        // go-relay-server/group_inbox_test.go (TestComputeGroupHistoryRangeHashGoldenVector).
+        // If this hash diverges from the Go side, the gap-repair safety net is
+        // broken — treat as a blocking regression, NOT a re-baseline.
+        const goldenHash =
+            '957339b598643b0fa92d13cbf6e6e0f02a9a392e96ff07eedc8c6f0ec20f5ec9';
+
+        final messages = <Map<String, dynamic>>[
+          {'from': 'peer-a', 'message': 'hello', 'timestamp': 1000},
+          {'from': 'peer-b', 'message': '', 'timestamp': 2000},
+          {'from': 'peer-c', 'message': 'héllo 世界 🎉', 'timestamp': 3000},
+          {'from': 'peer-d', 'message': 'a<b>c&d/e', 'timestamp': 4000},
+          {
+            'from': 'peer-e',
+            'message': 'big-ts',
+            'timestamp': 9223372036854775807,
+          },
+          // Row 6 exercises the absent-timestamp -> 0 coercion (no timestamp key).
+          {'from': 'peer-f', 'message': 'zero-ts'},
+        ];
+
+        expect(computeGroupHistoryRangeHash(messages), goldenHash);
+      },
+    );
+
+    test(
+      'realistic opaque-envelope golden vector — production payload shape',
+      () {
+        // Locks parity over the REAL hashed payload (a group_offline_replay
+        // envelope: embedded escaped quotes + braces + base64 +/= chars), not
+        // just short synthetic strings. Pinned identically in
+        // go-relay-server/group_inbox_test.go.
+        const goldenHash =
+            'd198d184054842c233f9ac90cb1019408273f54ac84084c7da8343e031c91737';
+        const envelope =
+            '{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"m-9f8e7d","ciphertext":"qA+9/Bc2Df==xYz0/12+","nonce":"N1+a/Zz9=="}';
+        final messages = <Map<String, dynamic>>[
+          {
+            'from': '12D3KooWReplaySender',
+            'message': envelope,
+            'timestamp': 1717243200123,
+          },
+        ];
+
+        expect(computeGroupHistoryRangeHash(messages), goldenHash);
+      },
+    );
+  });
 }

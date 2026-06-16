@@ -40,6 +40,9 @@ import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
 import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
 import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
 import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/081_group_pending_reactions.dart';
+import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
+import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
@@ -427,6 +430,14 @@ Future<sqlcipher.Database> _openTestDatabase({
       await runContactsMlKemKeyUpdatedTsMigration(db);
       await runPostMediaAttachmentCryptoColumnsMigration(db);
       await runMessageRelayCustodyMigration(db);
+      // Finding 10 reaction reliability: durable buffer (081) + message_reactions
+      // removed_at tombstone (082). 082 is REQUIRED — reaction insert/load/remove
+      // all reference removed_at once Phase 5 lands.
+      await runGroupPendingReactionsMigration(db);
+      await runMessageReactionTombstoneMigration(db);
+      // Concurrent finding-07 landing: groups.last_membership_event_id (083).
+      // The lib group-save writes it, so the harness schema must have it too.
+      await runGroupsLastMembershipEventIdMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -834,6 +845,17 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
               lastError: lastError,
               finalizedAt: finalizedAt,
             ),
+    dbLoadAllPendingGroupKeyRepairs: ({int limit = 200}) =>
+        dbLoadAllPendingGroupKeyRepairs(db, limit: limit),
+    dbLoadPendingGroupKeyRepairsForGroup:
+        ({required groupId, int limit = 100}) =>
+            dbLoadPendingGroupKeyRepairsForGroup(
+              db,
+              groupId: groupId,
+              limit: limit,
+            ),
+    dbDeleteGroupPendingKeyRepair: (id) =>
+        dbDeleteGroupPendingKeyRepair(db, id),
   );
   final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
     dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
@@ -862,8 +884,11 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         dbLoadReactionsForMessage(db, messageId),
     dbLoadReactionsForMessages: (messageIds) =>
         dbLoadReactionsForMessages(db, messageIds),
-    dbDeleteReaction: (messageId, senderPeerId) =>
-        dbDeleteReaction(db, messageId, senderPeerId),
+    dbLoadActiveOrTombstonedReactionForSender: (messageId, senderPeerId) =>
+        dbLoadActiveOrTombstonedReactionForSender(db, messageId, senderPeerId),
+    dbDeleteReaction: (messageId, senderPeerId, {removedAtTimestamp}) =>
+        dbDeleteReaction(db, messageId, senderPeerId,
+            removedAtTimestamp: removedAtTimestamp),
     dbDeleteReactionsForMessage: (messageId) =>
         dbDeleteReactionsForMessage(db, messageId),
     dbDeleteReactionsForContact: (contactPeerId) =>

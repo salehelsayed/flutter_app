@@ -800,16 +800,46 @@ func (n *Node) RefreshJoinedGroupStateIfNewer(groupId string, config *GroupConfi
 		if current == nil {
 			n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
 		} else {
-			n.groupKeys[groupId] = &GroupKeyInfo{
-				Key:           keyInfo.Key,
-				KeyEpoch:      keyInfo.KeyEpoch,
-				PrevKey:       current.Key,
-				PrevKeyEpoch:  current.KeyEpoch,
-				GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
-			}
+			n.groupKeys[groupId] = n.rotateGroupKeyRing(current, keyInfo)
 		}
 	}
 	return true, nil
+}
+
+// rotateGroupKeyRing appends the incoming epoch key to the front of current's
+// retained ring (newest-first), evicts past RetainedEpochKeys, and stamps the
+// effective grace deadline. The caller MUST hold n.mu and MUST have already
+// established that incoming.KeyEpoch is strictly newer than current.KeyEpoch
+// (epoch-monotonic guard). Key/KeyEpoch and the PrevKey/PrevKeyEpoch derived
+// view are recomputed from the ring head/second entries.
+func (n *Node) rotateGroupKeyRing(current *GroupKeyInfo, incoming *GroupKeyInfo) *GroupKeyInfo {
+	ring := heldGroupKeyRing(current)
+	// Prepend the new (current) epoch.
+	newRing := make([]GroupEpochKey, 0, RetainedEpochKeys)
+	newRing = append(newRing, GroupEpochKey{Key: incoming.Key, KeyEpoch: incoming.KeyEpoch})
+	for _, ek := range ring {
+		if ek.KeyEpoch == incoming.KeyEpoch {
+			// Defensive: never duplicate the incoming epoch.
+			continue
+		}
+		newRing = append(newRing, ek)
+		if len(newRing) >= RetainedEpochKeys {
+			break
+		}
+	}
+
+	updated := &GroupKeyInfo{
+		Key:           incoming.Key,
+		KeyEpoch:      incoming.KeyEpoch,
+		GraceDeadline: time.Now().Add(n.lastConfig.EffectiveKeyRotationGracePeriod()),
+		Keys:          newRing,
+	}
+	// Derived back-compat view over the second ring entry (previous epoch).
+	if len(newRing) > 1 {
+		updated.PrevKey = newRing[1].Key
+		updated.PrevKeyEpoch = newRing[1].KeyEpoch
+	}
+	return updated
 }
 
 func shouldRefreshJoinedGroupConfig(current *GroupConfig, incoming *GroupConfig) bool {
@@ -861,13 +891,7 @@ func (n *Node) UpdateGroupKey(groupId string, keyInfo *GroupKeyInfo) {
 	case keyInfo.KeyEpoch <= current.KeyEpoch:
 		return
 	default:
-		n.groupKeys[groupId] = &GroupKeyInfo{
-			Key:           keyInfo.Key,
-			KeyEpoch:      keyInfo.KeyEpoch,
-			PrevKey:       current.Key,
-			PrevKeyEpoch:  current.KeyEpoch,
-			GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
-		}
+		n.groupKeys[groupId] = n.rotateGroupKeyRing(current, keyInfo)
 	}
 }
 
@@ -883,6 +907,9 @@ func cloneGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
 		return nil
 	}
 	cloned := *keyInfo
+	// Deep-copy the ring slice: a shallow *keyInfo aliases the backing array, so
+	// GetGroupKeyInfo callers could otherwise mutate stored state (data race).
+	cloned.Keys = append([]GroupEpochKey(nil), keyInfo.Keys...)
 	return &cloned
 }
 
@@ -1250,9 +1277,21 @@ func joinedGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
 		return nil
 	}
 	cloned := *keyInfo
+	// Seed the held-keys ring from the incoming key info so the receive path has
+	// a ring to consult, while preserving the incoming Key/PrevKey/GraceDeadline
+	// metadata exactly (back-compat for wire/Dart payloads and existing tests).
+	if len(keyInfo.Keys) > 0 {
+		cloned.Keys = append([]GroupEpochKey(nil), keyInfo.Keys...)
+	} else {
+		cloned.Keys = heldGroupKeyRing(keyInfo)
+	}
 	return &cloned
 }
 
+// hasKeyRotationGrace reports whether a node may still SIGN/PUBLISH under its
+// previous epoch. The receive path no longer consults this; it anchors to keys
+// held in the ring (see heldGroupKeyForEpoch). This remains a send/sign-time
+// constraint only.
 func hasKeyRotationGrace(keyInfo *GroupKeyInfo, now time.Time) bool {
 	return keyInfo != nil &&
 		keyInfo.PrevKey != "" &&
@@ -1260,24 +1299,54 @@ func hasKeyRotationGrace(keyInfo *GroupKeyInfo, now time.Time) bool {
 		now.Before(keyInfo.GraceDeadline)
 }
 
+// heldGroupKeyRing returns the effective held-keys ring for a keyInfo,
+// newest-first. When Keys is populated it is authoritative. Otherwise a ring is
+// derived from the legacy Key/KeyEpoch + PrevKey/PrevKeyEpoch fields so
+// test-constructed structs and stale wire/Dart payloads (which predate the ring
+// field) keep decrypting their held epochs.
+func heldGroupKeyRing(keyInfo *GroupKeyInfo) []GroupEpochKey {
+	if keyInfo == nil {
+		return nil
+	}
+	if len(keyInfo.Keys) > 0 {
+		return keyInfo.Keys
+	}
+	ring := make([]GroupEpochKey, 0, 2)
+	if keyInfo.Key != "" {
+		ring = append(ring, GroupEpochKey{Key: keyInfo.Key, KeyEpoch: keyInfo.KeyEpoch})
+	}
+	if keyInfo.PrevKey != "" {
+		ring = append(ring, GroupEpochKey{Key: keyInfo.PrevKey, KeyEpoch: keyInfo.PrevKeyEpoch})
+	}
+	return ring
+}
+
+// heldGroupKeyForEpoch returns the held AES key for the requested epoch, or ""
+// if that epoch is not in the ring. No clock gate: any held epoch is eligible.
+func heldGroupKeyForEpoch(keyInfo *GroupKeyInfo, epoch int) (string, bool) {
+	for _, ek := range heldGroupKeyRing(keyInfo) {
+		if ek.KeyEpoch == epoch {
+			return ek.Key, true
+		}
+	}
+	return "", false
+}
+
 func verifyGroupEnvelopeSignature(groupId string, memberPublicKey string, env *internal.GroupEnvelope, keyInfo *GroupKeyInfo, now time.Time) bool {
 	if keyInfo == nil || env == nil {
 		return false
 	}
 
-	if env.KeyEpoch == keyInfo.KeyEpoch {
-		sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, env.Encrypted.Ciphertext)
-		valid, err := mcrypto.VerifyPayload(memberPublicKey, sigData, env.Signature)
-		return err == nil && valid
+	// Anchor to keys held: any epoch still in the ring may be verified. The
+	// clock no longer gates the receive path. Forgery is still rejected because
+	// the signature must verify under the per-epoch signature data.
+	if _, ok := heldGroupKeyForEpoch(keyInfo, env.KeyEpoch); !ok {
+		return false
 	}
 
-	if env.KeyEpoch == keyInfo.PrevKeyEpoch && hasKeyRotationGrace(keyInfo, now) {
-		sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.PrevKeyEpoch, env.Encrypted.Ciphertext)
-		valid, err := mcrypto.VerifyPayload(memberPublicKey, sigData, env.Signature)
-		return err == nil && valid
-	}
-
-	return false
+	sigData := mcrypto.BuildGroupSignatureData(groupId, env.KeyEpoch, env.Encrypted.Ciphertext)
+	valid, err := mcrypto.VerifyPayload(memberPublicKey, sigData, env.Signature)
+	return err == nil && valid
 }
 
 func decryptGroupEnvelopePayload(env *internal.GroupEnvelope, keyInfo *GroupKeyInfo, now time.Time) (string, error) {
@@ -1285,14 +1354,11 @@ func decryptGroupEnvelopePayload(env *internal.GroupEnvelope, keyInfo *GroupKeyI
 		return "", fmt.Errorf("missing group key info")
 	}
 
-	switch {
-	case env.KeyEpoch == keyInfo.KeyEpoch:
-		return mcrypto.DecryptGroupMessage(keyInfo.Key, env.Encrypted.Ciphertext, env.Encrypted.Nonce)
-	case env.KeyEpoch == keyInfo.PrevKeyEpoch && hasKeyRotationGrace(keyInfo, now):
-		return mcrypto.DecryptGroupMessage(keyInfo.PrevKey, env.Encrypted.Ciphertext, env.Encrypted.Nonce)
-	default:
-		return "", fmt.Errorf("no group key available for epoch %d", env.KeyEpoch)
+	// Any epoch still held in the ring decrypts (no clock gate).
+	if key, ok := heldGroupKeyForEpoch(keyInfo, env.KeyEpoch); ok {
+		return mcrypto.DecryptGroupMessage(key, env.Encrypted.Ciphertext, env.Encrypted.Nonce)
 	}
+	return "", fmt.Errorf("no group key available for epoch %d", env.KeyEpoch)
 }
 
 func groupEnvelopeHasEncryptedFields(env *internal.GroupEnvelope) bool {
@@ -1551,6 +1617,22 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			return pubsub.ValidationReject
 		}
 
+		// UDM-F: a strictly-future epoch (this node is key-behind) from a known
+		// group + bound member (steps 1-7 already passed) is NOT a forgery — we
+		// simply have not received this epoch's key yet, so we cannot verify its
+		// signature. Resolve to ValidationIgnore (silent drop, no peer-score
+		// penalty, no reject-feedback) plus a group:key_epoch_behind diagnostic so
+		// the message can be re-pulled, instead of penalizing an honest
+		// newer-epoch sender. Clamp to a small forward window so a bound member
+		// cannot grief with an absurd epoch claim; anything outside the window
+		// falls through to the signature check and is Rejected as before. Same-
+		// epoch and stale-past failures keep their bad_signature_or_epoch Reject.
+		if env.KeyEpoch > keyInfo.KeyEpoch &&
+			env.KeyEpoch <= keyInfo.KeyEpoch+maxFutureKeyEpochIgnoreWindow {
+			n.emitGroupKeyEpochBehind(groupId, env, keyInfo.KeyEpoch)
+			return pubsub.ValidationIgnore
+		}
+
 		if !verifyGroupEnvelopeSignature(groupId, sourceDevice.DeviceSigningPublicKey, env, keyInfo, time.Now()) {
 			n.logPubSubValidationReject("bad_signature_or_epoch", groupId, pid, env)
 			return pubsub.ValidationReject
@@ -1704,10 +1786,41 @@ func (n *Node) emitGroupDecryptionFailed(groupId string, env *internal.GroupEnve
 		"error":     decryptErr.Error(),
 		"decryptMs": decryptMs,
 	}
+	// UDM-F: additively bind the privacy-safe wire messageId so the Dart self-heal
+	// can tie the failure to a specific message. Never any ciphertext/nonce/sig/key.
+	if env.MessageId != "" {
+		data["messageId"] = env.MessageId
+	}
 	if keyInfo != nil {
 		data["localKeyEpoch"] = keyInfo.KeyEpoch
 	}
 	n.emitEvent("group:decryption_failed", data)
+}
+
+// maxFutureKeyEpochIgnoreWindow bounds how far ahead of our current epoch a
+// future-epoch envelope may be before the validator stops Ignoring it (UDM-F)
+// and falls through to the normal signature Reject. Generous enough to cover
+// realistic key-distribution lag, bounded so a bound member cannot grief with
+// absurd epoch claims. Anti-grief hygiene only — Ignore never accepts traffic.
+const maxFutureKeyEpochIgnoreWindow = 1024
+
+// emitGroupKeyEpochBehind reports a strictly-future (local key-behind) group
+// envelope that the validator chose to IGNORE rather than Reject (UDM-F). It is
+// a privacy-safe local diagnostic — groupId / senderId / epochs / messageId
+// only, NEVER ciphertext/nonce/signature/key material — consumed by the Dart
+// self-heal so the node can actively re-pull the missing epoch's key.
+func (n *Node) emitGroupKeyEpochBehind(groupId string, env *internal.GroupEnvelope, localKeyEpoch int) {
+	data := map[string]interface{}{
+		"groupId":       groupId,
+		"senderId":      env.SenderId,
+		"envelopeType":  env.Type,
+		"keyEpoch":      env.KeyEpoch,
+		"localKeyEpoch": localKeyEpoch,
+	}
+	if env.MessageId != "" {
+		data["messageId"] = env.MessageId
+	}
+	n.emitEvent("group:key_epoch_behind", data)
 }
 
 func buildGroupMessageExtra(messageId string, opts map[string]interface{}) map[string]interface{} {

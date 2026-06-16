@@ -579,7 +579,25 @@ class _HarnessReactionRepository implements ReactionRepository {
   }
 
   @override
-  Future<int> removeReaction(String messageId, String senderPeerId) async {
+  Future<MessageReaction?> getReactionForSenderIncludingRemoved({
+    required String messageId,
+    required String senderPeerId,
+  }) async {
+    for (final reaction in _reactionsByMessageId[messageId] ??
+        const <MessageReaction>[]) {
+      if (reaction.senderPeerId == senderPeerId) {
+        return reaction;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<int> removeReaction(
+    String messageId,
+    String senderPeerId, {
+    String? removedAtTimestamp,
+  }) async {
     final reactions = _reactionsByMessageId[messageId];
     if (reactions == null) {
       return 0;

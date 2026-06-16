@@ -289,6 +289,55 @@ Future<Map<String, Object?>?> dbLoadRemovedGroupMemberSnapshot(
   }
 }
 
+/// B4: persists/replaces the last-known device-set snapshot for a group member
+/// (the safety-number comparison baseline). Keyed by (group_id, peer_id).
+Future<void> dbUpsertGroupMemberDeviceSnapshot(
+  Database db,
+  Map<String, Object?> row,
+  String savedAt,
+) async {
+  final snapshotRow = Map<String, Object?>.from(row)..['saved_at'] = savedAt;
+  try {
+    await db.insert(
+      'group_member_device_snapshots',
+      snapshotRow,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MEMBER_DEVICE_SNAPSHOT_DB_UPSERT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// B4: loads the last-known device-set snapshot for a group member, or null.
+Future<Map<String, Object?>?> dbLoadGroupMemberDeviceSnapshot(
+  Database db,
+  String groupId,
+  String peerId,
+) async {
+  try {
+    final results = await db.query(
+      'group_member_device_snapshots',
+      where: 'group_id = ? AND peer_id = ?',
+      whereArgs: [groupId, peerId],
+      orderBy: 'saved_at DESC',
+      limit: 1,
+    );
+    return results.isEmpty ? null : results.first;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_MEMBER_DEVICE_SNAPSHOT_DB_LOAD_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Returns the count of members in a group.
 Future<int> dbCountGroupMembers(Database db, String groupId) async {
   try {

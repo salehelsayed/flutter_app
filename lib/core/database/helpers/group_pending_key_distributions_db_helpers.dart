@@ -54,6 +54,47 @@ Future<bool> dbUpsertGroupPendingKeyDistribution(
   return false;
 }
 
+/// (Re)opens a distribution row to PENDING for re-delivery, OVERRIDING a terminal
+/// (distributed / unreachable) status and resetting attempts/last_error/
+/// finalized_at. Unlike [dbUpsertGroupPendingKeyDistribution] this deliberately
+/// re-arms an exhausted/finalized row — it is for when the member's DEVICE SET
+/// changed (a sibling device was admitted), so the prior exhaustion (which was
+/// for the OLD device set) must not block re-distributing the current key to the
+/// now-larger device set. NOT for stale rotation re-enqueues (those keep using
+/// the exhaustion-preserving upsert).
+Future<void> dbReopenGroupPendingKeyDistributionForRedelivery(
+  Database db,
+  Map<String, Object?> row,
+) async {
+  final id = row['id'] as String;
+  final existing = await db.query(
+    'group_pending_key_distributions',
+    where: 'id = ?',
+    whereArgs: [id],
+    limit: 1,
+  );
+  if (existing.isEmpty) {
+    await db.insert('group_pending_key_distributions', row);
+    return;
+  }
+  await db.update(
+    'group_pending_key_distributions',
+    {
+      'status': groupPendingKeyDistributionStatusPending,
+      'key_epoch': row['key_epoch'] ?? existing.single['key_epoch'],
+      'transport_peer_id':
+          row['transport_peer_id'] ?? existing.single['transport_peer_id'],
+      'device_id': row['device_id'] ?? existing.single['device_id'],
+      'attempts': 0,
+      'last_error': null,
+      'finalized_at': null,
+      'updated_at': row['updated_at'],
+    },
+    where: 'id = ?',
+    whereArgs: [id],
+  );
+}
+
 Future<Map<String, Object?>?> dbLoadGroupPendingKeyDistribution(
   Database db,
   String id,

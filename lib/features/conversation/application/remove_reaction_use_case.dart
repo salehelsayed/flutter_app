@@ -119,8 +119,13 @@ Future<RemoveReactionResult> removeReaction({
     return RemoveReactionResult.sendFailed;
   }
 
-  // 5. Delete locally
-  await reactionRepo.removeReaction(messageId, senderPeerId);
+  // 5. Delete locally (tombstone with the remove's authored timestamp so a
+  //    stale re-delivered add can't resurrect it — INV-T1/INV-T2).
+  await reactionRepo.removeReaction(
+    messageId,
+    senderPeerId,
+    removedAtTimestamp: timestamp,
+  );
 
   emitFlowEvent(
     layer: 'FL',

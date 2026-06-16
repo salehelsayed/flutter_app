@@ -5,6 +5,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
@@ -26,6 +27,10 @@ class IdentityChoiceWired extends StatefulWidget {
   final SecureKeyStore? secureKeyStore;
   final ContactRepository? contactRepo;
 
+  /// Optional — forwarded to [MnemonicInputWired] so a restore that hydrates no
+  /// local groups can surface the honest device-local notice (A4).
+  final GroupRepository? groupRepo;
+
   const IdentityChoiceWired({
     super.key,
     required this.repository,
@@ -38,6 +43,7 @@ class IdentityChoiceWired extends StatefulWidget {
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.secureKeyStore,
     this.contactRepo,
+    this.groupRepo,
   });
 
   @override
@@ -169,6 +175,7 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
           callMlKemKeygen: widget.callMlKemKeygen,
           secureKeyStore: widget.secureKeyStore,
           contactRepo: widget.contactRepo,
+          groupRepo: widget.groupRepo,
           onNavigateToMain: () {
             // Pop back to this screen first, then navigate to main
             Navigator.of(routeContext).pop();

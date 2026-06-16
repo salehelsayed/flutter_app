@@ -123,6 +123,87 @@ void main() {
     expect(members.length, groupMembershipLimit);
   });
 
+  Future<void> seedSelfAdminAndKey() async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-peer-admin',
+        mlKemPublicKey: 'mlkem-peer-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 1,
+        encryptedKey: 'epoch-1',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+    bridge.responses['group:generateNextKey'] = {
+      'ok': true,
+      'groupKey': 'epoch-2',
+      'keyEpoch': 2,
+    };
+    bridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'm',
+      'topicPeers': 1,
+    };
+  }
+
+  GroupMember b5NewMember() => GroupMember(
+    groupId: 'group-1',
+    peerId: 'peer-b5',
+    username: 'B5',
+    role: MemberRole.writer,
+    publicKey: 'pk-peer-b5',
+    mlKemPublicKey: 'mlkem-peer-b5',
+    joinedAt: DateTime.now().toUtc(),
+  );
+
+  test('B5: forward rotation fires on add when opted in by the creator', () async {
+    await seedSelfAdminAndKey();
+
+    await addGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      newMember: b5NewMember(),
+      selfPeerId: 'peer-admin',
+      rotateKeyOnAdd: true,
+      senderPublicKey: 'pk-peer-admin',
+      senderPrivateKey: 'sk-peer-admin',
+      senderUsername: 'Admin',
+      sendP2PMessage: (peerId, message) async => true,
+    );
+
+    expect(
+      bridge.commandLog.where((c) => c == 'group:generateNextKey'),
+      isNotEmpty,
+      reason: 'rotateKeyOnAdd should advance the epoch after the add',
+    );
+    expect(await groupRepo.getMember('group-1', 'peer-b5'), isNotNull);
+  });
+
+  test('B5: default add does NOT rotate (non-breaking)', () async {
+    await seedSelfAdminAndKey();
+
+    await addGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      newMember: b5NewMember(),
+      selfPeerId: 'peer-admin',
+    );
+
+    expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
+    expect(await groupRepo.getMember('group-1', 'peer-b5'), isNotNull);
+  });
+
   test(
     'ML-010 exact duplicate active add is idempotent without config sync or key mutation',
     () async {

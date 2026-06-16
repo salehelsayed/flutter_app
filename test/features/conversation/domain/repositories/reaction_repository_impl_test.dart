@@ -6,6 +6,8 @@ void main() {
   late ReactionRepositoryImpl repo;
   late List<Map<String, Object?>> insertedRows;
   late Map<String, List<Map<String, Object?>>> storedRows;
+  late Map<String, Object?>? tombstoneAwareRow;
+  String? lastRemovedAtTimestamp;
 
   const testReaction = MessageReaction(
     id: 'r1',
@@ -19,6 +21,8 @@ void main() {
   setUp(() {
     insertedRows = [];
     storedRows = {};
+    tombstoneAwareRow = null;
+    lastRemovedAtTimestamp = null;
 
     repo = ReactionRepositoryImpl(
       dbInsertReaction: (row) async {
@@ -34,7 +38,11 @@ void main() {
         }
         return results;
       },
-      dbDeleteReaction: (messageId, senderPeerId) async {
+      dbLoadActiveOrTombstonedReactionForSender: (messageId, senderPeerId) async {
+        return tombstoneAwareRow;
+      },
+      dbDeleteReaction: (messageId, senderPeerId, {removedAtTimestamp}) async {
+        lastRemovedAtTimestamp = removedAtTimestamp;
         return 1;
       },
       dbDeleteReactionsForMessage: (messageId) async {
@@ -86,6 +94,39 @@ void main() {
     test('removeReaction delegates to dbDeleteReaction', () async {
       final count = await repo.removeReaction('msg-1', 'sender-1');
       expect(count, 1);
+    });
+
+    test('removeReaction threads the removedAtTimestamp to the helper', () async {
+      await repo.removeReaction(
+        'msg-1',
+        'sender-1',
+        removedAtTimestamp: '2026-02-27T11:00:00.000Z',
+      );
+      expect(lastRemovedAtTimestamp, '2026-02-27T11:00:00.000Z');
+    });
+
+    test('getReactionForSenderIncludingRemoved maps a tombstoned row', () async {
+      tombstoneAwareRow = testReaction
+          .copyWith(removedAt: '2026-02-27T11:00:00.000Z')
+          .toMap();
+
+      final reaction = await repo.getReactionForSenderIncludingRemoved(
+        messageId: 'msg-1',
+        senderPeerId: 'sender-1',
+      );
+      expect(reaction, isNotNull);
+      expect(reaction!.id, 'r1');
+      expect(reaction.removedAt, '2026-02-27T11:00:00.000Z');
+      expect(reaction.isRemoved, isTrue);
+    });
+
+    test('getReactionForSenderIncludingRemoved returns null for no row', () async {
+      tombstoneAwareRow = null;
+      final reaction = await repo.getReactionForSenderIncludingRemoved(
+        messageId: 'msg-1',
+        senderPeerId: 'sender-1',
+      );
+      expect(reaction, isNull);
     });
 
     test('deleteReactionsForMessage delegates', () async {

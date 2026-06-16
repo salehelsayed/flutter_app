@@ -2668,6 +2668,10 @@ func GroupInboxRetrieveCursor(paramsJSON string) (result string) {
 		return errJSON("GROUP_INBOX_ERROR", err.Error())
 	}
 
+	// NOTE: this {from,message,timestamp} projection is NOT load-bearing for the
+	// group range-hash safety net. The Dart computeGroupHistoryRangeHash projects
+	// to exactly these three fields itself (finding 06 Phase 1A), so adding e.g.
+	// "id": m.ID here would NOT break range-hash repair — the hash ignores it.
 	msgList := make([]map[string]interface{}, len(page.Messages))
 	for i, m := range page.Messages {
 		msgList[i] = map[string]interface{}{
@@ -2720,6 +2724,10 @@ func GroupHistoryRepairRange(paramsJSON string) (result string) {
 		return errJSON("GROUP_HISTORY_REPAIR_ERROR", err.Error())
 	}
 
+	// NOTE: this {from,message,timestamp} projection is NOT load-bearing for the
+	// group range-hash safety net — the Dart computeGroupHistoryRangeHash projects
+	// to exactly these three fields itself (finding 06 Phase 1A), so forwarding an
+	// extra field (e.g. "id": m.ID) here would NOT break range-hash repair.
 	msgList := make([]map[string]interface{}, len(resp.Messages))
 	for i, m := range resp.Messages {
 		msgList[i] = map[string]interface{}{

@@ -58,11 +58,26 @@ type GroupConfig struct {
 	CreatedAt         string        `json:"createdAt"`
 }
 
-// GroupKeyInfo holds the symmetric encryption key for a group.
+// GroupEpochKey is one retained (epoch, key) pair in the held-keys ring.
+type GroupEpochKey struct {
+	Key      string `json:"key"`      // base64 AES-256 key for this epoch
+	KeyEpoch int    `json:"keyEpoch"` // key rotation epoch
+}
+
+// GroupKeyInfo holds the symmetric encryption key(s) for a group.
+//
+// Keys is a retained ring of the most-recent epochs this node legitimately
+// held while a member, newest-first (index 0 == current epoch). Decrypt/verify
+// on the receive path consult the ring (no clock gate) so any held epoch still
+// decrypts. Key/KeyEpoch mirror the ring head (current epoch) for the send path
+// and wire/Dart back-compat. PrevKey/PrevKeyEpoch are a derived view over the
+// second ring entry, preserved so existing JSON/Dart consumers keep parsing.
+// GraceDeadline now governs only which epoch a node will sign/publish under.
 type GroupKeyInfo struct {
-	Key           string    `json:"key"`           // base64 AES-256 key
-	KeyEpoch      int       `json:"keyEpoch"`      // key rotation epoch
-	PrevKey       string    `json:"prevKey"`       // previous key during grace period
-	PrevKeyEpoch  int       `json:"prevKeyEpoch"`  // previous key rotation epoch
-	GraceDeadline time.Time `json:"graceDeadline"` // zero when no grace period is active
+	Key           string          `json:"key"`            // base64 AES-256 key (current epoch / ring head)
+	KeyEpoch      int             `json:"keyEpoch"`       // current key rotation epoch
+	PrevKey       string          `json:"prevKey"`        // derived view over ring[1]; previous key
+	PrevKeyEpoch  int             `json:"prevKeyEpoch"`   // derived view over ring[1]; previous epoch
+	GraceDeadline time.Time       `json:"graceDeadline"`  // zero when no grace period is active (send/sign constraint)
+	Keys          []GroupEpochKey `json:"keys,omitempty"` // retained held-epoch ring, newest-first
 }

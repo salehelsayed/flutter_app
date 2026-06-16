@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -544,6 +545,52 @@ func TestRedisPushTokenBackend_SurvivesAcrossClients(t *testing.T) {
 	if backendA.LookupToken("peer-1") != nil {
 		t.Fatal("expected token to be removed across clients")
 	}
+}
+
+// TestRedisGroupInboxCapEvictionIncrementsCounter locks finding 06 Phase 2 for
+// the redis backend: per-group cap overflow eviction increments
+// groupInboxCappedCounter (relay_group_inbox_capped_total). The counter is
+// added once per committed transaction (after withRedisWatchRetry returns), so
+// optimistic-retry replays of the closure do not double-count.
+func TestRedisGroupInboxCapEvictionIncrementsCounter(t *testing.T) {
+	server := miniredis.RunT(t)
+	const capLimit = 3
+	const total = 5
+	backend := newRedisGroupInboxBackend(newTestRedisClient(t, server), "capevict:", capLimit, 7*24*time.Hour)
+	groupID := "group-redis-cap-eviction-counter"
+
+	before := testutil.ToFloat64(groupInboxCappedCounter)
+
+	for i := 0; i < total; i++ {
+		msg := opaqueGroupReplayEnvelope(fmt.Sprintf("redis-cap-evict-%02d", i))
+		if _, err := backend.StoreWithRecipients(groupID, "peer-a", msg, []string{"peer-b"}); err != nil {
+			t.Fatalf("store %d: %v", i, err)
+		}
+	}
+
+	// Stored `total` distinct messages into a cap of `capLimit` -> the oldest
+	// (total-capLimit) are evicted, and each eviction increments the counter.
+	if retained := backend.RetrieveSince(groupID, 0); len(retained) != capLimit {
+		t.Fatalf("retained %d messages, want cap %d", len(retained), capLimit)
+	}
+
+	after := testutil.ToFloat64(groupInboxCappedCounter)
+	if delta := after - before; delta != float64(total-capLimit) {
+		t.Fatalf("groupInboxCappedCounter delta = %v, want %d", delta, total-capLimit)
+	}
+}
+
+// TestRedisGroupInboxCapEvictionSurfacesRepairableGap is the redis twin of the
+// memory eviction->gap->repair test (finding 06 Phase 2 integrated path). The
+// gap/repair logic lives in GroupInboxStore, so wrapping the redis backend in a
+// store exercises the identical authorized cursor path over miniredis-evicted
+// state — confirming a real evicted id still yields a coherent repairable gap.
+func TestRedisGroupInboxCapEvictionSurfacesRepairableGap(t *testing.T) {
+	server := miniredis.RunT(t)
+	const capLimit = 3
+	backend := newRedisGroupInboxBackend(newTestRedisClient(t, server), "capgap:", capLimit, 7*24*time.Hour)
+	store := NewGroupInboxStoreWithBackend(backend)
+	assertGroupInboxCapEvictionSurfacesRepairableGap(t, store, "group-redis-cap-eviction-gap")
 }
 
 func TestRedisGroupInboxBackend_CursorStableAcrossClients(t *testing.T) {

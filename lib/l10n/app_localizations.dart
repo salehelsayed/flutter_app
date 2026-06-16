@@ -2416,6 +2416,12 @@ abstract class AppLocalizations {
   /// **'This group is still catching up — try again in a moment.'**
   String get group_notification_catching_up;
 
+  /// No description provided for @restore_groups_device_local_notice.
+  ///
+  /// In en, this message translates to:
+  /// **'Your groups will reappear when this device is re-admitted. Group history from before this device existed can\'t be recovered.'**
+  String get restore_groups_device_local_notice;
+
   /// No description provided for @group_info_delete_local_failed.
   ///
   /// In en, this message translates to:

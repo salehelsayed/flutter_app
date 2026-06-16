@@ -33,11 +33,15 @@ import 'package:flutter_app/features/groups/application/trusted_private_group_sy
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_multi_device_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_membership_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/groups/application/admit_sibling_device_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
@@ -123,13 +127,15 @@ class GroupMessageListener {
   final Stream<Map<String, dynamic>>? _groupDiagnosticEvents;
   final GroupPendingKeyRepairRepository? _pendingKeyRepairRepo;
   final GroupPendingMembershipMessageRepository? _pendingMembershipMessageRepo;
+  final GroupPendingReactionRepository? _pendingReactionRepo;
   final RequestGroupKeyRepair _requestGroupKeyRepair;
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
   final RotateGroupKeyAfterRemoteRemoval? _rotateGroupKeyAfterRemoteRemoval;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
+  final AdmitSiblingDeviceFn _admitSiblingDevice;
 
   StreamSubscription<void>? _subscription;
-  StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
+  StreamSubscription<void>? _reactionSubscription;
   StreamSubscription<Map<String, dynamic>>? _diagnosticSubscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
   final _removedController = StreamController<String>.broadcast();
@@ -168,11 +174,13 @@ class GroupMessageListener {
     Stream<Map<String, dynamic>>? groupDiagnosticEvents,
     GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
     GroupPendingMembershipMessageRepository? pendingMembershipMessageRepo,
+    GroupPendingReactionRepository? pendingReactionRepo,
     RequestGroupKeyRepair? requestGroupKeyRepair,
     RecoverGroupDispatcherOverflow? recoverFromDispatcherOverflow,
     RotateGroupKeyAfterRemoteRemoval? rotateGroupKeyAfterRemoteRemoval,
     AccountMigrationNetworkGate accountMigrationNetworkGate =
         allowAccountMigrationNetworkSideEffects,
+    AdmitSiblingDeviceFn? admitSiblingDevice,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -192,11 +200,13 @@ class GroupMessageListener {
        _groupDiagnosticEvents = groupDiagnosticEvents,
        _pendingKeyRepairRepo = pendingKeyRepairRepo,
        _pendingMembershipMessageRepo = pendingMembershipMessageRepo,
+       _pendingReactionRepo = pendingReactionRepo,
        _requestGroupKeyRepair =
            requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
        _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow,
        _rotateGroupKeyAfterRemoteRemoval = rotateGroupKeyAfterRemoteRemoval,
-       _accountMigrationNetworkGate = accountMigrationNetworkGate;
+       _accountMigrationNetworkGate = accountMigrationNetworkGate,
+       _admitSiblingDevice = admitSiblingDevice ?? admitSiblingDeviceIfTrusted;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -298,16 +308,20 @@ class GroupMessageListener {
         );
 
     if (incomingGroupReactions != null) {
-      _reactionSubscription = incomingGroupReactions.listen(
-        _handleLiveReaction,
-        onError: (error) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'GROUP_REACTION_LISTENER_STREAM_ERROR',
-            details: {'error': error.toString()},
+      // asyncMap serializes reaction handling exactly like the message path
+      // above — no two _handleLiveReaction invocations overlap (INV-R6).
+      _reactionSubscription = incomingGroupReactions
+          .asyncMap(_handleLiveReaction)
+          .listen(
+            (_) {},
+            onError: (error) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_REACTION_LISTENER_STREAM_ERROR',
+                details: {'error': error.toString()},
+              );
+            },
           );
-        },
-      );
     }
 
     final diagnostics = _groupDiagnosticEvents;
@@ -326,6 +340,10 @@ class GroupMessageListener {
 
     if (_pendingMembershipMessageRepo != null) {
       unawaited(_flushStartupDurableMembershipDependentMessages());
+    }
+
+    if (_pendingReactionRepo != null) {
+      unawaited(_flushStartupDurablePendingReactions());
     }
   }
 
@@ -352,6 +370,103 @@ class GroupMessageListener {
     _reactionChangeController.add(change);
   }
 
+  /// Replays buffered reactions whose target [message] has just been persisted
+  /// (INV-R4). Each row is DELETED before its [ReactionChange] is emitted, so
+  /// an overlapping startup + live flush can never double-emit (INV-R5).
+  Future<void> _flushPendingReactionsForMessage(GroupMessage message) async {
+    final repo = _pendingReactionRepo;
+    final reactionRepo = _reactionRepo;
+    if (repo == null || reactionRepo == null) return;
+    if (_isStopping || _isDisposed) return;
+
+    List<GroupPendingReaction> buffered;
+    try {
+      buffered = await repo.getPendingReactionsForMessage(
+        groupId: message.groupId,
+        messageId: message.id,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_BUFFER_FLUSH_ERROR',
+        details: {'error': e.toString()},
+      );
+      return;
+    }
+    if (buffered.isEmpty) return;
+    buffered.sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
+
+    for (final pending in buffered) {
+      if (_isStopping || _isDisposed) return;
+      // Atomically claim the row before emitting; if another flush already
+      // took it, skip so the ReactionChange is emitted exactly once.
+      final claimed = await repo.deletePendingReaction(pending.id);
+      if (claimed == 0) continue;
+      try {
+        final (result, change) = await handleIncomingGroupReaction(
+          groupRepo: _groupRepo,
+          reactionRepo: reactionRepo,
+          msgRepo: _msgRepo,
+          groupId: pending.groupId,
+          senderId: pending.senderPeerId,
+          senderDeviceId: pending.senderDeviceId,
+          transportPeerId: pending.transportPeerId,
+          senderPublicKey: pending.senderPublicKey,
+          reactionJson: pending.reactionJson,
+        );
+        if (result == HandleGroupReactionResult.success && change != null) {
+          _emitReactionChange(change);
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REACTION_BUFFER_FLUSHED',
+          details: {
+            'groupId': pending.groupId.length > 8
+                ? pending.groupId.substring(0, 8)
+                : pending.groupId,
+            'messageId': pending.messageId.length > 8
+                ? pending.messageId.substring(0, 8)
+                : pending.messageId,
+            'result': result.name,
+          },
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REACTION_BUFFER_FLUSH_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+    }
+  }
+
+  /// Startup flush: replays buffered reactions whose target message already
+  /// exists locally. Mirrors [_flushStartupDurableMembershipDependentMessages].
+  Future<void> _flushStartupDurablePendingReactions() async {
+    final repo = _pendingReactionRepo;
+    if (repo == null || _isStopping || _isDisposed) return;
+    try {
+      final pending = await repo.getPendingReactions(
+        limit: kMaxBufferedGroupReactionsPerGroup * 8,
+      );
+      final flushedKeys = <String>{};
+      for (final row in pending) {
+        if (_isStopping || _isDisposed) return;
+        final key = '${row.groupId} ${row.messageId}';
+        if (!flushedKeys.add(key)) continue;
+        final message = await _msgRepo.getMessage(row.messageId);
+        if (message == null || message.groupId != row.groupId) continue;
+        await _flushPendingReactionsForMessage(message);
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_BUFFER_STARTUP_FLUSH_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   Future<void> _handleLiveMessage(Map<String, dynamic> data) {
     return _trackInFlight(() async {
       if (!await _allowsInboundAccountSideEffects(
@@ -368,8 +483,12 @@ class GroupMessageListener {
     }());
   }
 
-  void _handleLiveReaction(Map<String, dynamic> data) {
-    _trackInFlight(() async {
+  Future<void> _handleLiveReaction(Map<String, dynamic> data) {
+    // Return the tracked future so the reaction subscription's asyncMap awaits
+    // the WHOLE handler — gate included — before delivering the next reaction.
+    // Without this, two reactions' gate checks + applies could interleave
+    // across their await points (INV-R6).
+    return _trackInFlight(() async {
       if (!await _allowsInboundAccountSideEffects(
         operation: 'group_live_reaction',
         data: data,
@@ -924,6 +1043,29 @@ class GroupMessageListener {
 
       if (result != null) {
         _emitGroupMessage(result);
+        // The target message just landed — replay any reactions that arrived
+        // before it (INV-R4). This single site serves BOTH live and offline
+        // drain, because the drain replays messages through the same
+        // _handleMessage → _emitGroupMessage path.
+        await _flushPendingReactionsForMessage(result);
+        // A real live delivery for this group+epoch supersedes any synthetic
+        // `live:` decryption-failure placeholder from the same sender — clears
+        // the stuck placeholder and prevents the duplicate. Placed after the
+        // message is persisted/emitted so a mid-way crash can never delete the
+        // placeholder without the real message landing.
+        final pendingKeyRepairRepo = _pendingKeyRepairRepo;
+        if (pendingKeyRepairRepo != null &&
+            result.keyGeneration > 0 &&
+            senderId.isNotEmpty) {
+          await supersedeLiveGroupDecryptionRepairForDelivery(
+            pendingKeyRepairRepo: pendingKeyRepairRepo,
+            msgRepo: msgRepo,
+            groupId: groupId,
+            senderPeerId: senderId,
+            transportPeerId: transportPeerId,
+            keyEpoch: result.keyGeneration,
+          );
+        }
         await _requestReceivedMessageKeyRepairIfLocalEpochIsBehind(result);
         final persistedAttachments = _mediaAttachmentRepo == null
             ? <MediaAttachment>[]
@@ -937,6 +1079,16 @@ class GroupMessageListener {
           final group = await _groupRepo.getGroup(groupId);
           final isMuted = group?.isMuted ?? false;
           final groupName = group?.name ?? 'Group';
+          // Local notifications + the mute that suppresses them are device-local:
+          // muting on one device must never silence another device.
+          assert(
+            isGroupMultiDeviceDeviceLocal(
+              GroupMultiDeviceFacet.localNotifications,
+            ),
+          );
+          assert(
+            isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.mutePreference),
+          );
           if (!isMuted) {
             maybeShowNotification(
               notificationService: _notificationService,
@@ -1660,6 +1812,12 @@ class GroupMessageListener {
         ),
         'member_added' ||
         'members_added' => explicitMembershipEventAt ?? envelopeEventAt,
+        // device_announce signs eventAt into its payload; the wire timestamp is
+        // the Go publish time (a different instant), so the signed-audit verify
+        // MUST reconstruct eventAt from the payload or it fails payload_mismatch.
+        'device_announce' =>
+          _parseMembershipEventAt(parsed['eventAt'] as String?) ??
+              envelopeEventAt,
         _ => envelopeEventAt,
       };
       var membershipVersion = _resolveIncomingMembershipVersion(
@@ -1726,8 +1884,13 @@ class GroupMessageListener {
         return;
       }
 
+      // The audit-borne source id (nullable) is the ONLY id used for the
+      // deterministic equal-instant tie-break; the synthesized fallback below
+      // is device-local / JSON-key-order-dependent and must never be persisted
+      // or compared as a tie-breaker.
+      final auditSourceEventId = signedGroupTransitionAuditSourceEventId(parsed);
       final transitionSourceEventId =
-          signedGroupTransitionAuditSourceEventId(parsed) ??
+          auditSourceEventId ??
           (sourceEventId != null && sourceEventId.isNotEmpty
               ? sourceEventId
               : 'system:$groupId:$senderId:$sysType:$timestamp:${jsonEncode(parsed)}');
@@ -1785,6 +1948,7 @@ class GroupMessageListener {
           senderId: senderId,
           senderDeviceId: senderDeviceId,
           transportPeerId: transportPeerId,
+          sysType: sysType,
         );
         final expectedAuditActorBinding =
             await _expectedSignedAuditActorBindingForSystemEvent(
@@ -2063,6 +2227,7 @@ class GroupMessageListener {
             groupId,
             sysType: sysType,
             eventAt: membershipVersion.eventAt,
+            eventId: auditSourceEventId,
           )) {
             return;
           }
@@ -2073,6 +2238,7 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: membershipVersion.eventAt,
+            eventId: auditSourceEventId,
             msgRepo: msgRepo,
           );
         });
@@ -2092,6 +2258,7 @@ class GroupMessageListener {
                 groupId,
                 sysType: sysType,
                 eventAt: membershipVersion.eventAt,
+                eventId: auditSourceEventId,
               )) {
             return;
           }
@@ -2150,6 +2317,15 @@ class GroupMessageListener {
             'newKeyEpoch': parsed['newKeyEpoch'] ?? -1,
           },
         );
+      } else if (sysType == 'device_announce') {
+        await _handleDeviceAnnounce(
+          groupId: groupId,
+          senderId: senderId,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: transportPeerId,
+          parsed: parsed,
+          hasVerifiedSignedAudit: signedTransitionAudit != null,
+        );
       } else {
         emitFlowEvent(
           layer: 'FL',
@@ -2167,6 +2343,65 @@ class GroupMessageListener {
     }
   }
 
+  /// B1b: handle a `device_announce` system event — a same-user sibling device
+  /// announcing itself. Trust is the ACCOUNT-key signed audit (already verified
+  /// upstream in [_handleSystemMessage]); this refuses any announce that did not
+  /// carry a verified audit, then hands the announced device to
+  /// [admitSiblingDeviceIfTrusted], which is itself flag-gated (default-OFF) and
+  /// re-checks the account-key trust before persisting + re-distributing the key.
+  Future<void> _handleDeviceAnnounce({
+    required String groupId,
+    required String senderId,
+    String? senderDeviceId,
+    String? transportPeerId,
+    required Map<String, dynamic> parsed,
+    required bool hasVerifiedSignedAudit,
+  }) async {
+    if (!hasVerifiedSignedAudit) {
+      _emitSignedTransitionAuditRejected(
+        groupId,
+        sysType: 'device_announce',
+        reason: 'device_announce_requires_signed_audit',
+      );
+      return;
+    }
+    final accountKey = await _resolveActorSigningPublicKey(
+      groupId: groupId,
+      senderId: senderId,
+      senderDeviceId: senderDeviceId,
+      transportPeerId: transportPeerId,
+      sysType: 'device_announce',
+    );
+    if (accountKey == null || accountKey.isEmpty) {
+      return;
+    }
+    final device = parsed['announcedDevice'];
+    final deviceMap = device is Map ? device : const <String, dynamic>{};
+    final announcedDeviceId = (deviceMap['deviceId'] as String?)?.trim() ?? '';
+    final announcedTransportPeerId =
+        (deviceMap['transportPeerId'] as String?)?.trim() ?? '';
+    final announcedSigningKey =
+        (deviceMap['deviceSigningPublicKey'] as String?)?.trim() ?? '';
+    if (announcedDeviceId.isEmpty ||
+        announcedTransportPeerId.isEmpty ||
+        announcedSigningKey.isEmpty) {
+      return;
+    }
+    await _admitSiblingDevice(
+      groupRepo: _groupRepo,
+      groupId: groupId,
+      memberPeerId: senderId,
+      announcedDeviceId: announcedDeviceId,
+      announcedTransportPeerId: announcedTransportPeerId,
+      announcedDeviceSigningPublicKey: announcedSigningKey,
+      verifiedAccountSigningPublicKey: accountKey,
+      announcedMlKemPublicKey: deviceMap['mlKemPublicKey'] as String?,
+      announcedKeyPackageId: deviceMap['keyPackageId'] as String?,
+      announcedKeyPackagePublicMaterial:
+          deviceMap['keyPackagePublicMaterial'] as String?,
+    );
+  }
+
   Future<bool> _isBoundSystemEventSenderDevice({
     required String groupId,
     required String senderId,
@@ -2177,6 +2412,14 @@ class GroupMessageListener {
   }) async {
     if (senderId.isEmpty) {
       return false;
+    }
+    // B1b device_announce: the announcing sibling device is, by definition, not
+    // yet on the roster, so there is no per-device binding to check here. Its
+    // trust comes entirely from the ACCOUNT-key signed audit verified at the
+    // dispatch site (_handleDeviceAnnounce refuses an announce without a verified
+    // audit), so the sender-device binding is intentionally skipped.
+    if (sysType == 'device_announce') {
+      return true;
     }
     final member = await _groupRepo.getMember(groupId, senderId);
     if (member == null) {
@@ -2588,10 +2831,19 @@ class GroupMessageListener {
     required String senderId,
     String? senderDeviceId,
     String? transportPeerId,
+    String? sysType,
   }) async {
     final member = await _groupRepo.getMember(groupId, senderId);
     if (member == null) {
       return null;
+    }
+    // device_announce is ALWAYS account-key-signed (the announcing device may not
+    // be rostered, and a re-announce of an already-rostered device must still
+    // resolve the ACCOUNT key — not the per-device key — or its signed audit
+    // would spuriously fail with payload_mismatch and never re-arm delivery).
+    if (sysType == 'device_announce') {
+      final accountKey = member.publicKey?.trim();
+      return accountKey == null || accountKey.isEmpty ? null : accountKey;
     }
     if (member.devices.isNotEmpty) {
       final device = senderDeviceId?.trim().isNotEmpty == true
@@ -2882,10 +3134,20 @@ class GroupMessageListener {
         msgRepo: msgRepo,
         pruneOmittedMembers: false,
       );
-      await _syncGroupConfig(
+      final synced = await _syncGroupConfig(
         groupId,
         await _buildLocalGroupConfigSnapshot(groupId) ?? groupConfig,
+        emitFailureEvent: true,
       );
+      if (!synced) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONFIG_SYNC_FAILED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+      }
     }
 
     if (addedPeerId != null && addedPeerId.isNotEmpty) {
@@ -3019,10 +3281,20 @@ class GroupMessageListener {
         msgRepo: msgRepo,
         pruneOmittedMembers: false,
       );
-      await _syncGroupConfig(
+      final synced = await _syncGroupConfig(
         groupId,
         await _buildLocalGroupConfigSnapshot(groupId) ?? groupConfig,
+        emitFailureEvent: true,
       );
+      if (!synced) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONFIG_SYNC_FAILED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+      }
     }
 
     final addedMembers = validAddedMembers;
@@ -3878,6 +4150,7 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    String? eventId,
     required GroupMessageRepository msgRepo,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
@@ -3966,7 +4239,7 @@ class GroupMessageListener {
       _emitGroupMessage(savedTimelineMessage);
     }
 
-    await _recordMembershipEventWatermark(groupId, eventAt);
+    await _recordMembershipEventWatermark(groupId, eventAt, eventId: eventId);
 
     emitFlowEvent(
       layer: 'FL',
@@ -4215,6 +4488,9 @@ class GroupMessageListener {
         groupRepo: _groupRepo,
         reactionRepo: reactionRepo,
         msgRepo: _msgRepo,
+        // Buffer a live reaction whose target message has not arrived yet, so
+        // it replays when the message lands (INV-R4) instead of being dropped.
+        pendingReactionRepo: _pendingReactionRepo,
         groupId: groupId,
         senderId: senderId,
         senderDeviceId: senderDeviceId,
@@ -4461,6 +4737,7 @@ class GroupMessageListener {
     String groupId, {
     required String? sysType,
     required DateTime? eventAt,
+    String? eventId,
     bool allowEqualVersionReplay = false,
     Map<String, dynamic>? parsed,
     GroupMessageRepository? msgRepo,
@@ -4493,6 +4770,17 @@ class GroupMessageListener {
       return false;
     }
 
+    // Deterministic equal-instant tie-break: an incoming event whose audit
+    // source id strictly out-ranks the stored id is fresh — the higher id wins
+    // on every device, so concurrent same-instant cross-sender events converge.
+    // Degrades to strict-stale when either id is absent (mixed-version safe).
+    if (eventAt.isAtSameMomentAs(watermark) && eventId != null) {
+      final storedEventId = await _storedMembershipEventIdAt(groupId, watermark);
+      if (storedEventId != null && eventId.compareTo(storedEventId) > 0) {
+        return false;
+      }
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED',
@@ -4504,6 +4792,21 @@ class GroupMessageListener {
       },
     );
     return true;
+  }
+
+  /// The stored membership-event tie-breaker id, valid only when the persisted
+  /// `lastMembershipEventAt` is exactly [watermark] (i.e. the watermark came
+  /// from the stored field, not a synthesized createdAt/joinedAt fallback).
+  Future<String?> _storedMembershipEventIdAt(
+    String groupId,
+    DateTime watermark,
+  ) async {
+    final group = await _groupRepo.getGroup(groupId);
+    final storedAt = group?.lastMembershipEventAt?.toUtc();
+    if (storedAt != null && storedAt.isAtSameMomentAs(watermark)) {
+      return group!.lastMembershipEventId;
+    }
+    return null;
   }
 
   Future<bool> _membershipAddAdvancesLocalMember(
@@ -5129,12 +5432,14 @@ class GroupMessageListener {
 
   Future<void> _recordMembershipEventWatermark(
     String groupId,
-    DateTime? eventAt,
-  ) async {
+    DateTime? eventAt, {
+    String? eventId,
+  }) async {
     await recordGroupMembershipEventWatermark(
       groupRepo: _groupRepo,
       groupId: groupId,
       eventAt: eventAt,
+      eventId: eventId,
     );
   }
 

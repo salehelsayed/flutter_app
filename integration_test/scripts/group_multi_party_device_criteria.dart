@@ -69,6 +69,11 @@ const _privateReactionRoundtripRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_reaction_roundtrip',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _privateReactionToggleConvergenceRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_reaction_toggle_convergence',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privateMediaReactionRoundtripRequirement =
     GroupMultiPartyScenarioRequirement(
       scenario: 'private_media_reaction_roundtrip',
@@ -526,6 +531,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'pl012': _pl012Requirement,
   'private_abc_create': _privateAbcCreateRequirement,
   'private_reaction_roundtrip': _privateReactionRoundtripRequirement,
+  'private_reaction_toggle_convergence':
+      _privateReactionToggleConvergenceRequirement,
   'private_media_reaction_roundtrip':
       _privateMediaReactionRoundtripRequirement,
   'private_removed_reaction_rejected':
@@ -1948,6 +1955,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['bob', 'charlie'],
         ),
       ];
+    case 'private_reaction_toggle_convergence':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceToggleTarget',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
     case 'private_media_reaction_roundtrip':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
@@ -3236,6 +3251,11 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_reaction_roundtrip') {
     _validatePl009ReactionRoundtripProof(byRole: byRole, failures: failures);
+    return;
+  }
+
+  if (scenario == 'private_reaction_toggle_convergence') {
+    _validateReactionToggleConvergenceProof(byRole: byRole, failures: failures);
     return;
   }
 
@@ -5557,6 +5577,85 @@ void _validatePl009ReactionRoundtripProof({
         proof['charlieObservedSignal'] != true) {
       failures.add(
         '$role: PL-009 must prove Alice and Charlie observed Bob reaction',
+      );
+    }
+  }
+}
+
+void _validateReactionToggleConvergenceProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  final aliceSent = _mapList(byRole['alice']?['sentMessages'])
+      .where((entry) => _stringValue(entry['key']) == 'aliceToggleTarget')
+      .toList(growable: false);
+  final targetMessageId = aliceSent.length == 1
+      ? _stringValue(aliceSent.single['messageId'])
+      : null;
+  if (targetMessageId == null || targetMessageId.isEmpty) {
+    failures.add('alice: missing RT-001 aliceToggleTarget sent message');
+  }
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['reactionToggleConvergenceProof']);
+    if (proof == null) {
+      failures.add('$role: missing reactionToggleConvergenceProof');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'RT-001') {
+      failures.add('$role: reactionToggleConvergenceProof.rowId must be RT-001');
+    }
+    final activeRoles = _stringList(proof['activeRoles']).toSet();
+    for (final expectedRole in const <String>['alice', 'bob', 'charlie']) {
+      if (!activeRoles.contains(expectedRole)) {
+        failures.add(
+          '$role: reactionToggleConvergenceProof.activeRoles missing '
+          '$expectedRole',
+        );
+      }
+    }
+    if (targetMessageId != null &&
+        _stringValue(proof['targetMessageId']) != targetMessageId) {
+      failures.add(
+        '$role: reactionToggleConvergenceProof targetMessageId mismatch',
+      );
+    }
+    if (_stringValue(proof['reactorRole']) != 'bob') {
+      failures.add('$role: reactionToggleConvergenceProof.reactorRole must be bob');
+    }
+    // The toggle ends on the re-added ✅; converging to the initial 🔥 or to an
+    // empty state would mean the remove or re-add was lost.
+    if (_stringValue(proof['finalEmoji']) != '✅') {
+      failures.add('$role: RT-001 finalEmoji must be the re-added ✅');
+    }
+    if (_stringValue(proof['observedByRole']) != role) {
+      failures.add('$role: reactionToggleConvergenceProof observedByRole mismatch');
+    }
+    if (proof['convergedToFinalEmoji'] != true ||
+        _intValue(proof['finalReactionCount']) != 1) {
+      failures.add(
+        '$role: RT-001 must converge to exactly one final ✅ reaction',
+      );
+    }
+    if (_stringValue(proof['addOutcome']) != 'success' ||
+        _stringValue(proof['removeOutcome']) != 'success' ||
+        _stringValue(proof['readdOutcome']) != 'success') {
+      failures.add(
+        '$role: RT-001 Bob add/remove/re-add must all publish successfully',
+      );
+    }
+    // Observers must SEE the remove propagate — proving convergence isn't just
+    // the final add REPLACE-ing the initial reaction with the remove dropped.
+    if ((role == 'alice' || role == 'charlie') &&
+        proof['observedRemoveEvent'] != true) {
+      failures.add(
+        '$role: RT-001 must observe the remove propagate via the reaction stream',
+      );
+    }
+    if (proof['aliceConvergedSignal'] != true ||
+        proof['charlieConvergedSignal'] != true) {
+      failures.add(
+        '$role: RT-001 must prove Alice and Charlie converged to the final state',
       );
     }
   }

@@ -10,6 +10,7 @@ final class NotificationService: UNNotificationServiceExtension {
     dedupeStore: AppGroupPushDedupeStore(),
     eventEmitter: previewEventEmitter
   )
+  private lazy var recentRemoteShownMarkerStore = RecentRemoteShownMarkerStore()
 
   override func didReceive(
     _ request: UNNotificationRequest,
@@ -43,6 +44,16 @@ final class NotificationService: UNNotificationServiceExtension {
       if #available(iOS 15.0, *) {
         bestAttemptContent.interruptionLevel = .passive
       }
+    }
+    // 04-P0 SI-5: record that the NSE actually surfaced this push into the
+    // shared app-group container so a duplicate Dart-side banner is suppressed
+    // even if iOS never schedules the Dart isolate for this FCM copy. Skip the
+    // marker when the preview is suppressed (muted group): nothing was surfaced
+    // to dedupe against, and the Dart `isMuted` gate never consumes such a
+    // marker — writing one only orphans an inode that accumulates until the next
+    // cold-start prune.
+    if !preview.suppress {
+      recentRemoteShownMarkerStore?.mark(userInfo: bestAttemptContent.userInfo)
     }
 
     contentHandler(bestAttemptContent)

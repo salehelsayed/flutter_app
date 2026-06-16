@@ -27,8 +27,9 @@ class FakeReactionRepository implements ReactionRepository {
   @override
   Future<List<MessageReaction>> getReactionsForMessage(
       String messageId) async {
+    // Tombstoned (removed) reactions are hidden from UI loaders (INV-T1).
     return _reactions
-        .where((r) => r.messageId == messageId)
+        .where((r) => r.messageId == messageId && r.removedAt == null)
         .toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
@@ -39,7 +40,7 @@ class FakeReactionRepository implements ReactionRepository {
     final ids = messageIds.toSet();
     final Map<String, List<MessageReaction>> result = {};
     for (final r in _reactions) {
-      if (ids.contains(r.messageId)) {
+      if (ids.contains(r.messageId) && r.removedAt == null) {
         result.putIfAbsent(r.messageId, () => []).add(r);
       }
     }
@@ -47,12 +48,37 @@ class FakeReactionRepository implements ReactionRepository {
   }
 
   @override
-  Future<int> removeReaction(String messageId, String senderPeerId) async {
+  Future<MessageReaction?> getReactionForSenderIncludingRemoved({
+    required String messageId,
+    required String senderPeerId,
+  }) async {
+    for (final r in _reactions) {
+      if (r.messageId == messageId && r.senderPeerId == senderPeerId) {
+        return r;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<int> removeReaction(
+    String messageId,
+    String senderPeerId, {
+    String? removedAtTimestamp,
+  }) async {
     removeReactionCallCount++;
-    final before = _reactions.length;
-    _reactions.removeWhere(
-        (r) => r.messageId == messageId && r.senderPeerId == senderPeerId);
-    return before - _reactions.length;
+    // Soft-delete: tombstone the existing row in place (INV-T1).
+    final removedAt =
+        removedAtTimestamp ?? DateTime.now().toUtc().toIso8601String();
+    var affected = 0;
+    for (var i = 0; i < _reactions.length; i++) {
+      final r = _reactions[i];
+      if (r.messageId == messageId && r.senderPeerId == senderPeerId) {
+        _reactions[i] = r.copyWith(removedAt: removedAt);
+        affected++;
+      }
+    }
+    return affected;
   }
 
   @override

@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import Security
@@ -451,6 +452,102 @@ final class AppGroupPushDedupeStore: PushDedupeStoring {
     return value.unicodeScalars.map { scalar in
       allowed.contains(scalar) ? String(scalar) : "_"
     }.joined()
+  }
+}
+
+// 04-P0 SI-5: the NSE drops a per-message "already shown" marker into the SHARED
+// app-group container so the Dart RecentRemoteNotificationGate can suppress a
+// duplicate Dart-side banner even when iOS never schedules the Dart isolate.
+// The marker filename is sha256 hex of the EXACT Dart gate message key, so the
+// two processes name the same file for the same push. Locked by the SI-5
+// contract test.
+final class RecentRemoteShownMarkerStore {
+  private let directory: URL?
+
+  init?(appGroupIdentifier: String = mknoonSharedAppGroupIdentifier) {
+    guard let containerURL = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: appGroupIdentifier
+    ) else {
+      return nil
+    }
+    let dir = containerURL.appendingPathComponent(
+      "RecentRemoteShown",
+      isDirectory: true
+    )
+    try? FileManager.default.createDirectory(
+      at: dir,
+      withIntermediateDirectories: true
+    )
+    directory = dir
+  }
+
+  /// Test seam: inject the marker directory directly (no real app-group needed).
+  init(directory: URL) {
+    try? FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    self.directory = directory
+  }
+
+  /// The EXACT Dart `RecentRemoteNotificationGate` message key for this push, or
+  /// nil if it is not a message-aware target. Mirrors Dart
+  /// `NotificationRouteTarget.fromRemoteMessageData` + `.toPayload`, then the
+  /// gate's `_messageKey('message:<payload>|<messageId>')`.
+  /// NOTE: deliberately does NOT use `PushRouteData.messageId` (that accepts the
+  /// `m` alias Dart's `messageIdFromRemoteMessageData` does not) so the key
+  /// matches Dart byte-for-byte.
+  static func gateMessageKey(userInfo: [AnyHashable: Any]) -> String? {
+    let data = PushRouteData(userInfo: userInfo)
+    guard let messageId = data.string(
+      "message_id",
+      aliases: "messageId", "id", "msgId"
+    ) else {
+      return nil
+    }
+    switch data.string("type") {
+    case "group_message":
+      guard let groupId = data.string(
+        "groupId",
+        aliases: "group_id", "gid", "conversation_id"
+      ) else {
+        return nil
+      }
+      // Dart group toPayload (with messageId) = 'group:<gid>|message:<id>'.
+      return "message:group:\(groupId)|message:\(messageId)|\(messageId)"
+    case "new_message":
+      guard let peerId = data.string("sender_id", aliases: "from") else {
+        return nil
+      }
+      return "message:\(peerId)|\(messageId)"
+    default:
+      return nil
+    }
+  }
+
+  static func markerName(forKey key: String) -> String {
+    SHA256.hash(data: Data(key.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+  }
+
+  /// Atomically records that the NSE handled this push. Idempotent (a duplicate
+  /// O_EXCL create returns EEXIST → still "present"). No-op for non-message
+  /// pushes or when the container is unavailable.
+  @discardableResult
+  func mark(userInfo: [AnyHashable: Any]) -> Bool {
+    guard let directory, let key = Self.gateMessageKey(userInfo: userInfo) else {
+      return false
+    }
+    let path = directory.appendingPathComponent(
+      Self.markerName(forKey: key)
+    ).path
+    let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+    if fd >= 0 {
+      close(fd)
+      return true
+    }
+    return errno == EEXIST
   }
 }
 

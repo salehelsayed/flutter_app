@@ -183,7 +183,7 @@ void main() {
   });
 
   test(
-    'main.dart binds the pending retrier overlap guard to _isResuming',
+    'main.dart binds the pending retrier overlap guard to _isResuming and the group recovery gate',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);
 
@@ -191,8 +191,12 @@ void main() {
       expect(
         mainSource,
         contains(
-          'widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(\n      () => _isResuming,\n    );',
+          'widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(\n      () => _isResuming || isGroupRecoveryInProgress(),\n    );',
         ),
+        reason:
+            'the retrier overlap guard must also observe the group recovery '
+            'gate so the startup fire-and-forget recovery pass suppresses '
+            'retrier sweeps, not just the _isResuming app-resume path',
       );
     },
   );

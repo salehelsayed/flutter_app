@@ -13,6 +13,14 @@ class GroupPendingKeyRepairRepositoryImpl
     int limit,
   })
   dbLoadPendingGroupKeyRepairsForEpoch;
+  final Future<List<Map<String, Object?>>> Function({int limit})
+  dbLoadAllPendingGroupKeyRepairs;
+  final Future<List<Map<String, Object?>>> Function({
+    required String groupId,
+    int limit,
+  })
+  dbLoadPendingGroupKeyRepairsForGroup;
+  final Future<void> Function(String id) dbDeleteGroupPendingKeyRepair;
   final Future<void> Function(
     String id, {
     required String? lastError,
@@ -31,6 +39,9 @@ class GroupPendingKeyRepairRepositoryImpl
     required this.dbUpsertGroupPendingKeyRepair,
     required this.dbLoadGroupPendingKeyRepair,
     required this.dbLoadPendingGroupKeyRepairsForEpoch,
+    required this.dbLoadAllPendingGroupKeyRepairs,
+    required this.dbLoadPendingGroupKeyRepairsForGroup,
+    required this.dbDeleteGroupPendingKeyRepair,
     required this.dbRecordGroupPendingKeyRepairAttempt,
     required this.dbFinalizeGroupPendingKeyRepair,
   });
@@ -65,6 +76,31 @@ class GroupPendingKeyRepairRepositoryImpl
       limit: limit,
     );
     return rows.map(GroupPendingKeyRepair.fromMap).toList();
+  }
+
+  @override
+  Future<List<GroupPendingKeyRepair>> getAllPendingRepairs({
+    int limit = 200,
+  }) async {
+    final rows = await dbLoadAllPendingGroupKeyRepairs(limit: limit);
+    return rows.map(GroupPendingKeyRepair.fromMap).toList();
+  }
+
+  @override
+  Future<List<GroupPendingKeyRepair>> getPendingRepairsForGroup({
+    required String groupId,
+    int limit = 100,
+  }) async {
+    final rows = await dbLoadPendingGroupKeyRepairsForGroup(
+      groupId: groupId,
+      limit: limit,
+    );
+    return rows.map(GroupPendingKeyRepair.fromMap).toList();
+  }
+
+  @override
+  Future<void> deleteRepair(String id) async {
+    await dbDeleteGroupPendingKeyRepair(id);
   }
 
   @override

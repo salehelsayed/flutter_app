@@ -76,6 +76,23 @@ abstract class RemovedGroupMemberSnapshotRepository {
   Future<GroupMember?> getRemovedMemberSnapshot(String groupId, String peerId);
 }
 
+/// Optional repository capability (B4) for the persisted "last known device-set"
+/// baseline a group member's per-device safety number is compared against.
+abstract class GroupMemberDeviceSnapshotRepository {
+  /// Persists/replaces [member]'s current active device set as the trusted
+  /// baseline (TOFU). [savedAt] timestamps the write.
+  Future<void> saveGroupMemberDeviceSnapshot(
+    GroupMember member, {
+    required DateTime savedAt,
+  });
+
+  /// The last-known device set for (groupId, peerId), or null if none saved yet.
+  Future<List<GroupMemberDeviceIdentity>?> loadGroupMemberDeviceSnapshot(
+    String groupId,
+    String peerId,
+  );
+}
+
 /// Optional repository capability for locally generated rotation keys that
 /// have not been promoted to the committed group key set yet.
 abstract class GroupKeyRotationDraftRepository {

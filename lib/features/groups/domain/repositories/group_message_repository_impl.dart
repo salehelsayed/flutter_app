@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_message.dart';
 import '../models/group_message_receipt.dart';
+import '../models/group_multi_device_policy.dart';
 import '../models/group_thread_summary.dart';
 import '../utils/group_message_ordering.dart';
 import 'group_thread_summary_repository.dart';
@@ -396,16 +397,20 @@ class GroupMessageRepositoryImpl
 
   @override
   Future<int> getUnreadCount(String groupId) async {
+    // Unread counts are device-local: each install tracks what *it* has seen.
+    assert(isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.unreadCounters));
     return dbCountUnreadGroupMessages(groupId);
   }
 
   @override
   Future<int> getTotalUnreadCount() async {
+    assert(isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.unreadCounters));
     return dbCountTotalUnreadGroupMessages();
   }
 
   @override
   Future<void> markAsRead(String groupId) async {
+    assert(isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.unreadCounters));
     await dbMarkGroupMessagesAsRead(groupId);
   }
 

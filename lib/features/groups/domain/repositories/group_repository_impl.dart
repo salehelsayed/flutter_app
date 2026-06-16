@@ -22,6 +22,7 @@ class GroupRepositoryImpl
     implements
         GroupRepository,
         RemovedGroupMemberSnapshotRepository,
+        GroupMemberDeviceSnapshotRepository,
         GroupKeyRotationDraftRepository {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
@@ -48,6 +49,10 @@ class GroupRepositoryImpl
   dbInsertRemovedGroupMemberSnapshot;
   final Future<Map<String, Object?>?> Function(String groupId, String peerId)?
   dbLoadRemovedGroupMemberSnapshot;
+  final Future<void> Function(Map<String, Object?> row, String savedAt)?
+  dbUpsertGroupMemberDeviceSnapshot;
+  final Future<Map<String, Object?>?> Function(String groupId, String peerId)?
+  dbLoadGroupMemberDeviceSnapshot;
 
   // --- Key DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupKey;
@@ -89,6 +94,8 @@ class GroupRepositoryImpl
     required this.dbDeleteAllGroupMembers,
     this.dbInsertRemovedGroupMemberSnapshot,
     this.dbLoadRemovedGroupMemberSnapshot,
+    this.dbUpsertGroupMemberDeviceSnapshot,
+    this.dbLoadGroupMemberDeviceSnapshot,
     required this.dbInsertGroupKey,
     required this.dbLoadLatestGroupKey,
     required this.dbLoadGroupKeyByGeneration,
@@ -256,6 +263,44 @@ class GroupRepositoryImpl
       return null;
     }
     return GroupMember.fromMap(row);
+  }
+
+  @override
+  Future<void> saveGroupMemberDeviceSnapshot(
+    GroupMember member, {
+    required DateTime savedAt,
+  }) async {
+    final upsert = dbUpsertGroupMemberDeviceSnapshot;
+    if (upsert == null) {
+      return;
+    }
+    await upsert({
+      'group_id': member.groupId,
+      'peer_id': member.peerId,
+      'public_key': member.publicKey,
+      'ml_kem_public_key': member.mlKemPublicKey,
+      'devices_json': GroupMemberDeviceIdentity.listToJsonString(
+        member.activeDevicesWithLegacyFallback(),
+      ),
+    }, savedAt.toUtc().toIso8601String());
+  }
+
+  @override
+  Future<List<GroupMemberDeviceIdentity>?> loadGroupMemberDeviceSnapshot(
+    String groupId,
+    String peerId,
+  ) async {
+    final load = dbLoadGroupMemberDeviceSnapshot;
+    if (load == null) {
+      return null;
+    }
+    final row = await load(groupId, peerId);
+    if (row == null) {
+      return null;
+    }
+    return GroupMemberDeviceIdentity.listFromJsonString(
+      row['devices_json'] as String?,
+    );
   }
 
   @override

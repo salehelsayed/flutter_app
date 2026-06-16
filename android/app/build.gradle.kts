@@ -95,12 +95,6 @@ android {
     }
 }
 
-repositories {
-    flatDir {
-        dirs("libs")
-    }
-}
-
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
@@ -113,9 +107,24 @@ fun isValidAar(f: File): Boolean = f.exists() && f.length() > 1024
 
 tasks.register("buildGoAar") {
     val aar = file("libs/GoMknoon.aar")
+    val sourcesJar = file("libs/GoMknoon-sources.jar")
+    val goRoot = rootProject.file("../go-mknoon")
     val ensureBindingsScript = rootProject.file("../scripts/ensure_go_android_bindings.sh")
+    val verifyBindingsScript = rootProject.file("../scripts/verify_gomobile_bindings.sh")
+    val goInputs = fileTree(goRoot) {
+        include("**/*.go", "go.mod", "go.sum")
+        exclude("**/*_test.go")
+    }
+    val kotlinBridgeInputs = fileTree("src/main/kotlin") {
+        include("**/GoBridge.kt")
+    }
+
+    inputs.files(goInputs)
+    inputs.files(kotlinBridgeInputs)
+    inputs.file(ensureBindingsScript)
+    inputs.file(verifyBindingsScript)
     outputs.file(aar)
-    outputs.upToDateWhen { false }
+    outputs.file(sourcesJar)
     doLast {
         @Suppress("DEPRECATION")
         exec {

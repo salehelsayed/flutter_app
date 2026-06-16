@@ -60,6 +60,8 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryPendingIntroductionDeliveriesFn,
   Future<int> Function()? retryFailedGroupInboxStoresFn, // Section 4
   Future<int> Function()? drainPendingKeyDistributionsFn, // Finding 03 Slice 2
+  Future<int> Function()?
+  retryAllPendingGroupKeyRepairsFn, // Finding 02 UDM-B (Step 8i)
   Future<void> Function()? retryPushRegistrationFn,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
@@ -634,6 +636,29 @@ Future<bool?> handleAppResumed({
         emitFlowEvent(
           layer: 'FL',
           event: 'DRAIN_PENDING_KEY_DISTRIBUTIONS_RESUME_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+    }
+
+    // Step 8i: Finding 02 (UDM-B) — sweep ALL persisted pending group-key
+    // repairs so they re-fire after resume even without a fresh
+    // key-update/invite event for their exact (group, epoch). Ungated (matches
+    // the Step 8h precedent); internally cheap when nothing is pending. Runs
+    // AFTER the Step-3c group inbox drain and the Step 8h key-distribution drain
+    // so any freshly-arrived keys are already present.
+    if (retryAllPendingGroupKeyRepairsFn != null) {
+      try {
+        final count = await retryAllPendingGroupKeyRepairsFn();
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 8i: retryAllPendingGroupKeyRepairs=$count',
+          );
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_ALL_PENDING_GROUP_KEY_REPAIRS_RESUME_ERROR',
           details: {'error': e.toString()},
         );
       }

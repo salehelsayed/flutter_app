@@ -371,10 +371,12 @@ func (b *memoryGroupInboxBackend) StoreWithRecipients(
 		}
 	}
 
-	// Cap enforcement
+	// Cap enforcement. Each dropped (oldest) message is surfaced via
+	// groupInboxCappedCounter (relay_group_inbox_capped_total) so operators
+	// have visibility into group backlog truncation (finding 06 Phase 2).
 	if len(msgs) >= b.maxPerGroup {
 		overflow := len(msgs) - b.maxPerGroup + 1
-		_ = overflow
+		groupInboxCappedCounter.Add(float64(overflow))
 		msgs = msgs[overflow:]
 	}
 

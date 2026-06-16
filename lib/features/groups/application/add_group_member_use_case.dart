@@ -3,6 +3,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -131,6 +132,18 @@ Future<void> addGroupMember({
   required GroupMember newMember,
   required String selfPeerId,
   bool syncBridgeConfig = true,
+  // B5 (Part B, optional forward secrecy): when opted in AND the caller supplies
+  // identity credentials, rotate the group key after a successful add so a joiner
+  // cannot read prior-epoch live/GossipSub traffic. Default OFF — enabling it adds
+  // a full key rotation + per-device distribution to every add, a deliberate
+  // cost/latency trade-off the caller opts into. Rotation is creator-gated inside
+  // rotateAndDistributeGroupKey, so non-creator adders are a safe no-op.
+  bool rotateKeyOnAdd = false,
+  String? senderPublicKey,
+  String? senderPrivateKey,
+  String? senderUsername,
+  Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  Future<bool> Function(String peerId, String message)? storeP2PMessageInInbox,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -387,6 +400,46 @@ Future<void> addGroupMember({
           },
         );
         rethrow;
+      }
+
+      // B5: forward rotation on add. Runs ONLY after the member is added AND the
+      // config-sync committed (the catch above rethrows on sync failure, so we
+      // never reach here with an un-synced member). A rotation failure is
+      // best-effort/logged and does NOT revert the member — the member is
+      // legitimately added, so reverting would diverge state; missing forward
+      // secrecy on one add is the acceptable degradation.
+      if (rotateKeyOnAdd &&
+          senderPublicKey != null &&
+          senderPrivateKey != null &&
+          senderUsername != null) {
+        try {
+          final outcome = await rotateAndDistributeGroupKey(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: groupId,
+            selfPeerId: selfPeerId,
+            senderPublicKey: senderPublicKey,
+            senderPrivateKey: senderPrivateKey,
+            senderUsername: senderUsername,
+            sendP2PMessage: sendP2PMessage,
+            storeP2PMessageInInbox: storeP2PMessageInInbox,
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ADD_MEMBER_FORWARD_ROTATION',
+            details: {
+              'groupId': _diagnosticPrefix(groupId),
+              'rotated': outcome.rotated,
+              'fullyDistributed': outcome.fullyDistributed,
+            },
+          );
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ADD_MEMBER_FORWARD_ROTATION_ERROR',
+            details: {'groupId': _diagnosticPrefix(groupId), 'error': e.toString()},
+          );
+        }
       }
     },
   );

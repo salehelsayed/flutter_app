@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
+import 'package:flutter_app/features/groups/application/group_device_announce_marker.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -203,6 +204,20 @@ Future<RestoreIdentityResult> restoreIdentityFromMnemonic({
         emitFlowEvent(
           layer: 'FL',
           event: 'KEY_REANNOUNCE_MARK_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+    }
+    if (secureKeyStore != null) {
+      // R1 (B1b): flag this fresh restore so the startup hook announces this
+      // device's new per-device identity to its groups (one-shot; inert until
+      // kMultiDeviceSyncEnabled is on). Best-effort — restore already succeeded.
+      try {
+        await markGroupDeviceAnnouncePending(secureKeyStore);
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_DEVICE_ANNOUNCE_MARK_ERROR',
           details: {'error': e.toString()},
         );
       }

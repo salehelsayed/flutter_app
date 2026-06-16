@@ -140,6 +140,72 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(decryptor.groupCalls, 0)
   }
 
+  // 04-P0 SI-5 — the NSE marker writer must reproduce the EXACT Dart gate
+  // message key (sha256-named sidecar file in the app-group container) so the
+  // Dart RecentRemoteNotificationGate suppresses the duplicate Dart banner.
+  // This is the Swift half of the cross-process key-parity contract; the Dart
+  // half lives in recent_remote_notification_gate_test.dart (SI-5 group).
+  func testRecentRemoteShownMarkerWriterReproducesTheDartGateKey() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("si5-marker-\(UUID().uuidString)")
+    let store = RecentRemoteShownMarkerStore(directory: dir)
+
+    func markerExists(_ key: String) -> Bool {
+      FileManager.default.fileExists(
+        atPath: dir.appendingPathComponent(
+          RecentRemoteShownMarkerStore.markerName(forKey: key)
+        ).path
+      )
+    }
+
+    // 1:1 — key = message:<peerId>|<messageId>
+    let oneToOne: [AnyHashable: Any] = [
+      "type": "new_message", "sender_id": "peer-alice", "message_id": "msg-1",
+    ]
+    XCTAssertEqual(
+      RecentRemoteShownMarkerStore.gateMessageKey(userInfo: oneToOne),
+      "message:peer-alice|msg-1"
+    )
+    XCTAssertTrue(store.mark(userInfo: oneToOne))
+    XCTAssertTrue(markerExists("message:peer-alice|msg-1"))
+    XCTAssertTrue(store.mark(userInfo: oneToOne)) // idempotent duplicate push
+
+    // group — key = message:group:<gid>|message:<id>|<id> (double message:)
+    let group: [AnyHashable: Any] = [
+      "type": "group_message", "groupId": "g-1", "message_id": "m-9",
+    ]
+    XCTAssertEqual(
+      RecentRemoteShownMarkerStore.gateMessageKey(userInfo: group),
+      "message:group:g-1|message:m-9|m-9"
+    )
+    XCTAssertTrue(store.mark(userInfo: group))
+    XCTAssertTrue(markerExists("message:group:g-1|message:m-9|m-9"))
+
+    // Non-message push -> no key, no marker.
+    XCTAssertNil(
+      RecentRemoteShownMarkerStore.gateMessageKey(userInfo: ["type": "group_invite"])
+    )
+    XCTAssertFalse(store.mark(userInfo: ["type": "group_invite"]))
+
+    // 'm'-only messageId is NOT used (Dart's deriver ignores 'm') -> no key,
+    // so both sides skip consistently.
+    XCTAssertNil(
+      RecentRemoteShownMarkerStore.gateMessageKey(userInfo: [
+        "type": "new_message", "sender_id": "peer-x", "m": "msg-z",
+      ])
+    )
+
+    // older-relay aliases: 'from' (sender) + 'id' (messageId).
+    XCTAssertEqual(
+      RecentRemoteShownMarkerStore.gateMessageKey(userInfo: [
+        "type": "new_message", "from": "peer-bob", "id": "msg-2",
+      ]),
+      "message:peer-bob|msg-2"
+    )
+
+    try? FileManager.default.removeItem(at: dir)
+  }
+
   func testDecryptsNativeV3GroupPreviewFromEncryptedExtra() throws {
     let plaintext = try jsonString([
       "text": "Hello group",

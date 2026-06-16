@@ -716,6 +716,7 @@
   "group_info_notifications_muted": "Mitteilungen für diese Gruppe stummgeschaltet",
   "group_info_notifications_restored": "Mitteilungen für diese Gruppe wieder aktiviert",
   "group_notification_catching_up": "Diese Gruppe wird noch synchronisiert – versuche es gleich erneut.",
+  "restore_groups_device_local_notice": "Deine Gruppen erscheinen wieder, sobald dieses Gerät erneut zugelassen wird. Gruppenverlauf aus der Zeit vor diesem Gerät kann nicht wiederhergestellt werden.",
   "group_info_delete_local_failed": "Gruppe konnte lokal nicht gelöscht werden",
   "group_info_publish_member_removal_failed": "Entfernen des Mitglieds konnte nicht veröffentlicht werden",
   "group_info_rotate_key_failed": "Gruppenschlüssel konnte nach dem Entfernen nicht rotiert werden",

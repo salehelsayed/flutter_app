@@ -63,6 +63,33 @@ class _TimeoutCommandBridge extends FakeBridge {
   }
 }
 
+/// Fails `group:join` for one specific groupId only; every other group joins
+/// normally. Lets a test prove that one transient per-group error does not
+/// erase the recoverable outcomes of the other groups.
+class _SelectiveJoinFailureBridge extends FakeBridge {
+  final String failGroupId;
+
+  _SelectiveJoinFailureBridge({required this.failGroupId});
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:join') {
+      final payload = parsed['payload'] as Map<String, dynamic>?;
+      if (payload != null && payload['groupId'] == failGroupId) {
+        sendCallCount++;
+        lastSentMessage = message;
+        sentMessages.add(message);
+        lastCommand = cmd;
+        commandLog.add(cmd!);
+        throw TimeoutException('Simulated join failure for $failGroupId');
+      }
+    }
+    return super.send(message);
+  }
+}
+
 void main() {
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -1748,5 +1775,157 @@ void main() {
       expect(result.skippedNoKeyCount, 0);
       expect(result.errorCount, 0);
     });
+  });
+
+  group('Phase 3 — per-recoverable-set ack eligibility', () {
+    GroupMember adminMember(String groupId) {
+      return GroupMember(
+        groupId: groupId,
+        peerId: 'alice',
+        username: 'Alice',
+        role: MemberRole.admin,
+        publicKey: 'pk-alice',
+        joinedAt: DateTime.now().toUtc(),
+      );
+    }
+
+    GroupKeyInfo keyFor(String groupId) {
+      return GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'key-base64',
+        createdAt: DateTime.now().toUtc(),
+      );
+    }
+
+    test('a no-key group does NOT block canAcknowledgeGroupRecovery '
+        '(the recoverable set acks; no sticky needsGroupRecovery)', () async {
+      await seedGroup(
+        groupId: 'group-with-key',
+        name: 'Has Key',
+        members: [adminMember('group-with-key')],
+        keyInfo: keyFor('group-with-key'),
+      );
+      await seedGroup(
+        groupId: 'group-no-key',
+        name: 'No Key',
+        members: [adminMember('group-no-key')],
+      );
+
+      final result = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+      );
+
+      expect(result.skippedNoKeyCount, 1);
+      expect(result.errorCount, 0);
+      // The fix: a permanently-un-rejoinable no-key group no longer blocks
+      // the node-wide ack (would be false under the old whole-batch rule).
+      expect(result.canAcknowledgeGroupRecovery, isTrue);
+      expect(result.perGroupOutcomes['group-with-key'], RejoinOutcome.joined);
+      expect(
+        result.perGroupOutcomes['group-no-key'],
+        RejoinOutcome.skippedNoKey,
+      );
+    });
+
+    test('a transient per-group rejoin error STILL blocks '
+        'canAcknowledgeGroupRecovery (conservative node-wide ack)', () async {
+      bridge = _TimeoutCommandBridge('group:join');
+      await seedGroup(
+        groupId: 'group-fail',
+        name: 'Fails To Join',
+        members: [adminMember('group-fail')],
+        keyInfo: keyFor('group-fail'),
+      );
+
+      final result = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+      );
+
+      expect(result.errorCount, 1);
+      expect(result.canAcknowledgeGroupRecovery, isFalse);
+      expect(result.perGroupOutcomes['group-fail'], RejoinOutcome.error);
+    });
+
+    test(
+      'one transient error does not erase the recoverable outcomes of the '
+      'other groups (per-group map is independent of the ack gate)',
+      () async {
+        await seedGroup(
+          groupId: 'group-ok',
+          name: 'OK',
+          members: [adminMember('group-ok')],
+          keyInfo: keyFor('group-ok'),
+        );
+        await seedGroup(
+          groupId: 'group-no-key',
+          name: 'No Key',
+          members: [adminMember('group-no-key')],
+        );
+        // group-bad fails only on join; group-ok still joins.
+        bridge = _SelectiveJoinFailureBridge(failGroupId: 'group-bad');
+        await seedGroup(
+          groupId: 'group-bad',
+          name: 'Bad',
+          members: [adminMember('group-bad')],
+          keyInfo: keyFor('group-bad'),
+        );
+
+        final result = await rejoinGroupTopics(
+          bridge: bridge,
+          groupRepo: groupRepo,
+        );
+
+        expect(result.perGroupOutcomes['group-ok'], RejoinOutcome.joined);
+        expect(
+          result.perGroupOutcomes['group-no-key'],
+          RejoinOutcome.skippedNoKey,
+        );
+        expect(result.perGroupOutcomes['group-bad'], RejoinOutcome.error);
+        // The transient error still withholds the node-wide ack this pass.
+        expect(result.canAcknowledgeGroupRecovery, isFalse);
+      },
+    );
+
+    test(
+      'a dissolved group is recorded skippedDissolved and does not block ack',
+      () async {
+        final now = DateTime.now().toUtc();
+        await seedGroup(
+          groupId: 'group-active',
+          name: 'Active',
+          members: [adminMember('group-active')],
+          keyInfo: keyFor('group-active'),
+        );
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'group-dissolved',
+            name: 'Dissolved',
+            type: GroupType.chat,
+            topicName: 'topic-group-dissolved',
+            createdAt: now,
+            createdBy: 'admin-peer',
+            myRole: GroupRole.admin,
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'admin-peer',
+          ),
+        );
+
+        final result = await rejoinGroupTopics(
+          bridge: bridge,
+          groupRepo: groupRepo,
+        );
+
+        expect(result.perGroupOutcomes['group-active'], RejoinOutcome.joined);
+        expect(
+          result.perGroupOutcomes['group-dissolved'],
+          RejoinOutcome.skippedDissolved,
+        );
+        expect(result.canAcknowledgeGroupRecovery, isTrue);
+      },
+    );
   });
 }

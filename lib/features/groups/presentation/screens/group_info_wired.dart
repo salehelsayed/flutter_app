@@ -38,6 +38,7 @@ import 'package:flutter_app/features/groups/application/update_group_member_role
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/application/group_member_device_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -328,9 +329,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       }
       try {
         final contact = await widget.contactRepo.getContact(member.peerId);
-        final safety = GroupMemberIdentitySafety.compare(
+        final safety = await resolveGroupMemberDeviceSafety(
           member: member,
           savedContact: contact,
+          snapshotRepo: asGroupMemberDeviceSnapshotRepository(widget.groupRepo),
         );
         if (safety != null) {
           memberSafetyByPeerId[member.peerId] = safety;
@@ -1231,6 +1233,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         _group.id,
       );
 
+      // Pass no explicit eventAt: the use case mints monotonically from the
+      // wall clock so a clock-skewed watermark can never self-block this
+      // legitimate local toggle. The audit/timeline below still carry
+      // [changedAt]; reconciling those into one canonical event id is S3's job.
       await updateGroupMemberRole(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
@@ -1238,7 +1244,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         memberPeerId: member.peerId,
         role: nextRole,
         selfPeerId: identity.peerId,
-        eventAt: changedAt,
       );
 
       final group = await widget.groupRepo.getGroup(_group.id);
@@ -1506,11 +1511,18 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
 
     final changedAt = DateTime.now().toUtc();
+    // Snapshot for an honest rollback: if the local metadata is persisted but
+    // the broadcast does not actually leave this device, we revert rather than
+    // claim success while peers received nothing.
+    final preEditGroup = _group;
+    var metadataPersisted = false;
+    String? committedTimelineMessageId;
     final l10n = AppLocalizations.of(context)!;
     final noIdentityMessage = l10n.group_info_no_identity;
     final uploadPhotoFailedMessage = l10n.group_info_upload_photo_failed;
     final signMetadataFailedMessage = l10n.group_info_sign_metadata_failed;
     final recoveryWaitMessage = l10n.group_edit_recovery_waiting;
+    final detailsUpdateFailedMessage = l10n.group_info_details_update_failed;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
@@ -1666,6 +1678,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
 
+      // The local DB now holds the new metadata (and the avatar file is
+      // committed); from here a broadcast failure must roll this back.
+      metadataPersisted = true;
+
       final signedSysText = sysText;
       final signedMembers = refreshedMembers;
       if (signedSysText == null || signedMembers == null) {
@@ -1680,11 +1696,12 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
       if (widget.msgRepo != null) {
         await widget.msgRepo!.saveMessage(metadataTimelineMessage);
+        committedTimelineMessageId = metadataTimelineMessage.id;
       }
 
       final sourceMessageId =
           'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
-      await callGroupPublish(
+      final publishResult = await callGroupPublish(
         widget.bridge,
         groupId: _group.id,
         text: signedSysText,
@@ -1698,6 +1715,18 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderKeyPackageId: senderBinding.keyPackageId,
         messageId: sourceMessageId,
       );
+      // [callGroupPublish] returns {ok:false} (e.g. BRIDGE_TIMEOUT) on a soft
+      // failure instead of throwing; discarding it previously showed the
+      // success snackbar while peers received nothing. Route soft failures
+      // through the same revert/error path as a hard throw.
+      if (publishResult['ok'] != true) {
+        final publishError = publishResult['errorMessage']?.toString();
+        throw StateError(
+          publishError != null && publishError.isNotEmpty
+              ? publishError
+              : detailsUpdateFailedMessage,
+        );
+      }
 
       final recipientPeerIds = signedMembers
           .where((member) => member.peerId != identity.peerId)
@@ -1779,6 +1808,29 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         ),
       );
     } catch (e) {
+      // If the metadata was persisted locally but the broadcast did not
+      // succeed (hard throw OR soft publish failure), roll the optimistic edit
+      // back so we never report success while peers received nothing.
+      if (metadataPersisted) {
+        final persisted = await widget.groupRepo.getGroup(_group.id);
+        final persistedMetadataAt = persisted?.lastMetadataEventAt;
+        // Monotonicity guard: never clobber a newer remote metadata that landed
+        // between our persist and this failure.
+        final newerRemoteLanded =
+            persistedMetadataAt != null &&
+            persistedMetadataAt.isAfter(changedAt);
+        if (persisted != null && !newerRemoteLanded) {
+          // Restores the GroupModel fields (name/description/avatar*). The
+          // on-disk avatar file committed in beforePersist is NOT restored
+          // here; that residual only affects an avatar-changing edit that also
+          // fails to broadcast and is reconciled on the next successful sync.
+          await widget.groupRepo.updateGroup(preEditGroup);
+        }
+        final timelineId = committedTimelineMessageId;
+        if (timelineId != null) {
+          await widget.msgRepo?.deleteMessage(timelineId);
+        }
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INFO_FL_METADATA_UPDATE_ERROR',

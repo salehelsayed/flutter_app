@@ -308,6 +308,49 @@ class _InMemoryGroupPendingKeyRepairRepository
   }
 
   @override
+  Future<List<GroupPendingKeyRepair>> getAllPendingRepairs({
+    int limit = 200,
+  }) async {
+    final pending =
+        repairs.values
+            .where(
+              (repair) =>
+                  repair.status == groupPendingKeyRepairStatusPendingKey,
+            )
+            .toList()
+          ..sort((a, b) {
+            final byCreated = a.createdAt.compareTo(b.createdAt);
+            return byCreated != 0 ? byCreated : a.id.compareTo(b.id);
+          });
+    return pending.take(limit).toList();
+  }
+
+  @override
+  Future<List<GroupPendingKeyRepair>> getPendingRepairsForGroup({
+    required String groupId,
+    int limit = 100,
+  }) async {
+    final pending =
+        repairs.values
+            .where(
+              (repair) =>
+                  repair.groupId == groupId &&
+                  repair.status == groupPendingKeyRepairStatusPendingKey,
+            )
+            .toList()
+          ..sort((a, b) {
+            final byCreated = a.createdAt.compareTo(b.createdAt);
+            return byCreated != 0 ? byCreated : a.id.compareTo(b.id);
+          });
+    return pending.take(limit).toList();
+  }
+
+  @override
+  Future<void> deleteRepair(String id) async {
+    repairs.remove(id);
+  }
+
+  @override
   Future<void> recordAttempt(String id, {required String? lastError}) async {
     final existing = repairs[id];
     if (existing == null) return;

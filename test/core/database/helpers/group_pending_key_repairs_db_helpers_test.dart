@@ -31,6 +31,7 @@ void main() {
     int triggerCount = 1,
     int attempts = 0,
     String? replayEnvelopeJson = '{"kind":"group_offline_replay"}',
+    String createdAt = '2026-05-01T12:00:00.000Z',
     String updatedAt = '2026-05-01T12:00:00.000Z',
     String? finalizedAt,
   }) {
@@ -47,7 +48,7 @@ void main() {
       'trigger_count': triggerCount,
       'attempts': attempts,
       'last_error': null,
-      'created_at': '2026-05-01T12:00:00.000Z',
+      'created_at': createdAt,
       'updated_at': updatedAt,
       'finalized_at': finalizedAt,
     };
@@ -113,6 +114,128 @@ void main() {
     expect(loaded['last_error'], 'decrypt failed');
     expect(loaded['finalized_at'], '2026-05-01T12:03:00.000Z');
   });
+
+  test(
+    'dbLoadAllPendingGroupKeyRepairs returns only pending rows across all '
+    'groups/epochs ordered by created_at then id, honoring limit',
+    () async {
+      await dbUpsertGroupPendingKeyRepair(
+        db,
+        repairRow(
+          id: 'offline:group-2:b',
+          groupId: 'group-2',
+          messageId: 'b',
+          keyEpoch: 7,
+          createdAt: '2026-05-01T12:00:02.000Z',
+        ),
+      );
+      await dbUpsertGroupPendingKeyRepair(
+        db,
+        repairRow(
+          id: 'offline:group-1:a',
+          groupId: 'group-1',
+          messageId: 'a',
+          keyEpoch: 2,
+          createdAt: '2026-05-01T12:00:01.000Z',
+        ),
+      );
+      // A finalized (repaired) row must be excluded from the pending sweep.
+      await dbUpsertGroupPendingKeyRepair(
+        db,
+        repairRow(
+          id: 'offline:group-1:done',
+          groupId: 'group-1',
+          messageId: 'done',
+          createdAt: '2026-05-01T12:00:00.000Z',
+        ),
+      );
+      await dbFinalizeGroupPendingKeyRepair(
+        db,
+        'offline:group-1:done',
+        status: groupPendingKeyRepairStatusRepaired,
+        lastError: '',
+        finalizedAt: '2026-05-01T12:05:00.000Z',
+      );
+
+      final all = await dbLoadAllPendingGroupKeyRepairs(db);
+      expect(all.map((row) => row['id']), [
+        'offline:group-1:a',
+        'offline:group-2:b',
+      ]);
+
+      final limited = await dbLoadAllPendingGroupKeyRepairs(db, limit: 1);
+      expect(limited, hasLength(1));
+      expect(limited.single['id'], 'offline:group-1:a');
+    },
+  );
+
+  test(
+    'dbLoadPendingGroupKeyRepairsForGroup filters to one group and excludes '
+    'finalized rows',
+    () async {
+      await dbUpsertGroupPendingKeyRepair(
+        db,
+        repairRow(
+          id: 'offline:group-1:a',
+          groupId: 'group-1',
+          messageId: 'a',
+          keyEpoch: 2,
+          createdAt: '2026-05-01T12:00:01.000Z',
+        ),
+      );
+      await dbUpsertGroupPendingKeyRepair(
+        db,
+        repairRow(
+          id: 'offline:group-1:c',
+          groupId: 'group-1',
+          messageId: 'c',
+          keyEpoch: 5,
+          createdAt: '2026-05-01T12:00:03.000Z',
+        ),
+      );
+      await dbUpsertGroupPendingKeyRepair(
+        db,
+        repairRow(
+          id: 'offline:group-2:b',
+          groupId: 'group-2',
+          messageId: 'b',
+          keyEpoch: 7,
+          createdAt: '2026-05-01T12:00:02.000Z',
+        ),
+      );
+      await dbUpsertGroupPendingKeyRepair(
+        db,
+        repairRow(
+          id: 'offline:group-1:done',
+          groupId: 'group-1',
+          messageId: 'done',
+          createdAt: '2026-05-01T12:00:00.000Z',
+        ),
+      );
+      await dbFinalizeGroupPendingKeyRepair(
+        db,
+        'offline:group-1:done',
+        status: groupPendingKeyRepairStatusUndecryptable,
+        lastError: 'x',
+        finalizedAt: '2026-05-01T12:05:00.000Z',
+      );
+
+      final forGroup1 = await dbLoadPendingGroupKeyRepairsForGroup(
+        db,
+        groupId: 'group-1',
+      );
+      expect(forGroup1.map((row) => row['id']), [
+        'offline:group-1:a',
+        'offline:group-1:c',
+      ]);
+
+      final forGroup2 = await dbLoadPendingGroupKeyRepairsForGroup(
+        db,
+        groupId: 'group-2',
+      );
+      expect(forGroup2.map((row) => row['id']), ['offline:group-2:b']);
+    },
+  );
 
   test('persists pending repair rows across database reopen', () async {
     final dir = await Directory.systemTemp.createTemp(

@@ -606,8 +606,10 @@ func (b *redisGroupInboxBackend) StoreWithRecipients(
 	cutoff := time.Now().Add(-b.ttl).UnixMilli()
 	messageID := extractMessageId(message)
 	var result GroupInboxStoreResult
+	var droppedByCap int
 
 	err := withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
+		droppedByCap = 0
 		rawEntries, err := tx.LRange(ctx, key, 0, -1).Result()
 		if err == redis.Nil {
 			rawEntries = nil
@@ -667,6 +669,7 @@ func (b *redisGroupInboxBackend) StoreWithRecipients(
 		values := append([]string(nil), validRaw...)
 		values = append(values, string(payload))
 		if len(values) > b.maxPerGroup {
+			droppedByCap = len(values) - b.maxPerGroup
 			values = values[len(values)-b.maxPerGroup:]
 		}
 		if err := redisReplaceList(tx, key, values); err != nil {
@@ -677,6 +680,12 @@ func (b *redisGroupInboxBackend) StoreWithRecipients(
 	})
 	if err != nil {
 		return "", fmt.Errorf("store redis group inbox message: %w", err)
+	}
+	// Increment the cap-eviction counter only after the transaction commits, so
+	// optimistic-retry replays of the closure do not double-count (finding 06
+	// Phase 2). droppedByCap reflects the final (successful) attempt.
+	if droppedByCap > 0 {
+		groupInboxCappedCounter.Add(float64(droppedByCap))
 	}
 	return result, nil
 }

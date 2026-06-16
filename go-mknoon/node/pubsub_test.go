@@ -1598,6 +1598,13 @@ func validateGroupEnvelopeForTransportPeer(data string, groupId string, config *
 		return "reject:no_key"
 	}
 
+	// UDM-F: strictly-future epoch from a bound member within the clamp window is
+	// Ignored (re-pullable), mirroring the production validator.
+	if env.KeyEpoch > keyInfo.KeyEpoch &&
+		env.KeyEpoch <= keyInfo.KeyEpoch+maxFutureKeyEpochIgnoreWindow {
+		return "ignore"
+	}
+
 	if !verifyGroupEnvelopeSignature(groupId, sourceDevice.DeviceSigningPublicKey, env, keyInfo, time.Now()) {
 		return "reject:bad_signature"
 	}
@@ -2152,7 +2159,12 @@ func TestGK033ValidateGroupReactionUsesMessageEpochAndDeviceValidation(t *testin
 		t.Fatalf("current active reaction result = %q, want accept", result)
 	}
 
-	staleReaction := buildTestDeviceEnvelopeWithPlaintext(
+	// UDM-E (K=5 ring): a previous-epoch reaction from a still-active device is
+	// ACCEPTED even when the grace deadline has expired, because the receive path
+	// anchors to keys held in the ring (keyInfo derives a ring of {epoch2, epoch1}
+	// from Key/PrevKey). Pre-ring this asserted a reject:bad_signature on grace
+	// expiry. The device-revocation security check below is unchanged.
+	heldPrevEpochReaction := buildTestDeviceEnvelopeWithPlaintext(
 		t,
 		groupId,
 		"group_reaction",
@@ -2167,8 +2179,8 @@ func TestGK033ValidateGroupReactionUsesMessageEpochAndDeviceValidation(t *testin
 		1,
 		reactionPlaintext,
 	)
-	if result := validateGroupEnvelopeForTransportPeer(staleReaction, groupId, config, keyInfo, activeTransportPeerId); result != "reject:bad_signature" {
-		t.Fatalf("expired previous-epoch reaction result = %q, want reject:bad_signature", result)
+	if result := validateGroupEnvelopeForTransportPeer(heldPrevEpochReaction, groupId, config, keyInfo, activeTransportPeerId); result != "accept" {
+		t.Fatalf("held previous-epoch reaction result = %q, want accept", result)
 	}
 
 	revokedReaction := buildTestDeviceEnvelopeWithPlaintext(
@@ -3042,6 +3054,103 @@ func TestGroupTopicValidator_DeviceRejectsUnboundSibling(t *testing.T) {
 	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "transport-tablet")
 	if result != "reject:unbound_device" {
 		t.Errorf("expected reject:unbound_device for unregistered same-member device, got %s", result)
+	}
+}
+
+// TestGroupTopicValidator_NewlyAdmittedSiblingDeviceAccepted is the POSITIVE
+// counterpart to the unbound-sibling reject above: once a same-user sibling
+// device has been admitted (Dart-side admitSiblingDeviceIfTrusted -> group
+// config propagation), the receiver's local config.Members[].Devices carries it
+// as an active entry, and the topic validator must ACCEPT its envelopes. This
+// locks the B1b receiver acceptance with no Go code change: admission is purely
+// a matter of the device existing as an active roster entry.
+func TestGroupTopicValidator_NewlyAdmittedSiblingDeviceAccepted(t *testing.T) {
+	phonePriv, phonePub := generateEd25519KeyPair(t)
+	tabletPriv, tabletPub := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-device-admitted-sibling"
+
+	// member-B now carries BOTH the original phone AND the newly-admitted tablet
+	// sibling as active devices (the state admission produces, propagated via
+	// group config).
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "member-B",
+				Role:      GroupRoleWriter,
+				PublicKey: "member-public-key",
+				Devices: []GroupMemberDevice{
+					{
+						DeviceId:               "device-phone",
+						TransportPeerId:        "transport-phone",
+						DeviceSigningPublicKey: phonePub,
+						MlKemPublicKey:         "mlkem-phone",
+						KeyPackageId:           "kp-phone",
+						Status:                 "active",
+					},
+					{
+						DeviceId:               "device-tablet",
+						TransportPeerId:        "transport-tablet",
+						DeviceSigningPublicKey: tabletPub,
+						MlKemPublicKey:         "mlkem-tablet",
+						KeyPackageId:           "kp-tablet",
+						Status:                 "active",
+					},
+				},
+			},
+		},
+		CreatedBy: "member-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	// The admitted tablet sibling's envelope must now be ACCEPTED.
+	tabletEnvelope := buildTestDeviceEnvelope(
+		t, groupId, "member-B", "device-tablet", "transport-tablet",
+		tabletPub, "kp-tablet", tabletPriv, tabletPub, groupKey, 1,
+		"hello from the admitted sibling",
+	)
+	if result := validateGroupEnvelopeForTransportPeer(tabletEnvelope, groupId, config, keyInfo, "transport-tablet"); result != "accept" {
+		t.Errorf("expected accept for newly-admitted sibling device, got %s", result)
+	}
+
+	// Admission is additive: the original phone device is still accepted.
+	phoneEnvelope := buildTestDeviceEnvelope(
+		t, groupId, "member-B", "device-phone", "transport-phone",
+		phonePub, "kp-phone", phonePriv, phonePub, groupKey, 1,
+		"hello from the original phone",
+	)
+	if result := validateGroupEnvelopeForTransportPeer(phoneEnvelope, groupId, config, keyInfo, "transport-phone"); result != "accept" {
+		t.Errorf("expected accept for original device after sibling admission, got %s", result)
+	}
+
+	// Negative twin: a revoked sibling device must be rejected (locks the
+	// active-device gate so a stale/revoked admission cannot send).
+	revokedConfig := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "member-B",
+				Role:      GroupRoleWriter,
+				PublicKey: "member-public-key",
+				Devices: []GroupMemberDevice{
+					{
+						DeviceId:               "device-tablet",
+						TransportPeerId:        "transport-tablet",
+						DeviceSigningPublicKey: tabletPub,
+						MlKemPublicKey:         "mlkem-tablet",
+						KeyPackageId:           "kp-tablet",
+						Status:                 "revoked",
+					},
+				},
+			},
+		},
+		CreatedBy: "member-admin",
+	}
+	if result := validateGroupEnvelopeForTransportPeer(tabletEnvelope, groupId, revokedConfig, keyInfo, "transport-tablet"); result != "reject:unbound_device" {
+		t.Errorf("expected reject:unbound_device for revoked sibling device, got %s", result)
 	}
 }
 
@@ -5527,7 +5636,15 @@ func TestGL019ConcurrentJoinLeaveUpdateSameGroupIsRaceFree(t *testing.T) {
 			if err == nil {
 				continue
 			}
-			if !errors.Is(err, ErrGroupAlreadyJoined) {
+			// Both ErrGroupAlreadyJoined and the "interrupted" abort are legitimate
+			// outcomes of the same pre-lock reservation race with a concurrent
+			// LeaveGroupTopic: the join either observes the slot already filled, or
+			// observes its own reservation cleared and aborts cleanly (returning at
+			// the :183 path AFTER full topic/sub cleanup, leaving no partial state —
+			// which the runtime-state invariants below still enforce). The race-free
+			// guarantee this test protects is the absence of TORN state, not which of
+			// these two clean outcomes wins; tolerate both.
+			if !errors.Is(err, ErrGroupAlreadyJoined) && !strings.Contains(err.Error(), "interrupted") {
 				recordUnexpected("JoinGroupTopic iteration %d: %v", i, err)
 			}
 		}

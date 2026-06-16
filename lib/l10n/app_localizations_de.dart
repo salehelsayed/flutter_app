@@ -1407,6 +1407,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Diese Gruppe wird noch synchronisiert – versuche es gleich erneut.';
 
   @override
+  String get restore_groups_device_local_notice =>
+      'Deine Gruppen erscheinen wieder, sobald dieses Gerät erneut zugelassen wird. Gruppenverlauf aus der Zeit vor diesem Gerät kann nicht wiederhergestellt werden.';
+
+  @override
   String get group_info_delete_local_failed =>
       'Gruppe konnte lokal nicht gelöscht werden';
 

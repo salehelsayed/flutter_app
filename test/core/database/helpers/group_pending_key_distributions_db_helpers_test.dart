@@ -153,4 +153,45 @@ void main() {
     expect(loaded!['status'], groupPendingKeyDistributionStatusDistributed);
     expect(loaded['key_epoch'], 2); // not merged (terminal)
   });
+
+  test(
+    'reopenForRedelivery DOES reopen a terminal row (resets attempts/finalizedAt)',
+    () async {
+      await dbUpsertGroupPendingKeyDistribution(db, distributionRow());
+      await dbFinalizeGroupPendingKeyDistribution(
+        db,
+        'gpkd:group-1:peer-carol',
+        status: groupPendingKeyDistributionStatusUnreachable,
+        lastError: 'offline',
+        finalizedAt: '2026-06-16T12:03:00.000Z',
+      );
+
+      // Unlike a plain upsert (which leaves a terminal row terminal), reopen
+      // re-arms it for re-delivery because the member's device set changed.
+      await dbReopenGroupPendingKeyDistributionForRedelivery(
+        db,
+        distributionRow(keyEpoch: 4, updatedAt: '2026-06-16T12:06:00.000Z'),
+      );
+
+      final loaded = await dbLoadGroupPendingKeyDistribution(
+        db,
+        'gpkd:group-1:peer-carol',
+      );
+      expect(loaded!['status'], groupPendingKeyDistributionStatusPending);
+      expect(loaded['key_epoch'], 4); // refreshed to the current epoch
+      expect(loaded['attempts'], 0); // reset
+      expect(loaded['last_error'], isNull);
+      expect(loaded['finalized_at'], isNull);
+    },
+  );
+
+  test('reopenForRedelivery creates the row when none exists', () async {
+    await dbReopenGroupPendingKeyDistributionForRedelivery(db, distributionRow());
+    final loaded = await dbLoadGroupPendingKeyDistribution(
+      db,
+      'gpkd:group-1:peer-carol',
+    );
+    expect(loaded, isNotNull);
+    expect(loaded!['status'], groupPendingKeyDistributionStatusPending);
+  });
 }

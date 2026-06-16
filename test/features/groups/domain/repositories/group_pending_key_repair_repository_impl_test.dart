@@ -28,6 +28,12 @@ void main() {
                 keyEpoch: keyEpoch,
                 limit: limit,
               ),
+      dbLoadAllPendingGroupKeyRepairs: ({limit = 200}) =>
+          dbLoadAllPendingGroupKeyRepairs(db, limit: limit),
+      dbLoadPendingGroupKeyRepairsForGroup: ({required groupId, limit = 100}) =>
+          dbLoadPendingGroupKeyRepairsForGroup(db, groupId: groupId, limit: limit),
+      dbDeleteGroupPendingKeyRepair: (id) =>
+          dbDeleteGroupPendingKeyRepair(db, id),
       dbRecordGroupPendingKeyRepairAttempt:
           (id, {required lastError, required updatedAt}) =>
               dbRecordGroupPendingKeyRepairAttempt(
@@ -117,6 +123,38 @@ void main() {
       expect(finalized!.attempts, 1);
       expect(finalized.status, groupPendingKeyRepairStatusUndecryptable);
       expect(finalized.finalizedAt, isNotNull);
+    },
+  );
+
+  test(
+    'getAllPendingRepairs / getPendingRepairsForGroup expose only pending rows',
+    () async {
+      await repo.upsertPendingRepair(repair());
+      await repo.upsertPendingRepair(
+        repair(
+          id: 'offline:group-2:msg-2',
+          groupId: 'group-2',
+          messageId: 'msg-2',
+          keyEpoch: 9,
+        ),
+      );
+      await repo.upsertPendingRepair(
+        repair(id: 'offline:group-1:done', messageId: 'done'),
+      );
+      await repo.finalizeRepaired('offline:group-1:done');
+
+      final all = await repo.getAllPendingRepairs();
+      expect(all.map((r) => r.id), containsAll(<String>[
+        'offline:group-1:msg-1',
+        'offline:group-2:msg-2',
+      ]));
+      expect(
+        all.map((r) => r.id),
+        isNot(contains('offline:group-1:done')),
+      );
+
+      final group1 = await repo.getPendingRepairsForGroup(groupId: 'group-1');
+      expect(group1.map((r) => r.id), ['offline:group-1:msg-1']);
     },
   );
 }

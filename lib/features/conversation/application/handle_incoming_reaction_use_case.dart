@@ -175,14 +175,18 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
     return (HandleReactionResult.targetUnavailable, null);
   }
 
-  final currentReaction = await _loadCurrentReactionForSender(
-    reactionRepo: reactionRepo,
+  final currentReaction =
+      await reactionRepo.getReactionForSenderIncludingRemoved(
     messageId: payload.messageId,
     senderPeerId: payload.senderPeerId,
   );
   if (_isStaleComparedToCurrent(
     incomingTimestamp: payload.timestamp,
-    currentTimestamp: currentReaction?.timestamp,
+    // Comparand is the latest event's timestamp: a tombstone's removed_at when
+    // present (always >= the add timestamp), else the add timestamp (INV-T2).
+    currentTimestamp: currentReaction == null
+        ? null
+        : (currentReaction.removedAt ?? currentReaction.timestamp),
   )) {
     emitFlowEvent(
       layer: 'FL',
@@ -200,7 +204,11 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
 
   // 5. Process action
   if (payload.action == 'remove') {
-    await reactionRepo.removeReaction(payload.messageId, payload.senderPeerId);
+    await reactionRepo.removeReaction(
+      payload.messageId,
+      payload.senderPeerId,
+      removedAtTimestamp: payload.timestamp,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'REACTION_RECEIVE_REMOVED',
@@ -234,20 +242,6 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   );
 
   return (HandleReactionResult.success, ReactionChange.upsert(reaction));
-}
-
-Future<dynamic> _loadCurrentReactionForSender({
-  required ReactionRepository reactionRepo,
-  required String messageId,
-  required String senderPeerId,
-}) async {
-  final reactions = await reactionRepo.getReactionsForMessage(messageId);
-  for (final reaction in reactions) {
-    if (reaction.senderPeerId == senderPeerId) {
-      return reaction;
-    }
-  }
-  return null;
 }
 
 bool _isStaleComparedToCurrent({

@@ -476,6 +476,77 @@ void main() {
       expect(stored.single.timestamp, '2026-02-27T10:02:00.000Z');
     });
 
+    test(
+      'INV-T2 remove-then-stale-add stays removed (tombstone closes residual)',
+      () async {
+        // 1. Seed an active add at T1.
+        await reactionRepo.saveReaction(
+          const MessageReaction(
+            id: 'r-add',
+            messageId: 'msg-1',
+            emoji: '👍',
+            senderPeerId: _senderPeerId,
+            timestamp: '2026-02-27T10:00:00.000Z',
+            createdAt: '2026-02-27T10:00:01.000Z',
+          ),
+        );
+
+        final v2 = ReactionPayload.buildEncryptedEnvelope(
+          senderPeerId: _senderPeerId,
+          kem: 'k',
+          ciphertext: 'c',
+          nonce: 'n',
+        );
+
+        // 2. Apply a remove at T2 > T1 → tombstone.
+        bridge.responses['message.decrypt'] = {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r-remove',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'remove',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:01:00.000Z',
+          }),
+        };
+        await handleIncomingReaction(
+          message: _makeReactionMessage(v2),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+        );
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+
+        // 3. A STALE re-delivered add (T1 < T2) must NOT resurrect it.
+        bridge.responses['message.decrypt'] = {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r-add',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'add',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:00:00.000Z',
+          }),
+        };
+        final (result, change) = await handleIncomingReaction(
+          message: _makeReactionMessage(v2),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+        );
+
+        expect(result, HandleReactionResult.success);
+        expect(change, isNull);
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      },
+    );
+
     test('stale add does not replace a newer stored reaction', () async {
       await reactionRepo.saveReaction(
         const MessageReaction(

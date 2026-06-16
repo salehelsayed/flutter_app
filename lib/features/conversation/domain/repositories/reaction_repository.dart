@@ -12,8 +12,21 @@ abstract class ReactionRepository {
   Future<Map<String, List<MessageReaction>>> getReactionsForMessages(
       List<String> messageIds);
 
-  /// Removes a reaction for a specific message and sender. Returns count.
-  Future<int> removeReaction(String messageId, String senderPeerId);
+  /// Retrieves the single reaction for (message, sender) INCLUDING a tombstoned
+  /// (removed) one, for the last-writer-wins comparand. Returns null if none.
+  Future<MessageReaction?> getReactionForSenderIncludingRemoved({
+    required String messageId,
+    required String senderPeerId,
+  });
+
+  /// Removes (tombstones) a reaction for a specific message and sender, stamping
+  /// [removedAtTimestamp] (the remove's sender-authored timestamp) so a later
+  /// stale add can be dropped. Returns the number of rows affected.
+  Future<int> removeReaction(
+    String messageId,
+    String senderPeerId, {
+    String? removedAtTimestamp,
+  });
 
   /// Deletes all reactions for a message. Returns count.
   Future<int> deleteReactionsForMessage(String messageId);

@@ -101,6 +101,10 @@ class GroupModel {
   /// Latest applied membership-event timestamp for stale-event rejection.
   final DateTime? lastMembershipEventAt;
 
+  /// Audit-borne source event id of the latest applied membership event, used
+  /// as a deterministic tie-breaker when two events share [lastMembershipEventAt].
+  final String? lastMembershipEventId;
+
   /// Latest applied metadata-event timestamp for stale-event rejection.
   final DateTime? lastMetadataEventAt;
 
@@ -129,6 +133,7 @@ class GroupModel {
     this.isArchived = false,
     this.archivedAt,
     this.lastMembershipEventAt,
+    this.lastMembershipEventId,
     this.lastMetadataEventAt,
     this.lastBacklogExpiredAt,
     this.lastBacklogRetainedAt,
@@ -161,6 +166,7 @@ class GroupModel {
       lastMembershipEventAt: map['last_membership_event_at'] != null
           ? DateTime.parse(map['last_membership_event_at'] as String)
           : null,
+      lastMembershipEventId: map['last_membership_event_id'] as String?,
       lastMetadataEventAt: map['last_metadata_event_at'] != null
           ? DateTime.parse(map['last_metadata_event_at'] as String)
           : null,
@@ -196,6 +202,7 @@ class GroupModel {
       'last_membership_event_at': lastMembershipEventAt
           ?.toUtc()
           .toIso8601String(),
+      'last_membership_event_id': lastMembershipEventId,
       'last_metadata_event_at': lastMetadataEventAt?.toUtc().toIso8601String(),
       'last_backlog_expired_at': lastBacklogExpiredAt
           ?.toUtc()
@@ -226,6 +233,7 @@ class GroupModel {
     bool? isArchived,
     Object? archivedAt = _sentinel,
     Object? lastMembershipEventAt = _sentinel,
+    Object? lastMembershipEventId = _sentinel,
     Object? lastMetadataEventAt = _sentinel,
     Object? lastBacklogExpiredAt = _sentinel,
     Object? lastBacklogRetainedAt = _sentinel,
@@ -265,6 +273,9 @@ class GroupModel {
       lastMembershipEventAt: lastMembershipEventAt == _sentinel
           ? this.lastMembershipEventAt
           : lastMembershipEventAt as DateTime?,
+      lastMembershipEventId: lastMembershipEventId == _sentinel
+          ? this.lastMembershipEventId
+          : lastMembershipEventId as String?,
       lastMetadataEventAt: lastMetadataEventAt == _sentinel
           ? this.lastMetadataEventAt
           : lastMetadataEventAt as DateTime?,

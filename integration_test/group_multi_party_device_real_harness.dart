@@ -50,6 +50,7 @@ import 'package:flutter_app/features/groups/application/rotate_and_distribute_gr
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
@@ -270,6 +271,7 @@ const _rolesByScenario = <String, List<String>>{
   'pl002': <String>['alice', 'bob', 'charlie'],
   'pl012': <String>['alice', 'bob', 'charlie'],
   'private_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
+  'private_reaction_toggle_convergence': <String>['alice', 'bob', 'charlie'],
   'private_media_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
   'private_removed_reaction_rejected': <String>['alice', 'bob', 'charlie'],
   'private_removed_old_key_publish_rejected': <String>[
@@ -5395,6 +5397,339 @@ Future<void> _runPl009ReactionInvitee(
   } finally {
     inviteListener.dispose();
   }
+}
+
+// ---------------------------------------------------------------------------
+// RT-001 (private_reaction_toggle_convergence): Bob rapidly toggles a reaction
+// on Alice's message (add 🔥 → remove → re-add ✅). All three members must
+// converge to Bob's FINAL reaction (exactly one ✅), and the observers (Alice +
+// Charlie) must see the remove propagate through the reaction stream — proving
+// the Phase-5 tombstone + Phase-3 LWW + Phase-1 custody paths converge across
+// real devices regardless of intermediate state churn.
+// ---------------------------------------------------------------------------
+
+Future<void> _runReactionToggleAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  await waitForSharedSignal(_signalName('bob_rt_invite_listener_ready'));
+  await waitForSharedSignal(_signalName('charlie_rt_invite_listener_ready'));
+
+  final (groupId, _) = await _createMl001PrivateAbcGroup(
+    stack: stack,
+    identities: identities,
+  );
+  await waitForSharedSignal(_signalName('bob_rt_invite_accepted'));
+  await waitForSharedSignal(_signalName('charlie_rt_invite_accepted'));
+  await _waitForTimelineTexts(
+    stack: stack,
+    groupId: groupId,
+    texts: const <String>[
+      'GM Bob joined the group',
+      'GM Charlie joined the group',
+    ],
+  );
+
+  final target = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceToggleTarget',
+    text: 'RT-001 Alice reaction toggle target $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceToggleTarget.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceToggleTarget.json'),
+  );
+
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final messageId = target['messageId'] as String;
+
+  // Accumulate the full toggle sequence (upsert 🔥, removed, upsert ✅) so we
+  // can prove the remove propagated, not just the final re-add.
+  final observedChanges = <ReactionChange>[];
+  final sub = stack.groupListener.groupReactionChangeStream
+      .where(
+        (change) =>
+            change.messageId == messageId && change.senderPeerId == bobPeerId,
+      )
+      .listen(observedChanges.add);
+  writeSharedText(_signalName('alice_rt_ready_for_toggle'), 'ok');
+
+  final toggleDone = await waitForSharedJson(
+    _signalName('bob_rt_toggle_done.json'),
+  );
+  final finalEmoji = toggleDone['finalEmoji'] as String;
+  final convergence = await _convergeToFinalReaction(
+    stack: stack,
+    messageId: messageId,
+    reactorPeerId: bobPeerId,
+    finalEmoji: finalEmoji,
+    observedChanges: observedChanges,
+  );
+  await sub.cancel();
+
+  writeSharedText(_signalName('alice_rt_converged'), 'ok');
+  await waitForSharedSignal(_signalName('charlie_rt_converged'));
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[target],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'reactionToggleConvergenceProof': _reactionToggleConvergenceProof(
+        targetMessageId: messageId,
+        finalEmoji: finalEmoji,
+        convergence: convergence,
+        toggleDone: toggleDone,
+        aliceConvergedSignal: true,
+        charlieConvergedSignal: true,
+      ),
+    },
+  );
+}
+
+Future<void> _runReactionToggleInvitee(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = GroupInviteListener(
+    groupInviteStream: stack.messageRouter.groupInviteStream,
+    groupRepo: stack.groupRepo,
+    pendingInviteRepo: pendingInviteRepo,
+    contactRepo: stack.contactRepo,
+    bridge: stack.bridge,
+    getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
+    getOwnPeerId: () async => stack.identity.peerId,
+    getOwnDeviceId: () async => stack.p2pService.currentState.peerId,
+    getOwnTransportPeerId: () async => stack.p2pService.currentState.peerId,
+    getOwnMlKemPublicKey: () async => stack.identity.mlKemPublicKey,
+    msgRepo: stack.groupMsgRepo,
+  );
+  inviteListener.start();
+  try {
+    writeSharedText(_signalName('${_role}_rt_invite_listener_ready'), 'ok');
+    final invite = await _waitForMl001PendingInvite(
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final (acceptResult, acceptedGroup) = await acceptPendingGroupInvite(
+      pendingInviteRepo: pendingInviteRepo,
+      groupRepo: stack.groupRepo,
+      contactRepo: stack.contactRepo,
+      msgRepo: stack.groupMsgRepo,
+      bridge: stack.bridge,
+      groupId: invite.groupId,
+      groupMessageListener: stack.groupListener,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      ownDeviceId: stack.p2pService.currentState.peerId,
+      ownTransportPeerId: stack.p2pService.currentState.peerId,
+      ownMlKemPublicKey: stack.identity.mlKemPublicKey,
+    );
+    expect(acceptResult, AcceptPendingGroupInviteResult.success);
+    expect(acceptedGroup, isNotNull);
+    writeSharedText(_signalName('${_role}_rt_invite_accepted'), 'ok');
+
+    final target = await waitForSharedJson(
+      _signalName('alice_sent_aliceToggleTarget.json'),
+    );
+    final received = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: invite.groupId,
+      key: 'aliceToggleTarget',
+      text: target['text'] as String,
+      senderPeerId: identities['alice']!['peerId'] as String,
+    );
+    final messageId = target['messageId'] as String;
+    final bobPeerId = identities['bob']!['peerId'] as String;
+
+    if (_role == 'bob') {
+      await waitForSharedSignal(_signalName('alice_rt_ready_for_toggle'));
+      await waitForSharedSignal(_signalName('charlie_rt_ready_for_toggle'));
+
+      // Rapid toggle: add 🔥 → remove → re-add ✅. Spaced so the three ops carry
+      // strictly increasing sender-authored timestamps (LWW order) and the
+      // relay can fan each out.
+      final add = await _sendProofReaction(
+        stack: stack,
+        groupId: invite.groupId,
+        messageId: messageId,
+        key: 'bobToggleAdd',
+        emoji: '🔥',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final removeResult = await removeGroupReaction(
+        bridge: stack.bridge,
+        groupRepo: stack.groupRepo,
+        reactionRepo: stack.reactionRepo,
+        reactionReplayOutboxRepo: stack.reactionReplayOutboxRepo,
+        groupId: invite.groupId,
+        messageId: messageId,
+        emoji: '🔥',
+        senderPeerId: stack.identity.peerId,
+        senderPublicKey: stack.identity.publicKey,
+        senderPrivateKey: stack.identity.privateKey,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final readd = await _sendProofReaction(
+        stack: stack,
+        groupId: invite.groupId,
+        messageId: messageId,
+        key: 'bobToggleReadd',
+        emoji: '✅',
+      );
+
+      final bobReactions =
+          (await stack.reactionRepo.getReactionsForMessage(messageId))
+              .where((r) => r.senderPeerId == stack.identity.peerId)
+              .toList();
+      final bobConverged =
+          bobReactions.length == 1 && bobReactions.single.emoji == '✅';
+      final toggleDone = <String, dynamic>{
+        'finalEmoji': '✅',
+        'addOutcome': add['outcome'],
+        'removeOutcome': removeResult.name,
+        'readdOutcome': readd['outcome'],
+      };
+      writeSharedJson(_signalName('bob_rt_toggle_done.json'), toggleDone);
+
+      await waitForSharedSignal(_signalName('alice_rt_converged'));
+      await waitForSharedSignal(_signalName('charlie_rt_converged'));
+
+      await _writeVerdict(
+        stack: stack,
+        groupId: invite.groupId,
+        sentMessages: const <Map<String, dynamic>>[],
+        receivedMessages: <Map<String, dynamic>>[received],
+        extra: <String, dynamic>{
+          'reactionToggleConvergenceProof': _reactionToggleConvergenceProof(
+            targetMessageId: messageId,
+            finalEmoji: '✅',
+            convergence: <String, dynamic>{
+              'convergedToFinalEmoji': bobConverged,
+              'finalReactionCount': bobReactions.length,
+              // Bob is the reactor; the remove is true by construction.
+              'observedRemoveEvent': true,
+            },
+            toggleDone: toggleDone,
+            aliceConvergedSignal: true,
+            charlieConvergedSignal: true,
+          ),
+        },
+      );
+    } else {
+      final observedChanges = <ReactionChange>[];
+      final sub = stack.groupListener.groupReactionChangeStream
+          .where(
+            (change) =>
+                change.messageId == messageId &&
+                change.senderPeerId == bobPeerId,
+          )
+          .listen(observedChanges.add);
+      writeSharedText(_signalName('charlie_rt_ready_for_toggle'), 'ok');
+
+      final toggleDone = await waitForSharedJson(
+        _signalName('bob_rt_toggle_done.json'),
+      );
+      final finalEmoji = toggleDone['finalEmoji'] as String;
+      final convergence = await _convergeToFinalReaction(
+        stack: stack,
+        messageId: messageId,
+        reactorPeerId: bobPeerId,
+        finalEmoji: finalEmoji,
+        observedChanges: observedChanges,
+      );
+      await sub.cancel();
+
+      writeSharedText(_signalName('charlie_rt_converged'), 'ok');
+      await waitForSharedSignal(_signalName('alice_rt_converged'));
+
+      await _writeVerdict(
+        stack: stack,
+        groupId: invite.groupId,
+        sentMessages: const <Map<String, dynamic>>[],
+        receivedMessages: <Map<String, dynamic>>[received],
+        extra: <String, dynamic>{
+          'reactionToggleConvergenceProof': _reactionToggleConvergenceProof(
+            targetMessageId: messageId,
+            finalEmoji: finalEmoji,
+            convergence: convergence,
+            toggleDone: toggleDone,
+            aliceConvergedSignal: true,
+            charlieConvergedSignal: true,
+          ),
+        },
+      );
+    }
+  } finally {
+    inviteListener.dispose();
+  }
+}
+
+/// Polls local storage until the reactor's reaction for [messageId] converges
+/// to exactly one [finalEmoji], and reports whether a remove event was observed
+/// on the stream during the toggle.
+Future<Map<String, dynamic>> _convergeToFinalReaction({
+  required GroupMultiDeviceTestStack stack,
+  required String messageId,
+  required String reactorPeerId,
+  required String finalEmoji,
+  required List<ReactionChange> observedChanges,
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 120));
+  var reactorReactions = <dynamic>[];
+  while (DateTime.now().isBefore(deadline)) {
+    final all = await stack.reactionRepo.getReactionsForMessage(messageId);
+    reactorReactions =
+        all.where((r) => r.senderPeerId == reactorPeerId).toList();
+    if (reactorReactions.length == 1 &&
+        reactorReactions.single.emoji == finalEmoji) {
+      break;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  final converged = reactorReactions.length == 1 &&
+      reactorReactions.single.emoji == finalEmoji;
+  final sawRemove = observedChanges.any(
+    (change) => change.type == ReactionChangeType.removed,
+  );
+  return <String, dynamic>{
+    'convergedToFinalEmoji': converged,
+    'finalReactionCount': reactorReactions.length,
+    'observedRemoveEvent': sawRemove,
+    'observedChangeCount': observedChanges.length,
+  };
+}
+
+Map<String, dynamic> _reactionToggleConvergenceProof({
+  required String targetMessageId,
+  required String finalEmoji,
+  required Map<String, dynamic> convergence,
+  required Map<String, dynamic> toggleDone,
+  required bool aliceConvergedSignal,
+  required bool charlieConvergedSignal,
+}) {
+  return <String, dynamic>{
+    'rowId': 'RT-001',
+    'activeRoles': const <String>['alice', 'bob', 'charlie'],
+    'targetMessageId': targetMessageId,
+    'reactorRole': 'bob',
+    'finalEmoji': finalEmoji,
+    'observedByRole': _role,
+    'convergedToFinalEmoji': convergence['convergedToFinalEmoji'] == true,
+    'finalReactionCount': convergence['finalReactionCount'],
+    'observedRemoveEvent': convergence['observedRemoveEvent'] == true,
+    'addOutcome': toggleDone['addOutcome'],
+    'removeOutcome': toggleDone['removeOutcome'],
+    'readdOutcome': toggleDone['readdOutcome'],
+    'aliceConvergedSignal': aliceConvergedSignal,
+    'charlieConvergedSignal': charlieConvergedSignal,
+  };
 }
 
 Future<Map<String, dynamic>> _sendReactionAttemptProof({
@@ -48108,6 +48443,15 @@ Future<void> _runScenarioRole() async {
         await _runPl009ReactionAlice(stack, identities);
       } else {
         await _runPl009ReactionInvitee(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_reaction_toggle_convergence') {
+      if (_role == 'alice') {
+        await _runReactionToggleAlice(stack, identities);
+      } else {
+        await _runReactionToggleInvitee(stack, identities);
       }
       return;
     }

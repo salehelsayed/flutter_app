@@ -22,6 +22,12 @@ class MessageReaction {
   /// ISO-8601 timestamp when the row was created locally.
   final String createdAt;
 
+  /// ISO-8601 sender-authored timestamp of the remove that tombstoned this
+  /// reaction, or null when the reaction is active. A tombstoned reaction is
+  /// hidden from all UI loaders but retained as a last-writer-wins comparand so
+  /// an older (stale) re-add can be recognised and dropped (INV-T1/INV-T2).
+  final String? removedAt;
+
   const MessageReaction({
     required this.id,
     required this.messageId,
@@ -29,7 +35,11 @@ class MessageReaction {
     required this.senderPeerId,
     required this.timestamp,
     required this.createdAt,
+    this.removedAt,
   });
+
+  /// Whether this reaction has been tombstoned by a remove.
+  bool get isRemoved => removedAt != null;
 
   /// Creates a MessageReaction from a database row map (snake_case keys).
   factory MessageReaction.fromMap(Map<String, dynamic> map) {
@@ -40,10 +50,13 @@ class MessageReaction {
       senderPeerId: map['sender_peer_id'] as String,
       timestamp: map['timestamp'] as String,
       createdAt: map['created_at'] as String,
+      removedAt: map['removed_at'] as String?,
     );
   }
 
-  /// Converts the model to a database row map (snake_case keys).
+  /// Converts the model to a database row map (snake_case keys). Always writes
+  /// `removed_at` (null for an active reaction) so a `ConflictAlgorithm.replace`
+  /// insert overwrites — and thereby clears — any prior tombstone (INV-T3).
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -52,6 +65,7 @@ class MessageReaction {
       'sender_peer_id': senderPeerId,
       'timestamp': timestamp,
       'created_at': createdAt,
+      'removed_at': removedAt,
     };
   }
 
@@ -79,7 +93,9 @@ class MessageReaction {
     };
   }
 
-  /// Creates a copy with updated fields.
+  /// Creates a copy with updated fields. Pass `clearRemovedAt: true` to
+  /// resurrect a tombstoned reaction (the `removedAt`/`clearRemovedAt` combo
+  /// distinguishes "leave unchanged" from "set to null").
   MessageReaction copyWith({
     String? id,
     String? messageId,
@@ -87,6 +103,8 @@ class MessageReaction {
     String? senderPeerId,
     String? timestamp,
     String? createdAt,
+    String? removedAt,
+    bool clearRemovedAt = false,
   }) {
     return MessageReaction(
       id: id ?? this.id,
@@ -95,6 +113,7 @@ class MessageReaction {
       senderPeerId: senderPeerId ?? this.senderPeerId,
       timestamp: timestamp ?? this.timestamp,
       createdAt: createdAt ?? this.createdAt,
+      removedAt: clearRemovedAt ? null : (removedAt ?? this.removedAt),
     );
   }
 

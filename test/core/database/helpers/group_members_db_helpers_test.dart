@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
 import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
+import 'package:flutter_app/core/database/migrations/084_group_member_device_snapshots.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 
 void main() {
@@ -161,6 +162,39 @@ void main() {
 
       expect(await dbCountGroupMembers(db, 'group-1'), 0);
       expect(await dbCountGroupMembers(db, 'group-2'), 1);
+    });
+  });
+
+  group('B4 group_member_device_snapshots', () {
+    setUp(() => runGroupMemberDeviceSnapshotsMigration(db));
+
+    test('upsert + load round-trips devices_json (replace on conflict)', () async {
+      await dbUpsertGroupMemberDeviceSnapshot(db, {
+        'group_id': 'g1',
+        'peer_id': 'bob',
+        'public_key': 'pk-bob',
+        'ml_kem_public_key': 'mlkem-bob',
+        'devices_json': '[{"deviceId":"d1"}]',
+      }, '2026-06-16T12:00:00.000Z');
+
+      final first = await dbLoadGroupMemberDeviceSnapshot(db, 'g1', 'bob');
+      expect(first!['devices_json'], '[{"deviceId":"d1"}]');
+
+      await dbUpsertGroupMemberDeviceSnapshot(db, {
+        'group_id': 'g1',
+        'peer_id': 'bob',
+        'public_key': 'pk-bob',
+        'ml_kem_public_key': 'mlkem-bob',
+        'devices_json': '[{"deviceId":"d1"},{"deviceId":"d2"}]',
+      }, '2026-06-16T12:05:00.000Z');
+
+      final second = await dbLoadGroupMemberDeviceSnapshot(db, 'g1', 'bob');
+      expect(second!['devices_json'], '[{"deviceId":"d1"},{"deviceId":"d2"}]');
+      expect(second['saved_at'], '2026-06-16T12:05:00.000Z');
+    });
+
+    test('load returns null when no snapshot exists', () async {
+      expect(await dbLoadGroupMemberDeviceSnapshot(db, 'g1', 'nobody'), isNull);
     });
   });
 }

@@ -284,7 +284,10 @@ class PendingMessageRetrier {
 
     _isGroupContinuitySweeping = true;
     try {
-      await runWithGroupRecoveryGate(() async {
+      // P1.1: this best-effort continuity sweep skips (does not queue) when a
+      // recovery pass already holds the serialized gate, so 30s ticks never
+      // pile up behind an in-flight startup/resume/retry pass.
+      final sweep = runWithGroupRecoveryGateOrSkip(() async {
         var shouldAcknowledgeRecovery = false;
         if (rejoinGroupTopicsFn != null ||
             rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
@@ -315,6 +318,15 @@ class PendingMessageRetrier {
           shouldAcknowledgeRecovery && drainSucceeded,
         );
       });
+      if (sweep == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PENDING_RETRIER_GROUP_SWEEP_SKIPPED_GATE_ACTIVE',
+          details: {},
+        );
+      } else {
+        await sweep;
+      }
     } finally {
       _isGroupContinuitySweeping = false;
     }
@@ -353,89 +365,98 @@ class PendingMessageRetrier {
       // confirm-first prevents re-publishing a pending row custody resolved.
 
       if (groupRecoveryEnabled && groupRecoveryReady) {
-        var shouldAcknowledgeRecovery = false;
-        if (rejoinGroupTopicsFn != null ||
-            rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
+        // P1.3: hold the serialized group recovery gate for the whole group
+        // recovery + outbound-repair pass so isGroupRecoveryInProgress() reports
+        // true to the group-mutation guards and the "catching up" UI shell
+        // (matching the 30s continuity sweep), and so the serialized gate keeps
+        // this pass from overlapping the startup/resume recovery passes. Step
+        // order is preserved byte-for-byte (finding-125 GAP 3a: inbox-store
+        // custody-confirm before the re-publish retrier).
+        await runWithGroupRecoveryGate(() async {
+          var shouldAcknowledgeRecovery = false;
+          if (rejoinGroupTopicsFn != null ||
+              rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
+            try {
+              shouldAcknowledgeRecovery = await _runGroupRejoinIfNeeded();
+            } catch (e) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
+                details: {'error': e.toString()},
+              );
+            }
+          }
+
+          var drainSucceeded = true;
           try {
-            shouldAcknowledgeRecovery = await _runGroupRejoinIfNeeded();
+            drainSucceeded = await _runGroupDrainIfNeeded();
           } catch (e) {
+            drainSucceeded = false;
             emitFlowEvent(
               layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
+              event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
               details: {'error': e.toString()},
             );
           }
-        }
 
-        var drainSucceeded = true;
-        try {
-          drainSucceeded = await _runGroupDrainIfNeeded();
-        } catch (e) {
-          drainSucceeded = false;
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
-            details: {'error': e.toString()},
+          await _acknowledgeGroupRecoveryIfEligible(
+            shouldAcknowledgeRecovery && drainSucceeded,
           );
-        }
 
-        await _acknowledgeGroupRecoveryIfEligible(
-          shouldAcknowledgeRecovery && drainSucceeded,
-        );
-
-        if (recoverStuckSendingGroupMessagesFn != null) {
-          try {
-            await recoverStuckSendingGroupMessagesFn!();
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_RECOVER_STUCK_ERROR',
-              details: {'error': e.toString()},
-            );
+          if (recoverStuckSendingGroupMessagesFn != null) {
+            try {
+              await recoverStuckSendingGroupMessagesFn!();
+            } catch (e) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'PENDING_RETRIER_GROUP_RECOVER_STUCK_ERROR',
+                details: {'error': e.toString()},
+              );
+            }
           }
-        }
 
-        if (retryIncompleteGroupUploadsFn != null) {
-          try {
-            await retryIncompleteGroupUploadsFn!();
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_INCOMPLETE_UPLOAD_ERROR',
-              details: {'error': e.toString()},
-            );
+          if (retryIncompleteGroupUploadsFn != null) {
+            try {
+              await retryIncompleteGroupUploadsFn!();
+            } catch (e) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'PENDING_RETRIER_GROUP_INCOMPLETE_UPLOAD_ERROR',
+                details: {'error': e.toString()},
+              );
+            }
           }
-        }
 
-        // Publish-free custody confirm BEFORE the re-publish retrier: promote a
-        // reconcilable pending row to sent without re-sending. Both this and the
-        // re-publish step touch 'pending' rows; confirm-first prevents the
-        // re-publish below from re-transmitting — and risking a duplicate
-        // delivery of — a pending row that relay custody already resolved
-        // (GAP 3a).
-        if (retryFailedGroupInboxStoresFn != null) {
-          try {
-            await retryFailedGroupInboxStoresFn!();
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_INBOX_RETRY_ERROR',
-              details: {'error': e.toString()},
-            );
+          // Publish-free custody confirm BEFORE the re-publish retrier:
+          // promote a reconcilable pending row to sent without re-sending.
+          // Both this and the re-publish step touch 'pending' rows;
+          // confirm-first prevents the re-publish below from re-transmitting
+          // — and risking a duplicate delivery of — a pending row that relay
+          // custody already resolved (GAP 3a).
+          if (retryFailedGroupInboxStoresFn != null) {
+            try {
+              await retryFailedGroupInboxStoresFn!();
+            } catch (e) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'PENDING_RETRIER_GROUP_INBOX_RETRY_ERROR',
+                details: {'error': e.toString()},
+              );
+            }
           }
-        }
 
-        if (retryFailedGroupMessagesFn != null) {
-          try {
-            await retryFailedGroupMessagesFn!();
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_FAILED_MESSAGES_ERROR',
-              details: {'error': e.toString()},
-            );
+          if (retryFailedGroupMessagesFn != null) {
+            try {
+              await retryFailedGroupMessagesFn!();
+            } catch (e) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'PENDING_RETRIER_GROUP_FAILED_MESSAGES_ERROR',
+                details: {'error': e.toString()},
+              );
+            }
           }
-        }
+        });
       }
 
       // Step 6: Recover stuck sending messages
@@ -538,7 +559,6 @@ class PendingMessageRetrier {
           );
         }
       }
-
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_multi_device_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 Future<GroupModel> setGroupMuted({
@@ -7,6 +8,10 @@ Future<GroupModel> setGroupMuted({
   required String groupId,
   required bool isMuted,
 }) async {
+  // Mute is an installation-local preference and must never converge across a
+  // user's devices — keep this seam honoring its declared device-local scope so
+  // the multi-device contract cannot silently flip (see group_multi_device_policy).
+  assert(isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.mutePreference));
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_SET_MUTED_USE_CASE_BEGIN',

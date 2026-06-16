@@ -15,6 +15,19 @@ import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart'
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
 
+/// A [FakeBridge] that throws when the live reaction publish is attempted,
+/// while letting every other command (sign / inboxStore) succeed normally.
+class _ThrowingPublishReactionBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:publishReaction') {
+      throw Exception('FakeBridge: publishReaction error');
+    }
+    return super.send(message);
+  }
+}
+
 Map<String, dynamic> _replayEnvelopeFromRetryPayload(String retryPayload) {
   final payload = jsonDecode(retryPayload) as Map<String, dynamic>;
   return jsonDecode(payload['message'] as String) as Map<String, dynamic>;
@@ -273,6 +286,108 @@ void main() {
       _expectSignedReactionReplayEnvelope(
         _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload),
       );
+    },
+  );
+
+  test(
+    'INV-R1 publish failure queues remove for retry with custody',
+    () async {
+      bridge.responses['group:publishReaction'] = {
+        'ok': false,
+        'errorCode': 'GROUP_ERROR',
+      };
+
+      final result = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      // No longer a hard drop: queued for retry.
+      expect(result, RemoveGroupReactionResult.queuedForRetry);
+
+      // INV-R1(b): the optimistic local delete is applied despite the failure.
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      expect(reactionRepo.removeReactionCallCount, 1);
+
+      // INV-R1(a): a durable custody row exists for the remove.
+      await pumpEventQueue();
+      final entry = reactionReplayOutboxRepo.entries.single;
+      expect(entry.messageId, 'msg-1');
+      expect(entry.senderPeerId, 'peer-1');
+      expect(entry.action, 'remove');
+    },
+  );
+
+  test(
+    'INV-R1 thrown publish error queues remove for retry with custody',
+    () async {
+      final throwingBridge = _ThrowingPublishReactionBridge();
+
+      final result = await removeGroupReaction(
+        bridge: throwingBridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, RemoveGroupReactionResult.queuedForRetry);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+
+      await pumpEventQueue();
+      expect(reactionReplayOutboxRepo.entries, hasLength(1));
+    },
+  );
+
+  test(
+    'OQ-2 repeated remove re-stages a single durable row (deterministic id)',
+    () async {
+      // First remove succeeds; second is a re-stage of the same logical remove.
+      final first = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+      final second = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        // Emoji is irrelevant to a remove's identity (keyed by message+sender).
+        emoji: '❤️',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(first, RemoveGroupReactionResult.success);
+      expect(second, RemoveGroupReactionResult.success);
+
+      await pumpEventQueue();
+      // Before OQ-2 the remove minted a fresh uuid PK per call → two rows.
+      expect(reactionReplayOutboxRepo.entries, hasLength(1));
     },
   );
 

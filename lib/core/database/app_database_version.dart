@@ -1,1 +1,1 @@
-const int currentIdentityDatabaseVersion = 79;
+const int currentIdentityDatabaseVersion = 84;

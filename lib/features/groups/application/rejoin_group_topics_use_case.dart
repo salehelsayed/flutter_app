@@ -20,21 +20,41 @@ enum RejoinReason {
   inPlaceRecovery,
 }
 
+/// Per-group result of a single rejoin pass. Exposed so callers (and a future
+/// per-group Go ack) can reason about which specific groups are still
+/// un-recovered rather than only the batch aggregates.
+enum RejoinOutcome { joined, skippedNoKey, error, skippedDissolved }
+
 class RejoinGroupTopicsResult {
   final int joinedGroupCount;
   final int skippedNoKeyCount;
   final int errorCount;
   final bool skipped;
 
+  /// groupId → outcome for every group visited this pass.
+  final Map<String, RejoinOutcome> perGroupOutcomes;
+
   const RejoinGroupTopicsResult({
     required this.joinedGroupCount,
     required this.skippedNoKeyCount,
     required this.errorCount,
     required this.skipped,
+    this.perGroupOutcomes = const {},
   });
 
-  bool get canAcknowledgeGroupRecovery =>
-      !skipped && skippedNoKeyCount == 0 && errorCount == 0;
+  /// Whether this pass may acknowledge group recovery to the relay.
+  ///
+  /// The Go ack is **node-wide** (it takes no groupId), so eligibility is
+  /// computed over the *recoverable* set:
+  ///   * A group skipped for **no key material** is NOT a transient miss — it
+  ///     stays un-rejoinable until a key arrives, and key arrival re-triggers
+  ///     its own rejoin+drain. Blocking the node-wide ack on it would leave
+  ///     `needsGroupRecovery` stuck forever (the relay never hears we caught up
+  ///     for every *other* group), so no-key groups do NOT block the ack.
+  ///   * A transient per-group **error** still blocks: a failed rejoin may mean
+  ///     we missed live messages for that group, and with a node-wide ack we
+  ///     conservatively withhold the whole ack until a later pass clears it.
+  bool get canAcknowledgeGroupRecovery => !skipped && errorCount == 0;
 }
 
 /// Rejoins all group pubsub topics on startup or after watchdog restart.
@@ -68,11 +88,13 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   var joinedGroupCount = 0;
   var skippedNoKeyCount = 0;
   var errorCount = 0;
+  final perGroupOutcomes = <String, RejoinOutcome>{};
 
   for (final group in groups) {
     final groupStopwatch = Stopwatch()..start();
     try {
       if (group.isDissolved) {
+        perGroupOutcomes[group.id] = RejoinOutcome.skippedDissolved;
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_REJOIN_TOPICS_SKIP_DISSOLVED',
@@ -102,6 +124,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
       final keyInfo = await groupRepo.getLatestKey(group.id);
       if (keyInfo == null) {
         skippedNoKeyCount++;
+        perGroupOutcomes[group.id] = RejoinOutcome.skippedNoKey;
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_REJOIN_TOPICS_SKIP_NO_KEY',
@@ -138,6 +161,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
         keyEpoch: keyInfo.keyGeneration,
       );
       joinedGroupCount++;
+      perGroupOutcomes[group.id] = RejoinOutcome.joined;
 
       emitFlowEvent(
         layer: 'FL',
@@ -161,6 +185,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
       );
     } catch (e) {
       errorCount++;
+      perGroupOutcomes[group.id] = RejoinOutcome.error;
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_REJOIN_TOPICS_ERROR',
@@ -182,6 +207,14 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
     }
   }
 
+  final result = RejoinGroupTopicsResult(
+    joinedGroupCount: joinedGroupCount,
+    skippedNoKeyCount: skippedNoKeyCount,
+    errorCount: errorCount,
+    skipped: false,
+    perGroupOutcomes: perGroupOutcomes,
+  );
+
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_REJOIN_TOPICS_DONE',
@@ -190,6 +223,9 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
       'joinedGroupCount': joinedGroupCount,
       'skippedNoKeyCount': skippedNoKeyCount,
       'errorCount': errorCount,
+      // Node-wide ack eligibility: no-key groups no longer block it; only
+      // transient errors do (see RejoinGroupTopicsResult.canAcknowledgeGroupRecovery).
+      'canAcknowledgeGroupRecovery': result.canAcknowledgeGroupRecovery,
     },
   );
   emitFlowEvent(
@@ -207,10 +243,5 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
     },
   );
 
-  return RejoinGroupTopicsResult(
-    joinedGroupCount: joinedGroupCount,
-    skippedNoKeyCount: skippedNoKeyCount,
-    errorCount: errorCount,
-    skipped: false,
-  );
+  return result;
 }

@@ -12,6 +12,12 @@ class ContactSafetyNumber {
     required String peerId,
     required String? publicKey,
     String? mlKemPublicKey,
+    // B4: optional per-device fingerprints to fold into the number. EMPTY (the
+    // default, every existing caller) yields the byte-identical `v1` account-level
+    // number — non-breaking. When non-empty, a sorted device block is folded in
+    // and the version bumps to `v2`, so adding/swapping a device changes the
+    // displayed number (a deliberate security-string change).
+    List<String> deviceFingerprints = const [],
   }) {
     final normalizedPeerId = peerId.trim();
     final normalizedPublicKey = publicKey?.trim();
@@ -22,11 +28,27 @@ class ContactSafetyNumber {
     }
 
     final normalizedMlKemPublicKey = mlKemPublicKey?.trim() ?? '';
-    final material =
-        'mknoon-safety-v1\n'
-        'peer:$normalizedPeerId\n'
-        'ed25519:$normalizedPublicKey\n'
-        'mlkem:$normalizedMlKemPublicKey';
+    final normalizedDevices =
+        deviceFingerprints
+            .map((fingerprint) => fingerprint.trim())
+            .where((fingerprint) => fingerprint.isNotEmpty)
+            .toList()
+          ..sort();
+    final String material;
+    if (normalizedDevices.isEmpty) {
+      material =
+          'mknoon-safety-v1\n'
+          'peer:$normalizedPeerId\n'
+          'ed25519:$normalizedPublicKey\n'
+          'mlkem:$normalizedMlKemPublicKey';
+    } else {
+      material =
+          'mknoon-safety-v2\n'
+          'peer:$normalizedPeerId\n'
+          'ed25519:$normalizedPublicKey\n'
+          'mlkem:$normalizedMlKemPublicKey\n'
+          'devices:${normalizedDevices.join(",")}';
+    }
     final digest = sha256.convert(utf8.encode(material)).bytes;
     var value = BigInt.zero;
     for (final byte in digest.take(8)) {

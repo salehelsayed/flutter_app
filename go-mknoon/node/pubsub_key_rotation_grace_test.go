@@ -60,7 +60,10 @@ func TestGroupTopicValidator_AcceptsPreviousEpochDuringGrace(t *testing.T) {
 	}
 }
 
-func TestGroupTopicValidator_RejectsPreviousEpochAfterGraceExpires(t *testing.T) {
+// UDM-E (K=5 ring): a held previous epoch is accepted by the validator even
+// after the grace deadline expires — receive anchors to keys held, not the
+// clock. Pre-ring this asserted a reject after grace expiry.
+func TestGroupTopicValidator_AcceptsHeldPreviousEpochAfterGraceExpires(t *testing.T) {
 	priv, pub := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()
 	if err != nil {
@@ -87,12 +90,16 @@ func TestGroupTopicValidator_RejectsPreviousEpochAfterGraceExpires(t *testing.T)
 	)
 
 	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
-	if result != "reject:bad_signature" {
-		t.Fatalf("expected reject:bad_signature after grace expiry, got %s", result)
+	if result != "accept" {
+		t.Fatalf("expected accept for held previous epoch after grace expiry, got %s", result)
 	}
 }
 
-func TestGK017GroupTopicValidatorRejectsPreviousEpochAfterGraceDeadline(t *testing.T) {
+// UDM-E (K=5 ring): a held previous epoch is accepted regardless of the grace
+// deadline (live, expired, or zero) because the receive path consults the held
+// ring. The ONLY reject is when the previous key material is absent (not held)
+// — that security property is preserved.
+func TestGK017GroupTopicValidatorAcceptsHeldPreviousEpochRegardlessOfGraceDeadline(t *testing.T) {
 	priv, pub := generateEd25519KeyPair(t)
 	prevKey, err := mcrypto.GenerateGroupKey()
 	if err != nil {
@@ -124,7 +131,7 @@ func TestGK017GroupTopicValidatorRejectsPreviousEpochAfterGraceDeadline(t *testi
 		now.Add(KeyRotationGracePeriod),
 	)
 	if result := validateGroupEnvelope(envelope, groupId, config, liveGrace); result != "accept" {
-		t.Fatalf("expected previous epoch accept during live grace control, got %s", result)
+		t.Fatalf("expected previous epoch accept during live grace, got %s", result)
 	}
 
 	expiredGrace := buildGroupKeyInfoWithGrace(
@@ -134,10 +141,23 @@ func TestGK017GroupTopicValidatorRejectsPreviousEpochAfterGraceDeadline(t *testi
 		1,
 		now.Add(-time.Second),
 	)
-	if result := validateGroupEnvelope(envelope, groupId, config, expiredGrace); result != "reject:bad_signature" {
-		t.Fatalf("expected reject:bad_signature after grace deadline, got %s", result)
+	if result := validateGroupEnvelope(envelope, groupId, config, expiredGrace); result != "accept" {
+		t.Fatalf("expected held previous epoch accept after grace deadline, got %s", result)
 	}
 
+	withoutDeadline := buildGroupKeyInfoWithGrace(
+		currentKey,
+		2,
+		prevKey,
+		1,
+		time.Time{},
+	)
+	if result := validateGroupEnvelope(envelope, groupId, config, withoutDeadline); result != "accept" {
+		t.Fatalf("expected held previous epoch accept without grace deadline, got %s", result)
+	}
+
+	// SECURITY: a previous epoch the node never held (no prev key material) must
+	// still be rejected — the ring only ever holds keys legitimately received.
 	withoutPrevKey := buildGroupKeyInfoWithGrace(
 		currentKey,
 		2,
@@ -148,20 +168,11 @@ func TestGK017GroupTopicValidatorRejectsPreviousEpochAfterGraceDeadline(t *testi
 	if result := validateGroupEnvelope(envelope, groupId, config, withoutPrevKey); result != "reject:bad_signature" {
 		t.Fatalf("expected reject:bad_signature without previous key material, got %s", result)
 	}
-
-	withoutDeadline := buildGroupKeyInfoWithGrace(
-		currentKey,
-		2,
-		prevKey,
-		1,
-		time.Time{},
-	)
-	if result := validateGroupEnvelope(envelope, groupId, config, withoutDeadline); result != "reject:bad_signature" {
-		t.Fatalf("expected reject:bad_signature without grace deadline, got %s", result)
-	}
 }
 
-func TestGK017DecryptGroupEnvelopePayloadRejectsPreviousEpochAfterGraceDeadline(t *testing.T) {
+// UDM-E (K=5 ring): a held previous epoch decrypts regardless of the grace
+// deadline. A previous epoch never held (no prev key material) still fails.
+func TestGK017DecryptGroupEnvelopePayloadAcceptsHeldPreviousEpochRegardlessOfGraceDeadline(t *testing.T) {
 	priv, pub := generateEd25519KeyPair(t)
 	prevKey, err := mcrypto.GenerateGroupKey()
 	if err != nil {
@@ -190,7 +201,7 @@ func TestGK017DecryptGroupEnvelopePayloadRejectsPreviousEpochAfterGraceDeadline(
 	)
 	plaintext, err := decryptGroupEnvelopePayload(env, liveGrace, now)
 	if err != nil {
-		t.Fatalf("expected previous epoch decrypt during live grace control: %v", err)
+		t.Fatalf("expected previous epoch decrypt during live grace: %v", err)
 	}
 	if !strings.Contains(plaintext, text) {
 		t.Fatalf("live grace plaintext %q does not contain %q", plaintext, text)
@@ -204,10 +215,24 @@ func TestGK017DecryptGroupEnvelopePayloadRejectsPreviousEpochAfterGraceDeadline(
 		now.Add(-time.Second),
 	)
 	plaintext, err = decryptGroupEnvelopePayload(env, expiredGrace, now)
-	if err == nil {
-		t.Fatalf("expected decrypt after grace deadline to fail, got plaintext %q", plaintext)
+	if err != nil {
+		t.Fatalf("expected held previous epoch to decrypt after grace deadline: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no group key available for epoch 1") {
+	if !strings.Contains(plaintext, text) {
+		t.Fatalf("expired-grace plaintext %q does not contain %q", plaintext, text)
+	}
+
+	// SECURITY: an epoch never held (no prev key material) still fails closed.
+	notHeld := buildGroupKeyInfoWithGrace(
+		currentKey,
+		2,
+		"",
+		1,
+		now.Add(KeyRotationGracePeriod),
+	)
+	if plaintext, err := decryptGroupEnvelopePayload(env, notHeld, now); err == nil {
+		t.Fatalf("expected decrypt to fail for unheld previous epoch, got plaintext %q", plaintext)
+	} else if !strings.Contains(err.Error(), "no group key available for epoch 1") {
 		t.Fatalf("decrypt error = %q, want no group key available for epoch 1", err.Error())
 	}
 }
@@ -361,18 +386,21 @@ func TestGK019GroupTopicValidatorAcceptsOnlyEpoch0GraceAndCurrentEpoch2ForDirect
 	expiredKeyInfo := *liveKeyInfo
 	expiredKeyInfo.GraceDeadline = time.Now().Add(-time.Second)
 
+	// UDM-E (K=5 ring): epoch 0 (held) is retained and ACCEPTS regardless of the
+	// grace deadline; epoch 1 was SKIPPED (direct 0->2) and never held, so it
+	// stays a reject. Pre-ring, an expired deadline dropped held epoch 0.
 	cases := []struct {
 		name    string
 		keyInfo *GroupKeyInfo
 		epoch   int
 		want    string
 	}{
-		{name: "live epoch 0 previous grace", keyInfo: liveKeyInfo, epoch: 0, want: "accept"},
-		{name: "live epoch 1 skipped unsupported", keyInfo: liveKeyInfo, epoch: 1, want: "reject:bad_signature"},
+		{name: "live epoch 0 retained in ring", keyInfo: liveKeyInfo, epoch: 0, want: "accept"},
+		{name: "live epoch 1 skipped never held", keyInfo: liveKeyInfo, epoch: 1, want: "reject:bad_signature"},
 		{name: "live epoch 2 current", keyInfo: liveKeyInfo, epoch: 2, want: "accept"},
-		{name: "expired epoch 0 previous grace", keyInfo: &expiredKeyInfo, epoch: 0, want: "reject:bad_signature"},
-		{name: "expired epoch 1 skipped unsupported", keyInfo: &expiredKeyInfo, epoch: 1, want: "reject:bad_signature"},
-		{name: "expired epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2, want: "accept"},
+		{name: "expired-deadline epoch 0 still retained", keyInfo: &expiredKeyInfo, epoch: 0, want: "accept"},
+		{name: "expired-deadline epoch 1 skipped never held", keyInfo: &expiredKeyInfo, epoch: 1, want: "reject:bad_signature"},
+		{name: "expired-deadline epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2, want: "accept"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -420,14 +448,17 @@ func TestGK019DecryptGroupEnvelopePayloadAcceptsOnlyEpoch0GraceAndCurrentEpoch2F
 	expiredKeyInfo := *liveKeyInfo
 	expiredKeyInfo.GraceDeadline = now.Add(-time.Second)
 
+	// UDM-E (K=5 ring): held epochs 0 and 2 decrypt regardless of the grace
+	// deadline; epoch 1 was skipped (never held) and stays a hard miss.
 	successCases := []struct {
 		name    string
 		keyInfo *GroupKeyInfo
 		epoch   int
 	}{
-		{name: "live epoch 0 previous grace", keyInfo: liveKeyInfo, epoch: 0},
+		{name: "live epoch 0 retained in ring", keyInfo: liveKeyInfo, epoch: 0},
 		{name: "live epoch 2 current", keyInfo: liveKeyInfo, epoch: 2},
-		{name: "expired epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2},
+		{name: "expired-deadline epoch 0 still retained", keyInfo: &expiredKeyInfo, epoch: 0},
+		{name: "expired-deadline epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2},
 	}
 	for _, tc := range successCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -447,9 +478,8 @@ func TestGK019DecryptGroupEnvelopePayloadAcceptsOnlyEpoch0GraceAndCurrentEpoch2F
 		epoch      int
 		wantErrSub string
 	}{
-		{name: "live epoch 1 skipped unsupported", keyInfo: liveKeyInfo, epoch: 1, wantErrSub: "no group key available for epoch 1"},
-		{name: "expired epoch 0 previous grace", keyInfo: &expiredKeyInfo, epoch: 0, wantErrSub: "no group key available for epoch 0"},
-		{name: "expired epoch 1 skipped unsupported", keyInfo: &expiredKeyInfo, epoch: 1, wantErrSub: "no group key available for epoch 1"},
+		{name: "live epoch 1 skipped never held", keyInfo: liveKeyInfo, epoch: 1, wantErrSub: "no group key available for epoch 1"},
+		{name: "expired-deadline epoch 1 skipped never held", keyInfo: &expiredKeyInfo, epoch: 1, wantErrSub: "no group key available for epoch 1"},
 	}
 	for _, tc := range errorCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -488,18 +518,22 @@ func TestGK020GroupTopicValidatorAcceptsOnlyEpoch1GraceAndCurrentEpoch2AfterSequ
 	expiredKeyInfo := *liveKeyInfo
 	expiredKeyInfo.GraceDeadline = time.Now().Add(-time.Second)
 
+	// UDM-E (K=5 ring): after a sequential 0->1->2 rotation all three epochs are
+	// retained in the held-keys ring, so all three ACCEPT regardless of the grace
+	// deadline (the clock no longer gates receive). Pre-ring this test asserted
+	// epoch 0 "too old" and an expired prev-epoch reject.
 	cases := []struct {
 		name    string
 		keyInfo *GroupKeyInfo
 		epoch   int
 		want    string
 	}{
-		{name: "live epoch 0 too old", keyInfo: liveKeyInfo, epoch: 0, want: "reject:bad_signature"},
-		{name: "live epoch 1 previous grace", keyInfo: liveKeyInfo, epoch: 1, want: "accept"},
+		{name: "live epoch 0 retained in ring", keyInfo: liveKeyInfo, epoch: 0, want: "accept"},
+		{name: "live epoch 1 retained in ring", keyInfo: liveKeyInfo, epoch: 1, want: "accept"},
 		{name: "live epoch 2 current", keyInfo: liveKeyInfo, epoch: 2, want: "accept"},
-		{name: "expired epoch 0 too old", keyInfo: &expiredKeyInfo, epoch: 0, want: "reject:bad_signature"},
-		{name: "expired epoch 1 previous grace", keyInfo: &expiredKeyInfo, epoch: 1, want: "reject:bad_signature"},
-		{name: "expired epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2, want: "accept"},
+		{name: "expired-deadline epoch 0 still retained", keyInfo: &expiredKeyInfo, epoch: 0, want: "accept"},
+		{name: "expired-deadline epoch 1 still retained", keyInfo: &expiredKeyInfo, epoch: 1, want: "accept"},
+		{name: "expired-deadline epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2, want: "accept"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -536,14 +570,20 @@ func TestGK020DecryptGroupEnvelopePayloadAcceptsOnlyEpoch1GraceAndCurrentEpoch2A
 	expiredKeyInfo := *liveKeyInfo
 	expiredKeyInfo.GraceDeadline = now.Add(-time.Second)
 
+	// UDM-E (K=5 ring): all three sequentially-held epochs decrypt regardless of
+	// the grace deadline. Pre-ring epoch 0 was "too old" and an expired deadline
+	// dropped the prior epoch.
 	successCases := []struct {
 		name    string
 		keyInfo *GroupKeyInfo
 		epoch   int
 	}{
-		{name: "live epoch 1 previous grace", keyInfo: liveKeyInfo, epoch: 1},
+		{name: "live epoch 0 retained in ring", keyInfo: liveKeyInfo, epoch: 0},
+		{name: "live epoch 1 retained in ring", keyInfo: liveKeyInfo, epoch: 1},
 		{name: "live epoch 2 current", keyInfo: liveKeyInfo, epoch: 2},
-		{name: "expired epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2},
+		{name: "expired-deadline epoch 0 still retained", keyInfo: &expiredKeyInfo, epoch: 0},
+		{name: "expired-deadline epoch 1 still retained", keyInfo: &expiredKeyInfo, epoch: 1},
+		{name: "expired-deadline epoch 2 current", keyInfo: &expiredKeyInfo, epoch: 2},
 	}
 	for _, tc := range successCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -553,28 +593,6 @@ func TestGK020DecryptGroupEnvelopePayloadAcceptsOnlyEpoch1GraceAndCurrentEpoch2A
 			}
 			if !strings.Contains(plaintext, textByEpoch[tc.epoch]) {
 				t.Fatalf("plaintext %q does not contain %q", plaintext, textByEpoch[tc.epoch])
-			}
-		})
-	}
-
-	errorCases := []struct {
-		name       string
-		keyInfo    *GroupKeyInfo
-		epoch      int
-		wantErrSub string
-	}{
-		{name: "live epoch 0 too old", keyInfo: liveKeyInfo, epoch: 0, wantErrSub: "no group key available for epoch 0"},
-		{name: "expired epoch 0 too old", keyInfo: &expiredKeyInfo, epoch: 0, wantErrSub: "no group key available for epoch 0"},
-		{name: "expired epoch 1 previous grace", keyInfo: &expiredKeyInfo, epoch: 1, wantErrSub: "no group key available for epoch 1"},
-	}
-	for _, tc := range errorCases {
-		t.Run(tc.name, func(t *testing.T) {
-			plaintext, err := decryptGroupEnvelopePayload(envelopes[tc.epoch], tc.keyInfo, now)
-			if err == nil {
-				t.Fatalf("expected decrypt epoch %d to fail, got plaintext %q", tc.epoch, plaintext)
-			}
-			if !strings.Contains(err.Error(), tc.wantErrSub) {
-				t.Fatalf("decrypt error = %q, want substring %q", err.Error(), tc.wantErrSub)
 			}
 		})
 	}
@@ -614,22 +632,14 @@ func TestGK016GroupTopicValidatorAcceptsEpoch0PreviousKeyDuringFirstRotationGrac
 		t.Fatalf("expected epoch 0 accept during first rotation grace, got %s", result)
 	}
 
-	cases := []struct {
+	// UDM-E (K=5 ring): a held epoch 0 is accepted whether the grace deadline is
+	// live, zero, or expired — the clock no longer gates receive.
+	acceptCases := []struct {
 		name    string
 		keyInfo *GroupKeyInfo
 	}{
 		{
-			name: "missing previous key material",
-			keyInfo: buildGroupKeyInfoWithGrace(
-				epoch1Key,
-				1,
-				"",
-				0,
-				time.Now().Add(KeyRotationGracePeriod),
-			),
-		},
-		{
-			name: "zero grace deadline",
+			name: "zero grace deadline still held",
 			keyInfo: buildGroupKeyInfoWithGrace(
 				epoch1Key,
 				1,
@@ -639,7 +649,7 @@ func TestGK016GroupTopicValidatorAcceptsEpoch0PreviousKeyDuringFirstRotationGrac
 			),
 		},
 		{
-			name: "expired grace deadline",
+			name: "expired grace deadline still held",
 			keyInfo: buildGroupKeyInfoWithGrace(
 				epoch1Key,
 				1,
@@ -649,12 +659,24 @@ func TestGK016GroupTopicValidatorAcceptsEpoch0PreviousKeyDuringFirstRotationGrac
 			),
 		},
 	}
-	for _, tc := range cases {
+	for _, tc := range acceptCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if result := validateGroupEnvelope(envelope, groupId, config, tc.keyInfo); result != "reject:bad_signature" {
-				t.Fatalf("expected epoch 0 reject without explicit live grace, got %s", result)
+			if result := validateGroupEnvelope(envelope, groupId, config, tc.keyInfo); result != "accept" {
+				t.Fatalf("expected held epoch 0 accept regardless of grace deadline, got %s", result)
 			}
 		})
+	}
+
+	// SECURITY: epoch 0 NOT held (no previous key material) is still rejected.
+	notHeld := buildGroupKeyInfoWithGrace(
+		epoch1Key,
+		1,
+		"",
+		0,
+		time.Now().Add(KeyRotationGracePeriod),
+	)
+	if result := validateGroupEnvelope(envelope, groupId, config, notHeld); result != "reject:bad_signature" {
+		t.Fatalf("expected epoch 0 reject when not held, got %s", result)
 	}
 }
 
@@ -704,7 +726,10 @@ func TestGroupTopicValidator_RejectsRemovedSenderPreviousEpochDuringGrace(t *tes
 	}
 }
 
-func TestGroupTopicValidator_RejectsUnknownFutureEpochBeforeDelivery(t *testing.T) {
+// UDM-F: a bound member's strictly-future epoch (within the clamp window) is now
+// IGNORED (re-pullable), NOT Rejected — an honest newer-epoch sender must not be
+// peer-penalized for our key-lag. (Was TestGroupTopicValidator_RejectsUnknownFutureEpochBeforeDelivery.)
+func TestGroupTopicValidator_IgnoresMemberFutureEpochForRepull(t *testing.T) {
 	priv, pub := generateEd25519KeyPair(t)
 	currentKey, err := mcrypto.GenerateGroupKey()
 	if err != nil {
@@ -738,8 +763,51 @@ func TestGroupTopicValidator_RejectsUnknownFutureEpochBeforeDelivery(t *testing.
 	keyInfo := &GroupKeyInfo{Key: currentKey, KeyEpoch: 1}
 
 	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
+	if result != "ignore" {
+		t.Fatalf("expected ignore for a bound member's future epoch (UDM-F re-pull), got %s", result)
+	}
+}
+
+// UDM-F: the future-epoch Ignore is clamped — an absurd epoch claim (beyond the
+// window) is NOT Ignored; it falls through to the signature check and is
+// Rejected, so a bound member cannot grief with arbitrarily-far-future epochs.
+func TestGroupTopicValidator_RejectsFutureEpochBeyondClampWindow(t *testing.T) {
+	priv, pub := generateEd25519KeyPair(t)
+	currentKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate current key: %v", err)
+	}
+	futureKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate future key: %v", err)
+	}
+
+	groupId := "group-future-epoch-clamp"
+	config := &GroupConfig{
+		Name:      "Future Epoch Clamp Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-1", Role: GroupRoleAdmin, PublicKey: pub},
+		},
+		CreatedBy: "peer-1",
+	}
+
+	farEpoch := 1 + maxFutureKeyEpochIgnoreWindow + 1
+	envelope := buildTestEnvelope(
+		t,
+		groupId,
+		"peer-1",
+		priv,
+		pub,
+		futureKey,
+		farEpoch,
+		"absurd future epoch message",
+	)
+	keyInfo := &GroupKeyInfo{Key: currentKey, KeyEpoch: 1}
+
+	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
 	if result != "reject:bad_signature" {
-		t.Fatalf("expected reject:bad_signature for unknown future epoch, got %s", result)
+		t.Fatalf("expected reject:bad_signature for a future epoch beyond the clamp window, got %s", result)
 	}
 }
 
@@ -845,11 +913,18 @@ func assertGK019DirectJumpKeyInfo(t *testing.T, got *GroupKeyInfo, epoch0Key, ep
 		t.Fatalf("expected current epoch 2 key, got epoch=%d key=%q", got.KeyEpoch, got.Key)
 	}
 	if got.PrevKey != epoch0Key || got.PrevKeyEpoch != 0 {
-		t.Fatalf("expected previous epoch 0 key, got prevEpoch=%d prevKey=%q", got.PrevKeyEpoch, got.PrevKey)
+		t.Fatalf("expected previous epoch 0 key (derived ring[1] view), got prevEpoch=%d prevKey=%q", got.PrevKeyEpoch, got.PrevKey)
 	}
+	// epoch 1 was SKIPPED (direct 0->2) and was never held, so it must NOT be in
+	// the retained ring. The ring holds exactly the two epochs this node held:
+	// the current epoch 2 (head) and the prior epoch 0.
 	if got.Key == epoch1Key || got.PrevKey == epoch1Key || got.KeyEpoch == 1 || got.PrevKeyEpoch == 1 {
 		t.Fatalf("epoch 1 must not be stored after direct 0->2 update: current epoch=%d key=%q prevEpoch=%d prevKey=%q", got.KeyEpoch, got.Key, got.PrevKeyEpoch, got.PrevKey)
 	}
+	assertRingEpochsNewestFirst(t, got, []GroupEpochKey{
+		{Key: epoch2Key, KeyEpoch: 2},
+		{Key: epoch0Key, KeyEpoch: 0},
+	})
 	minDeadline := before.Add(KeyRotationGracePeriod - time.Second)
 	maxDeadline := after.Add(KeyRotationGracePeriod + time.Second)
 	if got.GraceDeadline.IsZero() {
@@ -923,11 +998,17 @@ func assertGK020SequentialRotationKeyInfo(t *testing.T, got *GroupKeyInfo, epoch
 		t.Fatalf("expected current epoch 2 key, got epoch=%d key=%q", got.KeyEpoch, got.Key)
 	}
 	if got.PrevKey != epoch1Key || got.PrevKeyEpoch != 1 {
-		t.Fatalf("expected previous epoch 1 key, got prevEpoch=%d prevKey=%q", got.PrevKeyEpoch, got.PrevKey)
+		t.Fatalf("expected previous epoch 1 key (derived ring[1] view), got prevEpoch=%d prevKey=%q", got.PrevKeyEpoch, got.PrevKey)
 	}
-	if got.Key == epoch0Key || got.PrevKey == epoch0Key || got.KeyEpoch == 0 || got.PrevKeyEpoch == 0 {
-		t.Fatalf("epoch 0 must not be stored after sequential 0->1->2 update: current epoch=%d key=%q prevEpoch=%d prevKey=%q", got.KeyEpoch, got.Key, got.PrevKeyEpoch, got.PrevKey)
-	}
+	// UDM-E (K=5 retained ring): after a sequential 0->1->2 rotation epoch 0 is
+	// RETAINED in the held-keys ring (it is within K of the head), reversing the
+	// pre-ring single-prev assertion that epoch 0 was dropped. The current epoch
+	// and the derived PrevKey view still mirror the two most-recent epochs.
+	assertRingEpochsNewestFirst(t, got, []GroupEpochKey{
+		{Key: epoch2Key, KeyEpoch: 2},
+		{Key: epoch1Key, KeyEpoch: 1},
+		{Key: epoch0Key, KeyEpoch: 0},
+	})
 	minDeadline := beforeSecondUpdate.Add(KeyRotationGracePeriod - time.Second)
 	maxDeadline := afterSecondUpdate.Add(KeyRotationGracePeriod + time.Second)
 	if got.GraceDeadline.IsZero() {
@@ -938,6 +1019,28 @@ func assertGK020SequentialRotationKeyInfo(t *testing.T, got *GroupKeyInfo, epoch
 	}
 	if !time.Now().Before(got.GraceDeadline) {
 		t.Fatalf("grace deadline %v is not live", got.GraceDeadline)
+	}
+}
+
+// assertRingEpochsNewestFirst asserts that the retained held-keys ring matches
+// the expected epochs in newest-first order. Introduced by UDM-E (K=5 ring) to
+// replace the pre-ring single-prev assertions.
+func assertRingEpochsNewestFirst(t *testing.T, got *GroupKeyInfo, want []GroupEpochKey) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("assertRingEpochsNewestFirst: nil key info")
+	}
+	if len(got.Keys) != len(want) {
+		t.Fatalf("ring length = %d (%+v), want %d (%+v)", len(got.Keys), got.Keys, len(want), want)
+	}
+	for i, w := range want {
+		if got.Keys[i].KeyEpoch != w.KeyEpoch || got.Keys[i].Key != w.Key {
+			t.Fatalf("ring[%d] = epoch %d key %q, want epoch %d key %q", i, got.Keys[i].KeyEpoch, got.Keys[i].Key, w.KeyEpoch, w.Key)
+		}
+	}
+	// Ring head must mirror the current epoch fields.
+	if got.Key != want[0].Key || got.KeyEpoch != want[0].KeyEpoch {
+		t.Fatalf("current key/epoch = %q/%d, want ring head %q/%d", got.Key, got.KeyEpoch, want[0].Key, want[0].KeyEpoch)
 	}
 }
 
@@ -1900,7 +2003,10 @@ func TestHandleGroupSubscription_DecryptsPreviousEpochDuringGrace(t *testing.T) 
 	t.Fatal("expected group_message:received event during grace-period decrypt")
 }
 
-func TestHandleGroupSubscription_DropsPreviousEpochAfterGraceExpires(t *testing.T) {
+// UDM-E (K=5 ring): a held previous epoch still DELIVERS after the grace
+// deadline expires because the receive path anchors to keys held, not the
+// clock. Pre-ring this test asserted the previous epoch was dropped post-grace.
+func TestHandleGroupSubscription_DeliversHeldPreviousEpochAfterGraceExpires(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	oldGroupKey, err := mcrypto.GenerateGroupKey()
 	if err != nil {
@@ -1937,6 +2043,7 @@ func TestHandleGroupSubscription_DropsPreviousEpochAfterGraceExpires(t *testing.
 
 	connectLocalGroupNodes(t, nodeA, nodeB)
 
+	text := "old epoch still delivers from the held ring"
 	envelopeJSON := buildTestEnvelope(
 		t,
 		groupId,
@@ -1945,22 +2052,25 @@ func TestHandleGroupSubscription_DropsPreviousEpochAfterGraceExpires(t *testing.
 		senderPubB64,
 		oldGroupKey,
 		1,
-		"old epoch should now be stale",
+		text,
 	)
+	baseline := len(nodeBCapture.snapshot())
 	publishRawGroupEnvelope(t, nodeA, groupId, envelopeJSON)
 
-	time.Sleep(500 * time.Millisecond)
-
-	events := nodeBCapture.snapshot()
-	if hasCollectedEventName(events, "group_message:received") {
-		t.Fatal("group_message:received should not be emitted after grace expiry")
+	received := waitForCollectedEventAfter(t, nodeBCapture, baseline, "group_message:received", 5*time.Second)
+	if got, _ := received["text"].(string); got != text {
+		t.Fatalf("received text = %q, want %q", got, text)
 	}
-	if hasCollectedEventName(events, "group:decryption_failed") {
-		t.Fatal("group:decryption_failed should not be emitted when stale old-epoch traffic is rejected by the validator")
+	if got, ok := received["keyEpoch"].(float64); !ok || int(got) != 1 {
+		t.Fatalf("received keyEpoch = %v, want 1", received["keyEpoch"])
 	}
+	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group:decryption_failed"`, 500*time.Millisecond)
 }
 
-func TestGK017GroupTopicValidatorEmitsBadSignatureOrEpochAfterGraceDeadline(t *testing.T) {
+// UDM-E (K=5 ring): a held previous epoch is accepted and delivered by a live
+// node even after the grace deadline expires. Pre-ring this asserted a live
+// bad_signature_or_epoch reject post-grace.
+func TestGK017GroupTopicValidatorDeliversHeldPreviousEpochAfterGraceDeadline(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	_, receiverPubB64 := generateEd25519KeyPair(t)
 	prevKey, err := mcrypto.GenerateGroupKey()
@@ -2002,6 +2112,7 @@ func TestGK017GroupTopicValidatorEmitsBadSignatureOrEpochAfterGraceDeadline(t *t
 	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 3*time.Second)
 	waitForGroupTopicPeerCount(t, nodeB, groupId, 1, 3*time.Second)
 
+	text := "held previous epoch still delivers after grace deadline"
 	envelopeJSON := buildTestEnvelope(
 		t,
 		groupId,
@@ -2010,14 +2121,19 @@ func TestGK017GroupTopicValidatorEmitsBadSignatureOrEpochAfterGraceDeadline(t *t
 		senderPubB64,
 		prevKey,
 		1,
-		"stale previous epoch should reject after grace",
+		text,
 	)
 	baseline := len(nodeBCapture.snapshot())
 	publishRawGroupEnvelope(t, nodeA, groupId, envelopeJSON)
 
-	waitForCollectedValidationReject(t, nodeBCapture, baseline, "bad_signature_or_epoch", 1, 5*time.Second)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group_message:received"`, 500*time.Millisecond)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group_reaction:received"`, 500*time.Millisecond)
+	received := waitForCollectedEventAfter(t, nodeBCapture, baseline, "group_message:received", 5*time.Second)
+	if got, _ := received["text"].(string); got != text {
+		t.Fatalf("received text = %q, want %q", got, text)
+	}
+	if got, ok := received["keyEpoch"].(float64); !ok || int(got) != 1 {
+		t.Fatalf("received keyEpoch = %v, want 1", received["keyEpoch"])
+	}
+	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group:validation_rejected"`, 500*time.Millisecond)
 	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group:decryption_failed"`, 500*time.Millisecond)
 }
 
@@ -2201,7 +2317,9 @@ func TestGK019HandleGroupSubscriptionDirectJumpReceivesAllowedEpochsOnly(t *test
 	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group:decryption_failed"`, 500*time.Millisecond)
 }
 
-func TestGK020HandleGroupSubscriptionSequentialRotationsReceivesAllowedEpochsOnly(t *testing.T) {
+// UDM-E (K=5 ring): after a sequential 0->1->2 rotation all three held epochs
+// (0, 1, 2) are retained and deliver. Pre-ring epoch 0 was dropped as "too old".
+func TestGK020HandleGroupSubscriptionSequentialRotationsReceivesAllHeldEpochs(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	_, receiverPubB64 := generateEd25519KeyPair(t)
 	epoch0Key, epoch1Key, epoch2Key := gk020GenerateDistinctEpochKeys(t)
@@ -2244,13 +2362,21 @@ func TestGK020HandleGroupSubscriptionSequentialRotationsReceivesAllowedEpochsOnl
 		t.Fatalf("nodeA unregister local validator before GK020 raw publish: %v", err)
 	}
 
-	epoch0Envelope := buildTestEnvelope(t, groupId, senderPeerId, senderPrivB64, senderPubB64, epoch0Key, 0, "sequential rotation rejects too-old epoch 0")
+	// UDM-E (K=5 ring): after 0->1->2 epoch 0 is RETAINED (within K of the head)
+	// and now DELIVERS. Pre-ring it was "too old" and rejected.
+	epoch0Text := "sequential rotation retains epoch 0 in the K=5 ring"
+	epoch0Envelope := buildTestEnvelope(t, groupId, senderPeerId, senderPrivB64, senderPubB64, epoch0Key, 0, epoch0Text)
 	baseline := len(nodeBCapture.snapshot())
 	publishRawGroupEnvelope(t, nodeA, groupId, epoch0Envelope)
 
-	waitForCollectedValidationReject(t, nodeBCapture, baseline, "bad_signature_or_epoch", 0, 5*time.Second)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group_message:received"`, 500*time.Millisecond)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group_reaction:received"`, 500*time.Millisecond)
+	received0 := waitForCollectedEventAfter(t, nodeBCapture, baseline, "group_message:received", 5*time.Second)
+	if got, _ := received0["text"].(string); got != epoch0Text {
+		t.Fatalf("epoch 0 received text = %q, want %q", got, epoch0Text)
+	}
+	if got, ok := received0["keyEpoch"].(float64); !ok || int(got) != 0 {
+		t.Fatalf("epoch 0 received keyEpoch = %v, want 0", received0["keyEpoch"])
+	}
+	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group:validation_rejected"`, 500*time.Millisecond)
 	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group:decryption_failed"`, 500*time.Millisecond)
 
 	epoch1Text := "sequential rotation accepts immediate previous epoch 1"

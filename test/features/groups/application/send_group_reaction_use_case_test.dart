@@ -16,6 +16,19 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
 
+/// A [FakeBridge] that throws when the live reaction publish is attempted,
+/// while letting every other command (sign / inboxStore) succeed normally.
+class _ThrowingPublishReactionBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:publishReaction') {
+      throw Exception('FakeBridge: publishReaction error');
+    }
+    return super.send(message);
+  }
+}
+
 Map<String, dynamic> _replayEnvelopeFromRetryPayload(String retryPayload) {
   final payload = jsonDecode(retryPayload) as Map<String, dynamic>;
   return jsonDecode(payload['message'] as String) as Map<String, dynamic>;
@@ -727,33 +740,165 @@ void main() {
     expect(reaction, isNull);
   });
 
-  test('publish failure returns publishFailed', () async {
-    bridge.responses['group:publishReaction'] = {
-      'ok': false,
-      'errorCode': 'GROUP_ERROR',
-    };
+  test(
+    'INV-R1 publish failure queues reaction for retry and persists optimistically',
+    () async {
+      bridge.responses['group:publishReaction'] = {
+        'ok': false,
+        'errorCode': 'GROUP_ERROR',
+      };
 
-    final (result, reaction) = await sendGroupReaction(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      reactionRepo: reactionRepo,
-      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-      groupId: 'group-1',
-      messageId: 'msg-1',
-      emoji: '👍',
-      senderPeerId: 'peer-1',
-      senderPublicKey: 'pk-1',
-      senderPrivateKey: 'sk-1',
-    );
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
 
-    expect(result, SendGroupReactionResult.publishFailed);
-    expect(reaction, isNull);
+      // No longer a hard drop: the reaction is queued for retry.
+      expect(result, SendGroupReactionResult.queuedForRetry);
+      expect(reaction, isNotNull);
+      expect(reaction!.emoji, '👍');
 
-    // Verify NOT persisted on failure
-    final stored = await reactionRepo.getReactionsForMessage('msg-1');
-    expect(stored, isEmpty);
-  });
+      // INV-R1(b): optimistic local state IS persisted despite the failure.
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+      expect(stored.single.id, reaction.id);
+      expect(reactionRepo.saveReactionCallCount, 1);
+
+      // INV-R1(a): a durable custody row exists regardless of publish outcome.
+      await pumpEventQueue();
+      final entry = await reactionReplayOutboxRepo.getEntry(reaction.id);
+      expect(entry, isNotNull);
+      expect(entry!.messageId, 'msg-1');
+      expect(entry.action, 'add');
+    },
+  );
+
+  test(
+    'INV-R2 publish + relay store failure leaves a retryable durable row',
+    () async {
+      bridge.responses['group:publishReaction'] = {
+        'ok': false,
+        'errorCode': 'GROUP_ERROR',
+      };
+      bridge.responses['group:inboxStore'] = {
+        'ok': false,
+        'errorCode': 'GROUP_INBOX_STORE_FAILED',
+      };
+
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, SendGroupReactionResult.queuedForRetry);
+      expect(reaction, isNotNull);
+
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+
+      await pumpEventQueue();
+
+      // The existing retry driver re-drives pending/failed rows with no change.
+      final entry = await reactionReplayOutboxRepo.getEntry(reaction!.id);
+      expect(entry, isNotNull);
+      expect(entry!.deliveryStatus, GroupReactionReplayOutboxStatus.failed);
+      final retryable = await reactionReplayOutboxRepo.loadRetryableEntries();
+      expect(retryable.map((e) => e.reactionId), contains(reaction.id));
+    },
+  );
+
+  test(
+    'INV-R1 thrown publish error queues reaction for retry with custody',
+    () async {
+      final throwingBridge = _ThrowingPublishReactionBridge();
+
+      final (result, reaction) = await sendGroupReaction(
+        bridge: throwingBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, SendGroupReactionResult.queuedForRetry);
+      expect(reaction, isNotNull);
+
+      final stored = await reactionRepo.getReactionsForMessage('msg-1');
+      expect(stored, hasLength(1));
+
+      await pumpEventQueue();
+      final entry = await reactionReplayOutboxRepo.getEntry(reaction!.id);
+      expect(entry, isNotNull);
+    },
+  );
+
+  test(
+    'INV-R3 repeated publish-failed add re-stages a single durable row',
+    () async {
+      bridge.responses['group:publishReaction'] = {
+        'ok': false,
+        'errorCode': 'GROUP_ERROR',
+      };
+
+      final first = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+      final second = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(first.$1, SendGroupReactionResult.queuedForRetry);
+      expect(second.$1, SendGroupReactionResult.queuedForRetry);
+      expect(second.$2!.id, first.$2!.id);
+
+      await pumpEventQueue();
+      expect(reactionReplayOutboxRepo.entries, hasLength(1));
+    },
+  );
 
   test(
     'EK004 stores signed offline replay envelope for group_reaction add',

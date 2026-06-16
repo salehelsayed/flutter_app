@@ -74,6 +74,11 @@ import 'package:flutter_app/core/database/migrations/076_post_media_attachment_c
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart';
 import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
+import 'package:flutter_app/core/database/migrations/080_group_pending_key_repairs_status_index.dart';
+import 'package:flutter_app/core/database/migrations/081_group_pending_reactions.dart';
+import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
+import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
+import 'package:flutter_app/core/database/migrations/084_group_member_device_snapshots.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
@@ -111,6 +116,7 @@ import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dar
 import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
@@ -192,16 +198,21 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_ke
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_key_repair_responder_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_backoff_timer.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -274,6 +285,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
 import 'package:flutter_app/features/push/application/group_missing_notification_feedback.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
@@ -336,6 +348,14 @@ void main() async {
       } catch (e) {
         debugPrint('Firebase init skipped: $e');
       }
+    }
+
+    // 04-P0 / SI-5 (iOS): wire the recent-remote gate to also consume the NSE's
+    // app-group sidecar dedupe markers, and persist the app-group container path
+    // so the FCM background isolate can read it too.
+    if (!kIsWeb && Platform.isIOS) {
+      configureRecentRemoteNotificationGateForIos();
+      unawaited(persistAppGroupContainerPathForGate());
     }
     StartupTiming.instance.mark('firebase_ready');
   }
@@ -462,6 +482,11 @@ void main() async {
       await runMessageRelayCustodyMigration(db);
       await runGroupPendingKeyDistributionsMigration(db);
       await runMessageDedupKeyMigration(db);
+      await runGroupPendingKeyRepairsStatusIndexMigration(db);
+      await runGroupPendingReactionsMigration(db);
+      await runMessageReactionTombstoneMigration(db);
+      await runGroupsLastMembershipEventIdMigration(db);
+      await runGroupMemberDeviceSnapshotsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -697,6 +722,25 @@ void main() async {
       if (oldVersion < 79) {
         await runMessageDedupKeyMigration(db);
       }
+      // Finding 02 (UDM-B): status-leading index for the all-pending sweep.
+      if (oldVersion < 80) {
+        await runGroupPendingKeyRepairsStatusIndexMigration(db);
+      }
+      // Finding 10 (Gap 2): durable buffer for reaction-before-message.
+      if (oldVersion < 81) {
+        await runGroupPendingReactionsMigration(db);
+      }
+      // Finding 10 (Gap 3c): message_reactions removed_at tombstone.
+      if (oldVersion < 82) {
+        await runMessageReactionTombstoneMigration(db);
+      }
+      // Finding 07 (S3): deterministic membership-event tie-breaker id.
+      if (oldVersion < 83) {
+        await runGroupsLastMembershipEventIdMigration(db);
+      }
+      if (oldVersion < 84) {
+        await runGroupMemberDeviceSnapshotsMigration(db);
+      }
     },
   );
   StartupTiming.instance.mark('database_ready');
@@ -812,7 +856,13 @@ void main() async {
         dbDeleteMessagesForContact(db, contactPeerId),
     dbDeleteMessage: (id) => dbDeleteMessage(db, id),
     dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
-        dbExistsMessageByContent(db, contactPeerId, senderPeerId, text, timestamp),
+        dbExistsMessageByContent(
+          db,
+          contactPeerId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
     dbExistsMessageByDedupKey: (contactPeerId, senderPeerId, dedupKey) =>
         dbExistsMessageByDedupKey(db, contactPeerId, senderPeerId, dedupKey),
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
@@ -1049,8 +1099,15 @@ void main() async {
         dbLoadReactionsForMessage(db, messageId),
     dbLoadReactionsForMessages: (messageIds) =>
         dbLoadReactionsForMessages(db, messageIds),
-    dbDeleteReaction: (messageId, senderPeerId) =>
-        dbDeleteReaction(db, messageId, senderPeerId),
+    dbLoadActiveOrTombstonedReactionForSender: (messageId, senderPeerId) =>
+        dbLoadActiveOrTombstonedReactionForSender(db, messageId, senderPeerId),
+    dbDeleteReaction: (messageId, senderPeerId, {removedAtTimestamp}) =>
+        dbDeleteReaction(
+          db,
+          messageId,
+          senderPeerId,
+          removedAtTimestamp: removedAtTimestamp,
+        ),
     dbDeleteReactionsForMessage: (messageId) =>
         dbDeleteReactionsForMessage(db, messageId),
     dbDeleteReactionsForContact: (contactPeerId) =>
@@ -1105,6 +1162,10 @@ void main() async {
         dbInsertRemovedGroupMemberSnapshot(db, row, removedAt),
     dbLoadRemovedGroupMemberSnapshot: (groupId, peerId) =>
         dbLoadRemovedGroupMemberSnapshot(db, groupId, peerId),
+    dbUpsertGroupMemberDeviceSnapshot: (row, savedAt) =>
+        dbUpsertGroupMemberDeviceSnapshot(db, row, savedAt),
+    dbLoadGroupMemberDeviceSnapshot: (groupId, peerId) =>
+        dbLoadGroupMemberDeviceSnapshot(db, groupId, peerId),
     dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
     dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
     dbLoadGroupKeyByGeneration: (groupId, generation) =>
@@ -1327,6 +1388,17 @@ void main() async {
               keyEpoch: keyEpoch,
               limit: limit,
             ),
+    dbLoadAllPendingGroupKeyRepairs: ({int limit = 200}) =>
+        dbLoadAllPendingGroupKeyRepairs(db, limit: limit),
+    dbLoadPendingGroupKeyRepairsForGroup:
+        ({required groupId, int limit = 100}) =>
+            dbLoadPendingGroupKeyRepairsForGroup(
+              db,
+              groupId: groupId,
+              limit: limit,
+            ),
+    dbDeleteGroupPendingKeyRepair: (id) =>
+        dbDeleteGroupPendingKeyRepair(db, id),
     dbRecordGroupPendingKeyRepairAttempt:
         (id, {required lastError, required updatedAt}) =>
             dbRecordGroupPendingKeyRepairAttempt(
@@ -1350,6 +1422,8 @@ void main() async {
       GroupPendingKeyDistributionRepositoryImpl(
         dbUpsertGroupPendingKeyDistribution: (row) =>
             dbUpsertGroupPendingKeyDistribution(db, row),
+        dbReopenGroupPendingKeyDistributionForRedelivery: (row) =>
+            dbReopenGroupPendingKeyDistributionForRedelivery(db, row),
         dbLoadGroupPendingKeyDistribution: (id) =>
             dbLoadGroupPendingKeyDistribution(db, id),
         dbLoadPendingGroupKeyDistributionsForPeer:
@@ -1407,6 +1481,28 @@ void main() async {
     );
   });
 
+  // B1b sibling admission: a newly-admitted device may need the current key
+  // re-delivered even when the member's (group,peer) row is already terminal —
+  // reopen it (overriding exhaustion, because the device set changed) so the
+  // runner re-distributes to the now-larger device set.
+  setDeferredGroupKeyDistributionReopenSink(({
+    required groupId,
+    required peerId,
+    required keyEpoch,
+  }) async {
+    final now = DateTime.now().toUtc();
+    await groupPendingKeyDistributionRepository.reopenForRedelivery(
+      GroupPendingKeyDistribution(
+        id: groupPendingKeyDistributionId(groupId, peerId),
+        groupId: groupId,
+        peerId: peerId,
+        keyEpoch: keyEpoch,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  });
+
   final groupPendingMembershipMessageRepository =
       GroupPendingMembershipMessageRepositoryImpl(
         dbUpsertGroupPendingMembershipMessage: (row) =>
@@ -1437,6 +1533,25 @@ void main() async {
               maxRows: maxRows,
             ),
       );
+
+  final groupPendingReactionRepository = GroupPendingReactionRepositoryImpl(
+    dbUpsertGroupPendingReaction: (row) =>
+        dbUpsertGroupPendingReaction(db, row),
+    dbLoadGroupPendingReactionsForMessage:
+        ({required groupId, required messageId}) =>
+            dbLoadGroupPendingReactionsForMessage(
+              db,
+              groupId: groupId,
+              messageId: messageId,
+            ),
+    dbLoadGroupPendingReactions: ({int limit = 200}) =>
+        dbLoadGroupPendingReactions(db, limit: limit),
+    dbDeleteGroupPendingReaction: (id) => dbDeleteGroupPendingReaction(db, id),
+    dbPruneGroupPendingReactions: (groupId, {required maxRows}) =>
+        dbPruneGroupPendingReactions(db, groupId, maxRows: maxRows),
+    dbDeleteExpiredGroupPendingReactions: ({required olderThanIso}) =>
+        dbDeleteExpiredGroupPendingReactions(db, olderThanIso: olderThanIso),
+  );
 
   final groupHistoryGapRepairRepository = GroupHistoryGapRepairRepositoryImpl(
     dbUpsertGroupHistoryGapRepair: (row) =>
@@ -2155,6 +2270,19 @@ void main() async {
     bridge: bridge,
   );
 
+  // Slice 2 / UDM-G — the real outbound active key-pull. Constructed below once
+  // `groupIdentityCallbacks` exists; declared `late` here so the producer call
+  // sites (GroupMessageListener, the drain backstop, key-update listener, …) can
+  // reference it through `requestGroupKeyRepairViaSender`. Old peers drop the
+  // unknown wire type and the sender falls back to the admin's inbox if offline,
+  // so this is strictly no-worse-than the previous log-only stub.
+  late final GroupKeyRepairRequestSender groupKeyRepairRequestSender;
+  Future<void> requestGroupKeyRepairViaSender(
+    GroupKeyRepairRequest request,
+  ) async {
+    await groupKeyRepairRequestSender.call(request);
+  }
+
   // Create group message listener and wire bridge callback to stream
   late final GroupMessageListener groupMessageListener;
   groupMessageListener = GroupMessageListener(
@@ -2177,7 +2305,8 @@ void main() async {
     groupDiagnosticEvents: groupDiagnosticEventStream,
     pendingKeyRepairRepo: groupPendingKeyRepairRepository,
     pendingMembershipMessageRepo: groupPendingMembershipMessageRepository,
-    requestGroupKeyRepair: emitGroupKeyRepairRequest,
+    pendingReactionRepo: groupPendingReactionRepository,
+    requestGroupKeyRepair: requestGroupKeyRepairViaSender,
     rotateGroupKeyAfterRemoteRemoval: (groupId) async {
       // Forward secrecy after a remote member leave/removal the local device
       // did not author. The listener already verified the local device is the
@@ -2212,9 +2341,10 @@ void main() async {
             groupMessageListener: groupMessageListener,
             mediaAttachmentRepo: mediaAttachmentRepository,
             reactionRepo: reactionRepository,
+            pendingReactionRepo: groupPendingReactionRepository,
             pendingKeyRepairRepo: groupPendingKeyRepairRepository,
             historyGapRepairRepo: groupHistoryGapRepairRepository,
-            requestGroupKeyRepair: emitGroupKeyRepairRequest,
+            requestGroupKeyRepair: requestGroupKeyRepairViaSender,
             selfPeerId: identity?.peerId,
           );
         },
@@ -2264,6 +2394,12 @@ void main() async {
     ),
   );
 
+  // Finding 02 (UDM-B): foreground backoff timer that re-runs the all-pending
+  // repair sweep so persisted repairs self-heal mid-session, not only on resume.
+  final groupPendingKeyRepairBackoffTimer = GroupPendingKeyRepairBackoffTimer(
+    runSweep: groupPendingKeyRepairRunner.retryAllPending,
+  );
+
   // Slice 2 (Finding 03): drainer for deferred key distributions + the prompt
   // member-key-arrival trigger (drain a peer the moment its updated config with
   // a usable ML-KEM key is applied), without threading callbacks through the UI.
@@ -2277,10 +2413,7 @@ void main() async {
     storeP2PMessageInInbox: (peerId, message) async =>
         p2pService.storeInInbox(peerId, message),
   );
-  setDeferredDistributionDrainSink(({
-    required groupId,
-    required peerId,
-  }) async {
+  setDeferredDistributionDrainSink(({required groupId, required peerId}) async {
     await groupPendingKeyDistributionRunner.drainPendingForPeer(
       groupId: groupId,
       peerId: peerId,
@@ -2292,6 +2425,24 @@ void main() async {
     identityRepo: repository,
     p2pService: p2pService,
   );
+
+  // Slice 2 / UDM-G — assign the real outbound active key-pull now that the
+  // identity callbacks exist. Targets the group admin/creator transport peer.
+  groupKeyRepairRequestSender = GroupKeyRepairRequestSender(
+    bridge: bridge,
+    groupRepo: groupRepository,
+    getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
+    getOwnDeviceId: groupIdentityCallbacks.getOwnDeviceId,
+    getOwnPrivateKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.privateKey;
+    },
+    sendP2PMessage: (peerId, message) async =>
+        p2pService.sendMessage(peerId, message),
+    storeP2PMessageInInbox: (peerId, message) async =>
+        p2pService.storeInInbox(peerId, message),
+  );
+
   final groupInviteListener = GroupInviteListener(
     groupInviteStream: messageRouter.groupInviteStream,
     groupRepo: groupRepository,
@@ -2339,7 +2490,7 @@ void main() async {
     getOwnDeviceId: groupIdentityCallbacks.getOwnDeviceId,
     retryPendingGroupKeyRepairs:
         groupPendingKeyRepairRunner.retryPendingRepairsForRequest,
-    requestGroupKeyRepair: emitGroupKeyRepairRequest,
+    requestGroupKeyRepair: requestGroupKeyRepairViaSender,
     appendGroupEventLogEntry:
         ({
           required groupId,
@@ -2361,6 +2512,41 @@ void main() async {
         ),
   );
 
+  // Slice 2 / UDM-G — admin-side responder for the active key-pull. Re-delivers
+  // the EXACT requested epoch (never mints a new one), gated by signed-request
+  // verification + member-at-epoch authz + per-(requester,groupId,epoch) rate
+  // limiting. Subscribes to the new router case alongside the key-update stream.
+  final groupKeyRepairResponderListener = GroupKeyRepairResponderListener(
+    groupKeyRepairRequestStream: messageRouter.groupKeyRepairRequestStream,
+    groupRepo: groupRepository,
+    bridge: bridge,
+    getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
+    distributeGroupKeyAtEpochToPeer:
+        ({
+          required String groupId,
+          required String peerId,
+          required int keyEpoch,
+        }) async {
+          final identity = await repository.loadIdentity();
+          if (identity == null) return 0;
+          return distributeGroupKeyAtEpochToPeer(
+            bridge: bridge,
+            groupRepo: groupRepository,
+            groupId: groupId,
+            peerId: peerId,
+            keyEpoch: keyEpoch,
+            selfPeerId: identity.peerId,
+            senderPublicKey: identity.publicKey,
+            senderPrivateKey: identity.privateKey,
+            senderUsername: identity.username,
+            sendP2PMessage: (toPeerId, message) async =>
+                p2pService.sendMessage(toPeerId, message),
+            storeP2PMessageInInbox: (toPeerId, message) async =>
+                p2pService.storeInInbox(toPeerId, message),
+          );
+        },
+  );
+
   final groupMembershipUpdateListener = GroupMembershipUpdateListener(
     groupMembershipUpdateStream: messageRouter.groupMembershipUpdateStream,
     groupRepo: groupRepository,
@@ -2368,7 +2554,7 @@ void main() async {
     groupMessageListener: groupMessageListener,
     msgRepo: groupMessageRepository,
     pendingKeyRepairRepo: groupPendingKeyRepairRepository,
-    requestGroupKeyRepair: emitGroupKeyRepairRequest,
+    requestGroupKeyRepair: requestGroupKeyRepairViaSender,
   );
 
   // Create introduction listener
@@ -2453,9 +2639,10 @@ void main() async {
             groupMessageListener: groupMessageListener,
             mediaAttachmentRepo: mediaAttachmentRepository,
             reactionRepo: reactionRepository,
+            pendingReactionRepo: groupPendingReactionRepository,
             pendingKeyRepairRepo: groupPendingKeyRepairRepository,
             historyGapRepairRepo: groupHistoryGapRepairRepository,
-            requestGroupKeyRepair: emitGroupKeyRepairRequest,
+            requestGroupKeyRepair: requestGroupKeyRepairViaSender,
             selfPeerId: identity?.peerId,
           );
         },
@@ -2615,6 +2802,7 @@ void main() async {
     );
     groupInviteListener.start();
     groupKeyUpdateListener.start();
+    groupKeyRepairResponderListener.start();
     groupMembershipUpdateListener.start();
     introductionListener.start();
 
@@ -2622,6 +2810,7 @@ void main() async {
     // StartupRouter._doStartP2P() AFTER node:start completes. They require
     // the Go node to be running (pubsub must be initialized).
     pendingMessageRetrier.start();
+    groupPendingKeyRepairBackoffTimer.start();
     pendingPostMediaUploadRetrier.start();
     pendingPostDeliveryRetrier.start();
     pendingPostFollowOnRetrier.start();
@@ -2698,12 +2887,17 @@ void main() async {
       groupInviteDeliveryAttemptRepository:
           groupInviteDeliveryAttemptRepository,
       groupPendingKeyRepairRepository: groupPendingKeyRepairRepository,
+      groupPendingReactionRepository: groupPendingReactionRepository,
+      groupPendingKeyRepairRunner: groupPendingKeyRepairRunner,
+      groupPendingKeyRepairBackoffTimer: groupPendingKeyRepairBackoffTimer,
       groupPendingKeyDistributionRunner: groupPendingKeyDistributionRunner,
       groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
       groupMessageListener: groupMessageListener,
       groupInviteListener: groupInviteListener,
       groupKeyUpdateListener: groupKeyUpdateListener,
+      groupKeyRepairResponderListener: groupKeyRepairResponderListener,
+      requestGroupKeyRepair: requestGroupKeyRepairViaSender,
       groupMembershipUpdateListener: groupMembershipUpdateListener,
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
@@ -2885,6 +3079,9 @@ class MyApp extends StatefulWidget {
   final GroupInviteDeliveryAttemptRepositoryImpl
   groupInviteDeliveryAttemptRepository;
   final GroupPendingKeyRepairRepositoryImpl groupPendingKeyRepairRepository;
+  final GroupPendingReactionRepository groupPendingReactionRepository;
+  final GroupPendingKeyRepairRunner groupPendingKeyRepairRunner;
+  final GroupPendingKeyRepairBackoffTimer groupPendingKeyRepairBackoffTimer;
   final GroupPendingKeyDistributionRunner groupPendingKeyDistributionRunner;
   final GroupHistoryGapRepairRepositoryImpl groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepositoryImpl
@@ -2892,6 +3089,8 @@ class MyApp extends StatefulWidget {
   final GroupMessageListener groupMessageListener;
   final GroupInviteListener groupInviteListener;
   final GroupKeyUpdateListener groupKeyUpdateListener;
+  final GroupKeyRepairResponderListener groupKeyRepairResponderListener;
+  final RequestGroupKeyRepair requestGroupKeyRepair;
   final GroupMembershipUpdateListener groupMembershipUpdateListener;
   final ActiveConversationTracker groupConversationTracker;
   final IntroductionRepositoryImpl introductionRepository;
@@ -2967,12 +3166,17 @@ class MyApp extends StatefulWidget {
     required this.groupMessageRepository,
     required this.groupInviteDeliveryAttemptRepository,
     required this.groupPendingKeyRepairRepository,
+    required this.groupPendingReactionRepository,
+    required this.groupPendingKeyRepairRunner,
+    required this.groupPendingKeyRepairBackoffTimer,
     required this.groupPendingKeyDistributionRunner,
     required this.groupHistoryGapRepairRepository,
     required this.groupReactionReplayOutboxRepository,
     required this.groupMessageListener,
     required this.groupInviteListener,
     required this.groupKeyUpdateListener,
+    required this.groupKeyRepairResponderListener,
+    required this.requestGroupKeyRepair,
     required this.groupMembershipUpdateListener,
     required this.groupConversationTracker,
     required this.introductionRepository,
@@ -3011,7 +3215,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(
-      () => _isResuming,
+      () => _isResuming || isGroupRecoveryInProgress(),
     );
     _postNotificationOpenCoordinator = PostNotificationOpenCoordinator(
       pendingTargetStore: widget.pendingPostTargetStore,
@@ -3617,9 +3821,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.pendingPostDeliveryRetrier.dispose();
     widget.pendingPostMediaUploadRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
+    widget.groupPendingKeyRepairBackoffTimer.dispose();
     widget.introductionListener.dispose();
     widget.groupMembershipUpdateListener.dispose();
     widget.groupKeyUpdateListener.dispose();
+    widget.groupKeyRepairResponderListener.dispose();
     widget.groupInviteListener.dispose();
     widget.groupMessageListener.dispose();
     widget.profileUpdateListener.dispose();
@@ -3756,8 +3962,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
         drainPendingKeyDistributionsFn:
             widget.groupPendingKeyDistributionRunner.drainAllPending,
+        retryAllPendingGroupKeyRepairsFn:
+            widget.groupPendingKeyRepairRunner.retryAllPending,
         historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
-        requestGroupKeyRepair: emitGroupKeyRepairRequest,
+        requestGroupKeyRepair: widget.requestGroupKeyRepair,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         reactionRepo: widget.reactionRepository,
         nearbyLocationService: widget.nearbyLocationService,
@@ -3905,10 +4113,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           groupId: groupId,
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
           reactionRepo: widget.reactionRepository,
+          pendingReactionRepo: widget.groupPendingReactionRepository,
           groupMessageListener: widget.groupMessageListener,
           pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
           historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
-          requestGroupKeyRepair: emitGroupKeyRepairRequest,
+          requestGroupKeyRepair: widget.requestGroupKeyRepair,
           selfPeerId: identity?.peerId,
         );
       },
@@ -4023,6 +4232,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupConversationTracker: widget.groupConversationTracker,
         introductionRepository: widget.introductionRepository,
         introductionListener: widget.introductionListener,
+        requestGroupKeyRepair: widget.requestGroupKeyRepair,
         shareIntentService: widget.shareIntentService,
         initialShareIntentCapture: _initialShareIntentCapture,
         ensureRuntimeServicesReady: _ensureRuntimeServicesReady,

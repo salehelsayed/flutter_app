@@ -716,6 +716,7 @@
   "group_info_notifications_muted": "Notifications muted for this group",
   "group_info_notifications_restored": "Notifications restored for this group",
   "group_notification_catching_up": "This group is still catching up — try again in a moment.",
+  "restore_groups_device_local_notice": "Your groups will reappear when this device is re-admitted. Group history from before this device existed can't be recovered.",
   "group_info_delete_local_failed": "Failed to delete group locally",
   "group_info_publish_member_removal_failed": "Failed to publish member removal",
   "group_info_rotate_key_failed": "Failed to rotate group key after removal",

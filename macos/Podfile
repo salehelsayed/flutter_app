@@ -26,6 +26,18 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 
 flutter_macos_podfile_setup
 
+go_mknoon_input_files = Dir[File.expand_path(File.join('..', 'go-mknoon', '**', '*.go'), __dir__)].sort + [
+  File.expand_path(File.join('..', 'go-mknoon', 'go.mod'), __dir__),
+  File.expand_path(File.join('..', 'go-mknoon', 'go.sum'), __dir__),
+  File.expand_path(File.join('Runner', 'MainFlutterWindow.swift'), __dir__),
+  File.expand_path(File.join('..', 'scripts', 'ensure_go_macos_bindings.sh'), __dir__),
+  File.expand_path(File.join('..', 'scripts', 'verify_gomobile_bindings.sh'), __dir__),
+]
+go_mknoon_output_files = [
+  File.expand_path(File.join('Runner', 'GoMknoon.xcframework', 'Info.plist'), __dir__),
+  File.expand_path(File.join('Runner', 'GoMknoon.xcframework', 'macos-arm64_x86_64', 'GoMknoon.framework', 'Versions', 'A', 'Headers', 'Bridge.objc.h'), __dir__),
+]
+
 go_mknoon_ensure = File.expand_path(File.join('..', 'scripts', 'ensure_go_macos_bindings.sh'), __dir__)
 unless system(go_mknoon_ensure)
   raise 'Failed to build or verify GoMknoon macOS bindings'
@@ -39,6 +51,8 @@ target 'Runner' do
     :name => 'Ensure GoMknoon macOS Bindings',
     :execution_position => :before_compile,
     :shell_path => '/bin/bash',
+    :input_files => go_mknoon_input_files,
+    :output_files => go_mknoon_output_files,
     :script => <<-'SCRIPT'
 "${PODS_ROOT}/../../scripts/ensure_go_macos_bindings.sh"
 SCRIPT

@@ -10,8 +10,11 @@ class ReactionRepositoryImpl implements ReactionRepository {
       dbLoadReactionsForMessage;
   final Future<List<Map<String, Object?>>> Function(List<String> messageIds)
       dbLoadReactionsForMessages;
-  final Future<int> Function(String messageId, String senderPeerId)
-      dbDeleteReaction;
+  final Future<Map<String, Object?>?> Function(
+          String messageId, String senderPeerId)
+      dbLoadActiveOrTombstonedReactionForSender;
+  final Future<int> Function(String messageId, String senderPeerId,
+      {String? removedAtTimestamp}) dbDeleteReaction;
   final Future<int> Function(String messageId) dbDeleteReactionsForMessage;
   final Future<int> Function(String contactPeerId) dbDeleteReactionsForContact;
 
@@ -19,6 +22,7 @@ class ReactionRepositoryImpl implements ReactionRepository {
     required this.dbInsertReaction,
     required this.dbLoadReactionsForMessage,
     required this.dbLoadReactionsForMessages,
+    required this.dbLoadActiveOrTombstonedReactionForSender,
     required this.dbDeleteReaction,
     required this.dbDeleteReactionsForMessage,
     required this.dbDeleteReactionsForContact,
@@ -80,8 +84,28 @@ class ReactionRepositoryImpl implements ReactionRepository {
   }
 
   @override
-  Future<int> removeReaction(String messageId, String senderPeerId) async {
-    return await dbDeleteReaction(messageId, senderPeerId);
+  Future<MessageReaction?> getReactionForSenderIncludingRemoved({
+    required String messageId,
+    required String senderPeerId,
+  }) async {
+    final row = await dbLoadActiveOrTombstonedReactionForSender(
+      messageId,
+      senderPeerId,
+    );
+    return row == null ? null : MessageReaction.fromMap(row);
+  }
+
+  @override
+  Future<int> removeReaction(
+    String messageId,
+    String senderPeerId, {
+    String? removedAtTimestamp,
+  }) async {
+    return await dbDeleteReaction(
+      messageId,
+      senderPeerId,
+      removedAtTimestamp: removedAtTimestamp,
+    );
   }
 
   @override

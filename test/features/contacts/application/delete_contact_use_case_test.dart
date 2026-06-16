@@ -230,7 +230,17 @@ class FakeReactionRepository implements ReactionRepository {
   ) async => const {};
 
   @override
-  Future<int> removeReaction(String messageId, String senderPeerId) async => 0;
+  Future<MessageReaction?> getReactionForSenderIncludingRemoved({
+    required String messageId,
+    required String senderPeerId,
+  }) async => null;
+
+  @override
+  Future<int> removeReaction(
+    String messageId,
+    String senderPeerId, {
+    String? removedAtTimestamp,
+  }) async => 0;
 
   @override
   Future<int> deleteReactionsForMessage(String messageId) async => 0;

@@ -5,6 +5,8 @@ class GroupPendingKeyDistributionRepositoryImpl
     implements GroupPendingKeyDistributionRepository {
   final Future<bool> Function(Map<String, Object?> row)
   dbUpsertGroupPendingKeyDistribution;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbReopenGroupPendingKeyDistributionForRedelivery;
   final Future<Map<String, Object?>?> Function(String id)
   dbLoadGroupPendingKeyDistribution;
   final Future<List<Map<String, Object?>>> Function({
@@ -34,6 +36,7 @@ class GroupPendingKeyDistributionRepositoryImpl
 
   GroupPendingKeyDistributionRepositoryImpl({
     required this.dbUpsertGroupPendingKeyDistribution,
+    this.dbReopenGroupPendingKeyDistributionForRedelivery,
     required this.dbLoadGroupPendingKeyDistribution,
     required this.dbLoadPendingGroupKeyDistributionsForPeer,
     required this.dbLoadPendingGroupKeyDistributionsForGroup,
@@ -53,6 +56,20 @@ class GroupPendingKeyDistributionRepositoryImpl
       distribution: loaded ?? distribution,
       created: created,
     );
+  }
+
+  @override
+  Future<void> reopenForRedelivery(
+    GroupPendingKeyDistribution distribution,
+  ) async {
+    final reopen = dbReopenGroupPendingKeyDistributionForRedelivery;
+    if (reopen == null) {
+      // No reopen helper wired: fall back to a best-effort enqueue (creates a
+      // pending row if none exists; a terminal row stays terminal).
+      await dbUpsertGroupPendingKeyDistribution(distribution.toMap());
+      return;
+    }
+    await reopen(distribution.toMap());
   }
 
   @override

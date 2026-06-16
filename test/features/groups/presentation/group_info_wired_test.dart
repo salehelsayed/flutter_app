@@ -396,12 +396,14 @@ Future<void> _pumpEditableGroupInfo(
   FakeMediaPicker? mediaPicker,
   ImageProcessor? imageProcessor,
   UploadGroupAvatarFn? uploadGroupAvatarFn,
+  InMemoryGroupMessageRepository? msgRepo,
 }) async {
   await tester.pumpWidget(
     _localizedMaterialApp(
       home: GroupInfoWired(
         group: group ?? makeAdminGroup(),
         groupRepo: groupRepo,
+        msgRepo: msgRepo,
         contactRepo: InMemoryContactRepository(),
         bridge: bridge ?? FakeBridge(),
         identityRepo:
@@ -414,6 +416,46 @@ Future<void> _pumpEditableGroupInfo(
     ),
   );
   await pumpFrames(tester);
+}
+
+/// A [FakeBridge] that throws when a specific command is sent (e.g. a hard
+/// `group:inboxStore` failure after a successful publish).
+class _ThrowOnCommandBridge extends FakeBridge {
+  _ThrowOnCommandBridge(this.command, {super.initialResponses});
+
+  final String command;
+
+  @override
+  Future<String> send(String message) async {
+    final cmd = (jsonDecode(message) as Map<String, dynamic>)['cmd'] as String?;
+    if (cmd == command) {
+      throw Exception('Simulated $command failure');
+    }
+    return super.send(message);
+  }
+}
+
+/// A [FakeBridge] whose first `group:publish` runs [onPublish] (e.g. simulate a
+/// newer remote metadata landing) and then reports a soft failure.
+class _PublishFailAfterHookBridge extends FakeBridge {
+  _PublishFailAfterHookBridge(this.onPublish);
+
+  final Future<void> Function() onPublish;
+  bool _fired = false;
+
+  @override
+  Future<String> send(String message) async {
+    final cmd = (jsonDecode(message) as Map<String, dynamic>)['cmd'] as String?;
+    if (cmd == 'group:publish' && !_fired) {
+      _fired = true;
+      await onPublish();
+      return jsonEncode({
+        'ok': false,
+        'errorMessage': 'simulated publish failure after remote update',
+      });
+    }
+    return super.send(message);
+  }
 }
 
 Future<void> _openGroupDetailsEditor(WidgetTester tester) async {
@@ -3004,6 +3046,135 @@ void main() {
         expect(persisted.avatarMime, isNull);
         expect(persisted.avatarPath, isNull);
         expect(find.text(_groupEditRecoveryWaitCopy), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'S2a metadata edit hard inboxStore failure reverts name and deletes timeline card',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final original = makeAdminGroup().copyWith(
+          name: 'Original Name',
+          description: 'Original Desc',
+        );
+        await _seedEditableGroup(groupRepo, group: original);
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        final bridge = _ThrowOnCommandBridge(
+          'group:inboxStore',
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'msg-1'},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'New Name');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup('group-1');
+        expect(persisted!.name, 'Original Name');
+        expect(persisted.description, 'Original Desc');
+        expect(msgRepo.count, 0);
+        expect(find.text('Group details updated'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'S2a metadata edit soft publish failure reverts and never reports success',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final original = makeAdminGroup().copyWith(
+          name: 'Original Name',
+          description: 'Original Desc',
+        );
+        await _seedEditableGroup(groupRepo, group: original);
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': false,
+              'errorMessage': 'simulated publish failure',
+            },
+            'group:inboxStore': {'ok': true},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'New Name');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup('group-1');
+        expect(persisted!.name, 'Original Name');
+        expect(msgRepo.count, 0);
+        expect(find.text('Group details updated'), findsNothing);
+        expect(find.text('simulated publish failure'), findsOneWidget);
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+      },
+    );
+
+    testWidgets(
+      'S2a metadata revert is monotonicity-guarded and keeps a newer remote update',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final original = makeAdminGroup().copyWith(
+          name: 'Original Name',
+          description: 'Original Desc',
+        );
+        await _seedEditableGroup(groupRepo, group: original);
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+
+        final bridge = _PublishFailAfterHookBridge(() async {
+          // A newer remote group_metadata_updated lands between our local
+          // persist and the publish failure.
+          final current = await groupRepo.getGroup('group-1');
+          await groupRepo.updateGroup(
+            current!.copyWith(
+              name: 'Remote Name',
+              lastMetadataEventAt: DateTime.now().toUtc().add(
+                const Duration(minutes: 5),
+              ),
+            ),
+          );
+        });
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'New Name');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final persisted = await groupRepo.getGroup('group-1');
+        // The monotonicity-guarded revert must not clobber the newer remote
+        // name back to 'Original Name'.
+        expect(persisted!.name, 'Remote Name');
+        expect(find.text('Group details updated'), findsNothing);
       },
     );
 

@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 
 Map<String, Object?> makeReactionRow({
@@ -58,6 +59,7 @@ void main() {
     await runIdentityTableMigration(db);
     await runMessagesTableMigration(db);
     await runMessageReactionsMigration(db);
+    await runMessageReactionTombstoneMigration(db);
   });
 
   tearDown(() async {
@@ -152,19 +154,64 @@ void main() {
     });
   });
 
-  group('dbDeleteReaction', () {
-    test('deletes matching reaction', () async {
+  group('dbDeleteReaction (tombstone)', () {
+    test('INV-T1 tombstones the row in place and hides it from loaders',
+        () async {
       await dbInsertReaction(db, makeReactionRow());
-      final count = await dbDeleteReaction(db, 'msg-1', 'sender-1');
+      final count = await dbDeleteReaction(db, 'msg-1', 'sender-1',
+          removedAtTimestamp: '2026-02-27T11:00:00.000Z');
       expect(count, 1);
 
-      final rows = await db.query('message_reactions');
-      expect(rows, isEmpty);
+      // Row is retained as a tombstone...
+      final rawRows = await db.query('message_reactions');
+      expect(rawRows, hasLength(1));
+      expect(rawRows.single['removed_at'], '2026-02-27T11:00:00.000Z');
+
+      // ...but hidden from the UI loaders.
+      expect(await dbLoadReactionsForMessage(db, 'msg-1'), isEmpty);
+      expect(await dbLoadReactionsForMessages(db, ['msg-1']), isEmpty);
     });
 
-    test('returns 0 when no match', () async {
+    test('returns 0 when no match (no tombstone is created)', () async {
       final count = await dbDeleteReaction(db, 'msg-999', 'sender-999');
       expect(count, 0);
+      expect(await db.query('message_reactions'), isEmpty);
+    });
+
+    test('INV-T3 re-inserting a reaction clears the tombstone', () async {
+      await dbInsertReaction(db, makeReactionRow());
+      await dbDeleteReaction(db, 'msg-1', 'sender-1',
+          removedAtTimestamp: '2026-02-27T11:00:00.000Z');
+
+      // A fresh add (removed_at null) REPLACEs the tombstone row.
+      await dbInsertReaction(
+        db,
+        {...makeReactionRow(id: 'r2', emoji: '🔥'), 'removed_at': null},
+      );
+
+      final visible = await dbLoadReactionsForMessage(db, 'msg-1');
+      expect(visible, hasLength(1));
+      expect(visible.single['emoji'], '🔥');
+      expect(visible.single['removed_at'], isNull);
+    });
+  });
+
+  group('dbLoadActiveOrTombstonedReactionForSender', () {
+    test('returns null when no row exists', () async {
+      final row = await dbLoadActiveOrTombstonedReactionForSender(
+          db, 'msg-1', 'sender-1');
+      expect(row, isNull);
+    });
+
+    test('INV-T2 returns the tombstoned row for the LWW comparand', () async {
+      await dbInsertReaction(db, makeReactionRow());
+      await dbDeleteReaction(db, 'msg-1', 'sender-1',
+          removedAtTimestamp: '2026-02-27T11:00:00.000Z');
+
+      final row = await dbLoadActiveOrTombstonedReactionForSender(
+          db, 'msg-1', 'sender-1');
+      expect(row, isNotNull);
+      expect(row!['removed_at'], '2026-02-27T11:00:00.000Z');
     });
   });
 
@@ -185,6 +232,17 @@ void main() {
       final remaining = await db.query('message_reactions');
       expect(remaining.length, 1);
       expect(remaining[0]['message_id'], 'msg-2');
+    });
+
+    test('INV-T4 hard-deletes tombstones too (no orphan leak)', () async {
+      await dbInsertReaction(db, makeReactionRow(id: 'r1', messageId: 'msg-1'));
+      await dbDeleteReaction(db, 'msg-1', 'sender-1',
+          removedAtTimestamp: '2026-02-27T11:00:00.000Z');
+
+      // The bulk cleanup removes the tombstone row entirely (raw query).
+      final count = await dbDeleteReactionsForMessage(db, 'msg-1');
+      expect(count, 1);
+      expect(await db.query('message_reactions'), isEmpty);
     });
   });
 

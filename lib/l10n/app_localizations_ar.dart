@@ -1382,6 +1382,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'لا تزال هذه المجموعة قيد المزامنة — حاول مرة أخرى بعد لحظات.';
 
   @override
+  String get restore_groups_device_local_notice =>
+      'ستظهر مجموعاتك مجددًا عند إعادة قبول هذا الجهاز. لا يمكن استرجاع سجل المجموعات الذي يسبق وجود هذا الجهاز.';
+
+  @override
   String get group_info_delete_local_failed => 'فشل حذف المجموعة محليًا';
 
   @override

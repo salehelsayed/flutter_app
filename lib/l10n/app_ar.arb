@@ -716,6 +716,7 @@
   "group_info_notifications_muted": "تم كتم إشعارات هذه المجموعة",
   "group_info_notifications_restored": "تمت إعادة إشعارات هذه المجموعة",
   "group_notification_catching_up": "لا تزال هذه المجموعة قيد المزامنة — حاول مرة أخرى بعد لحظات.",
+  "restore_groups_device_local_notice": "ستظهر مجموعاتك مجددًا عند إعادة قبول هذا الجهاز. لا يمكن استرجاع سجل المجموعات الذي يسبق وجود هذا الجهاز.",
   "group_info_delete_local_failed": "فشل حذف المجموعة محليًا",
   "group_info_publish_member_removal_failed": "فشل نشر إزالة العضو",
   "group_info_rotate_key_failed": "فشل تدوير مفتاح المجموعة بعد الإزالة",

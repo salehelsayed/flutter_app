@@ -45,6 +45,78 @@ void setDeferredGroupKeyDistributionSink(
   _deferredGroupKeyDistributionSink = sink;
 }
 
+/// Process-wide trigger to ENQUEUE a deferred key distribution for [peerId] at
+/// [keyEpoch] through the wired sink, mirroring
+/// [triggerDeferredDistributionDrainForPeer] (the drain half). No-op when no
+/// sink is wired; never throws.
+///
+/// Used by sibling-device admission (B1b): admitting a NEW device to an
+/// already-keyed member produces no pending row on its own, so the drain alone
+/// delivers nothing. Enqueueing the current epoch here creates the durable row
+/// the runner then drains, re-distributing the current key to the member's
+/// now-deliverable devices (including the freshly admitted one).
+Future<void> triggerDeferredGroupKeyDistributionEnqueue({
+  required String groupId,
+  required String peerId,
+  required int keyEpoch,
+}) async {
+  final sink = _deferredGroupKeyDistributionSink;
+  if (sink == null) return;
+  try {
+    await sink(groupId: groupId, peerId: peerId, keyEpoch: keyEpoch);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_KEY_DISTRIBUTION_ENQUEUE_TRIGGER_ERROR',
+      details: {
+        'groupId': _diagnosticPrefix(groupId),
+        'peerId': _diagnosticPrefix(peerId),
+        'error': e.toString(),
+      },
+    );
+  }
+}
+
+EnqueueDeferredGroupKeyDistribution? _deferredGroupKeyDistributionReopenSink;
+
+void setDeferredGroupKeyDistributionReopenSink(
+  EnqueueDeferredGroupKeyDistribution? sink,
+) {
+  _deferredGroupKeyDistributionReopenSink = sink;
+}
+
+/// Process-wide trigger to (re)OPEN a deferred distribution row for [peerId] to
+/// PENDING at [keyEpoch], OVERRIDING a terminal (distributed/unreachable) row.
+///
+/// Distinct from [triggerDeferredGroupKeyDistributionEnqueue]: this is for when
+/// the member's DEVICE SET changed (a sibling device was admitted) and the
+/// current key must be re-distributed to the now-larger device set — so it
+/// deliberately re-arms an exhausted/finalized row (the prior exhaustion was for
+/// the old device set; INV-D4's "never mask exhaustion" applies to stale rotation
+/// re-enqueues, not to a genuine device-set change). No-op when no reopen sink is
+/// wired (the device then converges via the next group key rotation); never throws.
+Future<void> triggerDeferredGroupKeyDistributionReopen({
+  required String groupId,
+  required String peerId,
+  required int keyEpoch,
+}) async {
+  final sink = _deferredGroupKeyDistributionReopenSink;
+  if (sink == null) return;
+  try {
+    await sink(groupId: groupId, peerId: peerId, keyEpoch: keyEpoch);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_KEY_DISTRIBUTION_REOPEN_TRIGGER_ERROR',
+      details: {
+        'groupId': _diagnosticPrefix(groupId),
+        'peerId': _diagnosticPrefix(peerId),
+        'error': e.toString(),
+      },
+    );
+  }
+}
+
 /// Result of a [rotateAndDistributeGroupKey] attempt.
 ///
 /// Distinguishes three outcomes that the old `GroupKeyInfo?` return conflated:
@@ -666,6 +738,103 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_KEY_DISTRIBUTION_REDISTRIBUTE_ERROR',
+        details: {'peerId': _diagnosticPrefix(peerId), 'error': e.toString()},
+      );
+    }
+  }
+  return delivered;
+}
+
+/// Targeted active-pull delivery (UDM-G responder): re-distributes the group key
+/// at the EXACT requested [keyEpoch] (loaded via `getKeyByGeneration`, never
+/// `getLatestKey`) to one [peerId]'s now-deliverable devices, reusing the exact
+/// signed/encrypted direct key-update path a fresh rotation uses. Returns the
+/// number of device targets that confirmed delivery (0 = still keyless /
+/// undeliverable / the epoch is not held locally).
+///
+/// MINTS NO NEW EPOCH: it never calls `group:generateNextKey` / `group:updateKey`
+/// / `saveKey` / a draft promote. The admin only re-delivers an epoch it already
+/// holds — `getKeyByGeneration(groupId, keyEpoch)` returning null is a no-op.
+Future<int> distributeGroupKeyAtEpochToPeer({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String peerId,
+  required int keyEpoch,
+  required String selfPeerId,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required String senderUsername,
+  String? sourceDeviceId,
+  required Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  Future<bool> Function(String peerId, String message)? storeP2PMessageInInbox,
+  Duration perRecipientTimeout = const Duration(seconds: 5),
+  int attemptCount = 3,
+  Duration retryDelay = const Duration(milliseconds: 500),
+}) async {
+  final epochKey = await groupRepo.getKeyByGeneration(groupId, keyEpoch);
+  if (epochKey == null) {
+    // The admin does not hold the requested epoch — never mint or substitute.
+    return 0;
+  }
+
+  final members = await groupRepo.getMembers(groupId);
+  final selfMatches = members.where((member) => member.peerId == selfPeerId);
+  final selfMember = selfMatches.isEmpty ? null : selfMatches.first;
+  final targetMatches = members.where((member) => member.peerId == peerId);
+  if (targetMatches.isEmpty) {
+    return 0;
+  }
+  final target = targetMatches.first;
+
+  final devices = _deliverableDevicesForRotation(target);
+  if (devices.isEmpty) {
+    return 0;
+  }
+
+  final sourceDevice = _resolveSourceDevice(
+    selfMember: selfMember,
+    senderPublicKey: senderPublicKey,
+    sourceDeviceId: sourceDeviceId,
+  );
+  final preTransitionStateHash = await buildGroupTransitionStateHash(
+    groupRepo,
+    groupId,
+  );
+  final eventAt = DateTime.now().toUtc();
+
+  final maxAttempts = attemptCount < 1 ? 1 : attemptCount;
+  var delivered = 0;
+  for (final device in devices) {
+    try {
+      final sent = await _distributeRotatedKeyToDeviceWithRetry(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        sourcePeerId: selfPeerId,
+        sourceDevice: sourceDevice,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+        member: target,
+        device: device,
+        newEpoch: epochKey.keyGeneration,
+        newKey: epochKey.encryptedKey,
+        eventAt: eventAt,
+        preTransitionStateHash: preTransitionStateHash,
+        sendP2PMessage: sendP2PMessage,
+        storeP2PMessageInInbox: storeP2PMessageInInbox,
+        perRecipientTimeout: perRecipientTimeout,
+        attemptCount: maxAttempts,
+        retryDelay: retryDelay,
+      );
+      if (sent) {
+        delivered++;
+      }
+    } on Exception catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_REPAIR_REDISTRIBUTE_ERROR',
         details: {'peerId': _diagnosticPrefix(peerId), 'error': e.toString()},
       );
     }

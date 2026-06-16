@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
@@ -228,6 +230,179 @@ void main() {
         // Degrades gracefully — no crash on a normal read.
         await gate.clear();
         expect(await gate.consumeIfRecentPayload('peer-x'), isFalse);
+      },
+    );
+  });
+
+  // 04-P0 / SI-5 — cross-process dedupe: the out-of-process iOS NSE drops a
+  // per-message sidecar marker (filename = sha256 of the gate message key) into
+  // the shared app-group container; the Dart gate consumes it so a banner the
+  // NSE already showed suppresses the duplicate Dart banner without the Dart
+  // isolate ever seeing the push via its own JSON map.
+  group('RecentRemoteNotificationGate SI-5 app-group sidecar', () {
+    late Directory container;
+    late Directory sidecarDir;
+    late DateTime now;
+    late RecentRemoteNotificationGate gate;
+
+    String markerName(String key) =>
+        sha256.convert(utf8.encode(key)).toString();
+
+    Future<void> writeMarker(String key, DateTime mtime) async {
+      final f = File('${sidecarDir.path}/${markerName(key)}');
+      await f.writeAsString('');
+      await f.setLastModified(mtime);
+    }
+
+    setUp(() async {
+      container = await Directory.systemTemp.createTemp('si5-appgroup-');
+      sidecarDir = Directory('${container.path}/RecentRemoteShown');
+      await sidecarDir.create(recursive: true);
+      now = DateTime.utc(2026, 4, 3, 12);
+      gate = RecentRemoteNotificationGate(
+        filePath: '${container.path}/mknoon_recent_remote_notifications.json',
+        now: () => now,
+        appGroupSidecarDirProvider: () async => container,
+      );
+      await gate.clear();
+    });
+
+    tearDown(() async {
+      try {
+        container.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    test('consumes an NSE-written 1:1 sidecar marker exactly once', () async {
+      await writeMarker('message:peer-123|msg-7', now);
+
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'peer-123',
+          messageId: 'msg-7',
+        ),
+        isTrue,
+      );
+      // Consumed: the marker is gone and a second call returns false.
+      expect(
+        File(
+          '${sidecarDir.path}/${markerName('message:peer-123|msg-7')}',
+        ).existsSync(),
+        isFalse,
+      );
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'peer-123',
+          messageId: 'msg-7',
+        ),
+        isFalse,
+      );
+    });
+
+    test('consumes a GROUP sidecar marker (double message: key shape)', () async {
+      // Group payload = 'group:<gid>|message:<id>', so the gate key is
+      // 'message:group:<gid>|message:<id>|<id>' — the NSE must reproduce this.
+      await writeMarker('message:group:g-1|message:m-9|m-9', now);
+
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'group:g-1|message:m-9',
+          messageId: 'm-9',
+        ),
+        isTrue,
+      );
+    });
+
+    test('honors the 12h message TTL on sidecar markers', () async {
+      await writeMarker(
+        'message:peer-x|m-1',
+        now.subtract(const Duration(hours: 13)),
+      );
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'peer-x',
+          messageId: 'm-1',
+        ),
+        isFalse,
+      );
+
+      await writeMarker(
+        'message:peer-y|m-2',
+        now.subtract(const Duration(hours: 11)),
+      );
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'peer-y',
+          messageId: 'm-2',
+        ),
+        isTrue,
+      );
+    });
+
+    test('ignores sidecar markers when no provider is configured', () async {
+      final noProvider = RecentRemoteNotificationGate(
+        filePath: '${container.path}/np.json',
+        now: () => now,
+      );
+      await writeMarker('message:peer-z|m-3', now);
+
+      expect(
+        await noProvider.consumeIfRecentAnnouncement(
+          payload: 'peer-z',
+          messageId: 'm-3',
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      're-resolves the sidecar dir after a transient first-launch failure '
+      '(does not negative-cache null)',
+      () async {
+        // Reproduces the first-ever-launch race: main() persists the app-group
+        // path via an UNAWAITED call, so an early push can hit the gate before
+        // the provider can resolve. The provider throws on the first consume,
+        // then succeeds. A naive `??=` would pin the transient null and disable
+        // SI-5 for the whole session; the gate must retry and still honor the
+        // marker once the path becomes available.
+        var pathReady = false;
+        final racingGate = RecentRemoteNotificationGate(
+          filePath: '${container.path}/race.json',
+          now: () => now,
+          appGroupSidecarDirProvider: () async {
+            if (!pathReady) {
+              throw StateError('app-group container path not persisted yet');
+            }
+            return container;
+          },
+        );
+        await racingGate.clear();
+        await writeMarker('message:peer-race|m-r', now);
+
+        // First consume loses the race: provider throws, marker untouched.
+        expect(
+          await racingGate.consumeIfRecentAnnouncement(
+            payload: 'peer-race',
+            messageId: 'm-r',
+          ),
+          isFalse,
+        );
+        expect(
+          File(
+            '${sidecarDir.path}/${markerName('message:peer-race|m-r')}',
+          ).existsSync(),
+          isTrue,
+        );
+
+        // Path becomes available — a later consume must now read the marker.
+        pathReady = true;
+        expect(
+          await racingGate.consumeIfRecentAnnouncement(
+            payload: 'peer-race',
+            messageId: 'm-r',
+          ),
+          isTrue,
+        );
       },
     );
   });

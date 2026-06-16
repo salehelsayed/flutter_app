@@ -335,6 +335,8 @@ List<String> _scenariosToRun(String scenario) {
       return const <String>['private_abc_create'];
     case 'private_reaction_roundtrip':
       return const <String>['private_reaction_roundtrip'];
+    case 'private_reaction_toggle_convergence':
+      return const <String>['private_reaction_toggle_convergence'];
     case 'private_media_reaction_roundtrip':
       return const <String>['private_media_reaction_roundtrip'];
     case 'private_removed_reaction_rejected':

@@ -63,7 +63,12 @@ bool requiresSignedGroupTransitionAudit(String? transitionType) {
       transitionType == 'group_metadata_updated' ||
       transitionType == 'group_dissolved' ||
       transitionType == 'key_rotated' ||
-      transitionType == 'group_key_update';
+      transitionType == 'group_key_update' ||
+      // B1b: a same-user sibling device announcing itself. The announce is signed
+      // by the ACCOUNT key (the only key a freshly-restored device shares with
+      // the roster), so it MUST carry a verified audit — the announcing device is
+      // not yet rostered, so there is no per-device binding to fall back on.
+      transitionType == 'device_announce';
 }
 
 Future<Map<String, dynamic>> signGroupSystemTransitionPayload({
@@ -366,6 +371,19 @@ Map<String, Object?> buildGroupSystemTransitionSubject(
       };
     case 'key_rotated':
       return {'newKeyEpoch': systemPayload['newKeyEpoch']};
+    case 'device_announce':
+      final device = systemPayload['announcedDevice'];
+      final deviceMap = device is Map ? device : const <String, dynamic>{};
+      return {
+        'announcedDevice': {
+          'deviceId': deviceMap['deviceId'] as String?,
+          'transportPeerId': deviceMap['transportPeerId'] as String?,
+          'deviceSigningPublicKey':
+              deviceMap['deviceSigningPublicKey'] as String?,
+          'mlKemPublicKey': deviceMap['mlKemPublicKey'] as String?,
+          'keyPackageId': deviceMap['keyPackageId'] as String?,
+        },
+      };
     default:
       return {'type': transitionType};
   }

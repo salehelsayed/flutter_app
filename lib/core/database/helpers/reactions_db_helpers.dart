@@ -52,7 +52,7 @@ Future<List<Map<String, Object?>>> dbLoadReactionsForMessage(
   try {
     final results = await db.query(
       'message_reactions',
-      where: 'message_id = ?',
+      where: 'message_id = ? AND removed_at IS NULL',
       whereArgs: [messageId],
       orderBy: 'timestamp ASC',
     );
@@ -88,7 +88,8 @@ Future<List<Map<String, Object?>>> dbLoadReactionsForMessages(
   try {
     final placeholders = List.filled(messageIds.length, '?').join(',');
     final results = await db.rawQuery(
-      'SELECT * FROM message_reactions WHERE message_id IN ($placeholders) ORDER BY timestamp ASC',
+      'SELECT * FROM message_reactions WHERE message_id IN ($placeholders) '
+      'AND removed_at IS NULL ORDER BY timestamp ASC',
       messageIds,
     );
 
@@ -109,29 +110,38 @@ Future<List<Map<String, Object?>>> dbLoadReactionsForMessages(
   }
 }
 
-/// Deletes a reaction for a specific message and sender.
+/// Soft-deletes (tombstones) a reaction for a specific message and sender by
+/// setting `removed_at` to the remove's sender-authored timestamp instead of
+/// hard-deleting the row. The retained tombstone is the last-writer-wins
+/// comparand that lets a later *older* add be recognised as stale and dropped
+/// (INV-T1). Falls back to the local clock when [removedAtTimestamp] is null.
 ///
-/// Returns the number of rows deleted (0 or 1).
+/// Only updates an existing row (the remove-then-stale-add case, where the
+/// remove is applied after the add). Returns the number of rows tombstoned.
 Future<int> dbDeleteReaction(
-    Database db, String messageId, String senderPeerId) async {
+    Database db, String messageId, String senderPeerId,
+    {String? removedAtTimestamp}) async {
   emitFlowEvent(
     layer: 'DB',
-    event: 'REACTION_DB_DELETE_START',
+    event: 'REACTION_DB_TOMBSTONE_START',
     details: {
       'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
     },
   );
 
   try {
-    final count = await db.delete(
+    final removedAt =
+        removedAtTimestamp ?? DateTime.now().toUtc().toIso8601String();
+    final count = await db.update(
       'message_reactions',
+      {'removed_at': removedAt},
       where: 'message_id = ? AND sender_peer_id = ?',
       whereArgs: [messageId, senderPeerId],
     );
 
     emitFlowEvent(
       layer: 'DB',
-      event: 'REACTION_DB_DELETE_SUCCESS',
+      event: 'REACTION_DB_TOMBSTONE_SUCCESS',
       details: {'count': count},
     );
 
@@ -139,11 +149,24 @@ Future<int> dbDeleteReaction(
   } catch (e) {
     emitFlowEvent(
       layer: 'DB',
-      event: 'REACTION_DB_DELETE_ERROR',
+      event: 'REACTION_DB_TOMBSTONE_ERROR',
       details: {'error': e.toString()},
     );
     rethrow;
   }
+}
+
+/// Loads the single reaction for (message, sender) — including a tombstoned one
+/// — for the last-writer-wins comparand. Returns null when no row exists.
+Future<Map<String, Object?>?> dbLoadActiveOrTombstonedReactionForSender(
+    Database db, String messageId, String senderPeerId) async {
+  final rows = await db.query(
+    'message_reactions',
+    where: 'message_id = ? AND sender_peer_id = ?',
+    whereArgs: [messageId, senderPeerId],
+    limit: 1,
+  );
+  return rows.isEmpty ? null : rows.single;
 }
 
 /// Deletes all reactions for a specific message.

@@ -65,9 +65,23 @@ Current repo facts that govern the split:
   incoming rows today, so if the repo wants another joined device with the same
   identity to reflect that user's own sent history truthfully, the receive seam
   must become self-aware
-- maintained matrix docs still mark `UX-013` as `Contract-undefined`, so final
-  closure must update those docs only after the shared-vs-local contract and
-  supporting proof are both real
+- **Runtime-vs-contract gap (recorded 2026-06-16):** UX-013 was marked `Closed`
+  on 2026-04-05 on the strength of the `group_multi_device_policy.dart` contract
+  and the `group_multi_device_convergence_test.dart` proof — but that proof
+  hand-copies repository rows (`getGroup`/`getMembers`/`getLatestKey` →
+  `saveGroup`/`saveMember`/`saveKey`) and there is **no production analogue** for
+  state hydration. At runtime a freshly restored second device hydrates no
+  group/member/metadata/keys and, because `restoreIdentityFromMnemonic` re-mints
+  a fresh ML-KEM keypair, can never decrypt keys distributed to the prior device.
+  The "Closed" convergence claim is therefore **contract-level only and not yet
+  realized in device runtime**. UX-013 has been reopened to
+  `Partial / Device-local-only`; shared-across-devices is gated behind
+  `kMultiDeviceSyncEnabled` (Part B). See
+  `Test-Flight-Improv/Group-Chat-Feature/Improvement-Review-2026-06/12-P2-multi-device-honesty.md`.
+- maintained matrix docs now mark `UX-013` as `Partial / Device-local-only`
+  (reopened 2026-06-16 from a premature `Closed`); final re-closure must update
+  those docs only after the shared-vs-local contract and supporting on-device
+  proof are both real and `kMultiDeviceSyncEnabled` is verified-on
 
 Source-of-truth conflicts that materially affected decomposition:
 

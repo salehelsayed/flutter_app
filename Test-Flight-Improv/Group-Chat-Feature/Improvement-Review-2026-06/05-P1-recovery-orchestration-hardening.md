@@ -1,5 +1,7 @@
 > Part of the **[Group Chat Improvement Review](./README.md)** · Priority **P1** · [Findings appendix](./appendix-findings.md)
 
+> ⚠️ **Superseded for implementation by [`05-P1-recovery-orchestration-hardening-TDD-plan.md`](./05-P1-recovery-orchestration-hardening-TDD-plan.md)** (verified 5-agent recon, 2026-06-16). All 7 findings + R1–R6 are still confirmed-unimplemented, but this spec's audit (2026-06-06) is stale: **proposed migration `076` is wrong — it already exists; the next free is `082` (DB v82)**; the Go ack is `bridge.go:861` (node-wide); **every line number drifted +4 to +663**; and the retrier already has an external-recovery skip guard (keyed to `_isResuming` only) + the resume ack already runs inside the gate. Use the TDD plan for line numbers, the corrected migration, reframed findings, and collision-aware phasing. This doc remains the source of intent (the prose findings).
+
 ---
 
 # Harden recovery orchestration: real locking, scoping, and backoff

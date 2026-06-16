@@ -9,12 +9,29 @@ class InMemoryGroupRepository
     implements
         GroupRepository,
         RemovedGroupMemberSnapshotRepository,
+        GroupMemberDeviceSnapshotRepository,
         GroupKeyRotationDraftRepository {
   final Map<String, GroupModel> _groups = {};
   final Map<String, Map<String, GroupMember>> _members = {};
   final Map<String, Map<String, GroupMember>> _removedMemberSnapshots = {};
+  final Map<String, List<GroupMemberDeviceIdentity>> _deviceSnapshots = {};
   final Map<String, List<GroupKeyInfo>> _keys = {};
   final Map<String, GroupKeyInfo> _pendingKeyRotations = {};
+
+  @override
+  Future<void> saveGroupMemberDeviceSnapshot(
+    GroupMember member, {
+    required DateTime savedAt,
+  }) async {
+    _deviceSnapshots['${member.groupId}:${member.peerId}'] = member
+        .activeDevicesWithLegacyFallback();
+  }
+
+  @override
+  Future<List<GroupMemberDeviceIdentity>?> loadGroupMemberDeviceSnapshot(
+    String groupId,
+    String peerId,
+  ) async => _deviceSnapshots['$groupId:$peerId'];
 
   // --- Groups ---
 

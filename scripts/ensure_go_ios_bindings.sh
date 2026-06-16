@@ -24,3 +24,14 @@ if [[ "$needs_rebuild" -eq 1 ]]; then
 fi
 
 "$verify_script" ios
+
+# Stamp the Xcode-declared output (a DerivedData sentinel) so the build system can
+# skip this phase when no Go sources changed. The output is deliberately NOT a file
+# inside GoMknoon.xcframework — declaring framework-internal files as outputs of
+# this Runner script phase creates a build-dependency cycle with
+# Pods-NotificationService (which links the same GoMknoon pod) and breaks on-device
+# builds. SCRIPT_OUTPUT_FILE_0 is set by Xcode; guard for manual/CI runs.
+if [[ -n "${SCRIPT_OUTPUT_FILE_0:-}" ]]; then
+  mkdir -p "$(dirname "$SCRIPT_OUTPUT_FILE_0")"
+  touch "$SCRIPT_OUTPUT_FILE_0"
+fi

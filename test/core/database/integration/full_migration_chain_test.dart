@@ -74,6 +74,10 @@ import 'package:flutter_app/core/database/migrations/074_group_message_logical_d
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart';
 import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
+import 'package:flutter_app/core/database/migrations/080_group_pending_key_repairs_status_index.dart';
+import 'package:flutter_app/core/database/migrations/081_group_pending_reactions.dart';
+import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
+import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -171,9 +175,25 @@ void main() {
     await runMessageRelayCustodyMigration(db);
     await runGroupPendingKeyDistributionsMigration(db);
     await runMessageDedupKeyMigration(db);
+    await runGroupPendingKeyRepairsStatusIndexMigration(db);
+    await runGroupPendingReactionsMigration(db);
+    await runMessageReactionTombstoneMigration(db);
+    await runGroupsLastMembershipEventIdMigration(db);
+
+    final chainIndexNames =
+        (await db.query(
+          'sqlite_master',
+          columns: ['name'],
+          where: "type = 'index'",
+        )).map((row) => row['name'] as String?).whereType<String>().toList();
+    expect(
+      chainIndexNames,
+      contains('idx_group_pending_key_repairs_status_created'),
+    );
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
+    expect(groupCols53, contains('last_membership_event_id'));
     expect(groupCols53, contains('avatar_blob_id'));
     expect(groupCols53, contains('avatar_mime'));
     expect(groupCols53, contains('avatar_path'));
@@ -288,6 +308,10 @@ void main() {
     await runMessageRelayCustodyMigration(db);
     await runGroupPendingKeyDistributionsMigration(db);
     await runMessageDedupKeyMigration(db);
+    await runGroupPendingKeyRepairsStatusIndexMigration(db);
+    await runGroupPendingReactionsMigration(db);
+    await runMessageReactionTombstoneMigration(db);
+    await runGroupsLastMembershipEventIdMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -483,6 +507,7 @@ void main() {
           'group_message_local_deletions',
           'group_key_rotation_drafts',
           'group_pending_key_distributions',
+          'group_pending_reactions',
         ]),
       );
 

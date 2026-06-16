@@ -30,7 +30,6 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
@@ -38,7 +37,9 @@ import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_pending_key_repair_repository.dart';
 import '../../../shared/fakes/in_memory_group_pending_membership_message_repository.dart';
+import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
@@ -144,83 +145,6 @@ class GateableMediaAttachmentRepository
   }
 }
 
-class _InMemoryGroupPendingKeyRepairRepository
-    implements GroupPendingKeyRepairRepository {
-  final Map<String, GroupPendingKeyRepair> repairs = {};
-
-  @override
-  Future<GroupPendingKeyRepairUpsertResult> upsertPendingRepair(
-    GroupPendingKeyRepair repair,
-  ) async {
-    final existing = repairs[repair.id];
-    if (existing == null) {
-      repairs[repair.id] = repair;
-      return GroupPendingKeyRepairUpsertResult(repair: repair, created: true);
-    }
-    final merged = existing.copyWith(updatedAt: repair.updatedAt);
-    repairs[repair.id] = merged;
-    return GroupPendingKeyRepairUpsertResult(repair: merged, created: false);
-  }
-
-  @override
-  Future<GroupPendingKeyRepair?> getRepair(String id) async => repairs[id];
-
-  @override
-  Future<List<GroupPendingKeyRepair>> getPendingRepairsForGroupEpoch({
-    required String groupId,
-    required int keyEpoch,
-    int limit = 50,
-  }) async {
-    return repairs.values
-        .where(
-          (repair) =>
-              repair.groupId == groupId &&
-              repair.keyEpoch == keyEpoch &&
-              repair.status == groupPendingKeyRepairStatusPendingKey,
-        )
-        .take(limit)
-        .toList();
-  }
-
-  @override
-  Future<void> recordAttempt(String id, {required String? lastError}) async {
-    final existing = repairs[id];
-    if (existing == null) return;
-    repairs[id] = existing.copyWith(
-      attempts: existing.attempts + 1,
-      lastError: lastError,
-      updatedAt: DateTime.now().toUtc(),
-    );
-  }
-
-  @override
-  Future<void> finalizeRepaired(String id) async {
-    final existing = repairs[id];
-    if (existing == null || existing.finalizedAt != null) return;
-    final now = DateTime.now().toUtc();
-    repairs[id] = existing.copyWith(
-      status: groupPendingKeyRepairStatusRepaired,
-      updatedAt: now,
-      finalizedAt: now,
-    );
-  }
-
-  @override
-  Future<void> finalizeUndecryptable(
-    String id, {
-    required String lastError,
-  }) async {
-    final existing = repairs[id];
-    if (existing == null || existing.finalizedAt != null) return;
-    final now = DateTime.now().toUtc();
-    repairs[id] = existing.copyWith(
-      status: groupPendingKeyRepairStatusUndecryptable,
-      lastError: lastError,
-      updatedAt: now,
-      finalizedAt: now,
-    );
-  }
-}
 
 class _TrackingInviteDeliveryAttemptRepository
     implements GroupInviteDeliveryAttemptRepository {
@@ -493,6 +417,27 @@ class _GateableReactionRepository extends FakeReactionRepository {
       await _releaseSave.future;
     }
     await super.saveReaction(reaction);
+  }
+}
+
+/// Records the completion order of [saveReaction], optionally delaying a
+/// specific message's save. Used to prove the live reaction pipeline is
+/// serialized: if the slow save completes before the fast one starts, the two
+/// handlers never overlapped (INV-R6).
+class _OrderRecordingReactionRepository extends FakeReactionRepository {
+  _OrderRecordingReactionRepository({this.delays = const {}});
+
+  final Map<String, Duration> delays;
+  final List<String> saveCompletionOrder = [];
+
+  @override
+  Future<void> saveReaction(MessageReaction reaction) async {
+    final delay = delays[reaction.messageId] ?? Duration.zero;
+    if (delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
+    await super.saveReaction(reaction);
+    saveCompletionOrder.add(reaction.messageId);
   }
 }
 
@@ -1006,8 +951,11 @@ void main() {
     'GO-004 live decryption failure creates repair placeholder and trigger without plaintext delivery',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
-      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
       final repairRequests = <GroupKeyRepairRequest>[];
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
       listener.dispose();
       listener = GroupMessageListener(
         groupRepo: groupRepo,
@@ -1072,13 +1020,105 @@ void main() {
         'text': 'Normal live delivery is separate',
         'timestamp': DateTime.now().toUtc().toIso8601String(),
       });
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
+      // The real live delivery supersedes the synthetic live placeholder for
+      // the same group+sender+epoch — no stuck placeholder, no duplicate.
+      final liveRepairId = liveGroupPendingKeyRepairId(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        keyEpoch: 3,
+        localKeyEpoch: 2,
+      );
       expect(
         await msgRepo.getMessage('normal-live-after-diagnostic'),
         isNotNull,
       );
+      expect(await msgRepo.getMessage(liveRepairId), isNull);
+      expect(msgRepo.count, 1);
+      final supersededRepair = await pendingRepo.getRepair(liveRepairId);
+      expect(supersededRepair, isNotNull);
+      expect(supersededRepair!.status, groupPendingKeyRepairStatusRepaired);
+      expect(supersededRepair.finalizedAt, isNotNull);
+      expect(
+        jsonEncode(flowEvents),
+        contains('GROUP_LIVE_DECRYPTION_REPAIR_SUPERSEDED'),
+      );
+    },
+  );
+
+  test(
+    'GO-004b live delivery supersedes only the matching live placeholder (epoch-precise)',
+    () async {
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
+      final repairRequests = <GroupKeyRepairRequest>[];
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: repairRequests.add,
+      );
+      listener.start(sourceController.stream);
+      addTearDown(diagnostics.close);
+
+      // Two live placeholders for the same sender at different epochs.
+      diagnostics.add({
+        'event': 'group:decryption_failed',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'keyEpoch': 3,
+        'localKeyEpoch': 2,
+        'error': 'cipher auth failed',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      diagnostics.add({
+        'event': 'group:decryption_failed',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'keyEpoch': 9,
+        'localKeyEpoch': 2,
+        'error': 'cipher auth failed',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final matchId = liveGroupPendingKeyRepairId(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        keyEpoch: 3,
+        localKeyEpoch: 2,
+      );
+      final otherId = liveGroupPendingKeyRepairId(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        keyEpoch: 9,
+        localKeyEpoch: 2,
+      );
       expect(msgRepo.count, 2);
+
+      // A real live message at epoch 3 supersedes only the epoch-3 placeholder;
+      // the epoch-9 placeholder must remain pending and undeleted.
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 3,
+        'messageId': 'real-live-epoch-3',
+        'text': 'real delivery',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await msgRepo.getMessage('real-live-epoch-3'), isNotNull);
+      expect(await msgRepo.getMessage(matchId), isNull);
+      expect(await msgRepo.getMessage(otherId), isNotNull);
+      final otherRepair = await pendingRepo.getRepair(otherId);
+      expect(otherRepair, isNotNull);
+      expect(otherRepair!.status, groupPendingKeyRepairStatusPendingKey);
+      expect(otherRepair.finalizedAt, isNull);
     },
   );
 
@@ -1086,7 +1126,7 @@ void main() {
     'OB-004 decryption diagnostic creates one repair workflow and dedupes repeats',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
-      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
       final repairRequests = <GroupKeyRepairRequest>[];
       final flowEvents = <Map<String, dynamic>>[];
       debugSetFlowEventSink(flowEvents.add);
@@ -1163,7 +1203,7 @@ void main() {
     'DE-014 decryption failure queues repair placeholder and later valid event still persists',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
-      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
       final repairRequests = <GroupKeyRepairRequest>[];
       final flowEvents = <Map<String, dynamic>>[];
       debugSetFlowEventSink(flowEvents.add);
@@ -1234,7 +1274,12 @@ void main() {
         await msgRepo.getMessage('de014-valid-after-diagnostic'),
         isNotNull,
       );
-      expect(msgRepo.count, 2);
+      // The later valid delivery supersedes the synthetic live placeholder
+      // for the same group+sender+epoch rather than duplicating it. (laterEvent
+      // resolves at emit-time, before the awaited supersede settles.)
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(await msgRepo.getMessage(repairId), isNull);
+      expect(msgRepo.count, 1);
     },
   );
 
@@ -1242,7 +1287,7 @@ void main() {
     'SV-005 tampered envelope diagnostic does not poison later listener delivery',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
-      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final pendingRepo = InMemoryGroupPendingKeyRepairRepository();
       final repairRequests = <GroupKeyRepairRequest>[];
 
       listener.dispose();
@@ -1295,7 +1340,22 @@ void main() {
       final laterMessage = await laterEvent;
       expect(laterMessage.text, 'SV-005 valid listener delivery after tamper');
       expect(await msgRepo.getMessage('sv005-valid-after-tamper'), isNotNull);
-      expect(msgRepo.count, 2);
+      // The valid delivery supersedes the live placeholder (same
+      // group+sender+epoch) instead of leaving a stuck duplicate. (laterEvent
+      // resolves at emit-time, before the awaited supersede settles.)
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(
+        await msgRepo.getMessage(
+          liveGroupPendingKeyRepairId(
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            keyEpoch: 5,
+            localKeyEpoch: 5,
+          ),
+        ),
+        isNull,
+      );
+      expect(msgRepo.count, 1);
     },
   );
 
@@ -7367,6 +7427,69 @@ void main() {
     );
 
     test(
+      'S1b member_added emits CONFIG_SYNC_FAILED when both update attempts fail',
+      () async {
+        bridge = SequencedUpdateConfigBridge([
+          (_) async => throw Exception('first update failed'),
+          (_) async => throw Exception('second update failed'),
+        ]);
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'writer',
+            'publicKey': 'pk-charlie',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+              {
+                'peerId': 'peer-charlie',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNotNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(2),
+        );
+        expect(
+          debugLogs.any(
+            (line) => line.contains('"event":"CONFIG_SYNC_FAILED"'),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
       'member_removed emits readable timeline event on groupMessageStream',
       () async {
         listener.start(sourceController.stream);
@@ -9926,6 +10049,108 @@ void main() {
       },
     );
 
+    Map<String, dynamic> convergenceRolePayload(String role) => {
+      '__sys': 'member_role_updated',
+      'member': {
+        'peerId': 'peer-sender',
+        'username': 'Sender',
+        'role': role,
+        'publicKey': 'pk-sender',
+      },
+      'groupConfig': {
+        'name': 'Test Group',
+        'groupType': 'chat',
+        'members': [
+          {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+          {'peerId': 'peer-sender', 'role': role, 'publicKey': 'pk-sender'},
+        ],
+        'createdBy': 'peer-admin',
+        'createdAt': DateTime.utc(2026, 4, 30).toIso8601String(),
+      },
+    };
+
+    Future<void> feedRoleEvent({
+      required String sourceEventId,
+      required String role,
+      required DateTime eventAt,
+    }) async {
+      final signed = await signedAuditSystemPayload(
+        transitionType: 'member_role_updated',
+        sourceEventId: sourceEventId,
+        eventAt: eventAt,
+        systemPayload: convergenceRolePayload(role),
+      );
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'messageId': sourceEventId,
+        'text': jsonEncode(signed),
+        'timestamp': eventAt.toIso8601String(),
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+
+    test(
+      'S3 equal-instant cross-sender role events converge to the higher audit id (lower then higher)',
+      () async {
+        listener.start(sourceController.stream);
+        final at = DateTime.utc(2026, 5, 25, 10);
+
+        await feedRoleEvent(
+          sourceEventId: 'role-aaa',
+          role: 'admin',
+          eventAt: at,
+        );
+        expect(
+          (await groupRepo.getMember('group-1', 'peer-sender'))!.role,
+          MemberRole.admin,
+        );
+
+        // Same instant, higher audit id → wins the tie-break and applies.
+        await feedRoleEvent(
+          sourceEventId: 'role-zzz',
+          role: 'reader',
+          eventAt: at,
+        );
+        expect(
+          (await groupRepo.getMember('group-1', 'peer-sender'))!.role,
+          MemberRole.reader,
+        );
+      },
+    );
+
+    test(
+      'S3 equal-instant role event with a lower audit id is ignored as stale (higher then lower)',
+      () async {
+        listener.start(sourceController.stream);
+        final at = DateTime.utc(2026, 5, 25, 10);
+
+        await feedRoleEvent(
+          sourceEventId: 'role-zzz',
+          role: 'reader',
+          eventAt: at,
+        );
+        expect(
+          (await groupRepo.getMember('group-1', 'peer-sender'))!.role,
+          MemberRole.reader,
+        );
+
+        // Same instant, lower audit id → stale, ignored. Converges to the same
+        // 'reader' state as the opposite arrival order.
+        await feedRoleEvent(
+          sourceEventId: 'role-aaa',
+          role: 'admin',
+          eventAt: at,
+        );
+        expect(
+          (await groupRepo.getMember('group-1', 'peer-sender'))!.role,
+          MemberRole.reader,
+        );
+      },
+    );
+
     test(
       'signed member_role_updated uses payload eventAt instead of envelope timestamp',
       () async {
@@ -12452,6 +12677,140 @@ void main() {
 
         await sub.cancel();
         rxnListener.dispose();
+      },
+    );
+
+    test(
+      'INV-R6 serializes live reactions so handlers do not interleave',
+      () async {
+        await saveGroupReactionTargetMessage('msg-slow');
+        await saveGroupReactionTargetMessage('msg-fast');
+
+        final orderedRepo = _OrderRecordingReactionRepository(
+          delays: {'msg-slow': const Duration(milliseconds: 80)},
+        );
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: orderedRepo,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        // Two reactions arrive back-to-back; the first one's persist is slow.
+        // Under the old fire-and-forget `.listen`, the fast second save
+        // completes before the slow first (interleave). asyncMap serialization
+        // forces strict arrival order: slow fully completes before fast starts.
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-slow',
+            'messageId': 'msg-slow',
+            'emoji': '\u{1F422}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-fast',
+            'messageId': 'msg-fast',
+            'emoji': '\u{1F407}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:01.000Z',
+          }),
+        });
+
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+
+        expect(orderedRepo.saveCompletionOrder, ['msg-slow', 'msg-fast']);
+      },
+    );
+
+    test(
+      'INV-R4/R5 buffers a reaction-before-message then flushes it exactly once',
+      () async {
+        final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          pendingReactionRepo: pendingReactionRepo,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        final changes = <ReactionChange>[];
+        final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+        addTearDown(sub.cancel);
+
+        // 1. Reaction arrives BEFORE its target message → buffered, not applied.
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-buffered',
+            'messageId': 'late-msg',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-06-05T12:04:00.000Z',
+          }),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+
+        expect(changes, isEmpty);
+        expect(pendingReactionRepo.reactions, hasLength(1));
+        expect(await reactionRepo.getReactionsForMessage('late-msg'), isEmpty);
+
+        // 2. The target message lands through the listener (live path :935).
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'Late target',
+          'timestamp': DateTime.utc(2026, 6, 5, 12, 3).toIso8601String(),
+          'messageId': 'late-msg',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        // 3. Flushed exactly once; buffer cleared; reaction applied.
+        expect(changes, hasLength(1));
+        expect(changes.single.type, ReactionChangeType.upserted);
+        expect(changes.single.messageId, 'late-msg');
+        expect(changes.single.reaction?.emoji, '\u{1F44D}');
+        expect(pendingReactionRepo.reactions, isEmpty);
+        expect(
+          await reactionRepo.getReactionsForMessage('late-msg'),
+          hasLength(1),
+        );
+
+        // 4. Re-delivering the same message must NOT re-emit (exactly-once).
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'Late target',
+          'timestamp': DateTime.utc(2026, 6, 5, 12, 3).toIso8601String(),
+          'messageId': 'late-msg',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(changes, hasLength(1));
       },
     );
 

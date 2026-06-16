@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func opaqueGroupReplayEnvelope(messageID string) string {
@@ -717,5 +719,220 @@ func TestGroupInboxStore_CursorPaginationStableAcrossInstances(t *testing.T) {
 			t.Fatalf("duplicate message ID detected: %q", m.ID)
 		}
 		seen[m.ID] = true
+	}
+}
+
+// TestComputeGroupHistoryRangeHashGoldenVector locks the relay range-hash output
+// byte-for-byte against the Dart client twin
+// (drain_group_offline_inbox_use_case_test.dart, same golden hash). The two
+// implementations MUST agree or the offline gap-repair safety net silently
+// breaks (every repair would return range_hash_mismatch).
+//
+// Canonical spec: field set exactly {from, message, timestamp}; keys
+// alphabetical; timestamp a bare JSON integer (int64); UTF-8; messages joined
+// with "\n"; SHA-256; lowercase hex. HTML escaping of < > & MUST be disabled so
+// Go matches Dart's jsonEncode (finding 06 Phase 1C).
+func TestComputeGroupHistoryRangeHashGoldenVector(t *testing.T) {
+	const goldenHash = "957339b598643b0fa92d13cbf6e6e0f02a9a392e96ff07eedc8c6f0ec20f5ec9"
+
+	messages := []groupInboxMessage{
+		{From: "peer-a", Message: "hello", Timestamp: 1000},
+		{From: "peer-b", Message: "", Timestamp: 2000},
+		{From: "peer-c", Message: "héllo 世界 🎉", Timestamp: 3000},
+		// Row 4 exercises HTML chars < > & (and /) — drives finding 06 Phase 1C.
+		{From: "peer-d", Message: "a<b>c&d/e", Timestamp: 4000},
+		{From: "peer-e", Message: "big-ts", Timestamp: 9223372036854775807},
+		// Row 6: zero timestamp — matches the Dart absent-timestamp -> 0 coercion.
+		{From: "peer-f", Message: "zero-ts"},
+	}
+
+	if got := computeGroupHistoryRangeHash(messages); got != goldenHash {
+		t.Fatalf(
+			"range hash golden vector mismatch:\n got  = %q\n want = %q\n"+
+				"(if this changed intentionally, update BOTH this vector and the Dart "+
+				"twin in drain_group_offline_inbox_use_case_test.dart)",
+			got, goldenHash,
+		)
+	}
+}
+
+// TestComputeGroupHistoryRangeHashRealisticEnvelopeGoldenVector locks parity
+// over the PRODUCTION payload shape: the `message` is a real group_offline_replay
+// envelope (embedded escaped quotes, braces, base64 +/= chars) rather than a
+// short synthetic string. Pinned identically on the Dart side, so a future
+// encoder/escaping change that altered quote/control-char handling on either
+// side flips this constant.
+func TestComputeGroupHistoryRangeHashRealisticEnvelopeGoldenVector(t *testing.T) {
+	const goldenHash = "d198d184054842c233f9ac90cb1019408273f54ac84084c7da8343e031c91737"
+	const envelope = `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"m-9f8e7d","ciphertext":"qA+9/Bc2Df==xYz0/12+","nonce":"N1+a/Zz9=="}`
+
+	messages := []groupInboxMessage{
+		{From: "12D3KooWReplaySender", Message: envelope, Timestamp: 1717243200123},
+	}
+
+	if got := computeGroupHistoryRangeHash(messages); got != goldenHash {
+		t.Fatalf(
+			"realistic-envelope golden mismatch:\n got  = %q\n want = %q\n"+
+				"(update BOTH this and the Dart twin if intentional)",
+			got, goldenHash,
+		)
+	}
+}
+
+// TestComputeGroupHistoryRangeHashIgnoresID locks that the node-layer `id` and
+// RecipientPeerIds never participate in the range hash — parity with the Dart
+// projection {from, message, timestamp} (finding 06 Phase 1A/1B).
+func TestComputeGroupHistoryRangeHashIgnoresID(t *testing.T) {
+	withID := []groupInboxMessage{
+		{
+			From:             "peer-x",
+			Message:          "payload",
+			Timestamp:        42,
+			ID:               "relay-seq-99",
+			RecipientPeerIds: []string{"peer-a", "peer-b"},
+		},
+	}
+	withoutID := []groupInboxMessage{
+		{From: "peer-x", Message: "payload", Timestamp: 42},
+	}
+
+	if computeGroupHistoryRangeHash(withID) != computeGroupHistoryRangeHash(withoutID) {
+		t.Fatalf(
+			"range hash must ignore id/RecipientPeerIds: with=%q without=%q",
+			computeGroupHistoryRangeHash(withID),
+			computeGroupHistoryRangeHash(withoutID),
+		)
+	}
+}
+
+// TestMemoryGroupInboxCapEvictionIncrementsCounter locks finding 06 Phase 2:
+// per-group cap overflow eviction increments groupInboxCappedCounter
+// (relay_group_inbox_capped_total), giving operators visibility into group
+// backlog truncation. Before this wiring the counter was declared-but-dead.
+func TestMemoryGroupInboxCapEvictionIncrementsCounter(t *testing.T) {
+	const capLimit = 3
+	const total = 5
+	store := NewGroupInboxStore(capLimit, 7*24*time.Hour)
+	groupID := "group-cap-eviction-counter"
+
+	before := testutil.ToFloat64(groupInboxCappedCounter)
+
+	for i := 0; i < total; i++ {
+		msg := opaqueGroupReplayEnvelope(fmt.Sprintf("cap-evict-%02d", i))
+		if err := store.StoreWithPushRecipients(groupID, "peer-a", msg, []string{"peer-b"}); err != nil {
+			t.Fatalf("store %d: %v", i, err)
+		}
+	}
+
+	// Stored `total` distinct messages into a cap of `capLimit` -> the oldest
+	// (total-capLimit) are evicted, and each eviction increments the counter.
+	if retained := store.RetrieveAuthorized(groupID, 0, "peer-b"); len(retained) != capLimit {
+		t.Fatalf("retained %d messages, want cap %d", len(retained), capLimit)
+	}
+
+	after := testutil.ToFloat64(groupInboxCappedCounter)
+	if delta := after - before; delta != float64(total-capLimit) {
+		t.Fatalf("groupInboxCappedCounter delta = %v, want %d", delta, total-capLimit)
+	}
+}
+
+// TestMemoryGroupInboxCapEvictionSurfacesRepairableGap locks the integrated
+// finding-06 story for the memory backend: when a client's last-seen message is
+// evicted by the per-group cap, a cursor pointing at that REAL evicted id must
+// surface exactly one history gap, and the repair-range response for that gap
+// must reproduce the gap's ExpectedRangeHash. Phase 2's counter only proves the
+// eviction happened; this proves the eviction -> cursor-not-found -> gap ->
+// repair chain is coherent end-to-end through the production store methods.
+func TestMemoryGroupInboxCapEvictionSurfacesRepairableGap(t *testing.T) {
+	const capLimit = 3
+	store := NewGroupInboxStore(capLimit, 7*24*time.Hour)
+	assertGroupInboxCapEvictionSurfacesRepairableGap(t, store, "group-cap-eviction-gap")
+}
+
+// TestGroupInboxCapEvictionSurfacesRepairableGapHelperSelfCheck guards the
+// shared helper itself (no eviction -> no gap), so a future bug in the helper
+// can't silently pass the eviction tests.
+func TestGroupInboxNonEvictedCursorReportsNoGap(t *testing.T) {
+	store := NewGroupInboxStore(500, 7*24*time.Hour)
+	reader := "peer-b"
+	groupID := "group-no-gap"
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", opaqueGroupReplayEnvelope("kept-0"), []string{reader}); err != nil {
+		t.Fatalf("store kept-0: %v", err)
+	}
+	kept := store.RetrieveAuthorized(groupID, 0, reader)
+	if len(kept) != 1 {
+		t.Fatalf("expected 1 stored message, got %d", len(kept))
+	}
+	// Using the only (still-present) id as cursor finds it -> no gap.
+	page, _, gaps := store.RetrieveWithCursorAuthorized(groupID, kept[0].ID, 50, reader)
+	if len(gaps) != 0 {
+		t.Fatalf("found cursor must not report a gap, got %#v", gaps)
+	}
+	if len(page) != 0 {
+		t.Fatalf("found cursor at the head returns no further messages, got %d", len(page))
+	}
+}
+
+// assertGroupInboxCapEvictionSurfacesRepairableGap is shared by the memory and
+// redis backend eviction tests (the gap/repair logic lives in GroupInboxStore,
+// so both backends exercise the identical authorized cursor/repair path).
+func assertGroupInboxCapEvictionSurfacesRepairableGap(t *testing.T, store *GroupInboxStore, groupID string) {
+	t.Helper()
+	const capLimit = 3
+	reader := "peer-b"
+
+	// Store the message that will later be evicted; capture its real id.
+	if err := store.StoreWithPushRecipients(groupID, "peer-a", opaqueGroupReplayEnvelope("evicted-0"), []string{reader}); err != nil {
+		t.Fatalf("store evicted-0: %v", err)
+	}
+	first := store.RetrieveAuthorized(groupID, 0, reader)
+	if len(first) != 1 {
+		t.Fatalf("expected 1 stored message, got %d", len(first))
+	}
+	evictedID := first[0].ID
+
+	// Push the captured message out of the cap window with capLimit more.
+	for i := 0; i < capLimit; i++ {
+		if err := store.StoreWithPushRecipients(groupID, "peer-a", opaqueGroupReplayEnvelope(fmt.Sprintf("retained-%02d", i)), []string{reader}); err != nil {
+			t.Fatalf("store retained-%02d: %v", i, err)
+		}
+	}
+
+	// Confirm the captured id was actually evicted (not merely never-found).
+	retained := store.RetrieveAuthorized(groupID, 0, reader)
+	if len(retained) != capLimit {
+		t.Fatalf("retained %d, want cap %d", len(retained), capLimit)
+	}
+	for _, m := range retained {
+		if m.ID == evictedID {
+			t.Fatalf("expected id %q to be evicted, still present in %#v", evictedID, retained)
+		}
+	}
+
+	// A cursor pointing at the evicted message must surface exactly one gap.
+	page, _, gaps := store.RetrieveWithCursorAuthorized(groupID, evictedID, 50, reader)
+	if len(gaps) != 1 {
+		t.Fatalf("expected one history gap for evicted cursor, got %#v", gaps)
+	}
+	gap := gaps[0]
+	if gap.MissingAfterMessageId != evictedID {
+		t.Fatalf("gap.MissingAfterMessageId = %q, want evicted id %q", gap.MissingAfterMessageId, evictedID)
+	}
+	if want := computeGroupHistoryRangeHash(page); gap.ExpectedRangeHash != want {
+		t.Fatalf("gap range hash %q != hash of returned page %q", gap.ExpectedRangeHash, want)
+	}
+
+	// The repair-range response for that gap must reproduce the same range hash.
+	repair, repairHash, repairHead := store.RetrieveHistoryRepairRangeAuthorized(
+		groupID, gap.MissingAfterMessageId, gap.MissingBeforeMessageId, 50, reader,
+	)
+	if len(repair) != capLimit {
+		t.Fatalf("repair returned %d messages, want %d", len(repair), capLimit)
+	}
+	if repairHash != gap.ExpectedRangeHash {
+		t.Fatalf("repair range hash %q != gap.ExpectedRangeHash %q", repairHash, gap.ExpectedRangeHash)
+	}
+	if repairHead != gap.ExpectedHeadMessageId {
+		t.Fatalf("repair head %q != gap.ExpectedHeadMessageId %q", repairHead, gap.ExpectedHeadMessageId)
 	}
 }

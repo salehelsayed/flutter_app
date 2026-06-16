@@ -21,6 +21,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 const groupUndecryptablePlaceholderText = 'Message could not be decrypted.';
@@ -65,6 +66,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   required GroupMessageRepository msgRepo,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  GroupPendingReactionRepository? pendingReactionRepo,
   GroupMessageListener? groupMessageListener,
   GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
   GroupHistoryGapRepairRepository? historyGapRepairRepo,
@@ -113,6 +115,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
           groupId: group.id,
           mediaAttachmentRepo: mediaAttachmentRepo,
           reactionRepo: reactionRepo,
+          pendingReactionRepo: pendingReactionRepo,
           groupMessageListener: groupMessageListener,
           pendingKeyRepairRepo: pendingKeyRepairRepo,
           historyGapRepairRepo: historyGapRepairRepo,
@@ -188,6 +191,7 @@ Future<void> drainGroupOfflineInboxForGroup({
   required String groupId,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  GroupPendingReactionRepository? pendingReactionRepo,
   GroupMessageListener? groupMessageListener,
   GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
   GroupHistoryGapRepairRepository? historyGapRepairRepo,
@@ -216,6 +220,7 @@ Future<void> drainGroupOfflineInboxForGroup({
       groupId: groupId,
       mediaAttachmentRepo: mediaAttachmentRepo,
       reactionRepo: reactionRepo,
+      pendingReactionRepo: pendingReactionRepo,
       groupMessageListener: groupMessageListener,
       pendingKeyRepairRepo: pendingKeyRepairRepo,
       historyGapRepairRepo: historyGapRepairRepo,
@@ -274,6 +279,7 @@ Future<void> _drainGroupInbox({
   required String groupId,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  GroupPendingReactionRepository? pendingReactionRepo,
   GroupMessageListener? groupMessageListener,
   GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
   GroupHistoryGapRepairRepository? historyGapRepairRepo,
@@ -539,6 +545,9 @@ Future<void> _drainGroupInbox({
             groupRepo: groupRepo,
             reactionRepo: reactionRepo,
             msgRepo: msgRepo,
+            // Buffer a relay-delivered reaction whose target message has not
+            // drained yet, so it replays when the message lands (INV-R4).
+            pendingReactionRepo: pendingReactionRepo,
             groupId: groupId,
             senderId:
                 payload['senderId'] as String? ??
@@ -1443,22 +1452,38 @@ Future<List<String>> _applyRepairedHistoryMessages({
   return appliedMessageIds;
 }
 
+/// Hashes a group-history range to a SHA-256 lowercase hex digest.
+///
+/// Projects every message to exactly `{from, message, timestamp}` (an absent or
+/// null `timestamp` coerces to the bare integer `0`) before canonicalizing, so
+/// the digest matches the relay's 3-field hash BY CONSTRUCTION — not by the
+/// accident of the gomobile bridge stripping every other field. Any extra key a
+/// future bridge serializer might forward (e.g. `id`) is ignored here.
+///
+/// Canonical spec — MUST stay byte-identical to the Go relay
+/// `computeGroupHistoryRangeHash` (`go-relay-server/inbox.go`): field set
+/// exactly `from,message,timestamp`; keys alphabetical (from < message <
+/// timestamp); `timestamp` a bare JSON integer (Dart `int` / Go `int64`, never
+/// `null`); UTF-8; messages joined with `\n`; SHA-256; lowercase hex. Locked
+/// cross-language by the golden vector in
+/// `drain_group_offline_inbox_use_case_test.dart` + `group_inbox_test.go`.
+///
+/// Residual escaping caveat: Go's `encoding/json` always escapes U+2028/U+2029
+/// even with `SetEscapeHTML(false)`, whereas Dart's `jsonEncode` emits them
+/// raw — so a `message` containing those two code points would hash differently
+/// across languages. This is unreachable for real group messages (the hashed
+/// `message` is the base64/ASCII encrypted offline-replay envelope, which cannot
+/// contain them); if that ever changes, escape U+2028/U+2029 here to restore
+/// parity.
 String computeGroupHistoryRangeHash(List<Map<String, dynamic>> messages) {
   final canonical = messages
-      .map((message) => jsonEncode(_canonicalizeJson(message)))
+      .map((message) => jsonEncode(<String, dynamic>{
+            'from': message['from'],
+            'message': message['message'],
+            'timestamp': message['timestamp'] ?? 0,
+          }))
       .join('\n');
   return sha256.convert(utf8.encode(canonical)).toString();
-}
-
-Object? _canonicalizeJson(Object? value) {
-  if (value is Map) {
-    final sortedKeys = value.keys.map((key) => key.toString()).toList()..sort();
-    return {for (final key in sortedKeys) key: _canonicalizeJson(value[key])};
-  }
-  if (value is List) {
-    return value.map(_canonicalizeJson).toList(growable: false);
-  }
-  return value;
 }
 
 String _safeId(String id) => id.length > 8 ? id.substring(0, 8) : id;

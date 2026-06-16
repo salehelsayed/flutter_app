@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
-import 'package:uuid/uuid.dart';
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
@@ -19,13 +20,36 @@ enum RemoveGroupReactionResult {
   ///
   /// This is not a remote delivery confirmation.
   success,
+
+  /// Live publish failed or threw, but the remove was durably staged in the
+  /// replay outbox and applied locally. The existing retry driver will
+  /// re-drive it — it is NOT a hard drop. (INV-R1)
+  queuedForRetry,
   groupNotFound,
   groupDissolved,
   notMember,
   publishFailed,
 }
 
-const _uuid = Uuid();
+/// Deterministic outbox PK for a remove, keyed by (groupId, messageId,
+/// senderPeerId) — emoji is intentionally excluded because a remove targets
+/// the single reaction a sender holds on a message. Repeated remove re-stages
+/// therefore collapse to one durable row instead of minting a fresh uuid each
+/// time (OQ-2 / INV-R3). Mirrors `_deterministicAddReactionId`.
+String _deterministicRemoveReactionId({
+  required String groupId,
+  required String messageId,
+  required String senderPeerId,
+}) {
+  final canonical = jsonEncode({
+    'action': 'remove',
+    'groupId': groupId,
+    'messageId': messageId,
+    'senderPeerId': senderPeerId,
+  });
+  final digest = sha256.convert(utf8.encode(canonical)).toString();
+  return 'group-reaction-remove-${digest.substring(0, 32)}';
+}
 
 /// Sends a "remove" reaction via live publish plus replay outbox and deletes locally.
 Future<RemoveGroupReactionResult> removeGroupReaction({
@@ -78,8 +102,12 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
     allowLegacyFallback: true,
   );
 
-  // 3. Build remove payload
-  final reactionId = _uuid.v4();
+  // 3. Build remove payload (deterministic id ⇒ idempotent re-stage / OQ-2)
+  final reactionId = _deterministicRemoveReactionId(
+    groupId: groupId,
+    messageId: messageId,
+    senderPeerId: senderPeerId,
+  );
   final timestamp = DateTime.now().toUtc().toIso8601String();
 
   final payload = GroupReactionPayload(
@@ -91,7 +119,31 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
     timestamp: timestamp,
   );
 
-  // 4. Publish via bridge
+  // 4. Stage durable custody + relay store BEFORE publishing, so a live publish
+  //    failure still leaves a retryable replay-outbox row (INV-R1/INV-R2).
+  await _stageRemoveReactionInboxStore(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+    groupId: groupId,
+    payload: payload,
+    senderPublicKey: senderDevice?.deviceSigningPublicKey ?? senderPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    senderDevice: senderDevice,
+  );
+
+  // 5. Delete locally (optimistic) regardless of the publish outcome. Tombstone
+  //    with the remove's authored timestamp so a stale incoming add can't
+  //    resurrect it (INV-T1/INV-T2).
+  await reactionRepo.removeReaction(
+    messageId,
+    senderPeerId,
+    removedAtTimestamp: timestamp,
+  );
+
+  // 6. Attempt live publish. A failure downgrades the result to queuedForRetry
+  //    but never discards the custody/optimistic delete staged above.
+  var publishOk = false;
   try {
     final result = await callGroupPublishReaction(
       bridge,
@@ -106,8 +158,14 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
       reactionPayload: payload.toInnerJson(),
     );
 
-    if (result['ok'] != true) {
-      return RemoveGroupReactionResult.publishFailed;
+    if (result['ok'] == true) {
+      publishOk = true;
+    } else {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REACTION_REMOVE_PUBLISH_FAILED',
+        details: {'errorCode': result['errorCode']},
+      );
     }
   } catch (e) {
     emitFlowEvent(
@@ -115,23 +173,7 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
       event: 'GROUP_REACTION_REMOVE_ERROR',
       details: {'error': e.toString()},
     );
-    return RemoveGroupReactionResult.publishFailed;
   }
-
-  // 5. Store remove in relay inbox for offline members
-  await _stageRemoveReactionInboxStore(
-    bridge: bridge,
-    groupRepo: groupRepo,
-    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-    groupId: groupId,
-    payload: payload,
-    senderPublicKey: senderDevice?.deviceSigningPublicKey ?? senderPublicKey,
-    senderPrivateKey: senderPrivateKey,
-    senderDevice: senderDevice,
-  );
-
-  // 6. Delete locally
-  await reactionRepo.removeReaction(messageId, senderPeerId);
 
   emitFlowEvent(
     layer: 'FL',
@@ -143,10 +185,13 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
       'deliveryConfirmed': false,
       'localState': 'optimistic',
       'replayStatus': 'pending',
+      'publishOk': publishOk,
     },
   );
 
-  return RemoveGroupReactionResult.success;
+  return publishOk
+      ? RemoveGroupReactionResult.success
+      : RemoveGroupReactionResult.queuedForRetry;
 }
 
 Future<void> _stageRemoveReactionInboxStore({

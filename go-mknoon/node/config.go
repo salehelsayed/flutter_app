@@ -42,8 +42,17 @@ const (
 
 	// PubSub.
 	GroupTopicPrefix                  = "/mknoon/group/"
-	PubSubTimeout                     = 30 * time.Second
-	KeyRotationGracePeriod            = 30 * time.Second
+	PubSubTimeout = 30 * time.Second
+	// KeyRotationGracePeriod is the DEFAULT key-rotation grace window. It now
+	// constrains only which prior epoch a node will sign/publish under (the
+	// receive path anchors to keys held in the ring, not the clock). Bumped from
+	// 30s to 10m so a slow rollout still publishes acceptably under the prior
+	// epoch. Override per-node via NodeConfig.KeyRotationGracePeriod.
+	KeyRotationGracePeriod = 10 * time.Minute
+	// RetainedEpochKeys bounds the held-keys ring: a node decrypts/verifies any
+	// of the last K epochs it legitimately held. Past K, the oldest is evicted
+	// (forward-secrecy bound).
+	RetainedEpochKeys = 5
 	GroupDiscoveryInterval            = 30 * time.Second // periodic rendezvous re-discovery for group peers
 	GroupDiscoveryWarmInterval        = 3 * time.Second  // short foreground retry window while a group is only partially connected
 	GroupDiscoveryWarmRetries         = 3                // bounded warm retries before falling back to slower background cadence
@@ -129,6 +138,7 @@ type NodeConfig struct {
 	Namespace                         string        // e.g. "mknoon:chat:<peerId>"
 	AutoRegister                      bool          // Auto-register on rendezvous after relay connect
 	PersonalRendezvousRefreshInterval time.Duration // 0 → DefaultPersonalRendezvousRefreshEvery
+	KeyRotationGracePeriod            time.Duration // 0 → KeyRotationGracePeriod default; sign/publish-under-prev-epoch window
 	ListenPort                        int           // 0 for random
 	FeatureFlags                      *FeatureFlags // Rollout flags; nil → all enabled
 }
@@ -149,6 +159,17 @@ func (c *NodeConfig) PersonalRendezvousRefreshEvery() time.Duration {
 		return c.PersonalRendezvousRefreshInterval
 	}
 	return DefaultPersonalRendezvousRefreshEvery
+}
+
+// EffectiveKeyRotationGracePeriod returns the effective key-rotation grace
+// window, falling back to the KeyRotationGracePeriod default when unset (nil
+// config or zero value). This now constrains only sign/publish-under-prev-epoch
+// behaviour; the receive path accepts any epoch still held in the ring.
+func (c *NodeConfig) EffectiveKeyRotationGracePeriod() time.Duration {
+	if c != nil && c.KeyRotationGracePeriod > 0 {
+		return c.KeyRotationGracePeriod
+	}
+	return KeyRotationGracePeriod
 }
 
 // NodeState represents the current state of the node.

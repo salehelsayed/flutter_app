@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -1173,11 +1174,23 @@ func computeGroupHistoryRangeHash(messages []groupInboxMessage) string {
 			"message":   message.Message,
 			"timestamp": message.Timestamp,
 		}
-		raw, err := json.Marshal(payload)
-		if err != nil {
+		// SetEscapeHTML(false): the Dart client's jsonEncode does NOT escape
+		// < > &, so the relay must not either or the two range hashes diverge
+		// (finding 06 Phase 1C). json.Encoder.Encode appends a trailing
+		// newline, trimmed here before joining with the inter-message "\n".
+		//
+		// Caveat: encoding/json still escapes U+2028/U+2029 even with HTML
+		// escaping off, while Dart's jsonEncode emits them raw — a message with
+		// those code points would hash differently across languages. Unreachable
+		// for real group messages (the hashed `message` is the base64/ASCII
+		// encrypted offline-replay envelope); see the Dart twin's doc comment.
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(payload); err != nil {
 			continue
 		}
-		parts = append(parts, string(raw))
+		parts = append(parts, strings.TrimRight(buf.String(), "\n"))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return fmt.Sprintf("%x", sum[:])

@@ -256,6 +256,25 @@ class _InMemoryGroupPendingKeyDistributionRepository
   }
 
   @override
+  Future<void> reopenForRedelivery(
+    GroupPendingKeyDistribution distribution,
+  ) async {
+    final existing = rows[distribution.id];
+    if (existing == null) {
+      rows[distribution.id] = distribution;
+      return;
+    }
+    rows[distribution.id] = existing.copyWith(
+      status: groupPendingKeyDistributionStatusPending,
+      keyEpoch: distribution.keyEpoch,
+      attempts: 0,
+      lastError: null,
+      finalizedAt: null,
+      updatedAt: distribution.updatedAt,
+    );
+  }
+
+  @override
   Future<GroupPendingKeyDistribution?> getDistribution(String id) async =>
       rows[id];
 

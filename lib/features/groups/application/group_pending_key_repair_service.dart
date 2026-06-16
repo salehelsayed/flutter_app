@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -22,6 +23,20 @@ const groupKeyRepairReasonKeyUpdateApplyFailed = 'key_update_apply_failed';
 const groupKeyRepairReasonSameEpochKeyConflict = 'same_epoch_key_conflict';
 const groupKeyRepairReasonDirectMembershipUpdateDeferred =
     'direct_membership_update_deferred';
+
+/// Hard cap on confirmed-crypto-failure retries before a keyed group repair is
+/// branded permanently undecryptable. Key-absence and transient/ambiguous
+/// failures never count toward this — only authenticity failures with the key
+/// present (see [_isConfirmedGroupReplayCryptoFailure]).
+const kGroupKeyRepairMaxAttempts = 5;
+
+/// A no-envelope `live:` placeholder whose real message never arrives is
+/// self-cleared (row + message DELETED, NOT branded undecryptable) once it is
+/// older than this — otherwise, under bounded-finalize + the resume/backoff
+/// sweep, it would wait forever with no ciphertext to recover.
+const liveGroupNoEnvelopeRepairTtl = Duration(hours: 24);
+
+DateTime _defaultGroupRepairNowUtc() => DateTime.now().toUtc();
 
 class GroupKeyRepairRequest {
   final String groupId;
@@ -66,6 +81,259 @@ Future<void> emitGroupKeyRepairRequest(GroupKeyRepairRequest request) async {
       if (request.messageId != null) 'messageId': _safeId(request.messageId!),
     },
   );
+}
+
+/// Wire type for the active key-pull request (Slice 2 / UDM-G). Old peers route
+/// this unknown type to `unknownMessageStream` → harmless drop, so backward-compat
+/// is free.
+const groupKeyRepairRequestType = 'group_key_repair_request';
+
+/// Ed25519 — same algorithm the signed group key-update / transition audit uses.
+const groupKeyRepairRequestSignatureAlgorithm = 'ed25519';
+
+/// Canonical, stable JSON over the request fields the requester signs. The
+/// responder rebuilds this identically and verifies the signature against the
+/// requester's bound device signing key (UDM-G threat-model gate #1).
+String canonicalGroupKeyRepairRequestSignedPayload({
+  required String groupId,
+  required int keyEpoch,
+  required String requesterPeerId,
+  required String requesterDeviceId,
+}) {
+  return jsonEncode({
+    'type': groupKeyRepairRequestType,
+    'groupId': groupId,
+    'keyEpoch': keyEpoch,
+    'requesterPeerId': requesterPeerId,
+    'requesterDeviceId': requesterDeviceId,
+  });
+}
+
+/// Builds the outbound signed `group_key_repair_request` envelope. The signature
+/// covers [canonicalGroupKeyRepairRequestSignedPayload] over the same four
+/// fields, signed via [callSignPayload] with the requester's device private key.
+///
+/// Returns `null` when signing fails (no private key, bridge error) — the caller
+/// degrades to the FLOW-log fallback rather than sending an unsigned request.
+Future<Map<String, dynamic>?> buildSignedGroupKeyRepairRequestEnvelope({
+  required Bridge bridge,
+  required String groupId,
+  required int keyEpoch,
+  required String requesterPeerId,
+  required String requesterDeviceId,
+  required String requesterPrivateKey,
+}) async {
+  final signedPayload = canonicalGroupKeyRepairRequestSignedPayload(
+    groupId: groupId,
+    keyEpoch: keyEpoch,
+    requesterPeerId: requesterPeerId,
+    requesterDeviceId: requesterDeviceId,
+  );
+  final signResult = await callSignPayload(
+    bridge: bridge,
+    dataToSign: signedPayload,
+    privateKey: requesterPrivateKey,
+  );
+  final signature = signResult['signature'];
+  if (signResult['ok'] != true || signature is! String || signature.isEmpty) {
+    return null;
+  }
+  return {
+    'type': groupKeyRepairRequestType,
+    'version': '1',
+    'payload': {
+      'groupId': groupId,
+      'keyEpoch': keyEpoch,
+      'requesterPeerId': requesterPeerId,
+      'requesterDeviceId': requesterDeviceId,
+      'signatureAlgorithm': groupKeyRepairRequestSignatureAlgorithm,
+      'signedPayload': signedPayload,
+      'signature': signature,
+    },
+  };
+}
+
+/// Real outbound active key-pull (UDM-G). Implements [RequestGroupKeyRepair]:
+/// when fired it builds a signed [groupKeyRepairRequestType] envelope and sends
+/// it directly to the group admin/creator's transport peer, falling back to the
+/// admin's relay inbox if the direct send fails. Keeps the FLOW-log behaviour of
+/// [emitGroupKeyRepairRequest] for observability.
+///
+/// Constructed once at startup with closures over the live `p2pService`
+/// send/inbox + the local identity getters; threaded to the direct
+/// `requestGroupKeyRepair:` call sites in place of the bare log-only stub.
+class GroupKeyRepairRequestSender {
+  final Bridge bridge;
+  final GroupRepository groupRepo;
+  final Future<String?> Function() getOwnPeerId;
+  final Future<String?> Function() getOwnDeviceId;
+  final Future<String?> Function() getOwnPrivateKey;
+  final Future<bool> Function(String peerId, String message) sendP2PMessage;
+  final Future<bool> Function(String peerId, String message)?
+  storeP2PMessageInInbox;
+  final Duration sendTimeout;
+
+  GroupKeyRepairRequestSender({
+    required this.bridge,
+    required this.groupRepo,
+    required this.getOwnPeerId,
+    required this.getOwnDeviceId,
+    required this.getOwnPrivateKey,
+    required this.sendP2PMessage,
+    this.storeP2PMessageInInbox,
+    this.sendTimeout = const Duration(seconds: 5),
+  });
+
+  Future<void> call(GroupKeyRepairRequest request) async {
+    // Always emit the diagnostic so the existing GROUP_KEY_REPAIR_REQUESTED
+    // observability stays intact regardless of send outcome.
+    await emitGroupKeyRepairRequest(request);
+
+    try {
+      final requesterPeerId = (await getOwnPeerId())?.trim();
+      final requesterDeviceId = (await getOwnDeviceId())?.trim();
+      final requesterPrivateKey = await getOwnPrivateKey();
+      if (requesterPeerId == null ||
+          requesterPeerId.isEmpty ||
+          requesterDeviceId == null ||
+          requesterDeviceId.isEmpty ||
+          requesterPrivateKey == null ||
+          requesterPrivateKey.isEmpty) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_REPAIR_REQUEST_SEND_NO_IDENTITY',
+          details: {
+            'groupId': _safeId(request.groupId),
+            'keyEpoch': request.keyEpoch,
+          },
+        );
+        return;
+      }
+
+      final adminTransportPeerId = await _resolveAdminTransportPeerId(
+        request.groupId,
+      );
+      if (adminTransportPeerId == null || adminTransportPeerId.isEmpty) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_REPAIR_REQUEST_NO_ADMIN_TARGET',
+          details: {
+            'groupId': _safeId(request.groupId),
+            'keyEpoch': request.keyEpoch,
+          },
+        );
+        return;
+      }
+
+      final envelope = await buildSignedGroupKeyRepairRequestEnvelope(
+        bridge: bridge,
+        groupId: request.groupId,
+        keyEpoch: request.keyEpoch,
+        requesterPeerId: requesterPeerId,
+        requesterDeviceId: requesterDeviceId,
+        requesterPrivateKey: requesterPrivateKey,
+      );
+      if (envelope == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_REPAIR_REQUEST_SIGN_FAILED',
+          details: {
+            'groupId': _safeId(request.groupId),
+            'keyEpoch': request.keyEpoch,
+          },
+        );
+        return;
+      }
+
+      final wire = jsonEncode(envelope);
+      final delivered = await _sendDirectWithInboxFallback(
+        transportPeerId: adminTransportPeerId,
+        envelope: wire,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_REPAIR_REQUEST_SENT',
+        details: {
+          'groupId': _safeId(request.groupId),
+          'keyEpoch': request.keyEpoch,
+          'delivered': delivered,
+        },
+      );
+    } catch (e) {
+      // Never throw out of the producer chain (NSE/background-safe): a failed
+      // send is no worse than today's log-only stub.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_KEY_REPAIR_REQUEST_SEND_ERROR',
+        details: {
+          'groupId': _safeId(request.groupId),
+          'keyEpoch': request.keyEpoch,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
+  Future<String?> _resolveAdminTransportPeerId(String groupId) async {
+    final group = await groupRepo.getGroup(groupId);
+    final creatorPeerId = group?.createdBy;
+    final members = await groupRepo.getMembers(groupId);
+
+    GroupMember? admin;
+    for (final member in members) {
+      if (creatorPeerId != null && member.peerId == creatorPeerId) {
+        admin = member;
+        break;
+      }
+    }
+    admin ??= () {
+      for (final member in members) {
+        if (member.permissions.allows(
+          GroupMemberPermission.rotateKeys,
+          member.role,
+        )) {
+          return member;
+        }
+      }
+      return null;
+    }();
+    if (admin == null) return null;
+
+    final devices = admin.devices.isEmpty
+        ? admin.activeDevicesWithLegacyFallback()
+        : admin.activeDevices;
+    for (final device in devices) {
+      final transport = device.transportPeerId.trim();
+      if (transport.isNotEmpty) return transport;
+    }
+    return null;
+  }
+
+  Future<bool> _sendDirectWithInboxFallback({
+    required String transportPeerId,
+    required String envelope,
+  }) async {
+    try {
+      final directFuture = sendP2PMessage(transportPeerId, envelope);
+      final directSent = await directFuture.timeout(
+        sendTimeout,
+        onTimeout: () => false,
+      );
+      if (directSent) return true;
+    } catch (_) {
+      // fall through to inbox
+    }
+    final inbox = storeP2PMessageInInbox;
+    if (inbox == null) return false;
+    try {
+      return await inbox(transportPeerId, envelope).timeout(
+        sendTimeout,
+        onTimeout: () => false,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 String offlineGroupPendingKeyRepairId({
@@ -199,15 +467,28 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
   return true;
 }
 
-Future<void> _supersedeLiveDiagnosticRepairForDurableReplay({
+/// Supersedes the synthetic `live:` decryption-failure placeholder(s) for a
+/// group+epoch once a real message for that epoch lands — whether via durable
+/// replay or the live-delivery path. A placeholder matches when its stored
+/// sender or transport peer equals EITHER [senderPeerId] or [transportPeerId];
+/// the real message replaces it, so the placeholder row + its message are
+/// deleted and the repair is finalized as repaired. Scoped precisely to the
+/// `(groupId, keyEpoch)` pair and the matching sender — never reconstructs the
+/// synthetic id (which embeds a `localKeyEpoch` the live path does not know).
+Future<void> supersedeLiveGroupDecryptionRepairForDelivery({
   required GroupPendingKeyRepairRepository pendingKeyRepairRepo,
   required GroupMessageRepository msgRepo,
   required String groupId,
   required String? senderPeerId,
+  required String? transportPeerId,
   required int keyEpoch,
 }) async {
+  final candidates = <String>{};
   final sender = senderPeerId?.trim();
-  if (sender == null || sender.isEmpty) return;
+  final transport = transportPeerId?.trim();
+  if (sender != null && sender.isNotEmpty) candidates.add(sender);
+  if (transport != null && transport.isNotEmpty) candidates.add(transport);
+  if (candidates.isEmpty) return;
 
   final repairs = await pendingKeyRepairRepo.getPendingRepairsForGroupEpoch(
     groupId: groupId,
@@ -215,7 +496,9 @@ Future<void> _supersedeLiveDiagnosticRepairForDurableReplay({
   );
   var supersededCount = 0;
   for (final repair in repairs) {
-    if (!_isLiveDiagnosticRepairForSender(repair, sender)) {
+    if (!candidates.any(
+      (candidate) => _isLiveDiagnosticRepairForSender(repair, candidate),
+    )) {
       continue;
     }
     await msgRepo.deleteMessage(repair.messageId);
@@ -232,6 +515,27 @@ Future<void> _supersedeLiveDiagnosticRepairForDurableReplay({
       'keyEpoch': keyEpoch,
       'count': supersededCount,
     },
+  );
+}
+
+/// Durable-replay supersede: delegates to
+/// [supersedeLiveGroupDecryptionRepairForDelivery] with only the durable
+/// sender known (no standalone transport peer), preserving the original
+/// single-identifier match semantics.
+Future<void> _supersedeLiveDiagnosticRepairForDurableReplay({
+  required GroupPendingKeyRepairRepository pendingKeyRepairRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required String? senderPeerId,
+  required int keyEpoch,
+}) async {
+  await supersedeLiveGroupDecryptionRepairForDelivery(
+    pendingKeyRepairRepo: pendingKeyRepairRepo,
+    msgRepo: msgRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    transportPeerId: null,
+    keyEpoch: keyEpoch,
   );
 }
 
@@ -389,6 +693,10 @@ class GroupPendingKeyRepairRunner {
   final ReactionRepository? reactionRepo;
   final ReplayGroupEnvelope? replayGroupEnvelope;
 
+  /// Injectable clock (UTC). Defaults to the real clock; tests inject a fixed
+  /// `now` to exercise the no-envelope TTL self-clear deterministically.
+  final DateTime Function() nowUtc;
+
   GroupPendingKeyRepairRunner({
     required this.bridge,
     required this.groupRepo,
@@ -397,7 +705,8 @@ class GroupPendingKeyRepairRunner {
     this.mediaAttachmentRepo,
     this.reactionRepo,
     this.replayGroupEnvelope,
-  });
+    DateTime Function()? nowUtc,
+  }) : nowUtc = nowUtc ?? _defaultGroupRepairNowUtc;
 
   Future<void> retryPendingRepairsForRequest(
     GroupPendingKeyRepairRetryRequest request,
@@ -424,9 +733,49 @@ class GroupPendingKeyRepairRunner {
     return repairedCount;
   }
 
+  /// Sweeps EVERY persisted `pending_key` repair across all groups/epochs and
+  /// runs each through [_retryOne]. Backs the resume sweep + backoff timer so
+  /// repairs re-fire even when no fresh key-update/invite event arrives for
+  /// their exact `(group, epoch)`. Internally cheap when nothing is pending.
+  Future<int> retryAllPending({int limit = 200}) async {
+    final repairs = await pendingKeyRepairRepo.getAllPendingRepairs(
+      limit: limit,
+    );
+    var repairedCount = 0;
+    for (final repair in repairs) {
+      final repaired = await _retryOne(repair);
+      if (repaired) repairedCount++;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_PENDING_KEY_REPAIR_SWEEP',
+      details: {'scanned': repairs.length, 'repaired': repairedCount},
+    );
+    return repairedCount;
+  }
+
   Future<bool> _retryOne(GroupPendingKeyRepair repair) async {
     final rawEnvelope = repair.replayEnvelopeJson;
     if (rawEnvelope == null || rawEnvelope.isEmpty) {
+      // TTL self-clear: a `live:` placeholder with no replay envelope whose real
+      // message never arrives would otherwise wait forever. Once stale, DELETE
+      // it (message + repair) — explicitly NOT branded undecryptable, since
+      // there is no ciphertext to recover and it isn't an authenticity failure.
+      if (repair.id.startsWith('live:') &&
+          nowUtc().difference(repair.createdAt) >= liveGroupNoEnvelopeRepairTtl) {
+        await msgRepo.deleteMessage(repair.messageId);
+        await pendingKeyRepairRepo.deleteRepair(repair.id);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_PENDING_KEY_REPAIR_SELF_CLEARED',
+          details: {
+            'groupId': _safeId(repair.groupId),
+            'messageId': _safeId(repair.messageId),
+            'keyEpoch': repair.keyEpoch,
+          },
+        );
+        return false;
+      }
       await pendingKeyRepairRepo.recordAttempt(
         repair.id,
         lastError: 'waiting for replay envelope',
@@ -442,8 +791,6 @@ class GroupPendingKeyRepairRunner {
       );
       return false;
     }
-
-    await pendingKeyRepairRepo.recordAttempt(repair.id, lastError: null);
 
     try {
       final envelope = jsonDecode(rawEnvelope) as Map<String, dynamic>;
@@ -545,14 +892,38 @@ class GroupPendingKeyRepairRunner {
         repair.groupId,
         repair.keyEpoch,
       );
-      if (key == null && e.toString().contains('Missing group replay key')) {
+      // (1) Key still missing → NEVER terminal; key absence is recoverable
+      // (the key may arrive later via key-update/distribution). Requeue.
+      if (key == null) {
         await pendingKeyRepairRepo.recordAttempt(
           repair.id,
           lastError: e.toString(),
         );
         return false;
       }
-      await _finalizeUndecryptable(repair, e.toString());
+      // (2) Confirmed crypto/auth failure WITH the key present → bounded: brand
+      // undecryptable only once the attempt budget is exhausted, so a single
+      // transient hiccup never permanently poisons the message.
+      if (_isConfirmedGroupReplayCryptoFailure(e)) {
+        if (repair.attempts >= kGroupKeyRepairMaxAttempts) {
+          await _finalizeUndecryptable(repair, e.toString());
+          return false;
+        }
+        await pendingKeyRepairRepo.recordAttempt(
+          repair.id,
+          lastError: e.toString(),
+        );
+        return false;
+      }
+      // (3) Everything else — a transient bridge/internal error
+      // (BRIDGE_TIMEOUT/UNKNOWN/INTERNAL_ERROR), a not-yet-injected reaction
+      // repo, an ordering StateError, an ambiguous (membership/data-timing)
+      // signature reason — is non-terminal: stay pending so a later retry can
+      // recover. Never brand undecryptable on a transient/ambiguous failure.
+      await pendingKeyRepairRepo.recordAttempt(
+        repair.id,
+        lastError: e.toString(),
+      );
       return false;
     }
   }
@@ -584,6 +955,34 @@ class GroupPendingKeyRepairRunner {
       },
     );
   }
+}
+
+/// Reasons that represent a *confirmed* authenticity/tampering failure — not a
+/// transient or data/membership-timing issue. Only these may eventually
+/// finalize a keyed repair as undecryptable. Ambiguous reasons (missing_*,
+/// unknown_sender, revoked_device, group_mismatch, relay_sender_mismatch,
+/// recipient_not_entitled, recipient_hash_mismatch) are deliberately EXCLUDED:
+/// they reflect not-yet-applied membership/data, and marking them terminal
+/// re-introduces false-undecryptable on a just-joined device.
+const _confirmedGroupReplayCryptoFailureReasons = <String>{
+  'signature_invalid',
+  'signature_algorithm_invalid',
+  'signed_payload_mismatch',
+  'signed_payload_malformed',
+  'plaintext_hash_mismatch',
+  'plaintext_malformed',
+  'sender_key_mismatch',
+  'sender_device_mismatch',
+  'sender_transport_mismatch',
+};
+
+bool _isConfirmedGroupReplayCryptoFailure(Object e) {
+  // The Go group.decrypt contract returns only INTERNAL_ERROR / INVALID_INPUT
+  // (no distinct AES-GCM auth errorCode), so a BridgeCommandException is NEVER a
+  // confirmed crypto failure. All authenticity checks are Dart-side via
+  // GroupOfflineReplaySignatureException.
+  if (e is! GroupOfflineReplaySignatureException) return false;
+  return _confirmedGroupReplayCryptoFailureReasons.contains(e.reason);
 }
 
 bool _isSystemGroupReplayPayload(Map<String, dynamic> payload) {

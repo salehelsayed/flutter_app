@@ -24,6 +24,8 @@ import UserNotifications
   private var migrationBackgroundTask: UIBackgroundTaskIdentifier = .invalid
   private let diskSpaceChannelName = "mknoon/disk_space"
   private var diskSpaceChannel: FlutterMethodChannel?
+  private let appGroupPathChannelName = "mknoon/app_group_path"
+  private var appGroupPathChannel: FlutterMethodChannel?
 
   deinit {
     NotificationCenter.default.removeObserver(self)
@@ -145,6 +147,7 @@ import UserNotifications
     setupIosNotificationOpenBridge(messenger: messenger)
     setupMigrationKeepAliveBridge(messenger: messenger)
     setupDiskSpaceBridge(messenger: messenger)
+    setupAppGroupPathBridge(messenger: messenger)
 
 #if canImport(GoMknoon)
     goBridge = GoBridge(messenger: messenger)
@@ -270,6 +273,7 @@ import UserNotifications
     setupIosNotificationOpenBridge(messenger: controller.binaryMessenger)
     setupMigrationKeepAliveBridge(messenger: controller.binaryMessenger)
     setupDiskSpaceBridge(messenger: controller.binaryMessenger)
+    setupAppGroupPathBridge(messenger: controller.binaryMessenger)
   }
 
   private func setupDiskSpaceBridge(messenger: FlutterBinaryMessenger) {
@@ -284,6 +288,38 @@ import UserNotifications
       self?.handleDiskSpaceMethodCall(call, result: result)
     }
     diskSpaceChannel = channel
+  }
+
+  // 04-P0 SI-5: expose the shared app-group container path to Dart so the
+  // RecentRemoteNotificationGate can read the NSE's cross-process dedupe markers.
+  private func setupAppGroupPathBridge(messenger: FlutterBinaryMessenger) {
+    if appGroupPathChannel != nil {
+      return
+    }
+    let channel = FlutterMethodChannel(
+      name: appGroupPathChannelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "appGroupContainerPath" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      // Must match mknoonSharedAppGroupIdentifier in the NotificationService
+      // target (a different module, so the literal is repeated here).
+      guard let path = FileManager.default.containerURL(
+        forSecurityApplicationGroupIdentifier: "group.com.mknoon.app.share"
+      )?.path else {
+        result(FlutterError(
+          code: "app_group_unavailable",
+          message: "shared app-group container is unavailable",
+          details: nil
+        ))
+        return
+      }
+      result(path)
+    }
+    appGroupPathChannel = channel
   }
 
   private func handleDiskSpaceMethodCall(

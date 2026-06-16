@@ -5376,6 +5376,102 @@ void main() {
       },
     );
 
+    testWidgets(
+      'INV-R1 optimistic reaction add is KEPT when publish fails (queuedForRetry)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+
+        // Force the live publish to fail → use case returns queuedForRetry.
+        bridge.responses['group:publishReaction'] = {
+          'ok': false,
+          'errorCode': 'GROUP_ERROR',
+        };
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        final thumbsUp = find.descendant(
+          of: find.byKey(MessageContextOverlay.reactionBarKey),
+          matching: find.text('\u{1F44D}'),
+        );
+        await tester.tap(thumbsUp);
+        await pumpFrames(tester, count: 20);
+
+        // Emoji is kept (NOT reverted), and the reaction is durably persisted.
+        expect(find.text('\u{1F44D}'), findsOneWidget);
+        expect(
+          await reactionRepo.getReactionsForMessage('msg-1'),
+          hasLength(1),
+        );
+      },
+    );
+
+    testWidgets(
+      'INV-R1 optimistic reaction remove is KEPT when publish fails (queuedForRetry)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-self',
+            messageId: 'msg-1',
+            emoji: '\u{1F44D}',
+            senderPeerId: testIdentity.peerId,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+
+        bridge.responses['group:publishReaction'] = {
+          'ok': false,
+          'errorCode': 'GROUP_ERROR',
+        };
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        // Tapping the already-present emoji toggles it off (remove).
+        final thumbsUp = find.descendant(
+          of: find.byKey(MessageContextOverlay.reactionBarKey),
+          matching: find.text('\u{1F44D}'),
+        );
+        await tester.tap(thumbsUp);
+        await pumpFrames(tester, count: 20);
+
+        // Optimistic removal is kept (NOT restored) even though publish failed.
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      },
+    );
+
     testWidgets('optimistic reaction remove rolls back on non-success result', (
       tester,
     ) async {

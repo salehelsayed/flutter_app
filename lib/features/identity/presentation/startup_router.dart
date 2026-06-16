@@ -58,6 +58,7 @@ import 'package:flutter_app/features/push/application/prepare_notification_route
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
+import 'package:flutter_app/features/groups/application/announce_restored_device_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -153,6 +154,11 @@ class StartupRouter extends StatefulWidget {
   /// Durable queue for future/missing-key repair replay.
   final GroupPendingKeyRepairRepository? groupPendingKeyRepairRepository;
 
+  /// Slice 2 / UDM-G — the real outbound active key-pull used by the post-rejoin
+  /// offline-inbox drain. Defaults to the FLOW-log-only [emitGroupKeyRepairRequest]
+  /// stub so tests/edge constructions remain backward-compatible.
+  final RequestGroupKeyRepair? requestGroupKeyRepair;
+
   /// Durable lifecycle state for partial history gap repair.
   final GroupHistoryGapRepairRepository? groupHistoryGapRepairRepository;
 
@@ -226,6 +232,7 @@ class StartupRouter extends StatefulWidget {
     this.groupMessageRepository,
     this.groupInviteDeliveryAttemptRepository,
     this.groupPendingKeyRepairRepository,
+    this.requestGroupKeyRepair,
     this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
@@ -500,6 +507,7 @@ class _StartupRouterState extends State<StartupRouter> {
               callMlKemKeygen: () => callMlKemKeygen(bridge),
               secureKeyStore: widget.secureKeyStore,
               contactRepo: contactRepository,
+              groupRepo: widget.groupRepository,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
               moveFromOldPhoneBuilder: (migrationContext) =>
@@ -681,10 +689,22 @@ class _StartupRouterState extends State<StartupRouter> {
                 reactionRepo: widget.reactionRepository,
                 pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
                 historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
-                requestGroupKeyRepair: emitGroupKeyRepairRequest,
+                requestGroupKeyRepair:
+                    widget.requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
                 selfPeerId: identity?.peerId,
               );
             }
+            // R1 (B1b): if this is a freshly-restored device, announce its new
+            // per-device identity to its groups so a sibling/admin can admit it
+            // and re-distribute the current key. One-shot (marker-gated) and
+            // inert unless kMultiDeviceSyncEnabled is on. Never blocks startup.
+            await maybeAnnounceRestoredDeviceOnStartup(
+              secureKeyStore: widget.secureKeyStore,
+              bridge: widget.bridge,
+              groupRepo: groupRepo,
+              identity: identity,
+              transportPeerId: widget.p2pService.currentState.peerId,
+            );
           }),
         );
       }
@@ -1052,6 +1072,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupInviteDeliveryAttemptRepository:
           widget.groupInviteDeliveryAttemptRepository,
       groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+      requestGroupKeyRepair: widget.requestGroupKeyRepair,
       groupHistoryGapRepairRepository: widget.groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository:
           widget.groupReactionReplayOutboxRepository,

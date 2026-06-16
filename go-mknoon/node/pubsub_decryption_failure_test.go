@@ -840,7 +840,11 @@ func TestGK025ValidGroupReactionDeliveryStillEmitsReaction(t *testing.T) {
 	assertNoCollectedEventContainingAfter(t, nodeBCapture, baseline, `"event":"group:payload_parse_failed"`, 500*time.Millisecond)
 }
 
-func TestGK033GroupReactionRejectsStaleEpochAndRevokedDeviceWithoutReceive(t *testing.T) {
+// UDM-E (K=5 ring): a previous-epoch reaction from a still-active device is now
+// DELIVERED (the receive path anchors to keys held, not the expired grace
+// deadline). The revoked-device reaction is still rejected (unbound_device) —
+// that security property is unchanged.
+func TestGK033GroupReactionDeliversHeldEpochAndRejectsRevokedDeviceWithoutReceive(t *testing.T) {
 	activePrivB64, activePubB64 := generateEd25519KeyPair(t)
 	revokedPrivB64, revokedPubB64 := generateEd25519KeyPair(t)
 	_, receiverPubB64 := generateEd25519KeyPair(t)
@@ -927,7 +931,7 @@ func TestGK033GroupReactionRejectsStaleEpochAndRevokedDeviceWithoutReceive(t *te
 	)
 	nodeB.mu.Unlock()
 
-	staleReactionEnvelope := buildTestDeviceEnvelopeWithPlaintext(
+	heldEpochReactionEnvelope := buildTestDeviceEnvelopeWithPlaintext(
 		t,
 		groupId,
 		"group_reaction",
@@ -940,18 +944,19 @@ func TestGK033GroupReactionRejectsStaleEpochAndRevokedDeviceWithoutReceive(t *te
 		activePubB64,
 		previousGroupKey,
 		1,
-		`{"id":"gk033-stale","messageId":"gk033-target","action":"add","emoji":"+1"}`,
+		`{"id":"gk033-held","messageId":"gk033-target","action":"add","emoji":"+1"}`,
 	)
-	staleBaseline := len(nodeBCapture.snapshot())
+	heldBaseline := len(nodeBCapture.snapshot())
 	if err := nodeA.pubsub.UnregisterTopicValidator(GroupTopicPrefix + groupId); err != nil {
-		t.Fatalf("nodeA unregister local validator before GK033 stale reaction publish: %v", err)
+		t.Fatalf("nodeA unregister local validator before GK033 held-epoch reaction publish: %v", err)
 	}
-	publishRawGroupEnvelope(t, nodeA, groupId, staleReactionEnvelope)
-	waitForCollectedValidationReject(t, nodeBCapture, staleBaseline, "bad_signature_or_epoch", 1, 5*time.Second)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, staleBaseline, `"event":"group_reaction:received"`, 500*time.Millisecond)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, staleBaseline, `"event":"group_message:received"`, 500*time.Millisecond)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, staleBaseline, `"event":"group:decryption_failed"`, 500*time.Millisecond)
-	assertNoCollectedEventContainingAfter(t, nodeBCapture, staleBaseline, "gk033-stale", 500*time.Millisecond)
+	publishRawGroupEnvelope(t, nodeA, groupId, heldEpochReactionEnvelope)
+	// UDM-E: the previous-epoch reaction is held in the ring and DELIVERS.
+	heldData := waitForCollectedEventAfter(t, nodeBCapture, heldBaseline, "group_reaction:received", 5*time.Second)
+	if reactionJSON, _ := heldData["reaction"].(string); !strings.Contains(reactionJSON, "gk033-held") {
+		t.Fatalf("held-epoch reaction payload = %q, want GK033 held marker", reactionJSON)
+	}
+	assertNoCollectedEventContainingAfter(t, nodeBCapture, heldBaseline, `"event":"group:decryption_failed"`, 500*time.Millisecond)
 
 	revokedReactionEnvelope := buildTestDeviceEnvelopeWithPlaintext(
 		t,
