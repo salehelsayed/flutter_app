@@ -4360,12 +4360,18 @@ func TestGE018SeededEnvelopeFieldTamperingValidatorClassifiesFailClosed(t *testi
 			},
 		},
 		{
+			// UDM-F: bumping keyEpoch to a strictly-future epoch (local+1, within the
+			// clamp window) is now classified as IGNORE rather than reject — a silent
+			// drop with no peer-score penalty. This is still FAIL-CLOSED: the tampered
+			// message is never accepted/delivered (the node holds no key for that
+			// epoch and the forged signature would never verify even if it did), so it
+			// remains a non-delivery classification — only the peer penalty changes.
 			name:      "key_epoch_tamper",
 			groupId:   groupId,
 			config:    config,
 			envelope:  validDeviceEnvelope,
 			transport: activeTransportPeerId,
-			want:      "reject:bad_signature",
+			want:      "ignore",
 			mutate: func(envelope string) string {
 				return setGroupEnvelopeJSONField(t, envelope, "keyEpoch", keyInfo.KeyEpoch+1)
 			},
