@@ -130,6 +130,25 @@ Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
       as Map<String, dynamic>;
 }
 
+/// Deterministically wait until [predicate] is satisfied instead of sleeping a
+/// fixed wall-clock duration. The GroupMessageListener persists injected stream
+/// messages asynchronously (asyncMap(_handleLiveMessage)); a fixed short sleep
+/// races that pipeline and flakes under loaded/parallel hosts. This polls,
+/// yielding to the event loop between checks, and returns as soon as the
+/// expected state lands (generous cap so a slow host still passes).
+Future<void> _waitUntil(
+  Future<bool> Function() predicate, {
+  Duration timeout = const Duration(seconds: 5),
+  Duration pollInterval = const Duration(milliseconds: 5),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (true) {
+    if (await predicate()) return;
+    if (DateTime.now().isAfter(deadline)) return;
+    await Future<void>.delayed(pollInterval);
+  }
+}
+
 Future<InMemoryGroupRepository> _repoFromConfig(
   Map<String, dynamic> groupConfig, {
   String groupId = _groupId,
@@ -2813,7 +2832,10 @@ void main() {
           'timestamp': DateTime.now().toUtc().toIso8601String(),
         });
 
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await _waitUntil(() async {
+          final m = await adminMsgRepo.getLatestMessage(_groupId);
+          return m?.text == 'Receiver joined the group';
+        });
 
         final latestMessage = await adminMsgRepo.getLatestMessage(_groupId);
         expect(latestMessage, isNotNull);
@@ -2974,7 +2996,10 @@ void main() {
           'timestamp': DateTime.now().toUtc().toIso8601String(),
         });
 
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await _waitUntil(() async {
+          final m = await adminMsgRepo.getLatestMessage(_groupId);
+          return m?.text == 'Receiver joined the group';
+        });
 
         final adminLatestMessage = await adminMsgRepo.getLatestMessage(
           _groupId,

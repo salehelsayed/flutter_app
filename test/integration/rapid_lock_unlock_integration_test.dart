@@ -85,7 +85,7 @@ void main() {
         final messages = await messageRepo.getMessagesForContact('peer-bob');
         expect(messages, hasLength(1));
         expect(messages.single.id, 'msg-sending-001');
-        expect(messages.single.status, 'delivered');
+        expect(messages.single.status, 'inboxed');
         expect(messages.single.transport, 'inbox');
         expect(p2pService.storeInInboxCallCount, 1);
       },

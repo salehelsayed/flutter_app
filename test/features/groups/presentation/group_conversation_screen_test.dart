@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -97,9 +98,10 @@ void main() {
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     String? highlightedMessageId,
+    Locale locale = const Locale('en'),
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -2222,5 +2224,69 @@ void main() {
       find.text('Only admins can send messages in this group'),
     );
     expectTextContrast(readOnly.style!.color!, colors.surfaceBase);
+  });
+
+  group('localized timestamps (finding 11 item 3)', () {
+    // A fixed local wall-clock time of 14:05, constructed as a *local* DateTime
+    // so toLocal() is a no-op and the assertion is timezone-independent.
+    final localAfternoon = DateTime(2026, 2, 9, 14, 5);
+
+    GroupMessage timestampMessage() => GroupMessage(
+      id: 'msg-time',
+      groupId: 'group-1',
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: 'Time check',
+      timestamp: localAfternoon,
+      createdAt: localAfternoon,
+      isIncoming: true,
+    );
+
+    testWidgets('de renders 24-hour time without an AM/PM marker', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [timestampMessage()],
+          locale: const Locale('de'),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.textContaining('14:05'), findsOneWidget);
+      expect(find.textContaining('PM'), findsNothing);
+      expect(find.textContaining('AM'), findsNothing);
+    });
+
+    testWidgets('en keeps the 12-hour AM/PM format', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [timestampMessage()],
+          locale: const Locale('en'),
+        ),
+      );
+      await tester.pump();
+
+      final expected = intl.DateFormat.jm('en').format(localAfternoon);
+      expect(expected, contains('PM'));
+      expect(find.textContaining(expected), findsOneWidget);
+    });
+
+    testWidgets('ar renders the locale-formatted time (Eastern-Arabic digits)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [timestampMessage()],
+          locale: const Locale('ar'),
+        ),
+      );
+      await tester.pump();
+
+      final expected = intl.DateFormat.jm('ar').format(localAfternoon);
+      // Sanity: the Arabic format is not the ASCII-digit Western form.
+      expect(expected, isNot(contains('14:05')));
+      expect(find.textContaining(expected), findsOneWidget);
+    });
   });
 }

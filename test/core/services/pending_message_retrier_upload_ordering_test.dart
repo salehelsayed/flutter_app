@@ -202,18 +202,24 @@ void main() {
 
         await Future.delayed(const Duration(seconds: 6));
 
+        // GAP-3a (plan 05 / finding-125): retryFailedGroupInboxStores is a
+        // publish-free custody confirm that now runs INSIDE the group-recovery
+        // gate, between retryIncompleteGroupUploads and retryFailedGroupMessages,
+        // so a relay-confirmed pending row is promoted before the group
+        // re-publish step can re-transmit (and risk duplicating) it. The 1:1
+        // tail ends with verifyInboxCustody.
         expect(callOrder, <String>[
           'rejoinGroupTopics',
           'drainGroupOfflineInbox',
           'recoverStuckGroup',
           'retryIncompleteGroupUploads',
+          'retryFailedGroupInboxStores',
           'retryFailedGroupMessages',
           'recoverStuckSendingMessages',
           'retryIncompleteUploads',
           'retryFailedMessages',
           'retryUnackedMessages',
           'verifyInboxCustody',
-          'retryFailedGroupInboxStores',
         ]);
       },
       timeout: const Timeout(Duration(seconds: 10)),

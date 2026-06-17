@@ -2337,4 +2337,94 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get qr_add_failed =>
       'Kontakt konnte nicht hinzugefügt werden. Bitte versuche es erneut.';
+
+  @override
+  String sibling_device_new_device_title(String member) {
+    return 'Neues Gerät für $member';
+  }
+
+  @override
+  String get sibling_device_verify_prompt =>
+      'Ein neues Gerät möchte diesem Konto beitreten. Überprüfe, ob die Sicherheitsnummer mit dem neuen Gerät übereinstimmt, bevor du es genehmigst.';
+
+  @override
+  String get sibling_device_reject => 'Ablehnen';
+
+  @override
+  String get sibling_device_verify_approve => 'Überprüfen & genehmigen';
+
+  @override
+  String get transport_diagnostics_title => 'TRANSPORT-DIAGNOSE (SITZUNG)';
+
+  @override
+  String get transport_diagnostics_census =>
+      'Sitzungsbezogene, rein aggregierte Transportübersicht. Keine Kennungen verlassen das Gerät.';
+
+  @override
+  String get transport_diagnostics_lan_discovery => 'Erkennung';
+
+  @override
+  String get transport_diagnostics_lan_peers => 'Peers';
+
+  @override
+  String get transport_diagnostics_lan_permission => 'Berechtigung';
+
+  @override
+  String get transport_diagnostics_refresh => 'Aktualisieren';
+
+  @override
+  String get account_migration_back => 'Zurück';
+
+  @override
+  String get account_migration_qr_heading => 'Konto-Umzugs-QR';
+
+  @override
+  String get account_migration_qr_confirm_label =>
+      'Bestätige diesen Code nach dem Scannen';
+
+  @override
+  String account_migration_qr_expires_at(String time) {
+    return 'Läuft ab um $time';
+  }
+
+  @override
+  String get account_migration_scan_action => 'Umzugs-QR scannen';
+
+  @override
+  String get account_migration_start_transfer => 'Übertragung starten';
+
+  @override
+  String get account_migration_cancel_transfer => 'Übertragung abbrechen';
+
+  @override
+  String get account_migration_retry => 'Erneut versuchen';
+
+  @override
+  String get account_migration_erase_confirm_title => 'Dieses Gerät löschen?';
+
+  @override
+  String get account_migration_erase_confirm_body =>
+      'Dies löscht nur die lokalen Kontodaten auf diesem Telefon, nachdem das Konto umgezogen ist. Es wird nichts zurückbewegt.';
+
+  @override
+  String get account_migration_cancel => 'Abbrechen';
+
+  @override
+  String get account_migration_erase_local_data => 'Lokale Daten löschen';
+
+  @override
+  String get account_migration_erased_snackbar => 'Lokale Kontodaten gelöscht';
+
+  @override
+  String account_migration_erase_failed(String error) {
+    return 'Lokale Kontodaten konnten nicht gelöscht werden: $error';
+  }
+
+  @override
+  String get account_migration_blocked_title =>
+      'Konto auf ein anderes Telefon umgezogen';
+
+  @override
+  String get account_migration_blocked_message =>
+      'Dieses Telefon ist nach der Migration für das Öffnen des Kontos gesperrt. Lösche die lokale Kopie erst, wenn du sicher bist, dass das neue Telefon funktioniert.';
 }

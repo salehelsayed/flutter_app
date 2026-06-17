@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/058_media_attachment_integrity_columns.dart';
 import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
+import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 
 void main() {
@@ -23,6 +24,9 @@ void main() {
     await runMediaAttachmentsMigration(db);
     await runMediaAttachmentIntegrityColumnsMigration(db);
     await runMediaAttachmentEncryptionColumnsMigration(db);
+    // Migration 089 adds download_retry_count, which dbUpdateMediaLocalPath now
+    // resets to 0 on a successful local-path commit (INV-DL-2).
+    await runMediaAttachmentDownloadRetryColumnMigration(db);
   });
 
   tearDown(() async {

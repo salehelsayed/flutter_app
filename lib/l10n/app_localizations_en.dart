@@ -2267,4 +2267,94 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get qr_add_failed => 'Failed to add contact. Please try again.';
+
+  @override
+  String sibling_device_new_device_title(String member) {
+    return 'New device for $member';
+  }
+
+  @override
+  String get sibling_device_verify_prompt =>
+      'A new device wants to join this account. Verify its safety number matches the new device before approving.';
+
+  @override
+  String get sibling_device_reject => 'Reject';
+
+  @override
+  String get sibling_device_verify_approve => 'Verify & approve';
+
+  @override
+  String get transport_diagnostics_title => 'TRANSPORT DIAGNOSTICS (SESSION)';
+
+  @override
+  String get transport_diagnostics_census =>
+      'Session-scoped, aggregate-only transport census. No identifiers leave the device.';
+
+  @override
+  String get transport_diagnostics_lan_discovery => 'discovery';
+
+  @override
+  String get transport_diagnostics_lan_peers => 'peers';
+
+  @override
+  String get transport_diagnostics_lan_permission => 'permission';
+
+  @override
+  String get transport_diagnostics_refresh => 'Refresh';
+
+  @override
+  String get account_migration_back => 'Back';
+
+  @override
+  String get account_migration_qr_heading => 'Move Account QR';
+
+  @override
+  String get account_migration_qr_confirm_label =>
+      'Confirm this code after scanning';
+
+  @override
+  String account_migration_qr_expires_at(String time) {
+    return 'Expires at $time';
+  }
+
+  @override
+  String get account_migration_scan_action => 'Scan migration QR';
+
+  @override
+  String get account_migration_start_transfer => 'Start transfer';
+
+  @override
+  String get account_migration_cancel_transfer => 'Cancel transfer';
+
+  @override
+  String get account_migration_retry => 'Retry';
+
+  @override
+  String get account_migration_erase_confirm_title => 'Erase this device?';
+
+  @override
+  String get account_migration_erase_confirm_body =>
+      'This only clears local account data on this phone after the account has moved. It will not move anything back.';
+
+  @override
+  String get account_migration_cancel => 'Cancel';
+
+  @override
+  String get account_migration_erase_local_data => 'Erase local data';
+
+  @override
+  String get account_migration_erased_snackbar => 'Local account data erased';
+
+  @override
+  String account_migration_erase_failed(String error) {
+    return 'Could not erase local account data: $error';
+  }
+
+  @override
+  String get account_migration_blocked_title =>
+      'Account moved to another phone';
+
+  @override
+  String get account_migration_blocked_message =>
+      'This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.';
 }

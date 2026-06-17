@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 class AccountMigrationBlockedScreen extends StatefulWidget {
   final Future<void> Function()? onEraseAccount;
@@ -19,22 +20,23 @@ class _AccountMigrationBlockedScreenState
     final erase = widget.onEraseAccount;
     if (erase == null || _isErasing) return;
 
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF161616),
-        title: const Text(
-          'Erase this device?',
-          style: TextStyle(color: AppColors.textPrimary),
+        title: Text(
+          l10n.account_migration_erase_confirm_title,
+          style: const TextStyle(color: AppColors.textPrimary),
         ),
-        content: const Text(
-          'This only clears local account data on this phone after the account has moved. It will not move anything back.',
-          style: TextStyle(color: AppColors.textMuted),
+        content: Text(
+          l10n.account_migration_erase_confirm_body,
+          style: const TextStyle(color: AppColors.textMuted),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(l10n.account_migration_cancel),
           ),
           FilledButton(
             key: const ValueKey('account-migration-erase-confirm'),
@@ -43,7 +45,7 @@ class _AccountMigrationBlockedScreenState
               backgroundColor: AppColors.primaryAccent,
               foregroundColor: Colors.black,
             ),
-            child: const Text('Erase local data'),
+            child: Text(l10n.account_migration_erase_local_data),
           ),
         ],
       ),
@@ -56,12 +58,16 @@ class _AccountMigrationBlockedScreenState
       await erase();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Local account data erased')),
+        SnackBar(
+          content: Text(l10n.account_migration_erased_snackbar),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not erase local account data: $e')),
+        SnackBar(
+          content: Text(l10n.account_migration_erase_failed(e.toString())),
+        ),
       );
     } finally {
       if (mounted) {
@@ -72,6 +78,7 @@ class _AccountMigrationBlockedScreenState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -87,22 +94,22 @@ class _AccountMigrationBlockedScreenState
                   color: AppColors.primaryAccent,
                 ),
                 const SizedBox(height: 20),
-                const Text(
-                  'Account moved to another phone',
-                  key: ValueKey('account-migration-blocked-title'),
+                Text(
+                  l10n.account_migration_blocked_title,
+                  key: const ValueKey('account-migration-blocked-title'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.',
-                  key: ValueKey('account-migration-blocked-message'),
+                Text(
+                  l10n.account_migration_blocked_message,
+                  key: const ValueKey('account-migration-blocked-message'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: AppColors.textMuted,
                     fontSize: 14,
                     height: 1.35,

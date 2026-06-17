@@ -175,11 +175,14 @@ void main() {
         expect(p2pService.storeInInboxCallCount, 1);
         expect(count, 1);
 
-        // The good message was delivered
+        // The good message was handed to the relay inbox, so status is
+        // 'inboxed' (115 relay-inbox custody: a successful relay store
+        // yields 'inboxed', never 'delivered'; 'delivered' is reserved
+        // for receiver-confirmed sites).
         final saved = messageRepo.lastSavedMessage;
         expect(saved, isNotNull);
         expect(saved!.id, 'msg-good');
-        expect(saved.status, 'delivered');
+        expect(saved.status, 'inboxed');
       },
     );
   });

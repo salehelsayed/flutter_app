@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Debug-only, read-only diagnostics card that renders the current session's
 /// aggregate transport metrics from [TransportMetrics].
@@ -52,16 +53,17 @@ class _SettingsTransportDiagnosticsCardState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
-              'TRANSPORT DIAGNOSTICS (SESSION)',
-              style: TextStyle(
+              l10n.transport_diagnostics_title,
+              style: const TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.88,
@@ -87,11 +89,10 @@ class _SettingsTransportDiagnosticsCardState
                   children: [
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'Session-scoped, aggregate-only transport census. '
-                            'No identifiers leave the device.',
-                            style: TextStyle(
+                            l10n.transport_diagnostics_census,
+                            style: const TextStyle(
                               fontSize: 12,
                               height: 1.35,
                               color: Color.fromRGBO(255, 255, 255, 0.65),
@@ -178,17 +179,17 @@ class _SettingsTransportDiagnosticsCardState
                     const _SectionLabel('LAN'),
                     const SizedBox(height: 6),
                     _MetricRow(
-                      label: 'discovery',
+                      label: l10n.transport_diagnostics_lan_discovery,
                       value: _lan.discoveryActive ? 'active' : 'inactive',
                     ),
                     _MetricRow(
-                      label: 'peers',
+                      label: l10n.transport_diagnostics_lan_peers,
                       value: '${_lan.discoveredPeerCount}',
                     ),
                     // P4: heuristic only (zero peers for >=12s while discovery
                     // active) — never authoritative; iOS has no permission API.
                     _MetricRow(
-                      label: 'permission',
+                      label: l10n.transport_diagnostics_lan_permission,
                       value: _lan.suspectedPermissionDenied
                           ? 'suspected-denied'
                           : 'ok',
@@ -232,7 +233,7 @@ class _SettingsTransportDiagnosticsCardState
                         buttonKey: const ValueKey(
                           'settings-transport-debug-refresh-button',
                         ),
-                        label: 'Refresh',
+                        label: l10n.transport_diagnostics_refresh,
                         color: const Color(0xFF14B8A6),
                         onTap: _refresh,
                       ),

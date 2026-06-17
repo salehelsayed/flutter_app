@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -70,9 +71,10 @@ void main() {
     bool isLoading = false,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
+    Locale locale = const Locale('en'),
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: GroupListScreen(
@@ -256,5 +258,52 @@ void main() {
 
     final inviteDescription = tester.widget<Text>(find.text('Read together'));
     expectTextContrast(inviteDescription.style!.color!, colors.surfaceRaised);
+  });
+
+  group('localized last-message timestamps (finding 11 item 3)', () {
+    // Fixed local wall-clock 14:05 so toLocal() is a no-op (TZ-independent).
+    final localAfternoon = DateTime(2026, 2, 9, 14, 5);
+
+    GroupMessage lastMessageAt(DateTime when) => GroupMessage(
+      id: 'msg-time',
+      groupId: testGroups.first.id,
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: 'Latest',
+      timestamp: when,
+      createdAt: when,
+      isIncoming: true,
+    );
+
+    testWidgets('de renders the 24-hour list time without an AM/PM marker', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          groups: [testGroups.first],
+          latestMessages: {testGroups.first.id: lastMessageAt(localAfternoon)},
+          locale: const Locale('de'),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.textContaining('14:05'), findsOneWidget);
+      expect(find.textContaining('PM'), findsNothing);
+    });
+
+    testWidgets('en keeps the 12-hour list time', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          groups: [testGroups.first],
+          latestMessages: {testGroups.first.id: lastMessageAt(localAfternoon)},
+          locale: const Locale('en'),
+        ),
+      );
+      await tester.pump();
+
+      final expected = intl.DateFormat.jm('en').format(localAfternoon);
+      expect(expected, contains('PM'));
+      expect(find.textContaining(expected), findsOneWidget);
+    });
   });
 }

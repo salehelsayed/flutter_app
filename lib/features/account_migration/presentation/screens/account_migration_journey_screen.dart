@@ -8,6 +8,7 @@ import 'package:flutter_app/features/account_migration/application/migration_acc
 import 'package:flutter_app/features/account_migration/presentation/models/account_migration_ui_state.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 class AccountMigrationJourneyScreen extends StatelessWidget {
@@ -131,7 +132,7 @@ class AccountMigrationJourneyScreen extends StatelessWidget {
                 left: 8,
                 child: IconButton.filledTonal(
                   key: const ValueKey('account-migration-close'),
-                  tooltip: 'Back',
+                  tooltip: AppLocalizations.of(context)!.account_migration_back,
                   style: IconButton.styleFrom(
                     backgroundColor: readableColors.surfaceRaised,
                     foregroundColor: readableColors.iconPrimary,
@@ -217,6 +218,7 @@ class _NewPhonePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     switch (qrState.status) {
       case AccountMigrationQrPresentationStatus.loading:
@@ -235,7 +237,7 @@ class _NewPhonePanel extends StatelessWidget {
           child: Column(
             children: [
               Text(
-                'Move Account QR',
+                l10n.account_migration_qr_heading,
                 key: const ValueKey('account-migration-qr-heading'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -248,7 +250,7 @@ class _NewPhonePanel extends StatelessWidget {
               _MigrationQrImage(data: qrState.qrJson!),
               const SizedBox(height: 12),
               Text(
-                'Confirm this code after scanning',
+                l10n.account_migration_qr_confirm_label,
                 key: const ValueKey(
                   'account-migration-new-phone-confirmation-label',
                 ),
@@ -275,7 +277,9 @@ class _NewPhonePanel extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                'Expires at ${_formatTime(qrState.expiresAt!)}',
+                l10n.account_migration_qr_expires_at(
+                  _formatTime(qrState.expiresAt!),
+                ),
                 key: const ValueKey('account-migration-qr-expiry'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -348,7 +352,7 @@ class _OldPhonePanel extends StatelessWidget {
               _PrimaryButton(
                 key: const ValueKey('account-migration-scan-action'),
                 icon: Icons.qr_code_scanner_outlined,
-                label: 'Scan migration QR',
+                label: AppLocalizations.of(context)!.account_migration_scan_action,
                 onPressed: onScanQr,
               ),
             ],
@@ -418,7 +422,7 @@ class _OldPhonePanel extends StatelessWidget {
               _PrimaryButton(
                 key: const ValueKey('account-migration-start-transfer'),
                 icon: Icons.play_arrow_rounded,
-                label: 'Start transfer',
+                label: AppLocalizations.of(context)!.account_migration_start_transfer,
                 onPressed: state.sizeCapBlockedMessage == null
                     ? onStartTransfer
                     : null,
@@ -458,6 +462,7 @@ class _ProgressPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final copy = _copyFor(stage);
     final terminal = stage.isTerminal;
 
@@ -523,7 +528,7 @@ class _ProgressPanel extends StatelessWidget {
             const SizedBox(height: 18),
             _SecondaryButton(
               key: const ValueKey('account-migration-cancel-transfer'),
-              label: 'Cancel transfer',
+              label: l10n.account_migration_cancel_transfer,
               onPressed: onCancel,
             ),
           ] else if (stage == AccountMigrationProgressStage.failed) ...[
@@ -531,7 +536,7 @@ class _ProgressPanel extends StatelessWidget {
             _PrimaryButton(
               key: const ValueKey('account-migration-retry-transfer'),
               icon: Icons.refresh,
-              label: 'Retry',
+              label: l10n.account_migration_retry,
               onPressed: onRetry,
             ),
           ],

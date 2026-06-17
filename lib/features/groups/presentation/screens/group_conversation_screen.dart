@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
@@ -50,6 +51,11 @@ class GroupConversationScreen extends StatelessWidget {
   final bool initialLoadDone;
   final ScrollController? scrollController;
   final String? highlightedMessageId;
+
+  /// When set, attached to the currently-highlighted row so the wired layer can
+  /// resolve a [BuildContext] for [Scrollable.ensureVisible] — i.e. scroll a
+  /// notification-tapped message into view, not merely highlight it.
+  final GlobalKey? highlightAnchorKey;
   final Map<String, List<MediaAttachment>> mediaMap;
   final List<File> pendingAttachments;
   final bool isUploading;
@@ -108,6 +114,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.initialLoadDone = false,
     this.scrollController,
     this.highlightedMessageId,
+    this.highlightAnchorKey,
     this.mediaMap = const {},
     this.pendingAttachments = const [],
     this.isUploading = false,
@@ -589,7 +596,7 @@ class GroupConversationScreen extends StatelessWidget {
                   preferMemberName: true,
                 ),
           text: message.text,
-          time: _formatTime(message.timestamp),
+          time: _formatTime(context, message.timestamp),
           isIncoming: !isSent,
           status: isSent ? message.status : null,
           quotedText: quotedText,
@@ -706,7 +713,7 @@ class GroupConversationScreen extends StatelessWidget {
         ? const Color(0xFF0F766E)
         : const Color(0xFF4ECDC4);
 
-    return Stack(
+    final cue = Stack(
       key: ValueKey('grp-highlight-$messageId'),
       clipBehavior: Clip.none,
       children: [
@@ -739,6 +746,14 @@ class GroupConversationScreen extends StatelessWidget {
         ),
       ],
     );
+
+    // Only the single highlighted row is built here, so the anchor key never
+    // collides. The wired layer reads its currentContext for ensureVisible.
+    final anchorKey = highlightAnchorKey;
+    if (anchorKey != null) {
+      return KeyedSubtree(key: anchorKey, child: cue);
+    }
+    return cue;
   }
 
   (String?, bool) _resolveQuotedText(GroupMessage message) {
@@ -868,14 +883,9 @@ class GroupConversationScreen extends StatelessWidget {
     }
   }
 
-  static String _formatTime(DateTime timestamp) {
-    final local = timestamp.toLocal();
-    final hour = local.hour == 0
-        ? 12
-        : (local.hour > 12 ? local.hour - 12 : local.hour);
-    final minute = local.minute.toString().padLeft(2, '0');
-    final period = local.hour < 12 ? 'AM' : 'PM';
-    return '$hour:$minute $period';
+  String _formatTime(BuildContext context, DateTime timestamp) {
+    final locale = Localizations.localeOf(context).toString();
+    return intl.DateFormat.jm(locale).format(timestamp.toLocal());
   }
 
   Future<void> _copyMessageText(BuildContext context, String text) async {

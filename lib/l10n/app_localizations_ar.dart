@@ -2304,4 +2304,93 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get qr_add_failed =>
       'فشلت إضافة جهة الاتصال. يُرجى المحاولة مرة أخرى.';
+
+  @override
+  String sibling_device_new_device_title(String member) {
+    return 'جهاز جديد لـ $member';
+  }
+
+  @override
+  String get sibling_device_verify_prompt =>
+      'يريد جهاز جديد الانضمام إلى هذا الحساب. تحقّق من تطابق رقم الأمان مع الجهاز الجديد قبل الموافقة.';
+
+  @override
+  String get sibling_device_reject => 'رفض';
+
+  @override
+  String get sibling_device_verify_approve => 'تحقّق ووافق';
+
+  @override
+  String get transport_diagnostics_title => 'تشخيص النقل (الجلسة)';
+
+  @override
+  String get transport_diagnostics_census =>
+      'إحصاء النقل ضمن الجلسة، إجمالي فقط. لا تغادر أي مُعرّفات هذا الجهاز.';
+
+  @override
+  String get transport_diagnostics_lan_discovery => 'الاكتشاف';
+
+  @override
+  String get transport_diagnostics_lan_peers => 'الأقران';
+
+  @override
+  String get transport_diagnostics_lan_permission => 'الإذن';
+
+  @override
+  String get transport_diagnostics_refresh => 'تحديث';
+
+  @override
+  String get account_migration_back => 'رجوع';
+
+  @override
+  String get account_migration_qr_heading => 'رمز نقل الحساب';
+
+  @override
+  String get account_migration_qr_confirm_label => 'أكّد هذا الرمز بعد المسح';
+
+  @override
+  String account_migration_qr_expires_at(String time) {
+    return 'تنتهي الصلاحية في $time';
+  }
+
+  @override
+  String get account_migration_scan_action => 'مسح رمز النقل';
+
+  @override
+  String get account_migration_start_transfer => 'بدء النقل';
+
+  @override
+  String get account_migration_cancel_transfer => 'إلغاء النقل';
+
+  @override
+  String get account_migration_retry => 'إعادة المحاولة';
+
+  @override
+  String get account_migration_erase_confirm_title => 'محو بيانات هذا الجهاز؟';
+
+  @override
+  String get account_migration_erase_confirm_body =>
+      'هذا يمحو فقط بيانات الحساب المحلية على هذا الهاتف بعد نقل الحساب. لن يُعيد أي شيء.';
+
+  @override
+  String get account_migration_cancel => 'إلغاء';
+
+  @override
+  String get account_migration_erase_local_data => 'محو البيانات المحلية';
+
+  @override
+  String get account_migration_erased_snackbar =>
+      'تم محو بيانات الحساب المحلية';
+
+  @override
+  String account_migration_erase_failed(String error) {
+    return 'تعذّر محو بيانات الحساب المحلية: $error';
+  }
+
+  @override
+  String get account_migration_blocked_title => 'تم نقل الحساب إلى هاتف آخر';
+
+  @override
+  String get account_migration_blocked_message =>
+      'هذا الهاتف محظور من فتح الحساب بعد النقل. لا تمحُ النسخة المحلية إلا عندما تتأكد من أن الهاتف الجديد يعمل.';
 }

@@ -147,7 +147,9 @@ void main() {
         final recoveredRows = await messageRepo.getMessagesForContact('peer-bob');
         expect(recoveredRows, hasLength(1));
         expect(recoveredRows.single.id, failedId);
-        expect(recoveredRows.single.status, 'delivered');
+        // 115 relay-inbox custody: bare storeInInbox success is custody, not
+        // receiver delivery; row terminates at 'inboxed' (no ack/receipt here).
+        expect(recoveredRows.single.status, 'inboxed');
         expect(recoveredRows.single.transport, 'inbox');
         expect(
           p2pService.storeInInboxCallCount,
@@ -199,7 +201,8 @@ void main() {
         final messages = await messageRepo.getMessagesForContact('peer-bob');
         expect(messages, hasLength(1));
         expect(messages.single.id, 'relay-down-001');
-        expect(messages.single.status, 'delivered');
+        // 115 relay-inbox custody: relay STORE success is custody, not delivery.
+        expect(messages.single.status, 'inboxed');
         expect(messages.single.transport, 'inbox');
         expect(p2pService.storeInInboxCallCount, 1);
 
@@ -275,7 +278,8 @@ void main() {
         final messages = await coldRepo.getMessagesForContact('peer-bob');
         expect(messages, hasLength(1));
         expect(messages.single.id, 'relay-down-003');
-        expect(messages.single.status, 'delivered');
+        // 115 relay-inbox custody: cold-start sweep reaches relay inbox = custody.
+        expect(messages.single.status, 'inboxed');
         expect(messages.single.transport, 'inbox');
         expect(p2pService.storeInInboxCallCount, 1);
 

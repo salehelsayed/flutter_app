@@ -401,7 +401,8 @@ void main() {
     });
 
     test(
-      'GR-006 recovery ack waits until every active group topic rejoins',
+      'GR-006 recovery ack proceeds despite a no-key group; the no-key '
+      'group rejoins once its key arrives',
       () async {
         final groupRepo = InMemoryGroupRepository();
         final groupMsgRepo = InMemoryGroupMessageRepository();
@@ -460,11 +461,17 @@ void main() {
           groupMsgRepo: groupMsgRepo,
         );
 
+        // Only the keyed group can rejoin this pass; the no-key group is
+        // skipped (no key material to join with).
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:join'),
           hasLength(1),
         );
-        expect(bridge.commandLog, isNot(contains('group:acknowledgeRecovery')));
+        // Finding 05 Phase 3: the node-wide recovery ack is computed over the
+        // *recoverable* set. A no-key group is permanently un-rejoinable until a
+        // key arrives, so it does NOT block the ack (otherwise needsGroupRecovery
+        // would be stuck forever). The ack therefore fires on this first pass.
+        expect(bridge.commandLog, contains('group:acknowledgeRecovery'));
 
         await groupRepo.saveKey(
           GroupKeyInfo(
@@ -484,6 +491,8 @@ void main() {
           groupMsgRepo: groupMsgRepo,
         );
 
+        // Now that the previously-keyless group has a key, BOTH groups rejoin
+        // their topics this pass (rejoin is idempotent), and the ack fires again.
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:join'),
           hasLength(2),

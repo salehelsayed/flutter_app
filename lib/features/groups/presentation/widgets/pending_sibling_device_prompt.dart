@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// View model for a pending sibling device awaiting a user trust decision (R2).
 class PendingSiblingDeviceView {
@@ -33,6 +34,7 @@ class PendingSiblingDevicePrompt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       key: Key('pending-sibling-device-${view.device.id}'),
       color: theme.colorScheme.secondaryContainer,
@@ -47,7 +49,7 @@ class PendingSiblingDevicePrompt extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'New device for ${view.memberLabel}',
+                    l10n.sibling_device_new_device_title(view.memberLabel),
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
@@ -55,8 +57,7 @@ class PendingSiblingDevicePrompt extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'A new device wants to join this account. Verify its safety number '
-              'matches the new device before approving.',
+              l10n.sibling_device_verify_prompt,
               style: theme.textTheme.bodySmall,
             ),
             if (view.safetyNumber != null) ...[
@@ -77,13 +78,13 @@ class PendingSiblingDevicePrompt extends StatelessWidget {
                 TextButton(
                   key: Key('pending-sibling-reject-${view.device.id}'),
                   onPressed: onReject,
-                  child: const Text('Reject'),
+                  child: Text(l10n.sibling_device_reject),
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
                   key: Key('pending-sibling-verify-${view.device.id}'),
                   onPressed: onVerify,
-                  child: const Text('Verify & approve'),
+                  child: Text(l10n.sibling_device_verify_approve),
                 ),
               ],
             ),

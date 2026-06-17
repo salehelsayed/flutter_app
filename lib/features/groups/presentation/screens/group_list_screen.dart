@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -257,7 +258,9 @@ class GroupListScreen extends StatelessWidget {
           ? lastMsg.senderUsername ?? l10n.groups_unknown_sender
           : null,
       lastMessageBody: lastMsg != null ? lastMsg.text : null,
-      lastMessageTime: lastMsg != null ? _formatTime(lastMsg.timestamp) : null,
+      lastMessageTime: lastMsg != null
+          ? _formatTime(context, lastMsg.timestamp)
+          : null,
       unreadCount: unread,
       onTap: () => onGroupTap(group),
     );
@@ -325,14 +328,9 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
-  String _formatTime(DateTime timestamp) {
-    final local = timestamp.toLocal();
-    final hour = local.hour == 0
-        ? 12
-        : (local.hour > 12 ? local.hour - 12 : local.hour);
-    final minute = local.minute.toString().padLeft(2, '0');
-    final period = local.hour < 12 ? 'AM' : 'PM';
-    return '$hour:$minute $period';
+  String _formatTime(BuildContext context, DateTime timestamp) {
+    final locale = Localizations.localeOf(context).toString();
+    return intl.DateFormat.jm(locale).format(timestamp.toLocal());
   }
 }
 

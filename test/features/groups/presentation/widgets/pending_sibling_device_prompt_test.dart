@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/pending_sibling_device_prompt.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
   final device = PendingSiblingDevice(
@@ -22,6 +23,8 @@ void main() {
     required VoidCallback onReject,
   }) => tester.pumpWidget(
     MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: PendingSiblingDevicePrompt(
           view: PendingSiblingDeviceView(

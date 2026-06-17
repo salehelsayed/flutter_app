@@ -3829,6 +3829,162 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Failed to add contact. Please try again.'**
   String get qr_add_failed;
+
+  /// No description provided for @sibling_device_new_device_title.
+  ///
+  /// In en, this message translates to:
+  /// **'New device for {member}'**
+  String sibling_device_new_device_title(String member);
+
+  /// No description provided for @sibling_device_verify_prompt.
+  ///
+  /// In en, this message translates to:
+  /// **'A new device wants to join this account. Verify its safety number matches the new device before approving.'**
+  String get sibling_device_verify_prompt;
+
+  /// No description provided for @sibling_device_reject.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get sibling_device_reject;
+
+  /// No description provided for @sibling_device_verify_approve.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify & approve'**
+  String get sibling_device_verify_approve;
+
+  /// No description provided for @transport_diagnostics_title.
+  ///
+  /// In en, this message translates to:
+  /// **'TRANSPORT DIAGNOSTICS (SESSION)'**
+  String get transport_diagnostics_title;
+
+  /// No description provided for @transport_diagnostics_census.
+  ///
+  /// In en, this message translates to:
+  /// **'Session-scoped, aggregate-only transport census. No identifiers leave the device.'**
+  String get transport_diagnostics_census;
+
+  /// No description provided for @transport_diagnostics_lan_discovery.
+  ///
+  /// In en, this message translates to:
+  /// **'discovery'**
+  String get transport_diagnostics_lan_discovery;
+
+  /// No description provided for @transport_diagnostics_lan_peers.
+  ///
+  /// In en, this message translates to:
+  /// **'peers'**
+  String get transport_diagnostics_lan_peers;
+
+  /// No description provided for @transport_diagnostics_lan_permission.
+  ///
+  /// In en, this message translates to:
+  /// **'permission'**
+  String get transport_diagnostics_lan_permission;
+
+  /// No description provided for @transport_diagnostics_refresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get transport_diagnostics_refresh;
+
+  /// No description provided for @account_migration_back.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get account_migration_back;
+
+  /// No description provided for @account_migration_qr_heading.
+  ///
+  /// In en, this message translates to:
+  /// **'Move Account QR'**
+  String get account_migration_qr_heading;
+
+  /// No description provided for @account_migration_qr_confirm_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm this code after scanning'**
+  String get account_migration_qr_confirm_label;
+
+  /// No description provided for @account_migration_qr_expires_at.
+  ///
+  /// In en, this message translates to:
+  /// **'Expires at {time}'**
+  String account_migration_qr_expires_at(String time);
+
+  /// No description provided for @account_migration_scan_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan migration QR'**
+  String get account_migration_scan_action;
+
+  /// No description provided for @account_migration_start_transfer.
+  ///
+  /// In en, this message translates to:
+  /// **'Start transfer'**
+  String get account_migration_start_transfer;
+
+  /// No description provided for @account_migration_cancel_transfer.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel transfer'**
+  String get account_migration_cancel_transfer;
+
+  /// No description provided for @account_migration_retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get account_migration_retry;
+
+  /// No description provided for @account_migration_erase_confirm_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Erase this device?'**
+  String get account_migration_erase_confirm_title;
+
+  /// No description provided for @account_migration_erase_confirm_body.
+  ///
+  /// In en, this message translates to:
+  /// **'This only clears local account data on this phone after the account has moved. It will not move anything back.'**
+  String get account_migration_erase_confirm_body;
+
+  /// No description provided for @account_migration_cancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get account_migration_cancel;
+
+  /// No description provided for @account_migration_erase_local_data.
+  ///
+  /// In en, this message translates to:
+  /// **'Erase local data'**
+  String get account_migration_erase_local_data;
+
+  /// No description provided for @account_migration_erased_snackbar.
+  ///
+  /// In en, this message translates to:
+  /// **'Local account data erased'**
+  String get account_migration_erased_snackbar;
+
+  /// No description provided for @account_migration_erase_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not erase local account data: {error}'**
+  String account_migration_erase_failed(String error);
+
+  /// No description provided for @account_migration_blocked_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Account moved to another phone'**
+  String get account_migration_blocked_title;
+
+  /// No description provided for @account_migration_blocked_message.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.'**
+  String get account_migration_blocked_message;
 }
 
 class _AppLocalizationsDelegate

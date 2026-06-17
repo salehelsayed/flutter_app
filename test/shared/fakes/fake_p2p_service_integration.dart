@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -15,7 +16,7 @@ import 'fake_p2p_network.dart';
 /// Per-user P2P service backed by [FakeP2PNetwork].
 ///
 /// Supports online/offline toggling and offline inbox drain.
-class FakeP2PService implements P2PService {
+class FakeP2PService implements P2PService, DurableLanSender {
   final String peerId;
   final FakeP2PNetwork network;
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -29,6 +30,14 @@ class FakeP2PService implements P2PService {
 
   /// Whether [sendLocalMessage] succeeds when the peer is local.
   bool localSendResult = true;
+
+  /// Ack classification returned by [sendLocalMessageDurable] on a successful
+  /// local delivery. Defaults to [LanSendAck.committed] so a WiFi send reports a
+  /// durable committed receiver ack (doc 114 LAN-ack-after-commit) and the send
+  /// path persists `transport == 'local'` — mirrors the real `P2PServiceImpl`,
+  /// which is a [DurableLanSender]. Tests that want to exercise the legacy
+  /// bool-ack inbox-custody backstop can set this to [LanSendAck.legacyAck].
+  LanSendAck localSendAck = LanSendAck.committed;
 
   /// Delay before a local WiFi send is acknowledged.
   Duration? localAckDelay;
@@ -305,7 +314,7 @@ class FakeP2PService implements P2PService {
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
 
   @override
-  Future<bool> sendLocalMessage(
+  Future<LanSendAck> sendLocalMessageDurable(
     String peerId,
     String message,
     String fromPeerId, {
@@ -313,7 +322,7 @@ class FakeP2PService implements P2PService {
   }) async {
     localSendCallCount++;
     lastLocalTimeoutMs = timeoutMs;
-    if (!localSendResult) return false;
+    if (!localSendResult) return LanSendAck.failed;
     final ackDelay = localAckDelay;
     if (ackDelay != null) {
       final budget = timeoutMs == null
@@ -321,11 +330,30 @@ class FakeP2PService implements P2PService {
           : Duration(milliseconds: timeoutMs);
       if (budget != null && ackDelay > budget) {
         await Future.delayed(budget);
-        return false;
+        return LanSendAck.failed;
       }
       await Future.delayed(ackDelay);
     }
-    return network.deliver(fromPeerId, peerId, message);
+    final delivered = await network.deliver(fromPeerId, peerId, message);
+    return delivered ? localSendAck : LanSendAck.failed;
+  }
+
+  @override
+  Future<bool> sendLocalMessage(
+    String peerId,
+    String message,
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
+    // Mirrors the real `P2PServiceImpl.sendLocalMessage`, which delegates to the
+    // durable path and treats only a committed receiver ack as a true send.
+    final ack = await sendLocalMessageDurable(
+      peerId,
+      message,
+      fromPeerId,
+      timeoutMs: timeoutMs,
+    );
+    return ack == LanSendAck.committed;
   }
 
   @override

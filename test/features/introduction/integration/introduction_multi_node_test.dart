@@ -1236,10 +1236,14 @@ void main() {
         final cReceived = waitForIntroReceived(userC, introId);
         expect(await userC.drainOfflineInbox(), 2);
         final cAfterReplay = await cReceived;
+        // `introReceivedStream` fires for the `send` action and carries the
+        // intro's state at the moment the `send` envelope is processed. The
+        // staged-inbox drain now serializes each entry (a `Future.delayed`
+        // zero-yield between injects), so B's already-buffered `accept` is
+        // applied AFTER this received-event emits — the snapshot may still read
+        // recipientStatus: pending here. Convergence to accepted is asserted on
+        // the durable store below, once the full drain has completed.
         expect(cAfterReplay.id, introId);
-        expect(cAfterReplay.recipientStatus, IntroductionStatus.accepted);
-        expect(cAfterReplay.introducedStatus, IntroductionStatus.pending);
-        expect(cAfterReplay.status, IntroductionOverallStatus.pending);
 
         final cReplayedIntro = await userC.introRepo.getIntroduction(introId);
         expect(cReplayedIntro, isNotNull);

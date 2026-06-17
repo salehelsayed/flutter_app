@@ -1577,7 +1577,15 @@ void main() {
         bridge.allowDrain.complete();
         await resumeFuture;
 
-        expect(await groupRepo.getGroup(groupId), isNull);
+        // 121 B3: self-removal now RETAINS the group as a read-only shell
+        // instead of hard-deleting it. The replayed admin removal has settled
+        // once the group row survives but self is no longer an active member
+        // and the group keys are purged (the composer then auto-gates
+        // read-only via `_canWriteForGroup`: self inactive + no send key).
+        final retainedGroup = await groupRepo.getGroup(groupId);
+        expect(retainedGroup, isNotNull);
+        expect(await groupRepo.getMember(groupId, 'my-peer'), isNull);
+        expect(await groupRepo.getLatestKey(groupId), isNull);
         expect(isGroupRecoveryInProgress(), isFalse);
       },
     );

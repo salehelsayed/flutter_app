@@ -4609,6 +4609,57 @@ void main() {
     );
 
     testWidgets(
+      'scrolls a notification-tapped older message into view, not merely highlights it',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final start = DateTime.utc(2026, 2, 1, 10);
+        for (var index = 0; index < 40; index++) {
+          await msgRepo.saveMessage(
+            GroupMessage(
+              id: 'msg-$index',
+              groupId: group.id,
+              senderPeerId: 'peer-alice',
+              senderUsername: 'Alice',
+              text: 'Message $index',
+              timestamp: start.add(Duration(minutes: index)),
+              createdAt: start.add(Duration(minutes: index)),
+            ),
+          );
+        }
+
+        // The oldest message sits at the far end of the reversed list — well
+        // off-screen from the live edge a fresh open lands on.
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialHighlightedMessageId: 'msg-0',
+          ),
+        );
+        await pumpFrames(tester, count: 30);
+
+        final highlight = find.byKey(const ValueKey('grp-highlight-msg-0'));
+        expect(
+          highlight,
+          findsOneWidget,
+          reason: 'the tapped row must be built and brought on-screen',
+        );
+
+        final listRect = tester.getRect(
+          find.byKey(const ValueKey('group-messages')),
+        );
+        final targetRect = tester.getRect(highlight);
+        expect(
+          targetRect.overlaps(listRect),
+          isTrue,
+          reason: 'the tapped row must overlap the visible list viewport',
+        );
+      },
+    );
+
+    testWidgets(
       'notification-anchor entry keeps group reaction inspection aligned with the shared conversation surface',
       (tester) async {
         final group = makeChatGroup();
@@ -4770,6 +4821,177 @@ void main() {
         expect(controller.offset, closeTo(offsetBefore, 1.0));
         expect(msgRepo.getMessagesPageCalls, 1);
         expect(mediaAttachmentRepo.getAttachmentsForMessagesCalls, 1);
+      },
+    );
+
+    testWidgets(
+      'own text send snaps back to the live edge even when reading older messages',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        final start = DateTime.utc(2026, 2, 1, 10);
+        for (var index = 0; index < 40; index++) {
+          await msgRepo.saveMessage(
+            GroupMessage(
+              id: 'msg-$index',
+              groupId: group.id,
+              senderPeerId: 'peer-alice',
+              senderUsername: 'Alice',
+              text: 'Message $index',
+              timestamp: start.add(Duration(minutes: index)),
+              createdAt: start.add(Duration(minutes: index)),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final controller = tester
+            .widget<ListView>(find.byKey(const ValueKey('group-messages')))
+            .controller!;
+        expect(controller.hasClients, isTrue);
+
+        // Scroll up into history (reverse list: offset 0 == newest/live edge).
+        controller.jumpTo(240);
+        await pumpFrames(tester, count: 4);
+        expect(controller.offset, greaterThan(32));
+
+        // The user acts: an own send must bring them back to their own message
+        // at the live edge.
+        await tester.enterText(find.byType(TextField), 'My own send');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('My own send'), findsOneWidget);
+        expect(controller.offset, closeTo(0, 1.0));
+      },
+    );
+
+    testWidgets(
+      'own voice send snaps back to the live edge even when reading older messages',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        final start = DateTime.utc(2026, 2, 1, 10);
+        for (var index = 0; index < 40; index++) {
+          await msgRepo.saveMessage(
+            GroupMessage(
+              id: 'msg-$index',
+              groupId: group.id,
+              senderPeerId: 'peer-alice',
+              senderUsername: 'Alice',
+              text: 'Message $index',
+              timestamp: start.add(Duration(minutes: index)),
+              createdAt: start.add(Duration(minutes: index)),
+            ),
+          );
+        }
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-scroll-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 1500;
+        final voiceFile = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        recorder.fakeOutputPath = voiceFile.path;
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+            // The optimistic insert (and its scroll) fire before the upload, so
+            // a no-op upload keeps the assertion deterministic.
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async => null,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final controller = tester
+            .widget<ListView>(find.byKey(const ValueKey('group-messages')))
+            .controller!;
+        controller.jumpTo(240);
+        await pumpFrames(tester, count: 4);
+        expect(controller.offset, greaterThan(32));
+
+        final messagesBefore = tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .messages
+            .length;
+
+        final startRecording =
+            tester
+                    .widget<GroupConversationScreen>(
+                      find.byType(GroupConversationScreen),
+                    )
+                    .onRecordStart!
+                as Future<void> Function();
+        await startRecording();
+        await pumpUntil(
+          tester,
+          () =>
+              tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .recordingState ==
+              VoiceRecordingState.recording,
+        );
+
+        final stopRecording =
+            tester
+                    .widget<GroupConversationScreen>(
+                      find.byType(GroupConversationScreen),
+                    )
+                    .onRecordStop!
+                as Future<void> Function();
+        await tester.runAsync(() async {
+          await stopRecording();
+        });
+        await pumpFrames(tester, count: 20);
+
+        final messagesAfter = tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .messages
+            .length;
+        expect(
+          messagesAfter,
+          greaterThan(messagesBefore),
+          reason: 'optimistic voice message was inserted',
+        );
+        expect(controller.offset, closeTo(0, 1.0));
       },
     );
 

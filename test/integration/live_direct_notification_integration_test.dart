@@ -230,7 +230,7 @@ void main() {
     'a burst from one conversation within the window coalesces to one tone',
     () async {
       bridge.onMessageReceived?.call(
-        directMessage(id: 'msg-burst-1', nonce: 'nonce-b1'),
+        directMessage(id: 'msg-burst-1', nonce: 'nonce-b1', text: 'burst one'),
       );
       await waitFor(
         () => notificationService.shown.length == 1,
@@ -239,9 +239,12 @@ void main() {
       expect(notificationService.shown.last.silent, isFalse);
 
       // Second message in the same conversation, still inside the 30s window.
+      // Distinct text so it is a genuinely new message, not an F8 content
+      // duplicate (same text+timestamp under a new id is dropped by the tier-1
+      // existsByContent dedup) — this exercises the real tone debounce.
       now = now.add(const Duration(seconds: 5));
       bridge.onMessageReceived?.call(
-        directMessage(id: 'msg-burst-2', nonce: 'nonce-b2'),
+        directMessage(id: 'msg-burst-2', nonce: 'nonce-b2', text: 'burst two'),
       );
       await waitFor(
         () => notificationService.shown.length == 2,

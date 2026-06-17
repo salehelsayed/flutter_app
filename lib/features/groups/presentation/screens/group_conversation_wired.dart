@@ -204,6 +204,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   _outgoingLocalMessageChangeSubscription;
   StreamSubscription<String>? _removedSubscription;
   final ScrollController _scrollController = ScrollController();
+
+  /// Attached to the highlighted row (via the screen) so a notification-tapped
+  /// message can be scrolled into view. Resolved once per open.
+  final GlobalKey _highlightAnchorKey = GlobalKey();
+  static const int _maxHighlightScrollRetries = 5;
+  bool _highlightScrollResolved = false;
   bool _initialLoadDone = false;
   bool _isSending = false;
   Set<String> _retryingFailedMessageIds = const {};
@@ -1248,7 +1254,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       if (!mounted) return;
 
       setState(() {
-        _messages = messages;
+        // Apply the same quote-threaded ordering that _upsertMessage uses, so
+        // the initial render order matches every subsequent in-place update and
+        // no row reshuffles on the first send/receive. (The repository already
+        // orders today; this keeps the two paths in lockstep defensively.)
+        _messages = orderGroupMessagesForTimeline(messages);
         _mediaMap = mediaMap;
         _initialLoadDone = true;
         _messageLoadErrorText = null;
@@ -1256,7 +1266,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       });
       appliedMessages = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _emitNotificationTapTimingIfNeeded();
+        if (!mounted) return;
+        _emitNotificationTapTimingIfNeeded();
+        _scrollToHighlightedMessage();
       });
 
       unawaited(_loadReactions(messages));
@@ -1898,6 +1910,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
       });
       optimisticDisplayed = true;
+      _scrollToLiveEdge();
     }
 
     // 4. sendGroupMessage() still owns the final message row save.
@@ -3403,6 +3416,66 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     });
   }
 
+  /// Snaps the reversed timeline back to the live edge (offset 0, newest).
+  /// Used for *own* sends: the user just acted, so there is no "reading
+  /// history" ambiguity — land them on their own message.
+  void _scrollToLiveEdge() {
+    _restoreScrollAfterMessageUpdate(
+      preserveScrollOffset: false,
+      previousOffset: 0,
+    );
+  }
+
+  /// Brings the notification-tapped message on-screen when the conversation is
+  /// opened from a notification anchor. Best-effort and bounded: if the id is
+  /// not in the loaded page yet, a later [_loadMessages] retries; once resolved
+  /// it never re-fights a user who scrolls away.
+  void _scrollToHighlightedMessage() {
+    final targetId = widget.initialHighlightedMessageId;
+    if (targetId == null || _highlightScrollResolved) return;
+    final chronologicalIndex = _messages.indexWhere((m) => m.id == targetId);
+    if (chronologicalIndex < 0) {
+      // Not in the loaded page yet — retried from the next _loadMessages.
+      return;
+    }
+    _highlightScrollResolved = true;
+    _bringHighlightOnScreen(chronologicalIndex, attempt: 0);
+  }
+
+  void _bringHighlightOnScreen(int chronologicalIndex, {required int attempt}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+
+      final anchorContext = _highlightAnchorKey.currentContext;
+      if (anchorContext != null) {
+        // Row is built: precisely centre it (and stop — never re-fight scroll).
+        Scrollable.ensureVisible(
+          anchorContext,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+        return;
+      }
+
+      if (attempt >= _maxHighlightScrollRetries) return;
+
+      // Row not built yet (lazy reversed list): coarse-jump toward its
+      // estimated offset so it materialises, then retry. Re-reading the extent
+      // each attempt lets the estimate converge as more rows lay out.
+      final count = _messages.length;
+      final reversedIndex = count - 1 - chronologicalIndex;
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      final viewport = _scrollController.position.viewportDimension;
+      final estimate = count <= 1
+          ? 0.0
+          : (reversedIndex / (count - 1)) * maxExtent - viewport / 2;
+      _scrollController.jumpTo(estimate.clamp(0.0, maxExtent).toDouble());
+
+      _bringHighlightOnScreen(chronologicalIndex, attempt: attempt + 1);
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Voice recording
   // -------------------------------------------------------------------------
@@ -3693,6 +3766,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           _upsertMessage(optimisticMessage);
           _updateMediaForMessage(messageId, optimisticMedia);
         });
+        _scrollToLiveEdge();
       }
 
       final bgTaskId = await _beginBackgroundTaskGuarded();
@@ -4721,6 +4795,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             onRetryMessageLoad: _retryMessageLoad,
             scrollController: _scrollController,
             highlightedMessageId: widget.initialHighlightedMessageId,
+            highlightAnchorKey: _highlightAnchorKey,
             mediaMap: _mediaMap,
             composerStateListenable: _composerState,
             onRemoveAttachment: _removeAttachment,

@@ -1258,5 +1258,52 @@
   "qr_expired_body": "This QR code has expired. Ask your friend for a new one.",
   "qr_self_title": "That's You!",
   "qr_self_body": "You can't add yourself as a contact.",
-  "qr_add_failed": "Failed to add contact. Please try again."
+  "qr_add_failed": "Failed to add contact. Please try again.",
+  "sibling_device_new_device_title": "New device for {member}",
+  "@sibling_device_new_device_title": {
+    "placeholders": {
+      "member": {
+        "type": "String"
+      }
+    }
+  },
+  "sibling_device_verify_prompt": "A new device wants to join this account. Verify its safety number matches the new device before approving.",
+  "sibling_device_reject": "Reject",
+  "sibling_device_verify_approve": "Verify & approve",
+  "transport_diagnostics_title": "TRANSPORT DIAGNOSTICS (SESSION)",
+  "transport_diagnostics_census": "Session-scoped, aggregate-only transport census. No identifiers leave the device.",
+  "transport_diagnostics_lan_discovery": "discovery",
+  "transport_diagnostics_lan_peers": "peers",
+  "transport_diagnostics_lan_permission": "permission",
+  "transport_diagnostics_refresh": "Refresh",
+  "account_migration_back": "Back",
+  "account_migration_qr_heading": "Move Account QR",
+  "account_migration_qr_confirm_label": "Confirm this code after scanning",
+  "account_migration_qr_expires_at": "Expires at {time}",
+  "@account_migration_qr_expires_at": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "account_migration_scan_action": "Scan migration QR",
+  "account_migration_start_transfer": "Start transfer",
+  "account_migration_cancel_transfer": "Cancel transfer",
+  "account_migration_retry": "Retry",
+  "account_migration_erase_confirm_title": "Erase this device?",
+  "account_migration_erase_confirm_body": "This only clears local account data on this phone after the account has moved. It will not move anything back.",
+  "account_migration_cancel": "Cancel",
+  "account_migration_erase_local_data": "Erase local data",
+  "account_migration_erased_snackbar": "Local account data erased",
+  "account_migration_erase_failed": "Could not erase local account data: {error}",
+  "@account_migration_erase_failed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "account_migration_blocked_title": "Account moved to another phone",
+  "account_migration_blocked_message": "This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works."
 }
