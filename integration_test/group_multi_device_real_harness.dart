@@ -106,6 +106,7 @@ import 'package:flutter_app/core/database/migrations/074_group_message_logical_d
 import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
 import 'package:flutter_app/core/database/migrations/076_post_media_attachment_crypto_columns.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -124,6 +125,12 @@ import 'package:flutter_app/features/groups/application/group_offline_replay_env
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/application/admit_sibling_device_use_case.dart';
+import 'package:flutter_app/features/groups/application/announce_restored_device_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository_impl.dart';
+import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
@@ -443,6 +450,11 @@ Future<sqlcipher.Database> _openTestDatabase({
       await runContactsMlKemKeyUpdatedTsMigration(db);
       await runPostMediaAttachmentCryptoColumnsMigration(db);
       await runMessageRelayCustodyMigration(db);
+      // R6 b1b: the deferred per-device key-distribution table (078). The
+      // sibling-admit redistribution path upserts/reopens rows here, so the
+      // harness schema must have it (else reopen/drain sinks throw and the
+      // sibling never converges).
+      await runGroupPendingKeyDistributionsMigration(db);
       // Finding 10 reaction reliability: durable buffer (081) + message_reactions
       // removed_at tombstone (082). 082 is REQUIRED — reaction insert/load/remove
       // all reference removed_at once Phase 5 lands.
@@ -1886,6 +1898,439 @@ Future<void> _runInviteReliabilitySibling() async {
   }
 }
 
+// ── R6: b1b_sibling_device_convergence (per-device ML-KEM key separation) ──
+// primary = admin/creator; sibling = primary's restored second device (fresh
+// transport + fresh ML-KEM). The sibling joins the topic (for the announce +
+// to receive the post-admit group message) but DOES NOT persist the group key
+// locally — it must obtain the current key ONLY via the live admit->redistribute
+// 1:1 key-update, ML-KEM-sealed to its fresh per-device key. Build with
+// --dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC=true so admit/announce are live.
+
+/// Imports the group SHELL (group + members + Go-side topic subscription) WITHOUT
+/// persisting the group key to the local repo, so the only way `getLatestKey`
+/// becomes non-null is the live key redistribution decrypting on this device's
+/// fresh ML-KEM secret (the B1b proof). Mirrors [importJoinedGroupFixture] minus
+/// the `saveKey` teleport.
+Future<String> _importGroupShellForB1b({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, dynamic> fixture,
+}) async {
+  final group = GroupModel.fromMap(
+    Map<String, dynamic>.from(fixture['group'] as Map),
+  );
+  final key = GroupKeyInfo.fromMap(
+    Map<String, dynamic>.from(fixture['key'] as Map),
+  );
+  final members = (fixture['members'] as List<dynamic>)
+      .map((raw) => GroupMember.fromMap(Map<String, dynamic>.from(raw as Map)))
+      .toList(growable: false);
+  final groupConfig = Map<String, dynamic>.from(fixture['groupConfig'] as Map);
+
+  MemberRole? selfMemberRole;
+  for (final member in members) {
+    if (member.peerId == stack.identity.peerId) {
+      selfMemberRole = member.role;
+      break;
+    }
+  }
+  final importedGroup = selfMemberRole == null
+      ? group
+      : group.copyWith(
+          myRole: selfMemberRole == MemberRole.admin
+              ? GroupRole.admin
+              : GroupRole.member,
+        );
+  await stack.groupRepo.saveGroup(importedGroup);
+  for (final member in members) {
+    await stack.groupRepo.saveMember(member);
+  }
+  // NOTE: deliberately NO `stack.groupRepo.saveKey(key)` — the key must arrive
+  // via the live redistribution, not the fixture. callGroupJoinWithConfig still
+  // subscribes the Go bridge to the topic (so the announce can publish and the
+  // post-admit message can be received).
+  await callGroupJoinWithConfig(
+    stack.bridge,
+    groupId: group.id,
+    groupConfig: groupConfig,
+    groupKey: key.encryptedKey,
+    keyEpoch: key.keyGeneration,
+  );
+  return group.id;
+}
+
+Future<void> _runB1bConvergencePrimary() async {
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'B1b Primary',
+    cliPeerFixture: null,
+  );
+
+  // Wire the SEND side of the deferred-distribution machinery (the 2-role stack
+  // wires only the receive-side GroupKeyUpdateListener). Mirrors main.dart so
+  // admit's reopen+drain re-distributes the current key to the sibling device.
+  final distributionRepo = GroupPendingKeyDistributionRepositoryImpl(
+    dbUpsertGroupPendingKeyDistribution: (row) =>
+        dbUpsertGroupPendingKeyDistribution(stack.db, row),
+    dbReopenGroupPendingKeyDistributionForRedelivery: (row) =>
+        dbReopenGroupPendingKeyDistributionForRedelivery(stack.db, row),
+    dbLoadGroupPendingKeyDistribution: (id) =>
+        dbLoadGroupPendingKeyDistribution(stack.db, id),
+    dbLoadPendingGroupKeyDistributionsForPeer:
+        ({required peerId, groupId, int limit = 50}) =>
+            dbLoadPendingGroupKeyDistributionsForPeer(
+              stack.db,
+              peerId: peerId,
+              groupId: groupId,
+              limit: limit,
+            ),
+    dbLoadPendingGroupKeyDistributionsForGroup:
+        ({required groupId, int limit = 50}) =>
+            dbLoadPendingGroupKeyDistributionsForGroup(
+              stack.db,
+              groupId: groupId,
+              limit: limit,
+            ),
+    dbRecordGroupPendingKeyDistributionAttempt:
+        (id, {required lastError, required updatedAt}) =>
+            dbRecordGroupPendingKeyDistributionAttempt(
+              stack.db,
+              id,
+              lastError: lastError,
+              updatedAt: updatedAt,
+            ),
+    dbFinalizeGroupPendingKeyDistribution:
+        (id, {required status, required lastError, required finalizedAt}) =>
+            dbFinalizeGroupPendingKeyDistribution(
+              stack.db,
+              id,
+              status: status,
+              lastError: lastError,
+              finalizedAt: finalizedAt,
+            ),
+  );
+  final distributionRunner = GroupPendingKeyDistributionRunner(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    repository: distributionRepo,
+    loadIdentity: stack.identityRepo.loadIdentity,
+    sendP2PMessage: (peerId, message) async =>
+        stack.p2pService.sendMessage(peerId, message),
+    storeP2PMessageInInbox: (peerId, message) async =>
+        stack.p2pService.storeInInbox(peerId, message),
+  );
+  setDeferredGroupKeyDistributionReopenSink(({
+    required groupId,
+    required peerId,
+    required keyEpoch,
+  }) async {
+    final now = DateTime.now().toUtc();
+    await distributionRepo.reopenForRedelivery(
+      GroupPendingKeyDistribution(
+        id: groupPendingKeyDistributionId(groupId, peerId),
+        groupId: groupId,
+        peerId: peerId,
+        keyEpoch: keyEpoch,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  });
+  setDeferredDistributionDrainSink(({required groupId, required peerId}) async {
+    await distributionRunner.drainPendingForPeer(
+      groupId: groupId,
+      peerId: peerId,
+    );
+  });
+
+  try {
+    writeSharedJson(
+      _signalName('primary_identity.json'),
+      _primaryIdentityFixture(stack.identity),
+    );
+
+    final witness = await _generateOfflineContact(
+      bridge: stack.bridge,
+      username: 'B1b Witness',
+    );
+    await stack.contactRepo.addContact(witness);
+    final groupResult = await createGroupWithMembers(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      p2pService: stack.p2pService,
+      identity: stack.identity,
+      selectedContacts: [witness],
+      type: GroupType.chat,
+      name: 'B1b Sibling Convergence',
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+    );
+    final groupId = groupResult.group.id;
+    final group = await stack.groupRepo.getGroup(groupId);
+    final keyInfo = await stack.groupRepo.getLatestKey(groupId);
+    final members = await stack.groupRepo.getMembers(groupId);
+    expect(group, isNotNull);
+    expect(keyInfo, isNotNull);
+    final primaryEpoch = keyInfo!.keyGeneration;
+
+    writeSharedJson(
+      _signalName('group_fixture.json'),
+      buildGroupFixture(group: group!, keyInfo: keyInfo, members: members),
+    );
+
+    // Wait for the sibling to restore + announce its fresh per-device identity.
+    final siblingDevice = await waitForSharedJson(
+      _signalName('sibling_announced.json'),
+      timeout: const Duration(minutes: 12),
+    );
+    final siblingTransport = siblingDevice['transportPeerId'] as String;
+    final siblingMlKem = siblingDevice['mlKemPublicKey'] as String?;
+    final siblingSigningKey = siblingDevice['publicKey'] as String;
+
+    // Process the device_announce that the sibling published on the group topic
+    // (best-effort; the admit below uses the announced identity directly — the
+    // admin's trust approval).
+    await drainGroupOfflineInboxForGroup(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      msgRepo: stack.groupMsgRepo,
+      groupId: groupId,
+      groupMessageListener: stack.groupListener,
+    );
+
+    final outcome = await admitSiblingDeviceIfTrusted(
+      groupRepo: stack.groupRepo,
+      groupId: groupId,
+      memberPeerId: stack.identity.peerId,
+      announcedDeviceId: siblingTransport,
+      announcedTransportPeerId: siblingTransport,
+      announcedDeviceSigningPublicKey: siblingSigningKey,
+      verifiedAccountSigningPublicKey: stack.identity.publicKey,
+      announcedMlKemPublicKey: siblingMlKem,
+      multiDeviceSyncEnabled: true,
+    );
+    expect(
+      outcome,
+      SiblingDeviceAdmissionOutcome.admitted,
+      reason: 'B1b: the fresh sibling device must be admitted',
+    );
+    final selfMember = await stack.groupRepo.getMember(
+      groupId,
+      stack.identity.peerId,
+    );
+    expect(
+      selfMember!.activeDevices.any(
+        (device) => device.transportPeerId == siblingTransport,
+      ),
+      isTrue,
+      reason: 'B1b: the sibling device must land on the creator member roster',
+    );
+    writeSharedText(_signalName('primary_admitted_sibling'), 'ok');
+
+    // The admit triggered reopen+drain; also send a post-admit group message the
+    // converged sibling should receive + decrypt.
+    final postAdmitText = 'B1b post-admit from primary $configuredRunId';
+    final sendResult = await sendGroupMessage(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      msgRepo: stack.groupMsgRepo,
+      groupId: groupId,
+      text: postAdmitText,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+      includeSenderPeerIdInDurableRecipients: true,
+    );
+    expect(
+      sendResult.$1,
+      anyOf(
+        SendGroupMessageResult.success,
+        SendGroupMessageResult.successNoPeers,
+      ),
+    );
+
+    writeSharedJson(_signalName('primary_verdict.json'), {
+      'primaryPeerId': stack.identity.peerId,
+      'primaryTransportPeerId': stack.p2pService.currentState.peerId,
+      'primaryMlKemPublicKey': stack.identity.mlKemPublicKey,
+      'admitOutcome': outcome.name,
+      'primaryEpoch': primaryEpoch,
+      'postAdmitText': postAdmitText,
+    });
+
+    await waitForSharedSignal(
+      _signalName('sibling_complete'),
+      timeout: const Duration(minutes: 5),
+    );
+  } finally {
+    setDeferredDistributionDrainSink(null);
+    setDeferredGroupKeyDistributionReopenSink(null);
+    await stack.teardown();
+  }
+}
+
+Future<void> _runB1bConvergenceSibling() async {
+  final identityFixture = await waitForSharedJson(
+    _signalName('primary_identity.json'),
+  );
+  final mnemonic = identityFixture['mnemonic12'] as String?;
+  expect(
+    mnemonic,
+    isNotNull,
+    reason: 'Primary must publish a mnemonic for sibling restore',
+  );
+
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'B1b Sibling',
+    cliPeerFixture: null,
+    restoreMnemonic: mnemonic,
+    useFreshTransportIdentityForRestoredAccount: true,
+  );
+
+  try {
+    expect(
+      stack.identity.peerId,
+      identityFixture['peerId'],
+      reason: 'Sibling must restore the same user (logical) identity',
+    );
+    final siblingTransport = stack.p2pService.currentState.peerId!;
+    expect(
+      siblingTransport,
+      isNot(stack.identity.peerId),
+      reason: 'B1b: the restored device must use a FRESH transport peer id',
+    );
+    expect(
+      stack.identity.mlKemPublicKey,
+      isNot(identityFixture['mlKemPublicKey']),
+      reason: 'B1b: restore must mint a FRESH per-device ML-KEM key',
+    );
+
+    final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+    final groupId = await _importGroupShellForB1b(
+      stack: stack,
+      fixture: fixture,
+    );
+    // Proof precondition: the sibling has NO group key yet (the fixture key was
+    // deliberately not persisted).
+    expect(
+      await stack.groupRepo.getLatestKey(groupId),
+      isNull,
+      reason: 'B1b: sibling must start keyless (key only via redistribution)',
+    );
+
+    // Announce this fresh device to the group (account-key-signed) — exercises
+    // the real announce wire path.
+    final announcedDevice = GroupMemberDeviceIdentity(
+      deviceId: siblingTransport,
+      transportPeerId: siblingTransport,
+      deviceSigningPublicKey: stack.identity.publicKey,
+      mlKemPublicKey: stack.identity.mlKemPublicKey,
+    );
+    final announcedCount = await announceRestoredDeviceToGroups(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      selfPeerId: stack.identity.peerId,
+      accountSigningPublicKey: stack.identity.publicKey,
+      accountSigningPrivateKey: stack.identity.privateKey,
+      selfUsername: stack.identity.username,
+      announcedDevice: announcedDevice,
+      multiDeviceSyncEnabled: true,
+    );
+    expect(
+      announcedCount,
+      greaterThanOrEqualTo(1),
+      reason: 'B1b: the sibling must announce its device to the group',
+    );
+
+    // Publish the announced device identity so the primary (admin) can admit it.
+    writeSharedJson(_signalName('sibling_announced.json'), {
+      'transportPeerId': siblingTransport,
+      'publicKey': stack.identity.publicKey,
+      if (stack.identity.mlKemPublicKey != null)
+        'mlKemPublicKey': stack.identity.mlKemPublicKey,
+    });
+
+    // A restored device knows its OWN identity: register this device on the
+    // local member roster so the incoming redistribution's recipient-device
+    // binding (_isBoundToLocalRecipient) resolves. The shell fixture predates the
+    // admin's admit, so the device is otherwise absent from the local roster —
+    // this does NOT introduce the key (which still arrives only via the live
+    // 1:1 ML-KEM redistribution).
+    final selfMemberBeforeKey = await stack.groupRepo.getMember(
+      groupId,
+      stack.identity.peerId,
+    );
+    if (selfMemberBeforeKey != null &&
+        !selfMemberBeforeKey.devices.any(
+          (device) => device.transportPeerId == siblingTransport,
+        )) {
+      await stack.groupRepo.saveMember(
+        selfMemberBeforeKey.copyWith(
+          devices: [...selfMemberBeforeKey.devices, announcedDevice],
+        ),
+      );
+    }
+
+    await waitForSharedSignal(
+      _signalName('primary_admitted_sibling'),
+      timeout: const Duration(minutes: 5),
+    );
+
+    // The runner now re-distributes the CURRENT group key 1:1, ML-KEM-sealed to
+    // this device's FRESH key. Drain the relay inbox so the key-update arrives;
+    // getLatestKey transitions null -> present ONLY when our GroupKeyUpdateListener
+    // decrypts that key-update with our fresh ML-KEM secret (the B1b proof).
+    await waitForCondition(() async {
+      await drainGroupOfflineInboxForGroup(
+        bridge: stack.bridge,
+        groupRepo: stack.groupRepo,
+        msgRepo: stack.groupMsgRepo,
+        groupId: groupId,
+        groupMessageListener: stack.groupListener,
+      );
+      return (await stack.groupRepo.getLatestKey(groupId)) != null;
+    }, timeout: const Duration(seconds: 120));
+    final convergedKey = await stack.groupRepo.getLatestKey(groupId);
+    expect(convergedKey, isNotNull);
+
+    // Decrypt the primary's post-admit group message (end-to-end proof).
+    final primaryVerdict = await waitForSharedJson(
+      _signalName('primary_verdict.json'),
+    );
+    final postAdmitText = primaryVerdict['postAdmitText'] as String;
+    await waitForCondition(() async {
+      await drainGroupOfflineInboxForGroup(
+        bridge: stack.bridge,
+        groupRepo: stack.groupRepo,
+        msgRepo: stack.groupMsgRepo,
+        groupId: groupId,
+        groupMessageListener: stack.groupListener,
+      );
+      final latest = await stack.groupMsgRepo.getLatestMessage(groupId);
+      return latest?.text == postAdmitText;
+    }, timeout: const Duration(seconds: 120));
+
+    expect(
+      stack.identity.mlKemPublicKey,
+      isNot(primaryVerdict['primaryMlKemPublicKey']),
+      reason: 'B1b: sibling per-device ML-KEM must differ from the primary',
+    );
+    expect(siblingTransport, isNot(primaryVerdict['primaryTransportPeerId']));
+
+    writeSharedJson(_signalName('sibling_verdict.json'), {
+      'siblingPeerId': stack.identity.peerId,
+      'siblingTransportPeerId': siblingTransport,
+      'siblingMlKemPublicKey': stack.identity.mlKemPublicKey,
+      'keyEpochReceived': convergedKey!.keyGeneration,
+      'decryptedPostAdmitText': postAdmitText,
+    });
+    writeSharedText(_signalName('sibling_complete'), 'ok');
+  } finally {
+    await stack.teardown();
+  }
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   initializeSqliteForCurrentPlatform();
@@ -1902,6 +2347,21 @@ void main() {
           await _runInviteReliabilityPrimary();
         } else {
           await _runInviteReliabilitySibling();
+        }
+        return;
+      }
+
+      // R6 (12-P2 Part B): per-device ML-KEM key separation. The primary
+      // (admin/creator) admits its OWN restored sibling device; the sibling
+      // obtains the current group key ONLY via the live announce->admit->
+      // redistribute path (a 1:1 key-update ML-KEM-sealed to its FRESH per-device
+      // key), never via the fixture. Requires the build to be compiled with
+      // --dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC=true.
+      if (configuredScenario == 'b1b_sibling_device_convergence') {
+        if (_isPrimaryRole) {
+          await _runB1bConvergencePrimary();
+        } else {
+          await _runB1bConvergenceSibling();
         }
         return;
       }
