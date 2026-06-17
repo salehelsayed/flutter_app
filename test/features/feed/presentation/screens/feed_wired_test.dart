@@ -942,6 +942,51 @@ void main() {
     );
 
     testWidgets(
+      'B2: Orbit badge counts only not-already-joined pending invites (parity with the list filter)',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        // Invite for an already-joined group → must NOT count.
+        await pendingInviteRepo.savePendingInvite(
+          makePendingInvite(groupId: 'grp-joined'),
+        );
+        // Invite for a not-yet-joined group → counts.
+        await pendingInviteRepo.savePendingInvite(
+          makePendingInvite(groupId: 'grp-fresh'),
+        );
+        final fakeGroupInviteListener = _FakeGroupInviteListener(
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-joined',
+            name: 'Joined Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-joined',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupInviteListener: fakeGroupInviteListener,
+            groupRepository: groupRepo,
+          ),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        // Two invites in the repo, but one group is already joined → badge = 1.
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+      },
+    );
+
+    testWidgets(
       'refreshes the Orbit badge on intro receipt and remote status changes',
       (tester) async {
         suppressFeedNavErrors();

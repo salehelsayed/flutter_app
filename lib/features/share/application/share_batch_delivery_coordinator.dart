@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/constants/media_constants.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
@@ -226,43 +226,52 @@ class DefaultShareBatchDeliveryCoordinator
     final processed = <PendingComposerMedia>[];
     var skippedOversizedGifCount = 0;
     for (final path in shareIntent.filePaths) {
+      PendingComposerMedia prepared;
       try {
         final file = File(path);
         if (!file.existsSync()) {
           continue;
         }
-        if (_isOversizedGif(path, file)) {
-          skippedOversizedGifCount++;
-          continue;
-        }
-        processed.add(
-          await preparePendingComposerMedia(
-            inputPath: path,
-            imageProcessor: imageProcessor,
-            imageQualityPreference: qualityPreference,
-            videoQualityPreference: videoQualityPreference,
-          ),
+        prepared = await preparePendingComposerMedia(
+          inputPath: path,
+          imageProcessor: imageProcessor,
+          imageQualityPreference: qualityPreference,
+          videoQualityPreference: videoQualityPreference,
         );
       } catch (_) {
         final file = File(path);
         if (!file.existsSync()) {
           continue;
         }
-        if (_isOversizedGif(path, file)) {
-          skippedOversizedGifCount++;
-          continue;
-        }
-        processed.add(
-          PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
+        prepared = PendingComposerMedia(
+          file: file,
+          budgetBytes: file.lengthSync(),
         );
       }
+      // Per-type SEND size gate on FINAL (post-processing) budget bytes (OQ-2 —
+      // the per-type cap table now applies to share-batch too). Replaces the old
+      // raw pre-compression GIF-only lengthSync check (INV-SZ-2). Oversized media
+      // is skipped per-file and surfaced via the batch summary; since images and
+      // video are compressed before this point, GIF is the dominant survivor of
+      // an oversize, so the summary copy stays GIF-worded.
+      final sizeValidation = GroupMediaSizePolicy.validateSize(
+        sizeBytes: prepared.budgetBytes,
+        mime: _mimeFromPath(prepared.file.path),
+      );
+      if (!sizeValidation.isValid) {
+        skippedOversizedGifCount++;
+        continue;
+      }
+      processed.add(prepared);
     }
 
     return ProcessedShareMediaBatch(
       processedMedia: processed,
       skippedOversizedGifCount: skippedOversizedGifCount,
+      // Media-agnostic: the per-type gate skips ANY oversized type (image,
+      // video, audio, file, gif), so the summary must not claim "GIF".
       skippedOversizedGifReason: skippedOversizedGifCount > 0
-          ? 'GIF files over 25 MB were skipped.'
+          ? 'Some attachments were too large and were skipped.'
           : null,
     );
   }
@@ -472,13 +481,6 @@ class DefaultShareBatchDeliveryCoordinator
       await callBgEnd(bridge, bgTaskId);
     }
   }
-}
-
-bool _isOversizedGif(String path, File file) {
-  if (_mimeFromPath(path) != 'image/gif') {
-    return false;
-  }
-  return file.lengthSync() > kMaxGifFileSize;
 }
 
 String _mimeFromPath(String path) {

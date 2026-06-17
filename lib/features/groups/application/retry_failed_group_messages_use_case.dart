@@ -63,9 +63,59 @@ String _shortId(String id) => id.length > 8 ? id.substring(0, 8) : id;
 
 final Map<String, Future<int>> _singleMessageRetryInFlight = {};
 
+// Finding 05 Phase 4: exponential backoff + terminal cap for failed outgoing
+// group-message retries. Base 30s doubling per attempt, capped at 30 minutes;
+// after [_groupMaxRetryAttempts] consecutive failed attempts the row flips to
+// the terminal `send_failed` status and is no longer auto-retried.
+const Duration _groupRetryBackoffBase = Duration(seconds: 30);
+const Duration _groupRetryBackoffCap = Duration(minutes: 30);
+const int _groupMaxRetryAttempts = 10;
+
+Duration _groupRetryBackoffDelay(int attempt) {
+  final baseMs = _groupRetryBackoffBase.inMilliseconds;
+  final capMs = _groupRetryBackoffCap.inMilliseconds;
+  final shift = attempt.clamp(0, 20);
+  final raw = baseMs * (1 << shift);
+  return Duration(milliseconds: raw > capMs ? capMs : raw);
+}
+
+/// Records a failed re-send: schedules the next attempt with exponential
+/// backoff and flips the row to terminal `send_failed` once the attempt budget
+/// is exhausted, so a permanently-undeliverable send stops being retried.
+Future<void> _recordGroupRetryBackoff(
+  GroupMessageRepository groupMsgRepo,
+  GroupMessage msg,
+) async {
+  final newAttempt = msg.retryAttemptCount + 1;
+  final terminal = newAttempt >= _groupMaxRetryAttempts;
+  final nextEligibleAt = DateTime.now().toUtc().add(
+    _groupRetryBackoffDelay(newAttempt),
+  );
+  await groupMsgRepo.recordRetryFailure(
+    msg.id,
+    nextEligibleAt: nextEligibleAt,
+    markTerminal: terminal,
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: terminal
+        ? 'RETRY_FAILED_GROUP_MESSAGES_TERMINAL'
+        : 'RETRY_FAILED_GROUP_MESSAGES_BACKOFF',
+    details: {
+      'messageId': _shortId(msg.id),
+      'attempt': newAttempt,
+      'nextEligibleAtMs': nextEligibleAt.millisecondsSinceEpoch,
+    },
+  );
+}
+
 bool _isRetryableOutgoingMessage(GroupMessage message) {
   if (message.isIncoming) return false;
-  return message.status == 'failed' || message.status == 'pending';
+  // Manual single-message retry re-arms the terminal `send_failed` status too;
+  // the background loader (getRetryableOutgoingMessages) excludes it via SQL.
+  return message.status == 'failed' ||
+      message.status == 'pending' ||
+      message.status == GroupMessage.statusSendFailed;
 }
 
 /// Retries failed outgoing group messages.
@@ -131,6 +181,15 @@ Future<int> retryFailedGroupMessage({
       final message = await groupMsgRepo.getMessage(normalizedMessageId);
       if (message == null || !_isRetryableOutgoingMessage(message)) {
         return const <GroupMessage>[];
+      }
+      // A user-initiated retry of a terminal `send_failed` row re-arms it with
+      // a fresh attempt budget before the normal send path re-attempts it.
+      if (message.status == GroupMessage.statusSendFailed) {
+        await groupMsgRepo.resetRetryStateForManualRetry(message.id);
+        final rearmed = await groupMsgRepo.getMessage(message.id);
+        return rearmed != null
+            ? <GroupMessage>[rearmed]
+            : const <GroupMessage>[];
       }
       return <GroupMessage>[message];
     },
@@ -338,6 +397,7 @@ _retryFailedGroupMessageCandidate({
       event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',
       details: {'messageId': _shortId(msg.id), 'result': result.name},
     );
+    await _recordGroupRetryBackoff(groupMsgRepo, msg);
     return (retried: false, skippedUnsupported: false);
   } catch (e) {
     emitFlowEvent(
@@ -345,6 +405,7 @@ _retryFailedGroupMessageCandidate({
       event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',
       details: {'messageId': _shortId(msg.id), 'error': e.toString()},
     );
+    await _recordGroupRetryBackoff(groupMsgRepo, msg);
     return (retried: false, skippedUnsupported: false);
   }
 }

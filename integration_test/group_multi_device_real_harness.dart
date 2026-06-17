@@ -43,6 +43,8 @@ import 'package:flutter_app/core/database/migrations/016_message_reactions.dart'
 import 'package:flutter_app/core/database/migrations/081_group_pending_reactions.dart';
 import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
+import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
+import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
@@ -124,6 +126,12 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
+import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
+import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/revoke_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -139,6 +147,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 
 import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
 
 const configuredSharedDir = String.fromEnvironment(
   'E2E_SHARED_DIR',
@@ -159,6 +168,10 @@ const configuredRunId = String.fromEnvironment(
 const configuredDbName = String.fromEnvironment(
   'E2E_DB_NAME',
   defaultValue: '',
+);
+const configuredScenario = String.fromEnvironment(
+  'MD004_SCENARIO',
+  defaultValue: 'same_user',
 );
 
 String sharedPath(String name) => '$configuredSharedDir/$name';
@@ -438,6 +451,13 @@ Future<sqlcipher.Database> _openTestDatabase({
       // Concurrent finding-07 landing: groups.last_membership_event_id (083).
       // The lib group-save writes it, so the harness schema must have it too.
       await runGroupsLastMembershipEventIdMigration(db);
+      // Finding 09 Phase 3: media_attachments.download_retry_count (089). The
+      // download use case reads/writes it, so the harness schema must have it.
+      await runMediaAttachmentDownloadRetryColumnMigration(db);
+      // Review-08 findings C+F: widen invite delivery-attempt CHECK to
+      // 'revoked'/'declined' + add invite_id (HOLE-4). The invite-reliability
+      // scenario persists those statuses + the id, so the harness needs it.
+      await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -553,6 +573,8 @@ class GroupMultiDeviceTestStack {
   final GroupKeyUpdateListener groupKeyUpdateListener;
   final GroupMembershipUpdateListener groupMembershipUpdateListener;
   final GroupMessageListener groupListener;
+  final GroupInviteListener groupInviteListener;
+  final InMemoryPendingGroupInviteRepository pendingInviteRepo;
   final StreamController<Map<String, dynamic>> groupStreamController;
   final StreamController<Map<String, dynamic>> groupReactionStreamController;
   final FakeNotificationService notificationService;
@@ -576,6 +598,8 @@ class GroupMultiDeviceTestStack {
     required this.groupKeyUpdateListener,
     required this.groupMembershipUpdateListener,
     required this.groupListener,
+    required this.groupInviteListener,
+    required this.pendingInviteRepo,
     required this.groupStreamController,
     required this.groupReactionStreamController,
     required this.notificationService,
@@ -588,6 +612,7 @@ class GroupMultiDeviceTestStack {
     groupMembershipUpdateListener.dispose();
     messageRouter.dispose();
     groupListener.dispose();
+    groupInviteListener.dispose();
     await groupStreamController.close();
     await groupReactionStreamController.close();
     await p2pService.stopNode();
@@ -623,6 +648,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   bool deleteExistingDb = true,
   bool reuseExistingIdentity = false,
   bool useFreshTransportIdentityForRestoredAccount = false,
+  bool onJoinMetadataResyncEnabled = false,
 }) async {
   if (deleteExistingDb) {
     await deleteTestSecureStore(dbName);
@@ -1079,6 +1105,22 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     msgRepo: groupMsgRepo,
     pendingKeyRepairRepo: groupPendingKeyRepairRepo,
   );
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final groupInviteListener = GroupInviteListener(
+    groupInviteStream: messageRouter.groupInviteStream,
+    groupRepo: groupRepo,
+    pendingInviteRepo: pendingInviteRepo,
+    contactRepo: contactRepo,
+    bridge: bridge,
+    deliveryRepo: groupInviteDeliveryAttemptRepo,
+    p2pService: p2pService,
+    loadOwnIdentity: () => identityRepo.loadIdentity(),
+    onJoinMetadataResyncEnabled: onJoinMetadataResyncEnabled,
+    getOwnMlKemSecretKey: () async => updatedIdentity.mlKemSecretKey,
+    getOwnPeerId: () async => updatedIdentity.peerId,
+    getOwnMlKemPublicKey: () async => updatedIdentity.mlKemPublicKey,
+  );
+
   messageRouter.start();
   groupKeyUpdateListener.start();
   groupListener.start(
@@ -1086,6 +1128,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     incomingGroupReactions: groupReactionStreamController.stream,
   );
   groupMembershipUpdateListener.start();
+  groupInviteListener.start();
   if (reuseExistingIdentity) {
     await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
   }
@@ -1107,6 +1150,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     groupKeyUpdateListener: groupKeyUpdateListener,
     groupMembershipUpdateListener: groupMembershipUpdateListener,
     groupListener: groupListener,
+    groupInviteListener: groupInviteListener,
+    pendingInviteRepo: pendingInviteRepo,
     groupStreamController: groupStreamController,
     groupReactionStreamController: groupReactionStreamController,
     notificationService: notificationService,
@@ -1594,15 +1639,271 @@ Future<void> _runSiblingScenario() async {
   }
 }
 
+// ── Review-08 invite-reliability two-DIFFERENT-user relay scenario ──
+// primary = Alice (admin/inviter), sibling = Bob (invitee). Every new envelope
+// (invite, decline-ack, revocation, config request/response) traverses the REAL
+// relay via storeInInbox + the recipient's drainOfflineInbox → router →
+// GroupInviteListener, then is verified/applied with real Go ML-KEM + ed25519.
+
+Map<String, dynamic> _peerIdentityFixture(IdentityModel identity) => {
+  'peerId': identity.peerId,
+  'publicKey': identity.publicKey,
+  'mlKemPublicKey': identity.mlKemPublicKey,
+  'username': identity.username,
+};
+
+ContactModel _contactFromFixture(
+  Map<String, dynamic> fixture,
+  String fallbackUsername,
+) {
+  return ContactModel(
+    peerId: fixture['peerId'] as String,
+    publicKey: fixture['publicKey'] as String,
+    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+    username: (fixture['username'] as String?) ?? fallbackUsername,
+    signature: 'sig-${fixture['peerId']}',
+    scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: fixture['mlKemPublicKey'] as String?,
+  );
+}
+
+Future<void> _runInviteReliabilityPrimary() async {
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Alice',
+    cliPeerFixture: null,
+    onJoinMetadataResyncEnabled: true,
+  );
+  try {
+    writeSharedJson(
+      _signalName('alice_identity.json'),
+      _peerIdentityFixture(stack.identity),
+    );
+
+    final bobFixture = await waitForSharedJson(_signalName('bob_identity.json'));
+    final bobContact = _contactFromFixture(bobFixture, 'Bob');
+    await stack.contactRepo.addContact(bobContact);
+
+    // Real create-with-members: creates the group + sends Bob invite#1 over the
+    // relay + records his delivery attempt (status sent, with invite_id).
+    final groupResult = await createGroupWithMembers(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      p2pService: stack.p2pService,
+      identity: stack.identity,
+      selectedContacts: [bobContact],
+      type: GroupType.chat,
+      name: 'Invite Reliability',
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+    );
+    final groupId = groupResult.group.id;
+    expect(groupResult.membersAdded, 1);
+
+    final group = await stack.groupRepo.getGroup(groupId);
+    final keyInfo = await stack.groupRepo.getLatestKey(groupId);
+    final members = await stack.groupRepo.getMembers(groupId);
+    expect(group, isNotNull);
+    expect(keyInfo, isNotNull);
+    writeSharedJson(
+      _signalName('group_fixture.json'),
+      buildGroupFixture(group: group!, keyInfo: keyInfo!, members: members),
+    );
+
+    // ── F: Bob declines invite#1; the decline-ack flips Alice's row. ──
+    await waitForSharedSignal(
+      _signalName('bob_declined'),
+      timeout: const Duration(minutes: 4),
+    );
+    await waitForCondition(() async {
+      await stack.p2pService.drainOfflineInbox();
+      final status = await stack.groupInviteDeliveryAttemptRepo
+          .getStatusForMember(groupId: groupId, peerId: bobContact.peerId);
+      return status == GroupInviteDeliveryStatus.declined;
+    }, timeout: const Duration(seconds: 150));
+    writeSharedText(_signalName('alice_saw_decline'), 'ok');
+
+    // ── C: resend invite#2, then revoke it (HOLE-4 invite_id match). ──
+    await resendGroupInvite(
+      p2pService: stack.p2pService,
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+      identity: stack.identity,
+      groupId: groupId,
+      memberPeerId: bobContact.peerId,
+    );
+    writeSharedText(_signalName('alice_invite2_sent'), 'ok');
+    await waitForSharedSignal(
+      _signalName('bob_got_invite2'),
+      timeout: const Duration(minutes: 3),
+    );
+
+    final attempt = await stack.groupInviteDeliveryAttemptRepo.getAttempt(
+      groupId: groupId,
+      peerId: bobContact.peerId,
+    );
+    expect(
+      attempt?.inviteId,
+      isNotNull,
+      reason: 'resend must persist the invite_id for revocation (HOLE-4)',
+    );
+    final revokeResult = await sendGroupInviteRevocation(
+      p2pService: stack.p2pService,
+      bridge: stack.bridge,
+      inviteId: attempt!.inviteId!,
+      groupId: groupId,
+      recipientPeerId: bobContact.peerId,
+      recipientMlKemPublicKey: bobContact.mlKemPublicKey,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      groupConfig: buildGroupConfigPayload(group, members),
+    );
+    expect(revokeResult, SendGroupInviteRevocationResult.success);
+    writeSharedText(_signalName('alice_revoked'), 'ok');
+    await waitForSharedSignal(
+      _signalName('bob_revoked_ok'),
+      timeout: const Duration(minutes: 3),
+    );
+
+    // ── D: bump metadata; answer Bob's config:request over the relay. ──
+    final freshAt = DateTime.now().toUtc();
+    await stack.groupRepo.updateGroup(
+      group.copyWith(
+        name: 'Invite Reliability (fresh)',
+        lastMetadataEventAt: freshAt,
+      ),
+    );
+    writeSharedText(_signalName('alice_metadata_fresh'), 'ok');
+    // Keep draining so Alice processes Bob's config:request and replies.
+    await waitForCondition(() async {
+      await stack.p2pService.drainOfflineInbox();
+      return File(sharedPath(_signalName('bob_converged'))).existsSync();
+    }, timeout: const Duration(minutes: 4));
+    writeSharedText(_signalName('alice_done'), 'ok');
+  } finally {
+    await stack.teardown();
+  }
+}
+
+Future<void> _runInviteReliabilitySibling() async {
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Bob',
+    cliPeerFixture: null,
+    onJoinMetadataResyncEnabled: true,
+  );
+  try {
+    writeSharedJson(
+      _signalName('bob_identity.json'),
+      _peerIdentityFixture(stack.identity),
+    );
+    final aliceFixture = await waitForSharedJson(
+      _signalName('alice_identity.json'),
+    );
+    final aliceContact = _contactFromFixture(aliceFixture, 'Alice');
+    await stack.contactRepo.addContact(aliceContact);
+
+    // ── F: receive invite#1 over the relay, then decline it. ──
+    await waitForCondition(() async {
+      await stack.p2pService.drainOfflineInbox();
+      return (await stack.pendingInviteRepo.getPendingInvites()).isNotEmpty;
+    }, timeout: const Duration(minutes: 4));
+    final firstInvite =
+        (await stack.pendingInviteRepo.getPendingInvites()).first;
+    final groupId = firstInvite.groupId;
+
+    final declineResult = await declinePendingGroupInvite(
+      pendingInviteRepo: stack.pendingInviteRepo,
+      groupId: groupId,
+      p2pService: stack.p2pService,
+      bridge: stack.bridge,
+      contactRepo: stack.contactRepo,
+      declinerPeerId: stack.identity.peerId,
+      declinerPrivateKey: stack.identity.privateKey,
+    );
+    expect(
+      declineResult,
+      anyOf(
+        DeclinePendingGroupInviteResult.success,
+        DeclinePendingGroupInviteResult.expired,
+      ),
+    );
+    writeSharedText(_signalName('bob_declined'), 'ok');
+    await waitForSharedSignal(
+      _signalName('alice_saw_decline'),
+      timeout: const Duration(minutes: 3),
+    );
+
+    // ── C: receive invite#2, confirm it is then revoked (deleted). ──
+    await waitForSharedSignal(
+      _signalName('alice_invite2_sent'),
+      timeout: const Duration(minutes: 3),
+    );
+    await waitForCondition(() async {
+      await stack.p2pService.drainOfflineInbox();
+      return (await stack.pendingInviteRepo.getPendingInvite(groupId)) != null;
+    }, timeout: const Duration(seconds: 150));
+    writeSharedText(_signalName('bob_got_invite2'), 'ok');
+
+    await waitForSharedSignal(
+      _signalName('alice_revoked'),
+      timeout: const Duration(minutes: 3),
+    );
+    await waitForCondition(() async {
+      await stack.p2pService.drainOfflineInbox();
+      return (await stack.pendingInviteRepo.getPendingInvite(groupId)) == null;
+    }, timeout: const Duration(seconds: 150));
+    writeSharedText(_signalName('bob_revoked_ok'), 'ok');
+
+    // ── D: import membership (stale name), pull fresh config over the relay. ──
+    final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+    await importJoinedGroupFixture(stack: stack, fixture: fixture);
+    await waitForSharedSignal(
+      _signalName('alice_metadata_fresh'),
+      timeout: const Duration(minutes: 3),
+    );
+    await sendOnJoinGroupConfigRequest(
+      p2pService: stack.p2pService,
+      bridge: stack.bridge,
+      groupId: groupId,
+      requesterPeerId: stack.identity.peerId,
+      inviterPeerId: aliceContact.peerId,
+      inviterMlKemPublicKey: aliceContact.mlKemPublicKey,
+    );
+    await waitForCondition(() async {
+      await stack.p2pService.drainOfflineInbox();
+      final converged = await stack.groupRepo.getGroup(groupId);
+      return converged?.name == 'Invite Reliability (fresh)';
+    }, timeout: const Duration(minutes: 4));
+    writeSharedText(_signalName('bob_converged'), 'ok');
+    await waitForSharedSignal(
+      _signalName('alice_done'),
+      timeout: const Duration(minutes: 3),
+    );
+  } finally {
+    await stack.teardown();
+  }
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   initializeSqliteForCurrentPlatform();
 
   testWidgets(
-    'MD-004 same-user sibling-device proof role=$configuredRole run=$configuredRunId',
+    'MD-004 multi-device proof scenario=$configuredScenario role=$configuredRole run=$configuredRunId',
     (tester) async {
       if (!_isPrimaryRole && !_isSiblingRole) {
         fail('Unsupported MD004_ROLE: $configuredRole');
+      }
+
+      if (configuredScenario == 'invite_reliability') {
+        if (_isPrimaryRole) {
+          await _runInviteReliabilityPrimary();
+        } else {
+          await _runInviteReliabilitySibling();
+        }
+        return;
       }
 
       if (_isPrimaryRole) {

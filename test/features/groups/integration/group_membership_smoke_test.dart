@@ -17880,6 +17880,57 @@ class _TrackingInviteDeliveryAttemptRepository
   }
 
   @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    final now = (revokedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.revoked,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.revoked,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    if (existing?.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    final now = (declinedAt ?? DateTime.now()).toUtc();
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.declined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.declined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
   Future<int> deleteAttempt({
     required String groupId,
     required String peerId,

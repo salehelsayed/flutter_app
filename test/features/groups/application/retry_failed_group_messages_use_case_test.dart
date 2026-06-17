@@ -1351,5 +1351,125 @@ void main() {
         );
       },
     );
+
+    test(
+      'Phase 4: a failed retry records backoff (attempt++ + future '
+      'next_eligible_at) and is hidden from the auto retrier below the cap',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-bk',
+            text: 'backoff me',
+            timestampIso: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+
+        final before = DateTime.now().toUtc();
+        await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: _FailFirstPublishBridge(),
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        final saved = (await msgRepo.getMessage('msg-bk'))!;
+        expect(saved.status, 'failed');
+        expect(saved.retryAttemptCount, 1);
+        expect(saved.nextEligibleAt, isNotNull);
+        expect(saved.nextEligibleAt!.isAfter(before), isTrue);
+        // The backoff window hides it from the background retrier.
+        final retryable = await msgRepo.getRetryableOutgoingMessages();
+        expect(retryable.where((m) => m.id == 'msg-bk'), isEmpty);
+      },
+    );
+
+    test('Phase 4: exceeding the retry-attempt cap flips the row to terminal '
+        'send_failed (no longer auto-retried)', () async {
+      identityRepo.seed(_makeIdentity());
+      await saveRetryGroupWithMembers();
+      final base = _makeFailedGroupMessage(
+        id: 'msg-term',
+        text: 'give up',
+        timestampIso: '2026-01-15T12:00:00.000Z',
+      );
+      // One attempt short of the cap.
+      await msgRepo.saveMessage(
+        base.copyWith(retryAttemptCount: 9, nextEligibleAt: null),
+      );
+
+      await retryFailedGroupMessages(
+        groupMsgRepo: msgRepo,
+        groupRepo: groupRepo,
+        identityRepo: identityRepo,
+        bridge: _FailFirstPublishBridge(),
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      final saved = (await msgRepo.getMessage('msg-term'))!;
+      expect(saved.status, GroupMessage.statusSendFailed);
+      expect(await msgRepo.getRetryableOutgoingMessages(), isEmpty);
+    });
+
+    test(
+      'Phase 4: manual retry re-arms a terminal send_failed row and re-sends',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        final base = _makeFailedGroupMessage(
+          id: 'msg-manual',
+          text: 'manual',
+          timestampIso: '2026-01-15T12:00:00.000Z',
+        );
+        await msgRepo.saveMessage(
+          base.copyWith(
+            status: GroupMessage.statusSendFailed,
+            retryAttemptCount: 12,
+          ),
+        );
+
+        // The background retrier ignores a terminal row...
+        expect(await msgRepo.getRetryableOutgoingMessages(), isEmpty);
+
+        // ...but a user-initiated manual retry re-arms and re-sends it.
+        final count = await retryFailedGroupMessage(
+          messageId: 'msg-manual',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        expect(count, 1);
+        expect((await msgRepo.getMessage('msg-manual'))!.status, 'sent');
+      },
+    );
+
+    test('Phase 4: clearRetryBackoff re-arms backed-off rows for an immediate '
+        'attempt (reconnect)', () async {
+      await saveRetryGroupWithMembers();
+      final base = _makeFailedGroupMessage(
+        id: 'msg-recon',
+        text: 'reconnect',
+        timestampIso: '2026-01-15T12:00:00.000Z',
+      );
+      await msgRepo.saveMessage(
+        base.copyWith(
+          nextEligibleAt: DateTime.now().toUtc().add(
+            const Duration(minutes: 20),
+          ),
+        ),
+      );
+
+      // Backed off → hidden.
+      expect(await msgRepo.getRetryableOutgoingMessages(), isEmpty);
+
+      final rearmed = await msgRepo.clearRetryBackoff();
+      expect(rearmed, 1);
+      final retryable = await msgRepo.getRetryableOutgoingMessages();
+      expect(retryable.map((m) => m.id), contains('msg-recon'));
+    });
   });
 }

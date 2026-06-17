@@ -64,6 +64,7 @@ import 'package:flutter_app/core/database/migrations/064_group_welcome_key_packa
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
+import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
@@ -78,6 +79,7 @@ import 'package:flutter_app/core/database/migrations/080_group_pending_key_repai
 import 'package:flutter_app/core/database/migrations/081_group_pending_reactions.dart';
 import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
+import 'package:flutter_app/core/database/migrations/086_pending_group_broadcasts.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -179,6 +181,8 @@ void main() {
     await runGroupPendingReactionsMigration(db);
     await runMessageReactionTombstoneMigration(db);
     await runGroupsLastMembershipEventIdMigration(db);
+    await runPendingGroupBroadcastsMigration(db);
+    await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
 
     final chainIndexNames =
         (await db.query(
@@ -210,6 +214,7 @@ void main() {
     expect(await getTableNames(db), contains('pending_group_invites'));
     expect(await getTableNames(db), contains('group_reaction_replay_outbox'));
     expect(await getTableNames(db), contains('group_invite_revocations'));
+    expect(await getTableNames(db), contains('pending_group_broadcasts'));
     expect(await getTableNames(db), contains('group_invite_consumptions'));
     expect(await getTableNames(db), contains('group_event_log'));
     expect(await getTableNames(db), contains('group_pending_key_repairs'));
@@ -312,6 +317,7 @@ void main() {
     await runGroupPendingReactionsMigration(db);
     await runMessageReactionTombstoneMigration(db);
     await runGroupsLastMembershipEventIdMigration(db);
+    await runPendingGroupBroadcastsMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -469,6 +475,57 @@ void main() {
   }
 
   group('Full DB migration chain', () {
+    test(
+      '090. group_invite_delivery_attempts accepts revoked/declined rows and an invite_id (v90)',
+      () async {
+        db = await databaseFactoryFfi.openDatabase(
+          inMemoryDatabasePath,
+          options: OpenDatabaseOptions(version: 1),
+        );
+        await runFreshInstallMigrations(db);
+
+        // The widened CHECK + new invite_id column must accept the new statuses.
+        await db.insert('group_invite_delivery_attempts', {
+          'group_id': 'g1',
+          'peer_id': 'p-revoked',
+          'status': 'revoked',
+          'attempted_at': '2026-06-17T00:00:00.000Z',
+          'updated_at': '2026-06-17T00:00:00.000Z',
+          'invite_id': 'invite-abc',
+        });
+        await db.insert('group_invite_delivery_attempts', {
+          'group_id': 'g1',
+          'peer_id': 'p-declined',
+          'status': 'declined',
+          'attempted_at': '2026-06-17T00:00:00.000Z',
+          'updated_at': '2026-06-17T00:00:00.000Z',
+          'invite_id': 'invite-def',
+        });
+
+        final rows = await db.query(
+          'group_invite_delivery_attempts',
+          orderBy: 'peer_id',
+        );
+        expect(rows, hasLength(2));
+        expect(rows[0]['status'], 'declined');
+        expect(rows[0]['invite_id'], 'invite-def');
+        expect(rows[1]['status'], 'revoked');
+        expect(rows[1]['invite_id'], 'invite-abc');
+
+        // A bogus status is still rejected by the CHECK.
+        await expectLater(
+          () => db.insert('group_invite_delivery_attempts', {
+            'group_id': 'g1',
+            'peer_id': 'p-bogus',
+            'status': 'not_a_status',
+            'attempted_at': '2026-06-17T00:00:00.000Z',
+            'updated_at': '2026-06-17T00:00:00.000Z',
+          }),
+          throwsA(anything),
+        );
+      },
+    );
+
     test('1a. Fresh install path creates all tables with correct schema', () async {
       db = await databaseFactoryFfi.openDatabase(
         inMemoryDatabasePath,

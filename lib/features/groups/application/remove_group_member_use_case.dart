@@ -39,7 +39,11 @@ bool _memberAllows(
 /// Key rotation is intentionally NOT done here because the new key epoch
 /// would cause signature mismatches at other members until they receive
 /// the updated key. Key distribution should be handled separately.
-Future<void> removeGroupMember({
+/// Returns the canonical `(eventAt, eventId)` pair the removal minted and
+/// recorded in the local membership watermark, so the caller can publish the
+/// SAME pair in the signed audit (keeping the local watermark id consistent
+/// with the wire id for deterministic equal-instant convergence).
+Future<({DateTime eventAt, String eventId})> removeGroupMember({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required String groupId,
@@ -74,7 +78,7 @@ Future<void> removeGroupMember({
     throw StateError(groupRecoveryPendingError);
   }
 
-  await runGroupMembershipMutationLocked<void>(
+  return runGroupMembershipMutationLocked<({DateTime eventAt, String eventId})>(
     groupId: groupId,
     action: () async {
       // 1. Load group, verify caller is admin
@@ -105,11 +109,15 @@ Future<void> removeGroupMember({
         );
       }
 
-      final normalizedEventAt = eventAt?.toUtc() ?? DateTime.now().toUtc();
-      if (isStaleGroupMembershipEvent(
-        eventAt: normalizedEventAt,
-        lastMembershipEventAt: group.lastMembershipEventAt,
-      )) {
+      // Stale gate for an *explicit* older-or-equal event; the live caller
+      // passes no eventAt and is lifted past a skew-advanced watermark by the
+      // monotonic mint below (never self-blocks).
+      final providedEventAt = eventAt?.toUtc();
+      if (providedEventAt != null &&
+          isStaleGroupMembershipEvent(
+            eventAt: providedEventAt,
+            lastMembershipEventAt: group.lastMembershipEventAt,
+          )) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_REMOVE_MEMBER_USE_CASE_STALE_EVENT',
@@ -118,11 +126,21 @@ Future<void> removeGroupMember({
             'peerId': memberPeerId.length > 8
                 ? memberPeerId.substring(0, 8)
                 : memberPeerId,
-            'eventAt': normalizedEventAt.toIso8601String(),
+            'eventAt': providedEventAt.toIso8601String(),
           },
         );
         throw StateError(staleGroupMembershipEventMessage);
       }
+      final normalizedEventAt = nextMembershipEventAt(
+        group.lastMembershipEventAt,
+        now: providedEventAt,
+      );
+      final mintedEventId = canonicalMembershipEventId(
+        transitionType: 'member_removed',
+        groupId: groupId,
+        actorPeerId: selfPeerId ?? group.createdBy,
+        eventAt: normalizedEventAt,
+      );
 
       final removedMember = await groupRepo.getMember(groupId, memberPeerId);
       if (removedMember == null) {
@@ -220,6 +238,7 @@ Future<void> removeGroupMember({
           groupRepo: groupRepo,
           groupId: groupId,
           eventAt: normalizedEventAt,
+          eventId: mintedEventId,
         );
       } catch (e) {
         await groupRepo.saveMember(removedMember);
@@ -250,6 +269,7 @@ Future<void> removeGroupMember({
           'remainingMembers': remainingMembers.length,
         },
       );
+      return (eventAt: normalizedEventAt, eventId: mintedEventId);
     },
   );
 }

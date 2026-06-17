@@ -247,14 +247,63 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<List<GroupMessage>> getRetryableOutgoingMessages() async {
+    final now = DateTime.now().toUtc();
     final retryable = _messages.values
         .where(
           (m) =>
-              !m.isIncoming && (m.status == 'failed' || m.status == 'pending'),
+              !m.isIncoming &&
+              (m.status == 'failed' || m.status == 'pending') &&
+              (m.nextEligibleAt == null || !m.nextEligibleAt!.isAfter(now)),
         )
         .toList();
     retryable.sort(compareGroupMessagesAscending);
     return retryable;
+  }
+
+  @override
+  Future<void> recordRetryFailure(
+    String id, {
+    required DateTime nextEligibleAt,
+    required bool markTerminal,
+  }) async {
+    final msg = _messages[id];
+    if (msg == null || msg.isIncoming) return;
+    if (msg.status != 'failed' && msg.status != 'pending') return;
+    _messages[id] = msg.copyWith(
+      retryAttemptCount: msg.retryAttemptCount + 1,
+      nextEligibleAt: nextEligibleAt,
+      status: markTerminal ? GroupMessage.statusSendFailed : msg.status,
+    );
+    _emitOutgoingRowsChangedIfNeeded(1);
+  }
+
+  @override
+  Future<int> clearRetryBackoff() async {
+    var count = 0;
+    for (final entry in _messages.entries.toList()) {
+      final msg = entry.value;
+      if (!msg.isIncoming &&
+          (msg.status == 'failed' || msg.status == 'pending') &&
+          msg.nextEligibleAt != null) {
+        _messages[entry.key] = msg.copyWith(nextEligibleAt: null);
+        count++;
+      }
+    }
+    _emitOutgoingRowsChangedIfNeeded(count);
+    return count;
+  }
+
+  @override
+  Future<void> resetRetryStateForManualRetry(String id) async {
+    final msg = _messages[id];
+    if (msg == null || msg.isIncoming) return;
+    if (msg.status != GroupMessage.statusSendFailed) return;
+    _messages[id] = msg.copyWith(
+      status: 'failed',
+      retryAttemptCount: 0,
+      nextEligibleAt: null,
+    );
+    _emitOutgoingRowsChangedIfNeeded(1);
   }
 
   @override

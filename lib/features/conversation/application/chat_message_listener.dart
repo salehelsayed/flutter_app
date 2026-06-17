@@ -189,9 +189,21 @@ class ChatMessageListener {
             attachment: attachment,
             contactPeerId: message.contactPeerId,
           );
-          downloadedMedia.add(
-            result ?? attachment.copyWith(downloadStatus: 'failed'),
-          );
+          if (result != null) {
+            downloadedMedia.add(result);
+          } else {
+            // Re-read the authoritative persisted status so a terminal
+            // download_failed (relay not-found / budget exhausted) isn't shown
+            // as a retryable `failed` (INV-DL-1).
+            final persisted = await mediaAttachmentRepo!
+                .getAttachmentsForMessage(message.id);
+            final match = persisted.where((a) => a.id == attachment.id);
+            downloadedMedia.add(
+              match.isEmpty
+                  ? attachment.copyWith(downloadStatus: 'failed')
+                  : match.first,
+            );
+          }
         } catch (e) {
           downloadedMedia.add(attachment.copyWith(downloadStatus: 'failed'));
           emitFlowEvent(

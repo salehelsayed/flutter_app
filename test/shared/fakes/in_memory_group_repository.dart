@@ -2,7 +2,9 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/pending_sibling_device_repository.dart';
 
 /// In-memory [GroupRepository] for integration tests.
 class InMemoryGroupRepository
@@ -10,13 +12,64 @@ class InMemoryGroupRepository
         GroupRepository,
         RemovedGroupMemberSnapshotRepository,
         GroupMemberDeviceSnapshotRepository,
+        PendingSiblingDeviceRepository,
         GroupKeyRotationDraftRepository {
   final Map<String, GroupModel> _groups = {};
   final Map<String, Map<String, GroupMember>> _members = {};
   final Map<String, Map<String, GroupMember>> _removedMemberSnapshots = {};
   final Map<String, List<GroupMemberDeviceIdentity>> _deviceSnapshots = {};
+  final Map<String, PendingSiblingDevice> _pendingSiblingDevices = {};
   final Map<String, List<GroupKeyInfo>> _keys = {};
   final Map<String, GroupKeyInfo> _pendingKeyRotations = {};
+  final Map<String, GroupRejoinState> _rejoinStates = {};
+
+  @override
+  Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() async =>
+      Map<String, GroupRejoinState>.from(_rejoinStates);
+
+  @override
+  Future<void> recordGroupRejoinFailure(
+    String groupId, {
+    required DateTime nextEligibleAt,
+  }) async {
+    final existing = _rejoinStates[groupId];
+    _rejoinStates[groupId] = GroupRejoinState(
+      attemptCount: (existing?.attemptCount ?? 0) + 1,
+      nextEligibleAt: nextEligibleAt,
+    );
+  }
+
+  @override
+  Future<void> clearGroupRejoinState(String groupId) async {
+    _rejoinStates.remove(groupId);
+  }
+
+  @override
+  Future<void> savePendingSiblingDevice(PendingSiblingDevice device) async {
+    _pendingSiblingDevices[device.id] = device;
+  }
+
+  @override
+  Future<List<PendingSiblingDevice>> getPendingSiblingDevicesForGroup(
+    String groupId,
+  ) async =>
+      _pendingSiblingDevices.values.where((d) => d.groupId == groupId).toList();
+
+  @override
+  Future<PendingSiblingDevice?> getPendingSiblingDevice(
+    String groupId,
+    String memberPeerId,
+    String deviceId,
+  ) async => _pendingSiblingDevices['$groupId:$memberPeerId:$deviceId'];
+
+  @override
+  Future<void> deletePendingSiblingDevice(
+    String groupId,
+    String memberPeerId,
+    String deviceId,
+  ) async {
+    _pendingSiblingDevices.remove('$groupId:$memberPeerId:$deviceId');
+  }
 
   @override
   Future<void> saveGroupMemberDeviceSnapshot(

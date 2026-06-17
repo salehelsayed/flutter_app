@@ -55,6 +55,10 @@ class MediaAttachment {
   /// Incremented on each transient failure. Terminal after kMaxUploadRetries.
   final int? uploadRetryCount;
 
+  /// Number of download retry attempts for incoming attachments.
+  /// Incremented on each transient failure. Terminal after kMaxDownloadRetries.
+  final int? downloadRetryCount;
+
   /// Canonical lowercase SHA-256 digest for group media relay blob bytes.
   final String? contentHash;
 
@@ -84,6 +88,7 @@ class MediaAttachment {
     required this.createdAt,
     this.waveform,
     this.uploadRetryCount,
+    this.downloadRetryCount,
     this.contentHash,
     this.thumbnailHash,
     this.encryptionKeyBase64,
@@ -146,6 +151,7 @@ class MediaAttachment {
       createdAt: map['created_at'] as String,
       waveform: waveform,
       uploadRetryCount: map['upload_retry_count'] as int?,
+      downloadRetryCount: map['download_retry_count'] as int?,
       contentHash: map['content_hash'] as String?,
       thumbnailHash: map['thumbnail_hash'] as String?,
       encryptionKeyBase64: map['encryption_key_base64'] as String?,
@@ -170,6 +176,7 @@ class MediaAttachment {
       'created_at': createdAt,
       'waveform': waveform != null ? jsonEncode(waveform) : null,
       if (uploadRetryCount != null) 'upload_retry_count': uploadRetryCount,
+      if (downloadRetryCount != null) 'download_retry_count': downloadRetryCount,
       'content_hash': contentHash,
       'thumbnail_hash': thumbnailHash,
       'encryption_key_base64': encryptionKeyBase64,
@@ -250,6 +257,7 @@ class MediaAttachment {
     List<double>? waveform,
     bool clearWaveform = false,
     int? uploadRetryCount,
+    int? downloadRetryCount,
     String? contentHash,
     bool clearContentHash = false,
     String? thumbnailHash,
@@ -275,6 +283,7 @@ class MediaAttachment {
       createdAt: createdAt ?? this.createdAt,
       waveform: clearWaveform ? null : (waveform ?? this.waveform),
       uploadRetryCount: uploadRetryCount ?? this.uploadRetryCount,
+      downloadRetryCount: downloadRetryCount ?? this.downloadRetryCount,
       contentHash: clearContentHash ? null : (contentHash ?? this.contentHash),
       thumbnailHash: clearThumbnailHash
           ? null

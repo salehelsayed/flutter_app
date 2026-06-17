@@ -21,7 +21,7 @@ enum GroupMultiDeviceFacet {
 // once the Part-B convergence build (sibling-device admission + restore-time key
 // continuity + peer hydration) ships behind `kMultiDeviceSyncEnabled` and is
 // device-matrix verified — see `groupMultiDeviceImplemented` below and
-// `Test-Flight-Improv/.../12-P2-multi-device-honesty.md`. The device-local
+// the `12-P2-multi-device-honesty` plan. The device-local
 // facets ARE produced at runtime today. This repo defines no account-wide sync
 // channel for pending-invite review or other installation-local preferences.
 const Map<GroupMultiDeviceFacet, GroupMultiDeviceScope>

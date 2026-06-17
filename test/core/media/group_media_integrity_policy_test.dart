@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
@@ -156,11 +157,12 @@ void main() {
         ),
         isTrue,
       );
+      // INV-DL-3: integrity_failed (tamper) is no longer retryable.
       expect(
         GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
           base.copyWith(downloadStatus: kMediaDownloadStatusIntegrityFailed),
         ),
-        isTrue,
+        isFalse,
       );
       expect(
         GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
@@ -274,4 +276,51 @@ void main() {
       );
     },
   );
+
+  group('bounded download retries', () {
+    const base = MediaAttachment(
+      id: 'blob',
+      messageId: 'msg',
+      mime: 'image/jpeg',
+      size: 5,
+      mediaType: 'image',
+      downloadStatus: kMediaDownloadStatusFailed,
+      createdAt: '2026-06-17T12:00:00.000Z',
+    );
+
+    test('failed is retryable only while under the retry ceiling (INV-DL-1)',
+        () {
+      expect(
+        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(base),
+        isTrue, // count null -> treated as 0 < ceiling
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
+          base.copyWith(downloadRetryCount: kMaxDownloadRetries - 1),
+        ),
+        isTrue,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
+          base.copyWith(downloadRetryCount: kMaxDownloadRetries),
+        ),
+        isFalse,
+      );
+    });
+
+    test('download_failed is terminal: not retryable, and unavailable', () {
+      final terminal = base.copyWith(
+        downloadStatus: kMediaDownloadStatusDownloadFailed,
+        downloadRetryCount: kMaxDownloadRetries,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(terminal),
+        isFalse,
+      );
+      expect(
+        GroupMediaIntegrityPolicy.isUnavailableMedia(terminal),
+        isTrue,
+      );
+    });
+  });
 }

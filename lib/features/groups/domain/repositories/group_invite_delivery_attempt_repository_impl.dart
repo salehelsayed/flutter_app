@@ -162,6 +162,72 @@ class GroupInviteDeliveryAttemptRepositoryImpl
   }
 
   @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    final now = (revokedAt ?? DateTime.now()).toUtc();
+    final existing = await getAttempt(groupId: groupId, peerId: peerId);
+    if (existing == null) {
+      await saveAttempt(
+        GroupInviteDeliveryAttempt(
+          groupId: groupId,
+          peerId: peerId,
+          status: GroupInviteDeliveryStatus.revoked,
+          attemptedAt: now,
+          updatedAt: now,
+        ),
+      );
+      return;
+    }
+
+    await saveAttempt(
+      existing.copyWith(
+        status: GroupInviteDeliveryStatus.revoked,
+        updatedAt: now,
+        clearLastError: true,
+      ),
+    );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final now = (declinedAt ?? DateTime.now()).toUtc();
+    final existing = await getAttempt(groupId: groupId, peerId: peerId);
+    // Joined-wins precedence: a member who declined then rejoined must stay
+    // joined; never downgrade an existing joined row to declined.
+    if (existing != null &&
+        existing.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    if (existing == null) {
+      await saveAttempt(
+        GroupInviteDeliveryAttempt(
+          groupId: groupId,
+          peerId: peerId,
+          status: GroupInviteDeliveryStatus.declined,
+          attemptedAt: now,
+          updatedAt: now,
+        ),
+      );
+      return;
+    }
+
+    await saveAttempt(
+      existing.copyWith(
+        status: GroupInviteDeliveryStatus.declined,
+        updatedAt: now,
+        clearLastError: true,
+      ),
+    );
+  }
+
+  @override
   Future<int> deleteAttempt({required String groupId, required String peerId}) {
     return dbDeleteGroupInviteDeliveryAttempt(groupId: groupId, peerId: peerId);
   }

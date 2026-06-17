@@ -142,6 +142,26 @@ abstract class GroupMessageRepository {
   Future<List<GroupMessage>> getRetryableOutgoingMessages() =>
       getFailedOutgoingMessages();
 
+  /// Finding 05 Phase 4: records a failed background retry attempt — increments
+  /// the attempt counter, schedules the exponential-backoff window, and (when
+  /// [markTerminal]) flips the row to the terminal `send_failed` status so it is
+  /// no longer auto-retried. Default no-op keeps lightweight doubles compatible.
+  Future<void> recordRetryFailure(
+    String id, {
+    required DateTime nextEligibleAt,
+    required bool markTerminal,
+  }) async {}
+
+  /// Clears the retry-backoff window for every retryable outgoing row so the
+  /// next pass re-attempts them immediately (a reconnect grants one immediate
+  /// attempt). Returns the number of rows re-armed. Default no-op.
+  Future<int> clearRetryBackoff() async => 0;
+
+  /// Re-arms a terminal `send_failed` row for a user-initiated manual retry:
+  /// resets the attempt counter + backoff and returns the row to the retryable
+  /// `failed` status. Default no-op.
+  Future<void> resetRetryStateForManualRetry(String id) async {}
+
   /// Transitions all outgoing messages with status='sending' that are older
   /// than [olderThan] to status='failed', so the retry service picks them up.
   ///

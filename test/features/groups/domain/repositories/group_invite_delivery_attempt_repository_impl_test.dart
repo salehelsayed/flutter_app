@@ -115,4 +115,81 @@ void main() {
     expect(attempt.status, GroupInviteDeliveryStatus.needsResend);
     expect(attempt.lastError, 'send_failed');
   });
+
+  test('markRevoked sets status to revoked and clears lastError', () async {
+    final now = DateTime.utc(2026, 6, 17, 12);
+    await repository.saveAttempt(
+      GroupInviteDeliveryAttempt(
+        groupId: 'group-1',
+        peerId: 'peer-a',
+        status: GroupInviteDeliveryStatus.sent,
+        attemptedAt: now,
+        updatedAt: now,
+        lastError: 'something',
+        inviteId: 'invite-1',
+      ),
+    );
+
+    await repository.markRevoked(groupId: 'group-1', peerId: 'peer-a');
+
+    final attempt = await repository.getAttempt(
+      groupId: 'group-1',
+      peerId: 'peer-a',
+    );
+    expect(attempt!.status, GroupInviteDeliveryStatus.revoked);
+    expect(attempt.lastError, isNull);
+    // invite_id is preserved across the status change.
+    expect(attempt.inviteId, 'invite-1');
+  });
+
+  test('markRevoked on a missing row creates a fresh revoked row', () async {
+    await repository.markRevoked(groupId: 'group-1', peerId: 'ghost');
+    final attempt = await repository.getAttempt(
+      groupId: 'group-1',
+      peerId: 'ghost',
+    );
+    expect(attempt!.status, GroupInviteDeliveryStatus.revoked);
+  });
+
+  test('markDeclined sets status to declined', () async {
+    final now = DateTime.utc(2026, 6, 17, 12);
+    await repository.saveAttempt(
+      GroupInviteDeliveryAttempt(
+        groupId: 'group-1',
+        peerId: 'peer-a',
+        status: GroupInviteDeliveryStatus.sent,
+        attemptedAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    await repository.markDeclined(groupId: 'group-1', peerId: 'peer-a');
+
+    final attempt = await repository.getAttempt(
+      groupId: 'group-1',
+      peerId: 'peer-a',
+    );
+    expect(attempt!.status, GroupInviteDeliveryStatus.declined);
+  });
+
+  test('markDeclined never downgrades a joined row (joined-wins)', () async {
+    final now = DateTime.utc(2026, 6, 17, 12);
+    await repository.saveAttempt(
+      GroupInviteDeliveryAttempt(
+        groupId: 'group-1',
+        peerId: 'peer-a',
+        status: GroupInviteDeliveryStatus.joined,
+        attemptedAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    await repository.markDeclined(groupId: 'group-1', peerId: 'peer-a');
+
+    final attempt = await repository.getAttempt(
+      groupId: 'group-1',
+      peerId: 'peer-a',
+    );
+    expect(attempt!.status, GroupInviteDeliveryStatus.joined);
+  });
 }

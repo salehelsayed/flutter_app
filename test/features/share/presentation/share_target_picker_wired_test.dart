@@ -710,7 +710,7 @@ void main() {
       await tester.pump();
 
       expect(
-        find.text('Sent to 1 target. Skipped 1 oversized GIF.'),
+        find.text('Sent to 1 target. Skipped 1 oversized attachment.'),
         findsOneWidget,
       );
     },

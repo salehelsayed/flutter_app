@@ -18,7 +18,13 @@ const lastAdminRoleChangeBlockedMessage =
 
 /// Updates a member role after group creation and synchronizes the new
 /// authoritative config with the bridge validator.
-Future<void> updateGroupMemberRole({
+///
+/// Returns the canonical `(eventAt, eventId)` pair the mutation minted and
+/// recorded in the local membership watermark, so the caller can publish the
+/// SAME pair in the signed audit (keeping the local watermark id consistent
+/// with the wire id for deterministic equal-instant convergence). Returns
+/// `null` when the call is a no-op (the target already holds [role]).
+Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required String groupId,
@@ -54,7 +60,7 @@ Future<void> updateGroupMemberRole({
   // membership lock so concurrent add/remove/role mutations cannot lose
   // updates on the admin-count math or the watermark. The recovery gate stays
   // outside the lock, mirroring add/remove.
-  await runGroupMembershipMutationLocked<void>(
+  return runGroupMembershipMutationLocked<({DateTime eventAt, String eventId})?>(
     groupId: groupId,
     action: () async {
       final group = await groupRepo.getGroup(groupId);
@@ -132,7 +138,7 @@ Future<void> updateGroupMemberRole({
             'role': role.toValue(),
           },
         );
-        return;
+        return null;
       }
 
       final members = await groupRepo.getMembers(groupId);
@@ -184,6 +190,12 @@ Future<void> updateGroupMemberRole({
         group.lastMembershipEventAt,
         now: providedEventAt,
       );
+      final mintedEventId = canonicalMembershipEventId(
+        transitionType: 'member_role_updated',
+        groupId: groupId,
+        actorPeerId: selfPeerId,
+        eventAt: normalizedEventAt,
+      );
 
       final previousMyRole = group.myRole;
       final updatedMyRole = memberPeerId == selfPeerId
@@ -210,6 +222,7 @@ Future<void> updateGroupMemberRole({
           groupRepo: groupRepo,
           groupId: groupId,
           eventAt: normalizedEventAt,
+          eventId: mintedEventId,
         );
 
         emitFlowEvent(
@@ -223,6 +236,7 @@ Future<void> updateGroupMemberRole({
             'role': role.toValue(),
           },
         );
+        return (eventAt: normalizedEventAt, eventId: mintedEventId);
       } catch (error) {
         await groupRepo.updateMemberRole(
           groupId,

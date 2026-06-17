@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
-import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -14,7 +13,6 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -252,7 +250,7 @@ List<String> _pendingPaths(WidgetTester tester) {
 }
 
 void main() {
-  group('ConversationWired GIF picker guard', () {
+  group('ConversationWired GIF send-time size gate', () {
     late FakeIdentityRepository identityRepo;
     late FakeMessageRepository messageRepo;
     late FakeContactRepository contactRepo;
@@ -284,7 +282,7 @@ void main() {
     });
 
     testWidgets(
-      'oversized GIF is rejected before it reaches pending attachments',
+      'oversized GIF now stages at pick and is rejected by the send-time gate',
       (tester) async {
         final oversizedGif = File('${tempDir.path}/too-big.gif');
         oversizedGif.createSync(recursive: true);
@@ -304,19 +302,31 @@ void main() {
         );
 
         await _openGalleryPicker(tester);
-        await tester.pump(const Duration(milliseconds: 500));
+        await _pumpUntil(tester, () => _pendingPaths(tester).isNotEmpty);
 
-        expect(_pendingPaths(tester), isEmpty);
+        // No pick-time GIF guard anymore: the GIF stages like any other media,
+        // validated on final bytes only at send time (INV-SZ-2).
+        expect(_pendingPaths(tester), [oversizedGif.path]);
+        expect(
+          find.text('GIF files larger than 25 MB cannot be added.'),
+          findsNothing,
+        );
+
+        // Tapping send routes through the single per-type size gate.
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 300));
+
         expect(
           find.text('GIF files larger than 25 MB cannot be added.'),
           findsOneWidget,
         );
+        // Send aborted before any persistence/upload; composer keeps the media.
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(_pendingPaths(tester), [oversizedGif.path]);
       },
     );
 
-    testWidgets('large JPEGs are not rejected by the GIF-only picker guard', (
-      tester,
-    ) async {
+    testWidgets('picking media has no pick-time size guard', (tester) async {
       final largeJpg = File('${tempDir.path}/large-photo.jpg');
       largeJpg.createSync(recursive: true);
       largeJpg.openSync(mode: FileMode.write)
@@ -345,7 +355,7 @@ void main() {
     });
 
     testWidgets(
-      'mixed picks keep valid JPEG siblings while skipping oversized GIFs',
+      'an oversized GIF in a mixed pick blocks the whole send (all-or-nothing)',
       (tester) async {
         final oversizedGif = File('${tempDir.path}/too-big.gif');
         oversizedGif.createSync(recursive: true);
@@ -370,13 +380,22 @@ void main() {
         );
 
         await _openGalleryPicker(tester);
-        await _pumpUntil(tester, () => _pendingPaths(tester).isNotEmpty);
+        await _pumpUntil(tester, () => _pendingPaths(tester).length == 2);
 
-        expect(_pendingPaths(tester), [validJpg.path]);
+        // Both stage at pick — the GIF is no longer skipped there.
+        expect(_pendingPaths(tester), containsAll(<String>[oversizedGif.path]));
+        expect(_pendingPaths(tester).length, 2);
+
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 300));
+
+        // The send-time gate rejects the whole batch on the oversized GIF.
         expect(
           find.text('GIF files larger than 25 MB cannot be added.'),
           findsOneWidget,
         );
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(_pendingPaths(tester).length, 2);
       },
     );
   });

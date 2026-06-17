@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/constants/media_constants.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
@@ -282,7 +283,7 @@ void main() {
       expect(result.skippedOversizedGifCount, 1);
       expect(
         result.skippedOversizedGifReason,
-        'GIF files over 25 MB were skipped.',
+        'Some attachments were too large and were skipped.',
       );
       expect(deliveredMedia, isNotNull);
       expect(deliveredMedia, hasLength(1));
@@ -291,7 +292,7 @@ void main() {
   );
 
   test(
-    'large JPEGs are not rejected by the GIF-only share-batch guard',
+    'share-batch applies per-type size caps to non-GIF media (OQ-2)',
     () async {
       final identityRepository = FakeIdentityRepository()
         ..seed(_makeIdentity());
@@ -303,10 +304,15 @@ void main() {
           await tempDir.delete(recursive: true);
         }
       });
+      // A non-decodable fake JPEG never compresses, so its final budget bytes
+      // stay above the per-type image cap and it is skipped on FINAL bytes
+      // (the per-type table now applies to non-GIF share media too).
       final oversizedJpg = File('${tempDir.path}/large-photo.jpg');
       final oversizedJpgHandle = oversizedJpg.openSync(mode: FileMode.write);
-      oversizedJpgHandle.truncateSync(kMaxGifFileSize + 1);
+      oversizedJpgHandle.truncateSync(kGroupMediaImageLimitBytes + 1);
       oversizedJpgHandle.closeSync();
+      final smallJpg = File('${tempDir.path}/ok.jpg')
+        ..writeAsBytesSync([1, 2, 3]);
 
       List<PendingComposerMedia>? deliveredMedia;
       final coordinator = DefaultShareBatchDeliveryCoordinator(
@@ -339,17 +345,18 @@ void main() {
       final result = await coordinator.deliver(
         shareIntent: ShareIntent(
           type: ShareIntentType.files,
-          filePaths: [oversizedJpg.path],
+          filePaths: [oversizedJpg.path, smallJpg.path],
         ),
         targets: [
           ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
         ],
       );
 
-      expect(result.skippedOversizedGifCount, 0);
+      // The over-cap image is skipped; the within-cap sibling is still delivered.
+      expect(result.skippedOversizedGifCount, 1);
       expect(deliveredMedia, isNotNull);
       expect(deliveredMedia, hasLength(1));
-      expect(deliveredMedia!.single.file.path, oversizedJpg.path);
+      expect(deliveredMedia!.single.file.path, smallJpg.path);
     },
   );
 

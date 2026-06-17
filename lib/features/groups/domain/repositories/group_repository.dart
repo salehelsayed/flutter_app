@@ -2,6 +2,18 @@ import '../models/group_key_info.dart';
 import '../models/group_member.dart';
 import '../models/group_model.dart';
 
+/// Finding 05 Phase 3: per-group rejoin-retry state. A value exists only for a
+/// group that has failed to rejoin its topic and is being backed off.
+class GroupRejoinState {
+  const GroupRejoinState({required this.attemptCount, this.nextEligibleAt});
+
+  /// How many consecutive rejoin attempts have failed for this group.
+  final int attemptCount;
+
+  /// Earliest time the next rejoin attempt is eligible; null = immediately.
+  final DateTime? nextEligibleAt;
+}
+
 /// Repository interface for managing groups, members, and keys.
 abstract class GroupRepository {
   // --- Groups ---
@@ -11,6 +23,25 @@ abstract class GroupRepository {
 
   /// Retrieves all groups, ordered by created_at DESC.
   Future<List<GroupModel>> getAllGroups();
+
+  // --- Finding 05 Phase 3: bounded per-group rejoin retry ---
+
+  /// Loads per-group rejoin-retry state (groupId → state) for groups that have
+  /// failed to rejoin. Default empty keeps lightweight doubles compatible (no
+  /// backoff — every group is attempted every pass, the prior behavior).
+  Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() async =>
+      const {};
+
+  /// Records a failed rejoin attempt: increments the attempt count and sets the
+  /// exponential-backoff window. Default no-op.
+  Future<void> recordGroupRejoinFailure(
+    String groupId, {
+    required DateTime nextEligibleAt,
+  }) async {}
+
+  /// Clears the rejoin-retry state for a group after a successful rejoin.
+  /// Default no-op.
+  Future<void> clearGroupRejoinState(String groupId) async {}
 
   /// Retrieves a single group by ID.
   Future<GroupModel?> getGroup(String id);

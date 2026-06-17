@@ -5,6 +5,8 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import '../models/group_key_info.dart';
 import '../models/group_key_retention_policy.dart';
 import '../models/group_member.dart';
+import '../models/pending_sibling_device.dart';
+import 'pending_sibling_device_repository.dart';
 import '../models/group_model.dart';
 import 'group_repository.dart';
 
@@ -23,6 +25,7 @@ class GroupRepositoryImpl
         GroupRepository,
         RemovedGroupMemberSnapshotRepository,
         GroupMemberDeviceSnapshotRepository,
+        PendingSiblingDeviceRepository,
         GroupKeyRotationDraftRepository {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
@@ -53,6 +56,22 @@ class GroupRepositoryImpl
   dbUpsertGroupMemberDeviceSnapshot;
   final Future<Map<String, Object?>?> Function(String groupId, String peerId)?
   dbLoadGroupMemberDeviceSnapshot;
+  final Future<void> Function(Map<String, Object?> row)?
+  dbUpsertPendingSiblingDevice;
+  final Future<List<Map<String, Object?>>> Function(String groupId)?
+  dbLoadPendingSiblingDevicesForGroup;
+  final Future<Map<String, Object?>?> Function(
+    String groupId,
+    String memberPeerId,
+    String deviceId,
+  )?
+  dbLoadPendingSiblingDevice;
+  final Future<void> Function(
+    String groupId,
+    String memberPeerId,
+    String deviceId,
+  )?
+  dbDeletePendingSiblingDevice;
 
   // --- Key DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupKey;
@@ -75,6 +94,13 @@ class GroupRepositoryImpl
   final SecureKeyStore? groupKeyStore;
   final SecureKeyStore? pushSharedKeyStore;
 
+  // Finding 05 Phase 3: bounded per-group rejoin retry state.
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadGroupRejoinStatesFn;
+  final Future<void> Function(String groupId, {required int nextEligibleAtMs})?
+  dbRecordGroupRejoinFailureFn;
+  final Future<void> Function(String groupId)? dbClearGroupRejoinStateFn;
+
   final Map<String, GroupKeyInfo> _pendingKeyRotationFallback = {};
 
   GroupRepositoryImpl({
@@ -96,6 +122,13 @@ class GroupRepositoryImpl
     this.dbLoadRemovedGroupMemberSnapshot,
     this.dbUpsertGroupMemberDeviceSnapshot,
     this.dbLoadGroupMemberDeviceSnapshot,
+    this.dbUpsertPendingSiblingDevice,
+    this.dbLoadPendingSiblingDevicesForGroup,
+    this.dbLoadPendingSiblingDevice,
+    this.dbDeletePendingSiblingDevice,
+    this.dbLoadGroupRejoinStatesFn,
+    this.dbRecordGroupRejoinFailureFn,
+    this.dbClearGroupRejoinStateFn,
     required this.dbInsertGroupKey,
     required this.dbLoadLatestGroupKey,
     required this.dbLoadGroupKeyByGeneration,
@@ -304,6 +337,46 @@ class GroupRepositoryImpl
   }
 
   @override
+  Future<void> savePendingSiblingDevice(PendingSiblingDevice device) async {
+    final upsert = dbUpsertPendingSiblingDevice;
+    if (upsert == null) return;
+    await upsert(device.toMap());
+  }
+
+  @override
+  Future<List<PendingSiblingDevice>> getPendingSiblingDevicesForGroup(
+    String groupId,
+  ) async {
+    final load = dbLoadPendingSiblingDevicesForGroup;
+    if (load == null) return const [];
+    final rows = await load(groupId);
+    return rows.map(PendingSiblingDevice.fromMap).toList();
+  }
+
+  @override
+  Future<PendingSiblingDevice?> getPendingSiblingDevice(
+    String groupId,
+    String memberPeerId,
+    String deviceId,
+  ) async {
+    final load = dbLoadPendingSiblingDevice;
+    if (load == null) return null;
+    final row = await load(groupId, memberPeerId, deviceId);
+    return row == null ? null : PendingSiblingDevice.fromMap(row);
+  }
+
+  @override
+  Future<void> deletePendingSiblingDevice(
+    String groupId,
+    String memberPeerId,
+    String deviceId,
+  ) async {
+    final delete = dbDeletePendingSiblingDevice;
+    if (delete == null) return;
+    await delete(groupId, memberPeerId, deviceId);
+  }
+
+  @override
   Future<void> removeAllMembers(String groupId) async {
     await dbDeleteAllGroupMembers(groupId);
   }
@@ -325,6 +398,46 @@ class GroupRepositoryImpl
     final row = await dbLoadLatestGroupKey(groupId);
     if (row == null) return null;
     return _groupKeyFromRow(row);
+  }
+
+  @override
+  Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() async {
+    final fn = dbLoadGroupRejoinStatesFn;
+    if (fn == null) return const {};
+    final rows = await fn();
+    final result = <String, GroupRejoinState>{};
+    for (final row in rows) {
+      final groupId = row['group_id'] as String?;
+      if (groupId == null) continue;
+      final nextMs = row['next_eligible_at'] as int?;
+      result[groupId] = GroupRejoinState(
+        attemptCount: (row['rejoin_attempt_count'] as int?) ?? 0,
+        nextEligibleAt: nextMs != null
+            ? DateTime.fromMillisecondsSinceEpoch(nextMs, isUtc: true)
+            : null,
+      );
+    }
+    return result;
+  }
+
+  @override
+  Future<void> recordGroupRejoinFailure(
+    String groupId, {
+    required DateTime nextEligibleAt,
+  }) async {
+    final fn = dbRecordGroupRejoinFailureFn;
+    if (fn == null) return;
+    await fn(
+      groupId,
+      nextEligibleAtMs: nextEligibleAt.toUtc().millisecondsSinceEpoch,
+    );
+  }
+
+  @override
+  Future<void> clearGroupRejoinState(String groupId) async {
+    final fn = dbClearGroupRejoinStateFn;
+    if (fn == null) return;
+    await fn(groupId);
   }
 
   @override

@@ -394,6 +394,7 @@
   "media_too_large_after_compress": "ما زالت الوسائط كبيرة جدًا حتى بعد الضغط.",
   "media_gif_too_large": "لا يمكن إضافة ملفات GIF أكبر من 25 م.ب.",
   "media_unavailable": "الوسائط غير متاحة",
+  "media_could_not_verify": "تعذّر التحقق من هذه الوسائط",
   "media_retry_unavailable": "إعادة تحميل الوسائط غير المتاحة",
   "edit_save_failed": "فشل حفظ التعديل.",
   "sending_taking_longer": "الإرسال يستغرق وقتًا أطول…",
@@ -521,7 +522,10 @@
   "group_info_member_role_update_failed": "فشل تحديث دور العضو",
   "group_info_details_updated": "تم تحديث تفاصيل المجموعة",
   "group_info_details_update_failed": "فشل تحديث تفاصيل المجموعة",
+  "group_info_details_update_queued": "تم الحفظ — ستتم إعادة الإرسال عند إعادة الاتصال",
   "group_info_invite_resend_failed": "فشل إعادة إرسال الدعوة",
+  "group_info_invite_revoked": "تم إلغاء دعوة {username}",
+  "group_info_invite_revoke_failed": "فشل إلغاء الدعوة",
   "group_info_invite_sent": "تم إرسال الدعوة إلى {username}",
   "@group_info_invite_sent": {
     "placeholders": {
@@ -567,6 +571,8 @@
   "btn_save": "حفظ",
   "group_member_sending": "جارٍ الإرسال...",
   "group_member_resend": "إعادة الإرسال",
+  "group_member_revoke": "إلغاء",
+  "group_member_revoking": "جارٍ الإلغاء...",
   "group_member_manage_role": "إدارة الدور",
   "group_role_admin": "مشرف",
   "group_role_writer": "كاتب",
@@ -644,6 +650,8 @@
   "invite_status_needs_resend": "تحتاج إلى إعادة إرسال",
   "invite_status_cannot_send": "تعذر الإرسال",
   "invite_status_joined": "انضم",
+  "invite_status_revoked": "أُلغيت",
+  "invite_status_declined": "رُفضت",
   "invite_status_unknown": "الدعوة غير معروفة",
   "invite_cannot_send_missing_secure_key_detail": "لا نملك المعلومات الآمنة المطلوبة لدعوة هذا الصديق. اطلب منه فتح التطبيق أو إعادة تثبيته، ثم حاول مرة أخرى.",
   "invite_cannot_send_group_key_missing_detail": "تفتقد هذه المجموعة مفتاح الدعوة الآمن. أعد فتح التطبيق وحاول مرة أخرى.",
@@ -927,7 +935,7 @@
     }
   },
   "share_summary_nothing": "لم تتم مشاركة أي شيء.",
-  "share_summary_skipped_gifs": "{count, plural, =1{تم تخطي ملف GIF كبير واحد.} =2{تم تخطي ملفي GIF كبيرين.} few{تم تخطي {count} ملفات GIF كبيرة.} many{تم تخطي {count} ملف GIF كبيرًا.} other{تم تخطي {count} ملف GIF كبير.}}",
+  "share_summary_skipped_gifs": "{count, plural, =1{تم تخطي مرفق كبير واحد.} =2{تم تخطي مرفقين كبيرين.} few{تم تخطي {count} مرفقات كبيرة.} many{تم تخطي {count} مرفقًا كبيرًا.} other{تم تخطي {count} مرفق كبير.}}",
   "@share_summary_skipped_gifs": {
     "placeholders": {
       "count": {
@@ -1189,6 +1197,9 @@
   },
   "group_invite_no_longer_available": "لم تعد الدعوة متاحة",
   "group_invite_expired": "انتهت صلاحية الدعوة",
+  "group_invite_expired_ask_resend": "انتهت صلاحية هذه الدعوة. اطلب من مشرف المجموعة إرسال دعوة جديدة.",
+  "group_joining_in_progress": "جارٍ الانضمام…",
+  "group_join_failed_retry": "تعذّر الانضمام — أعد المحاولة",
   "group_invite_revoked": "تم إلغاء الدعوة",
   "group_invite_already_used": "تم استخدام الدعوة بالفعل",
   "group_invite_wrong_identity": "الدعوة لهوية أخرى",

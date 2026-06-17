@@ -657,8 +657,20 @@ class _FeedWiredState extends State<FeedWired>
 
       var pendingInviteCount = 0;
       if (pendingInviteRepo != null) {
-        pendingInviteCount =
-            (await pendingInviteRepo.getPendingInvites()).length;
+        final invites = await pendingInviteRepo.getPendingInvites();
+        // Mirror the list surfaces' B2 materialized filter so the badge equals
+        // the number of actionable (not-already-joined) invites rendered.
+        final groupRepo = widget.groupRepository;
+        if (groupRepo != null) {
+          final joinedGroupIds = (await groupRepo.getActiveGroups())
+              .map((group) => group.id)
+              .toSet();
+          pendingInviteCount = invites
+              .where((invite) => !joinedGroupIds.contains(invite.groupId))
+              .length;
+        } else {
+          pendingInviteCount = invites.length;
+        }
       }
 
       if (!mounted || requestId != _orbitBadgeLoadRequestId) {

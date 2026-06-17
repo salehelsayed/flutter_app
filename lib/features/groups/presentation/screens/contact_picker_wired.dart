@@ -11,8 +11,11 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/core/config/forward_rotate_on_add_flag.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
@@ -434,6 +437,21 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       } catch (e) {
         membersAddedPublishFailed = true;
       }
+      if (!membersAddedPublishFailed) {
+        // Anchor the local membership watermark to the canonical members_added
+        // (eventAt, eventId) pair we just published — the per-member
+        // addGroupMember calls advanced it to their (earlier) joinedAt with no
+        // id, so a concurrent remote event would otherwise tie-break against a
+        // stale, id-less watermark. publishedAt is computed after the add loop,
+        // so it is strictly newer and advances the watermark. [sourceEventId]
+        // is already the canonical `members_added:<gid>:<actor>:<µs>` form.
+        await recordGroupMembershipEventWatermark(
+          groupRepo: widget.groupRepo,
+          groupId: widget.groupId,
+          eventAt: publishedAt,
+          eventId: sourceEventId,
+        );
+      }
       final keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
       if (existingRecipientPeerIds.isNotEmpty && keyInfo != null) {
         try {
@@ -532,6 +550,46 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           'addedCount': addedMembers.length,
         },
       );
+
+      // B5 (R4): forward rotation on add (opt-in, default-OFF). After the BATCH
+      // add + config-sync + members_added broadcast succeeded, rotate the group
+      // key ONCE so the new members cannot read prior-epoch live traffic. This is
+      // the batch-correct placement: the per-member addGroupMember rotation is
+      // skipped here because this path uses syncBridgeConfig:false. Best-effort —
+      // never reverts the already-added+synced members; creator-gated inside
+      // rotateAndDistributeGroupKey, so a non-creator adder is a safe no-op.
+      if (kForwardRotateOnAddEnabled && !membersAddedPublishFailed) {
+        try {
+          final rotationOutcome = await rotateAndDistributeGroupKey(
+            bridge: widget.bridge,
+            groupRepo: widget.groupRepo,
+            groupId: widget.groupId,
+            selfPeerId: identity.peerId,
+            senderPublicKey: identity.publicKey,
+            senderPrivateKey: identity.privateKey,
+            senderUsername: identity.username,
+            sendP2PMessage: (peerId, message) =>
+                widget.p2pService.sendMessage(peerId, message),
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_PICKER_FL_FORWARD_ROTATION',
+            details: {
+              'groupId': widget.groupId.length > 8
+                  ? widget.groupId.substring(0, 8)
+                  : widget.groupId,
+              'rotated': rotationOutcome.rotated,
+              'fullyDistributed': rotationOutcome.fullyDistributed,
+            },
+          );
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_PICKER_FL_FORWARD_ROTATION_ERROR',
+            details: {'groupId': widget.groupId, 'error': e.toString()},
+          );
+        }
+      }
 
       // 4. Send individual encrypted P2P invites in parallel
       GroupInviteBatchResult? inviteBatchResult;

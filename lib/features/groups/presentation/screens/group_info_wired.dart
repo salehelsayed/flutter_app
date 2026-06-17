@@ -18,6 +18,8 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
@@ -30,6 +32,7 @@ import 'package:flutter_app/features/groups/application/leave_group_use_case.dar
 import 'package:flutter_app/features/groups/application/refresh_pending_group_invites_for_metadata_change_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/revoke_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -38,8 +41,14 @@ import 'package:flutter_app/features/groups/application/update_group_member_role
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/core/config/multi_device_sync_flag.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/groups/application/group_member_device_safety.dart';
+import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
+import 'package:flutter_app/features/groups/domain/repositories/pending_sibling_device_repository.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/pending_sibling_device_prompt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -97,8 +106,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   Map<String, GroupInviteDeliveryStatus> _inviteStatusesByPeerId = {};
   Map<String, GroupInviteDeliveryAttempt> _inviteAttemptsByPeerId = {};
   final Set<String> _resendingInvitePeerIds = {};
+  final Set<String> _revokingInvitePeerIds = {};
   Map<String, GroupMemberIdentitySafety> _memberSafetyByPeerId = {};
   GroupSecurityStatusViewState? _securityStatus;
+  List<PendingSiblingDeviceView> _pendingSiblingDeviceViews = const [];
   String? _ownPeerId;
   bool _didMutateGroup = false;
   bool _isUpdatingMute = false;
@@ -151,6 +162,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             ? 1
             : 0,
       );
+      final pendingSiblingDeviceViews = await _loadPendingSiblingDevices(members);
       if (!mounted) return;
       setState(() {
         if (group != null) {
@@ -164,6 +176,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         _inviteAttemptsByPeerId = inviteDeliveryInfo.attemptsByPeerId;
         _memberSafetyByPeerId = memberSafetyByPeerId;
         _securityStatus = securityStatus;
+        _pendingSiblingDeviceViews = pendingSiblingDeviceViews;
       });
     } catch (e) {
       emitFlowEvent(
@@ -351,6 +364,72 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       }
     }
     return memberSafetyByPeerId;
+  }
+
+  // R2: pending sibling devices awaiting an explicit user trust decision.
+  Future<List<PendingSiblingDeviceView>> _loadPendingSiblingDevices(
+    List<GroupMember> members,
+  ) async {
+    if (!kMultiDeviceSyncEnabled) {
+      return const [];
+    }
+    final repo = widget.groupRepo;
+    if (repo is! PendingSiblingDeviceRepository) {
+      return const [];
+    }
+    try {
+      final pending = await (repo as PendingSiblingDeviceRepository)
+          .getPendingSiblingDevicesForGroup(widget.group.id);
+      return pending.map((device) {
+        final member = members
+            .where((m) => m.peerId == device.memberPeerId)
+            .cast<GroupMember?>()
+            .firstWhere((m) => m != null, orElse: () => null);
+        final fingerprint =
+            '${device.deviceSigningPublicKey}:'
+            '${device.mlKemPublicKey ?? ''}:'
+            '${device.keyPackageId ?? ''}';
+        final safetyNumber = ContactSafetyNumber.build(
+          peerId: device.memberPeerId,
+          publicKey: device.verifiedAccountSigningPublicKey,
+          mlKemPublicKey: device.mlKemPublicKey,
+          deviceFingerprints: [fingerprint],
+        );
+        return PendingSiblingDeviceView(
+          device: device,
+          memberLabel: member?.username ?? device.memberPeerId,
+          safetyNumber: safetyNumber,
+        );
+      }).toList();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INFO_FL_PENDING_SIBLING_LOAD_ERROR',
+        details: {'error': e.toString()},
+      );
+      return const [];
+    }
+  }
+
+  Future<void> _onVerifyPendingSiblingDevice(PendingSiblingDevice device) async {
+    final repo = widget.groupRepo;
+    if (repo is! PendingSiblingDeviceRepository) return;
+    await verifyAndAdmitPendingSiblingDevice(
+      pendingRepo: repo as PendingSiblingDeviceRepository,
+      groupRepo: widget.groupRepo,
+      pending: device,
+    );
+    await _loadGroupInfo();
+  }
+
+  Future<void> _onRejectPendingSiblingDevice(PendingSiblingDevice device) async {
+    final repo = widget.groupRepo;
+    if (repo is! PendingSiblingDeviceRepository) return;
+    await rejectPendingSiblingDevice(
+      pendingRepo: repo as PendingSiblingDeviceRepository,
+      pending: device,
+    );
+    await _loadGroupInfo();
   }
 
   Future<void> _onLeave() async {
@@ -1218,7 +1297,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     final nextRole = member.role == MemberRole.admin
         ? MemberRole.writer
         : MemberRole.admin;
-    final changedAt = DateTime.now().toUtc();
     final l10n = AppLocalizations.of(context)!;
     final noIdentityMessage = l10n.group_info_no_identity;
     final memberNotFoundMessage = l10n.group_info_member_not_found;
@@ -1235,9 +1313,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
       // Pass no explicit eventAt: the use case mints monotonically from the
       // wall clock so a clock-skewed watermark can never self-block this
-      // legitimate local toggle. The audit/timeline below still carry
-      // [changedAt]; reconciling those into one canonical event id is S3's job.
-      await updateGroupMemberRole(
+      // legitimate local toggle. It returns the canonical (eventAt, eventId)
+      // pair it recorded in the local watermark; the audit/timeline below
+      // publish the SAME pair so a concurrent remote toggle tie-breaks against
+      // the same id on every device.
+      final minted = await updateGroupMemberRole(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
         groupId: _group.id,
@@ -1245,6 +1325,12 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         role: nextRole,
         selfPeerId: identity.peerId,
       );
+      if (minted == null) {
+        // No-op: the target already holds [nextRole]; nothing to broadcast.
+        await _loadGroupInfo();
+        return;
+      }
+      final changedAt = minted.eventAt;
 
       final group = await widget.groupRepo.getGroup(_group.id);
       final updatedMember = await widget.groupRepo.getMember(
@@ -1265,8 +1351,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         preferredTransportPeerId: _currentSenderDeviceId,
         senderPublicKey: identity.publicKey,
       );
-      final sourceEventId =
-          'member_role_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
+      final sourceEventId = minted.eventId;
       final sysPayload = await signGroupSystemTransitionPayload(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
@@ -1517,12 +1602,18 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     final preEditGroup = _group;
     var metadataPersisted = false;
     String? committedTimelineMessageId;
+    // Captured once the signed broadcast is built, so a post-persist failure can
+    // durably enqueue it for retry instead of reverting (S2b).
+    String? committedSysText;
+    var committedRecipientPeerIds = const <String>[];
+    String? committedSourceMessageId;
     final l10n = AppLocalizations.of(context)!;
     final noIdentityMessage = l10n.group_info_no_identity;
     final uploadPhotoFailedMessage = l10n.group_info_upload_photo_failed;
     final signMetadataFailedMessage = l10n.group_info_sign_metadata_failed;
     final recoveryWaitMessage = l10n.group_edit_recovery_waiting;
     final detailsUpdateFailedMessage = l10n.group_info_details_update_failed;
+    final detailsUpdateQueuedMessage = l10n.group_info_details_update_queued;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
@@ -1701,6 +1792,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
       final sourceMessageId =
           'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
+      final recipientPeerIds = signedMembers
+          .where((member) => member.peerId != identity.peerId)
+          .map((member) => member.peerId)
+          .toList();
+      // Capture the signed broadcast before publishing so the catch can durably
+      // enqueue it for retry if it fails to leave the device.
+      committedSysText = signedSysText;
+      committedSourceMessageId = sourceMessageId;
+      committedRecipientPeerIds = recipientPeerIds;
+
       final publishResult = await callGroupPublish(
         widget.bridge,
         groupId: _group.id,
@@ -1728,10 +1829,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         );
       }
 
-      final recipientPeerIds = signedMembers
-          .where((member) => member.peerId != identity.peerId)
-          .map((member) => member.peerId)
-          .toList();
       if (recipientPeerIds.isNotEmpty) {
         final inboxPayload = jsonEncode({
           'groupId': _group.id,
@@ -1809,8 +1906,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       );
     } catch (e) {
       // If the metadata was persisted locally but the broadcast did not
-      // succeed (hard throw OR soft publish failure), roll the optimistic edit
-      // back so we never report success while peers received nothing.
+      // succeed (hard throw OR soft publish failure), either durably enqueue
+      // the signed broadcast for retry (S2b, when wired) keeping the local edit,
+      // or roll the optimistic edit back (S2a fallback) — never report success
+      // while peers received nothing.
+      var enqueuedForRetry = false;
       if (metadataPersisted) {
         final persisted = await widget.groupRepo.getGroup(_group.id);
         final persistedMetadataAt = persisted?.lastMetadataEventAt;
@@ -1819,21 +1919,48 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         final newerRemoteLanded =
             persistedMetadataAt != null &&
             persistedMetadataAt.isAfter(changedAt);
-        if (persisted != null && !newerRemoteLanded) {
-          // Restores the GroupModel fields (name/description/avatar*). The
-          // on-disk avatar file committed in beforePersist is NOT restored
-          // here; that residual only affects an avatar-changing edit that also
-          // fails to broadcast and is reconciled on the next successful sync.
-          await widget.groupRepo.updateGroup(preEditGroup);
-        }
-        final timelineId = committedTimelineMessageId;
-        if (timelineId != null) {
-          await widget.msgRepo?.deleteMessage(timelineId);
+        final signedBroadcast = committedSysText;
+
+        if (!newerRemoteLanded &&
+            signedBroadcast != null &&
+            hasGroupPendingBroadcastEnqueueSink) {
+          // S2b: keep the local edit and queue the already-signed broadcast for
+          // a re-push on the next rejoin/foreground. Re-uses the original
+          // [changedAt] so a retry can't resurrect stale state.
+          final now = DateTime.now().toUtc();
+          await enqueueGroupPendingBroadcast(
+            GroupPendingBroadcast(
+              id: 'pending_group_broadcast:${_group.id}:$committedSourceMessageId',
+              groupId: _group.id,
+              kind: 'group_metadata_updated',
+              sysText: signedBroadcast,
+              recipientPeerIds: committedRecipientPeerIds,
+              eventAt: changedAt,
+              sourceMessageId: committedSourceMessageId,
+              createdAt: now,
+              updatedAt: now,
+            ),
+          );
+          enqueuedForRetry = true;
+        } else {
+          if (persisted != null && !newerRemoteLanded) {
+            // Restores the GroupModel fields (name/description/avatar*). The
+            // on-disk avatar file committed in beforePersist is NOT restored
+            // here; that residual only affects an avatar-changing edit that also
+            // fails to broadcast and is reconciled on the next successful sync.
+            await widget.groupRepo.updateGroup(preEditGroup);
+          }
+          final timelineId = committedTimelineMessageId;
+          if (timelineId != null) {
+            await widget.msgRepo?.deleteMessage(timelineId);
+          }
         }
       }
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_INFO_FL_METADATA_UPDATE_ERROR',
+        event: enqueuedForRetry
+            ? 'GROUP_INFO_FL_METADATA_UPDATE_QUEUED'
+            : 'GROUP_INFO_FL_METADATA_UPDATE_ERROR',
         details: {
           'groupId': _group.id.length > 8
               ? _group.id.substring(0, 8)
@@ -1842,11 +1969,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError
+      final message = enqueuedForRetry
+          ? detailsUpdateQueuedMessage
+          : e is StateError
           ? e.message == groupRecoveryPendingError
                 ? recoveryWaitMessage
                 : e.message
-          : AppLocalizations.of(context)!.group_info_details_update_failed;
+          : detailsUpdateFailedMessage;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -1971,8 +2100,98 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         return groupInviteCannotSendSnackBarMessage(l10n, lastError);
       case GroupInviteDeliveryStatus.joined:
         return l10n.group_info_invite_joined(name);
+      case GroupInviteDeliveryStatus.revoked:
+      case GroupInviteDeliveryStatus.declined:
       case GroupInviteDeliveryStatus.unknown:
         return l10n.group_info_invite_unknown;
+    }
+  }
+
+  Future<void> _onRevokeInvite(GroupMember member) async {
+    final repo = widget.inviteDeliveryAttemptRepo;
+    if (repo == null || _revokingInvitePeerIds.contains(member.peerId)) {
+      return;
+    }
+
+    // Capture l10n synchronously before any await so it can be used after the
+    // identity load without an across-async-gap context access.
+    final l10n = AppLocalizations.of(context)!;
+    setState(() => _revokingInvitePeerIds.add(member.peerId));
+    try {
+      final identity = await widget.identityRepo.loadIdentity();
+      if (identity == null) {
+        throw StateError(l10n.group_info_no_identity);
+      }
+      // HOLE-4: the receiver only deletes its live pending invite when the
+      // revocation carries the exact invite id it was sent. That id is
+      // persisted on the delivery-attempt row at send time.
+      final inviteId = _inviteAttemptsByPeerId[member.peerId]?.inviteId;
+      final result = await sendGroupInviteRevocation(
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        inviteId: inviteId ?? '',
+        groupId: _group.id,
+        recipientPeerId: member.peerId,
+        recipientMlKemPublicKey: member.mlKemPublicKey,
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        groupConfig: _buildGroupConfig(_group, _members),
+      );
+      if (result == SendGroupInviteRevocationResult.success) {
+        await repo.markRevoked(groupId: _group.id, peerId: member.peerId);
+      }
+      await _loadGroupInfo();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_revokeInviteMessage(member, result))),
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INFO_FL_REVOKE_INVITE_ERROR',
+        details: {
+          'groupId': _group.id.length > 8
+              ? _group.id.substring(0, 8)
+              : _group.id,
+          'peerId': member.peerId.length > 10
+              ? member.peerId.substring(0, 10)
+              : member.peerId,
+          'error': e.toString(),
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.group_info_invite_revoke_failed,
+          ),
+        ),
+      );
+      await _loadGroupInfo();
+    } finally {
+      if (mounted) {
+        setState(() => _revokingInvitePeerIds.remove(member.peerId));
+      } else {
+        _revokingInvitePeerIds.remove(member.peerId);
+      }
+    }
+  }
+
+  String _revokeInviteMessage(
+    GroupMember member,
+    SendGroupInviteRevocationResult result,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final name = _displayName(member);
+    switch (result) {
+      case SendGroupInviteRevocationResult.success:
+        return l10n.group_info_invite_revoked(name);
+      case SendGroupInviteRevocationResult.nodeNotRunning:
+      case SendGroupInviteRevocationResult.encryptionRequired:
+      case SendGroupInviteRevocationResult.invalidPayload:
+      case SendGroupInviteRevocationResult.sendFailed:
+        return l10n.group_info_invite_revoke_failed;
     }
   }
 
@@ -1993,8 +2212,12 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       inviteStatusesByPeerId: _inviteStatusesByPeerId,
       inviteAttemptsByPeerId: _inviteAttemptsByPeerId,
       resendingInvitePeerIds: _resendingInvitePeerIds,
+      revokingInvitePeerIds: _revokingInvitePeerIds,
       memberSafetyByPeerId: _memberSafetyByPeerId,
       securityStatus: _securityStatus,
+      pendingSiblingDevices: _pendingSiblingDeviceViews,
+      onVerifyPendingSiblingDevice: _onVerifyPendingSiblingDevice,
+      onRejectPendingSiblingDevice: _onRejectPendingSiblingDevice,
       isAdmin: isAdmin,
       ownPeerId: _ownPeerId,
       isMuted: _group.isMuted,
@@ -2012,6 +2235,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       onAddMember: canManageGroup ? _onAddMember : null,
       onResendInvite: canManageGroup && widget.inviteDeliveryAttemptRepo != null
           ? _onResendInvite
+          : null,
+      onRevokeInvite: canManageGroup && widget.inviteDeliveryAttemptRepo != null
+          ? _onRevokeInvite
           : null,
       backgroundPreference: widget.backgroundPreference,
     );

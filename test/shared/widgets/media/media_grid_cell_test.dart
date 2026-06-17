@@ -812,7 +812,13 @@ void main() {
         await pumpCell(attachment);
         await tester.pump();
 
-        expect(find.text('Media unavailable'), findsOneWidget);
+        // Tamper (integrity_failed) shows the distinct "couldn't verify" label;
+        // every other unavailable case shows the generic one.
+        final expectedLabel =
+            attachment.downloadStatus == kMediaDownloadStatusIntegrityFailed
+            ? "Couldn't verify this media"
+            : 'Media unavailable';
+        expect(find.text(expectedLabel), findsOneWidget);
         expect(find.byType(MediaThumbnailImage), findsNothing);
         expect(find.byType(VideoThumbnailOverlay), findsNothing);
         expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);

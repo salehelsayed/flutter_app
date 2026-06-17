@@ -1928,4 +1928,113 @@ void main() {
       },
     );
   });
+
+  group('Phase 3 — bounded per-group rejoin retry', () {
+    GroupMember adminMember(String groupId) => GroupMember(
+      groupId: groupId,
+      peerId: 'alice',
+      username: 'Alice',
+      role: MemberRole.admin,
+      publicKey: 'pk-alice',
+      joinedAt: DateTime.now().toUtc(),
+    );
+    GroupKeyInfo keyFor(String groupId) => GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: 1,
+      encryptedKey: 'key-base64',
+      createdAt: DateTime.now().toUtc(),
+    );
+
+    test('a failed rejoin records backoff and is skipped (deferred) next pass '
+        'without blocking the node-wide ack', () async {
+      bridge = _TimeoutCommandBridge('group:join');
+      await seedGroup(
+        groupId: 'g-bk',
+        name: 'Backoff',
+        members: [adminMember('g-bk')],
+        keyInfo: keyFor('g-bk'),
+      );
+
+      final first = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+      );
+      expect(first.perGroupOutcomes['g-bk'], RejoinOutcome.error);
+      final states = await groupRepo.loadGroupRejoinStates();
+      expect(states['g-bk']!.attemptCount, 1);
+      expect(
+        states['g-bk']!.nextEligibleAt!.isAfter(DateTime.now().toUtc()),
+        isTrue,
+      );
+
+      // Immediately re-run: still inside the backoff window → deferred.
+      final second = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+      );
+      expect(second.perGroupOutcomes['g-bk'], RejoinOutcome.deferred);
+      expect(second.deferredCount, 1);
+      expect(second.errorCount, 0);
+      // A deferred (backed-off) group does NOT block the ack.
+      expect(second.canAcknowledgeGroupRecovery, isTrue);
+    });
+
+    test('a group exceeding the rejoin attempt cap emits '
+        'GROUP_REJOIN_PERMANENTLY_STUCK', () async {
+      bridge = _TimeoutCommandBridge('group:join');
+      await seedGroup(
+        groupId: 'g-stuck',
+        name: 'Stuck',
+        members: [adminMember('g-stuck')],
+        keyInfo: keyFor('g-stuck'),
+      );
+      // Pre-seed 9 prior failures, each eligible now (past window), so this
+      // pass is attempt 10 and trips the cap.
+      for (var i = 0; i < 9; i++) {
+        await groupRepo.recordGroupRejoinFailure(
+          'g-stuck',
+          nextEligibleAt: DateTime.now().toUtc().subtract(
+            const Duration(days: 1),
+          ),
+        );
+      }
+
+      final events = await captureFlowEvents(() async {
+        await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+      });
+      expect(
+        events.any((e) => e['event'] == 'GROUP_REJOIN_PERMANENTLY_STUCK'),
+        isTrue,
+      );
+      expect(
+        (await groupRepo.loadGroupRejoinStates())['g-stuck']!.attemptCount,
+        10,
+      );
+    });
+
+    test('a successful rejoin clears the backoff state', () async {
+      await seedGroup(
+        groupId: 'g-ok',
+        name: 'OK',
+        members: [adminMember('g-ok')],
+        keyInfo: keyFor('g-ok'),
+      );
+      // A prior failure, now eligible (past window) so it is attempted again.
+      await groupRepo.recordGroupRejoinFailure(
+        'g-ok',
+        nextEligibleAt: DateTime.now().toUtc().subtract(
+          const Duration(days: 1),
+        ),
+      );
+      expect((await groupRepo.loadGroupRejoinStates())['g-ok'], isNotNull);
+
+      // The default bridge joins successfully → state cleared.
+      final result = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+      );
+      expect(result.perGroupOutcomes['g-ok'], RejoinOutcome.joined);
+      expect((await groupRepo.loadGroupRejoinStates())['g-ok'], isNull);
+    });
+  });
 }

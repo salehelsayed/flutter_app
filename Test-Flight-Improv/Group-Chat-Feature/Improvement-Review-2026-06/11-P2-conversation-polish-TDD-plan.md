@@ -4,7 +4,9 @@
 
 # TDD plan — close 3 of the 7 in-conversation polish seams (items 3, 5, 2)
 
-**Status: PLAN ONLY (2026-06-16)** · Branch base: `124-harness-refactor` · **No DB migration, no wire-format change, no Go build.** Dart-only, presentation-layer.
+**Status: READY TO IMPLEMENT — re-verified 2026-06-17** · Branch base: `124-harness-refactor` · **No DB migration, no wire-format change, no Go build.** Dart-only, presentation-layer.
+
+> **Re-verification (2026-06-17, 5-agent fan-out against the current dirty tree):** All **3 seams (items 3, 5, 2) are still present** and the fixes remain sound — start implementing. Two things changed since the 2026-06-16 read: (1) **line anchors drifted** — `group_conversation_wired.dart` +~2–27 lines, `group_conversation_wired_test.dart` +~110 lines (commit `b63c19d5` Finding-02 tests), `group_conversation_screen.dart` +~3 lines (uncommitted Finding-05 `send_failed` work); `group_list_screen.dart` is **unchanged** (anchors exact). Corrected anchors are inline below. (2) **The pre-flight regression worry was a false alarm** — see the corrected Pre-flight step 2 and Phase A RED step 2.
 
 ## Why this scope (the critical read)
 
@@ -22,6 +24,36 @@ Finding 11 lists 7 seams. A 14-agent verify-then-adversarially-refute pass (2026
 
 All HEAD line numbers below were read on 2026-06-16; treat them as anchors and re-confirm before editing.
 
+**Corrected anchors (read 2026-06-17 — supersede the inline 2026-06-16 numbers):**
+
+| Anchor (plan ref) | 2026-06-16 | 2026-06-17 (current) |
+|---|---|---|
+| `group_conversation_screen.dart` `_formatTime` (AM/PM literal) | `:868-876` (lit `:874`) | `:871-879` (lit `:877`) |
+| `group_conversation_screen.dart` `_formatTime` call site | `:589` | `:592` |
+| `group_list_screen.dart` `_formatTime` / call site / `_buildGroupCard` | `:307-315` / `:239` / `:226` | **unchanged** `:307-315` / `:239` / `:226` |
+| `conversation_screen.dart` 1:1 sibling pattern | `:823-827` | `:823-831` |
+| `group_conversation_wired.dart` `_restoreScrollAfterMessageUpdate` | `:3363` | `:3389-3404` |
+| `..._wired.dart` text optimistic (`showOptimisticMessage`/`optimisticDisplayed=true`) | `:1883` | `:1891` (true at `:1900`) |
+| `..._wired.dart` voice optimistic setState | `:3665-3670` | `:3691-3696` |
+| `..._wired.dart` post-send text upsert (do NOT scroll) | `:2071` | `:2088-2093` |
+| `..._wired.dart` post-send voice upsert (do NOT scroll) | `:3770` | `:3797-3801` |
+| `..._wired.dart` `_loadMessages` raw `_messages = messages` (the bug) | `:1253` | `:1251` |
+| `..._wired.dart` `_upsertMessage` orders timeline | `:3247` | `:3265-3273` (orders at `:3273`) |
+| `..._wired.dart` `orderGroupMessagesForTimeline` import | — | present `:59` (no new import) |
+| `group_conversation_screen.dart` `_buildHighlightedMessageCue` | `:695` | `:698-742` |
+| `group_conversation_screen.dart` highlight keys (shell / cue) | `:707` / `:718` | `:710` / `:721` |
+| `group_conversation_screen.dart` `.reversed` display build / `reverse: true` | `:692` / `:537-540` | `:695` / `:540` |
+| `..._wired.dart` `_loadMessages` post-frame (`_emitNotificationTapTimingIfNeeded`) | `:1260-1262` | `:1258-1260` |
+| `..._wired.dart` screen construction (where `highlightAnchorKey` is passed) | `:4684` | `:4723` |
+| `..._wired_test.dart` `buildWidget` factory / hard-coded `Locale('en')` | `:926-989` / `:954` | **unchanged** `:926-989` / `:954` |
+| `..._wired_test.dart` GroupMessage fixture | `:4562-4573` | `:4676-4684` |
+| `..._wired_test.dart` scroll-offset assertion pattern | `:4581-4607` | `:4693-4703` |
+| `..._wired_test.dart` "incoming preserves scroll offset" + `getMessagesPageCalls == 1` | `:4555` / `:4608` | `:4668` / `:4720` |
+| `..._wired_test.dart` existing highlight tests (cue-exists, mask item 2) | `:4380` / `:4448` | `:4488` / `:4560` |
+| `conversation_screen_test.dart` locale pump / `ar` pump | `:66-69` / `:1277` | **unchanged** `:66-69` / `:1277` |
+
+Confirmed absent (as the plan assumes): `test/features/groups/domain/utils/group_message_ordering_test.dart` and the `domain/utils` test dir do not exist; no existing scroll-to-highlighted logic; `intl: any` present `pubspec.yaml:35`; `supportedLocales == [ar, de, en]` `app_localizations.dart:97-101`. Note both group screens still **lack** the `import 'package:intl/intl.dart' as intl;` — add it in GREEN (Phase A already calls for this).
+
 ## Pre-flight (do once, before any code)
 
 1. **Confirm green baseline** for the suites this plan touches:
@@ -29,8 +61,9 @@ All HEAD line numbers below were read on 2026-06-16; treat them as anchors and r
    - `flutter test test/features/groups/presentation/group_conversation_screen_test.dart`
    - `flutter test test/features/groups/presentation/group_list_screen_test.dart test/features/groups/presentation/group_card_test.dart`
    - `flutter test test/features/conversation/presentation/widgets/letter_card_test.dart`
-2. **Regression-surface grep** (item 3 can break tests asserting literal `AM`/`PM`):
-   `GRAPH_OK=1 grep -rnE "'(AM|PM)'|[0-9]:[0-9][0-9] (AM|PM)" test/features/groups test/features/conversation` — reconcile any hit during GREEN.
+2. **Regression-surface grep** (run it, but the risk is smaller than it looks):
+   `GRAPH_OK=1 grep -rnE "'(AM|PM)'|[0-9]:[0-9][0-9] (AM|PM)" test/features/groups test/features/conversation`
+   **2026-06-17 finding:** the 13 hits are **all in widget tests that pass a *pre-formatted* time string as a prop** — `group_card_test.dart:69` / `group_card_bidi_test.dart:39` feed `lastMessageTime: '9:30 AM'` (`GroupCard.lastMessageTime` is `final String?`), and `letter_card_test.dart` (×11) feeds `time: '3:30 PM'` (`LetterCard.time` is `final String`). **None of them invoke `_formatTime`**, so making `_formatTime` locale-aware **does not touch them** — no reconciliation needed. (`LetterCard` is the 1:1 row, whose screen-level `_formatTime` is already localized anyway.) The real test surface is the *screen* level — see Phase A RED.
 3. `intl` is already a direct dependency (`pubspec.yaml: intl: any`). The 1:1 sibling proves the harness renders `DateFormat.jm` under non-en locales (`test/.../conversation_screen_test.dart:1277` pumps `Locale('ar')`).
 
 **Recommended landing order: 3 → 5 → 2** (smallest/safest first). Each item is an independent commit.
@@ -56,7 +89,7 @@ Time-of-day rendering in both group screens follows the active locale: `de` → 
    - `Locale('de')` → `expect(find.textContaining('14:05'), findsOneWidget); expect(find.textContaining('PM'), findsNothing);`
    - `Locale('en')` → `expect(find.textContaining('2:05'), findsOneWidget);` and the `PM` marker present.
    - `Locale('ar')` → assert the rendered time string contains an Eastern-Arabic digit (e.g. `expect(find.textContaining('١'), findsWidgets)` or compare against `intl.DateFormat.jm('ar').format(local)` computed in-test). Keep this assertion tolerant (compare to the live `DateFormat` output) so it can't rot on ICU data updates.
-2. **`test/features/groups/presentation/group_card_test.dart`** (or `group_list_screen_test.dart`) — mirror the `de` 24-hour + `en` cases for `GroupCard.lastMessageTime`.
+2. **`test/features/groups/presentation/group_list_screen_test.dart`** — mirror the `de` 24-hour + `en` cases at the **screen** level (pump `GroupListScreen` with a group whose `lastMsg.timestamp` is a fixed local `DateTime`, assert the rendered `GroupCard` text). **Not `group_card_test.dart`** — `GroupCard.lastMessageTime` is a pre-formatted `String?` prop, so the formatting under test lives in `group_list_screen._formatTime`, not in the card. Test where `_formatTime` actually runs.
 
 These fail today: both `_formatTime` bodies emit literal `'AM'/'PM'` (`group_conversation_screen.dart:874`, `group_list_screen.dart:313`).
 

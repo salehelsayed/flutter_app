@@ -962,6 +962,43 @@ void main() {
       expect(await groupRepo.getMember('group-1', 'peer-writer'), isNull);
     },
   );
+
+  test(
+    'ROLE-SEND-SIDE returns and persists the canonical (eventAt, eventId) pair',
+    () async {
+      final minted = await updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-writer',
+        role: MemberRole.admin,
+        selfPeerId: 'peer-admin',
+      );
+
+      expect(minted, isNotNull);
+      final expectedId =
+          'member_role_updated:group-1:peer-admin:'
+          '${minted!.eventAt.microsecondsSinceEpoch}';
+      expect(minted.eventId, expectedId);
+
+      // The local watermark stores the SAME pair that the caller will publish.
+      final group = await groupRepo.getGroup('group-1');
+      expect(group!.lastMembershipEventAt, minted.eventAt);
+      expect(group.lastMembershipEventId, minted.eventId);
+    },
+  );
+
+  test('ROLE-SEND-SIDE returns null on a no-op', () async {
+    final minted = await updateGroupMemberRole(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-writer',
+      role: MemberRole.writer,
+      selfPeerId: 'peer-admin',
+    );
+    expect(minted, isNull);
+  });
 }
 
 class _BlockingUpdateConfigBridge extends FakeBridge {

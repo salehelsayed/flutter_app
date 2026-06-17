@@ -287,7 +287,13 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              l10n.media_unavailable,
+              // Tamper (integrity_failed) gets an honest "couldn't verify"
+              // label, distinct from the generic unavailable/terminal copy.
+              GroupMediaIntegrityPolicy.isQuarantinedGroupMedia(
+                    widget.attachment,
+                  )
+                  ? l10n.media_could_not_verify
+                  : l10n.media_unavailable,
               style: const TextStyle(
                 color: Color.fromRGBO(255, 255, 255, 0.66),
                 fontSize: 12,

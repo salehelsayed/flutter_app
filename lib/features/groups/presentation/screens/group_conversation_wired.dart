@@ -25,7 +25,6 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
-import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -1087,14 +1086,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     ImageQualityPreference? videoQualityPreference,
     bool ownsProcessingLifecycle = true,
   }) async {
-    if (_mimeFromPath(path) == 'image/gif') {
-      final fileSize = File(path).lengthSync();
-      if (fileSize > kMaxGifFileSize) {
-        _showGifTooLargeMessage();
-        throw const _RejectedPendingGroupMediaException();
-      }
-    }
-
+    // GIF is no longer special-cased on raw pre-compression bytes here; it
+    // flows through the same single send-time GroupMediaSizePolicy.validateSize
+    // gate as every other type, validated on final budget bytes (INV-SZ-2).
     final processor = widget.imageProcessor;
     final isVideo = processor?.isProcessableVideo(path) ?? false;
     if (isVideo && ownsProcessingLifecycle) {
@@ -1339,13 +1333,32 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         } catch (_) {
           downloaded = null;
         }
-        final fallbackList = _replaceAttachment(
-          _mediaMap[entry.key] ?? entry.value,
-          downloaded ??
+        MediaAttachment fallbackAttachment;
+        if (downloaded != null) {
+          fallbackAttachment = downloaded;
+        } else {
+          // downloadMedia persisted the authoritative status (a bounded
+          // `failed` while under budget, or the terminal `download_failed`
+          // once the budget is exhausted / on a relay not-found). Re-read it so
+          // the UI never downgrades a terminal row back to a retryable `failed`
+          // — that would re-arm recovery forever (INV-DL-1).
+          MediaAttachment? persisted;
+          try {
+            final rows = await widget.mediaAttachmentRepo!
+                .getAttachmentsForMessage(entry.key);
+            final matches = rows.where((a) => a.id == attachment.id);
+            persisted = matches.isEmpty ? null : matches.first;
+          } catch (_) {}
+          fallbackAttachment =
+              persisted ??
               retrying.copyWith(
                 clearLocalPath: true,
                 downloadStatus: kMediaDownloadStatusFailed,
-              ),
+              );
+        }
+        final fallbackList = _replaceAttachment(
+          _mediaMap[entry.key] ?? entry.value,
+          fallbackAttachment,
         );
         final resolved = await _resolveHydratedMediaForMessage(
           entry.key,
@@ -3012,7 +3025,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final statusIsRecoverable =
         attachment.downloadStatus == kMediaDownloadStatusPending ||
         attachment.downloadStatus == kMediaDownloadStatusDownloading ||
-        attachment.downloadStatus == kMediaDownloadStatusFailed;
+        // A transient `failed` row is recoverable only while under the bounded
+        // retry budget; the terminal `download_failed` is never re-recovered
+        // (INV-DL-1) — isRetryableDownloadFailure encodes both rules.
+        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
     return statusIsRecoverable && _hasRecoverableVisibleGroupMedia(attachment);
   }
 
@@ -3021,7 +3037,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           mime: attachment.mime,
           mediaType: attachment.mediaType,
         ).isValid &&
-        GroupMediaSizePolicy.validateAttachments([attachment]).isValid &&
+        // Recovery eligibility: permissive cross-type backstop, not per-type
+        // SEND caps — never refuse to recover already-received media that is
+        // within the cross-type maximum.
+        GroupMediaSizePolicy.validateAttachments(
+          [attachment],
+          perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
+        ).isValid &&
         GroupMediaIntegrityPolicy.hasRequiredVerificationMetadata(attachment);
   }
 
@@ -4399,7 +4421,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         event: 'GROUP_CONV_FL_MEDIA_REJECTED_INVALID_SIZE',
         details: {'reason': sizeValidation.reason},
       );
-      _showAttachmentTooLargeMessage();
+      // Route the type-aware reason to the right copy: the GIF-specific message
+      // for the GIF cap, otherwise the generic too-large message.
+      if (sizeValidation.reason == 'gif_size_exceeded') {
+        _showGifTooLargeMessage();
+      } else {
+        _showAttachmentTooLargeMessage();
+      }
       return false;
     }
     return true;

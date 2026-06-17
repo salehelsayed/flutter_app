@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_app/features/groups/application/admit_sibling_device_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -25,10 +24,11 @@ void main() {
   late FakeBridge bridge;
   late StreamController<Map<String, dynamic>> source;
   late GroupMessageListener listener;
-  late List<Map<String, Object?>> admitCalls;
+  late List<Map<String, Object?>> holdCalls;
 
-  Future<SiblingDeviceAdmissionOutcome> admitSpy({
-    required groupRepo,
+  // R2: the listener HOLDS account-signed announces pending a user decision; it
+  // never auto-admits. The spy records the hold seam invocation.
+  Future<void> holdSpy({
     required String groupId,
     required String memberPeerId,
     required String announcedDeviceId,
@@ -37,9 +37,8 @@ void main() {
     required String verifiedAccountSigningPublicKey,
     String? announcedMlKemPublicKey,
     String? announcedKeyPackageId,
-    String? announcedKeyPackagePublicMaterial,
   }) async {
-    admitCalls.add({
+    holdCalls.add({
       'memberPeerId': memberPeerId,
       'announcedDeviceId': announcedDeviceId,
       'announcedTransportPeerId': announcedTransportPeerId,
@@ -47,7 +46,6 @@ void main() {
       'verifiedAccountSigningPublicKey': verifiedAccountSigningPublicKey,
       'announcedMlKemPublicKey': announcedMlKemPublicKey,
     });
-    return SiblingDeviceAdmissionOutcome.admitted;
   }
 
   setUp(() async {
@@ -55,7 +53,7 @@ void main() {
     msgRepo = InMemoryGroupMessageRepository();
     bridge = FakeBridge();
     source = StreamController<Map<String, dynamic>>.broadcast();
-    admitCalls = [];
+    holdCalls = [];
 
     await groupRepo.saveGroup(
       GroupModel(
@@ -86,7 +84,7 @@ void main() {
       msgRepo: msgRepo,
       bridge: bridge,
       getSelfPeerId: () async => 'alice',
-      admitSiblingDevice: admitSpy,
+      holdPendingSiblingDevice: holdSpy,
     );
     listener.start(source.stream);
     addTearDown(() async {
@@ -118,7 +116,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 60));
   }
 
-  test('an account-signed device_announce admits the sibling device', () async {
+  test('an account-signed device_announce HOLDS the sibling device pending', () async {
     final signedEventAt = DateTime.utc(2026, 5, 1, 12);
     final signed = await signGroupSystemTransitionPayload(
       bridge: bridge,
@@ -142,8 +140,8 @@ void main() {
 
     await feed(signed, 'device-announce-1');
 
-    expect(admitCalls, hasLength(1));
-    final call = admitCalls.single;
+    expect(holdCalls, hasLength(1));
+    final call = holdCalls.single;
     expect(call['memberPeerId'], 'bob');
     expect(call['announcedDeviceId'], siblingDeviceId);
     expect(call['announcedMlKemPublicKey'], 'mlkem-bob-tablet');
@@ -156,12 +154,12 @@ void main() {
       {'__sys': 'device_announce', 'announcedDevice': announcedDevice()},
       'device-announce-unsigned',
     );
-    expect(admitCalls, isEmpty);
+    expect(holdCalls, isEmpty);
   });
 
   test(
     're-announce of an ALREADY-ROSTERED device still verifies (account-key '
-    'resolution) and re-arms admission',
+    'resolution) and re-holds',
     () async {
       // The announced device is already on bob's roster (a re-announce, e.g. on
       // a later restart). The signed audit is account-key-signed, so the
@@ -208,8 +206,8 @@ void main() {
 
       await feed(signed, 'device-announce-reannounce');
 
-      expect(admitCalls, hasLength(1));
-      expect(admitCalls.single['verifiedAccountSigningPublicKey'], bobAccountKey);
+      expect(holdCalls, hasLength(1));
+      expect(holdCalls.single['verifiedAccountSigningPublicKey'], bobAccountKey);
     },
   );
 }

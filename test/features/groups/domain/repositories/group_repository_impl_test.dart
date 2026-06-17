@@ -13,6 +13,7 @@ import 'package:flutter_app/core/database/migrations/057_group_member_permission
 import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
+import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -47,6 +48,7 @@ void main() {
     await runGroupMemberDeviceIdentitiesMigration(db);
     await runRemovedGroupMemberSnapshotsMigration(db);
     await runGroupKeyRotationDraftsMigration(db);
+    await runGroupsLastMembershipEventIdMigration(db);
     groupKeyStore = FakeSecureKeyStore();
     sharedPushKeyStore = FakeSecureKeyStore();
 

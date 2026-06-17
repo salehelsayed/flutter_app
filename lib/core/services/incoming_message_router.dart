@@ -203,6 +203,35 @@ class IncomingMessageRouter {
             },
           );
           _groupInviteController.add(message);
+        case 'group_invite_decline_ack':
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MESSAGE_ROUTER_GROUP_INVITE_DECLINE_ACK_DISPATCHED',
+            details: {
+              'from': message.from.length > 10
+                  ? message.from.substring(0, 10)
+                  : message.from,
+              'hasListeners': _groupInviteController.hasListener,
+            },
+          );
+          _groupInviteController.add(message);
+        case 'group_config_request':
+        case 'group_config_response':
+          // On-join authoritative-metadata resync (finding D). The
+          // GroupInviteListener consumes both off the same stream and applies
+          // the flag gate; older builds hit the default branch as a no-op.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MESSAGE_ROUTER_GROUP_CONFIG_RESYNC_DISPATCHED',
+            details: {
+              'type': type,
+              'from': message.from.length > 10
+                  ? message.from.substring(0, 10)
+                  : message.from,
+              'hasListeners': _groupInviteController.hasListener,
+            },
+          );
+          _groupInviteController.add(message);
         case 'group_key_update':
           _groupKeyUpdateController.add(message);
         case 'group_key_repair_request':

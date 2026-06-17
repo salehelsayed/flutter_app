@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/pending_sibling_device_prompt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
@@ -23,6 +25,7 @@ class GroupInfoScreen extends StatelessWidget {
   final Map<String, GroupInviteDeliveryStatus> inviteStatusesByPeerId;
   final Map<String, GroupInviteDeliveryAttempt> inviteAttemptsByPeerId;
   final Set<String> resendingInvitePeerIds;
+  final Set<String> revokingInvitePeerIds;
   final Map<String, GroupMemberIdentitySafety> memberSafetyByPeerId;
   final bool isAdmin;
   final String? ownPeerId;
@@ -38,8 +41,12 @@ class GroupInfoScreen extends StatelessWidget {
   final ValueChanged<GroupMember>? onToggleAdminRole;
   final VoidCallback? onAddMember;
   final ValueChanged<GroupMember>? onResendInvite;
+  final ValueChanged<GroupMember>? onRevokeInvite;
   final BackgroundPreference backgroundPreference;
   final GroupSecurityStatusViewState? securityStatus;
+  final List<PendingSiblingDeviceView> pendingSiblingDevices;
+  final ValueChanged<PendingSiblingDevice>? onVerifyPendingSiblingDevice;
+  final ValueChanged<PendingSiblingDevice>? onRejectPendingSiblingDevice;
 
   const GroupInfoScreen({
     super.key,
@@ -48,6 +55,7 @@ class GroupInfoScreen extends StatelessWidget {
     this.inviteStatusesByPeerId = const {},
     this.inviteAttemptsByPeerId = const {},
     this.resendingInvitePeerIds = const {},
+    this.revokingInvitePeerIds = const {},
     this.memberSafetyByPeerId = const {},
     required this.isAdmin,
     this.ownPeerId,
@@ -63,8 +71,12 @@ class GroupInfoScreen extends StatelessWidget {
     this.onToggleAdminRole,
     this.onAddMember,
     this.onResendInvite,
+    this.onRevokeInvite,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.securityStatus,
+    this.pendingSiblingDevices = const [],
+    this.onVerifyPendingSiblingDevice,
+    this.onRejectPendingSiblingDevice,
   });
 
   @override
@@ -98,6 +110,22 @@ class GroupInfoScreen extends StatelessWidget {
                             child: _buildSecurityStatusCard(
                               context,
                               securityStatus!,
+                            ),
+                          ),
+                        ],
+                        // R2: pending sibling-device trust prompts.
+                        for (final pending in pendingSiblingDevices) ...[
+                          const SizedBox(height: 12),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: PendingSiblingDevicePrompt(
+                              view: pending,
+                              onVerify: () => onVerifyPendingSiblingDevice?.call(
+                                pending.device,
+                              ),
+                              onReject: () => onRejectPendingSiblingDevice?.call(
+                                pending.device,
+                              ),
                             ),
                           ),
                         ],
@@ -510,6 +538,7 @@ class GroupInfoScreen extends StatelessWidget {
             isAdmin: isAdmin,
             isSelf: isSelf,
             isResendingInvite: resendingInvitePeerIds.contains(member.peerId),
+            isRevokingInvite: revokingInvitePeerIds.contains(member.peerId),
             onToggleAdminRole:
                 !group.isDissolved &&
                     isAdmin &&
@@ -533,6 +562,21 @@ class GroupInfoScreen extends StatelessWidget {
                             GroupInviteDeliveryStatus.unknown) ==
                         GroupInviteDeliveryStatus.needsResend
                 ? () => onResendInvite!(member)
+                : null,
+            onRevokeInvite:
+                !group.isDissolved &&
+                    isAdmin &&
+                    !isSelf &&
+                    onRevokeInvite != null &&
+                    const {
+                      GroupInviteDeliveryStatus.sent,
+                      GroupInviteDeliveryStatus.queued,
+                      GroupInviteDeliveryStatus.needsResend,
+                    }.contains(
+                      inviteStatusesByPeerId[member.peerId] ??
+                          GroupInviteDeliveryStatus.unknown,
+                    )
+                ? () => onRevokeInvite!(member)
                 : null,
           );
         }),

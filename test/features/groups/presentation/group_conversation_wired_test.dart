@@ -638,6 +638,57 @@ class _InMemoryInviteDeliveryAttemptRepository
   }
 
   @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    final now = (revokedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.revoked,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.revoked,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final now = (declinedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    if (existing?.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.declined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.declined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
   Future<int> deleteAttempt({
     required String groupId,
     required String peerId,
@@ -1284,6 +1335,115 @@ void main() {
           compressedFile.path,
         );
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'send rejects an oversized non-GIF attachment pre-upload with a type-aware message',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_send_size_gate_video_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        // A tiny real file with a video extension; the send gate reads the
+        // declared budgetBytes (300 MB, over the 250 MB video cap), not the file.
+        final video = File('${tempDir.path}/clip.mp4')..writeAsStringSync('x');
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialPendingMedia: [
+              PendingComposerMedia(
+                file: video,
+                budgetBytes: 300 * 1024 * 1024,
+              ),
+            ],
+          ),
+        );
+        await pumpFrames(tester, count: 15);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.composerStateListenable!.value.pendingAttachments,
+          hasLength(1),
+        );
+
+        final send = screen.onSend as Future<void> Function(String);
+        await send('');
+        await pumpFrames(tester, count: 10);
+
+        // Type-aware reason (video, not GIF) -> generic too-large copy. INV-SZ-1:
+        // nothing published, and the composer keeps the attachment (send aborted).
+        expect(
+          find.text('The media is too large even after compression.'),
+          findsOneWidget,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .composerStateListenable!
+              .value
+              .pendingAttachments,
+          hasLength(1),
+        );
+      },
+    );
+
+    testWidgets(
+      'send rejects an oversized GIF on final bytes with the GIF-specific message',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_send_size_gate_gif_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final gif = File('${tempDir.path}/big.gif')..writeAsStringSync('x');
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialPendingMedia: [
+              PendingComposerMedia(
+                file: gif,
+                budgetBytes: 26 * 1024 * 1024, // over the 25 MB GIF cap
+              ),
+            ],
+          ),
+        );
+        await pumpFrames(tester, count: 15);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final send = screen.onSend as Future<void> Function(String);
+        await send('');
+        await pumpFrames(tester, count: 10);
+
+        // GIF cap reason routes to the GIF-specific copy (INV-SZ-2: validated on
+        // final budget bytes via the single send-time gate, no raw-bytes branch).
+        expect(
+          find.text('GIF files larger than 25 MB cannot be added.'),
+          findsOneWidget,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
 
@@ -3422,13 +3582,16 @@ void main() {
         }
 
         expectHydratedOnce();
+        // The quarantined (integrity_failed) voice is preserved across reopen
+        // but is terminal — INV-DL-3 means no retry affordance (was retryable
+        // under the old MD-012 behaviour).
         expect(
           find.byKey(
             const ValueKey(
               'unavailable-media-retry-gmar004-failed-gmar004-voice-failed',
             ),
           ),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
           find.byKey(const ValueKey('failed-media-retry-gmar004-failed')),

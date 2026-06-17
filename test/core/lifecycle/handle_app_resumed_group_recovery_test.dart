@@ -1257,6 +1257,48 @@ void main() {
     );
 
     test(
+      'Phase 1b: resume outbound-repair follow-ons run INSIDE the recovery gate '
+      '(isGroupRecoveryInProgress() == true while resends execute)',
+      () async {
+        bridge = _TracingBridge(<String>[]);
+        await seedRecoveryGroup(
+          groupId: 'group-p1b',
+          latestEpoch: 1,
+          latestKey: 'p1b-key',
+          createdAt: DateTime.utc(2026, 6, 17, 12),
+        );
+
+        final gateDuring = <String, bool>{};
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          recoverStuckSendingGroupMessagesFn: () async {
+            gateDuring['recoverStuck'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+          retryIncompleteGroupUploadsFn: () async {
+            gateDuring['uploads'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+          retryFailedGroupMessagesFn: () async {
+            gateDuring['retryFailed'] = isGroupRecoveryInProgress();
+            return 0;
+          },
+        );
+
+        // The message-resending follow-ons now run under the held gate, so a
+        // concurrent recovery pass / mutation cannot interleave with them.
+        expect(gateDuring['recoverStuck'], isTrue);
+        expect(gateDuring['uploads'], isTrue);
+        expect(gateDuring['retryFailed'], isTrue);
+        // Gate fully released after resume completes.
+        expect(isGroupRecoveryInProgress(), isFalse);
+      },
+    );
+
+    test(
       'NW-011 resume retries failed or pending background send after rejoin and drain',
       () async {
         final callOrder = <String>[];

@@ -42,7 +42,9 @@ import 'package:flutter_app/features/contacts/application/archive_contact_use_ca
 import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -527,9 +529,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         groupRepo: groupRepository,
         msgRepo: groupMessageRepository,
       );
+      // E: tag half-materialized groups (topic-join not yet succeeded) with
+      // their bounded rejoin attempt count so the row can badge "Joining…" /
+      // "Couldn't join".
+      final rejoinStates = await groupRepository.loadGroupRejoinStates();
       if (!mounted) return;
 
-      _activeGroups = active;
+      _activeGroups = active
+          .map(
+            (group) => group.copyWith(
+              rejoinAttemptCount: rejoinStates[group.groupId]?.attemptCount,
+            ),
+          )
+          .toList();
       _activeGroupsLoaded = true;
       _publishListProjection();
     } catch (e) {
@@ -581,7 +593,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final invites = await inviteListener.pendingInviteRepo
           .getPendingInvites();
       if (!mounted) return;
-      _pendingGroupInvites = invites;
+      // B2: drop invites whose group is already joined (materialized orphan).
+      // Tolerates _activeGroups not yet loaded (empty set → no filtering).
+      // Membership-only filter; expired-but-unjoined invites keep their card.
+      final joinedGroupIds = _activeGroups
+          .map((group) => group.groupId)
+          .toSet();
+      _pendingGroupInvites = invites
+          .where((invite) => !joinedGroupIds.contains(invite.groupId))
+          .toList();
       _publishListProjection();
     } catch (e) {
       emitFlowEvent(
@@ -1096,6 +1116,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       }
       if (!mounted) return;
 
+      final l10n = AppLocalizations.of(context)!;
       switch (result) {
         case AcceptPendingGroupInviteResult.success:
           _showSnackBar('Joined ${group?.name ?? invite.groupName}');
@@ -1108,6 +1129,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           break;
         case AcceptPendingGroupInviteResult.expired:
           _showSnackBar('Invite expired');
+          break;
+        case AcceptPendingGroupInviteResult.expiredFreshness:
+          _showSnackBar(l10n.group_invite_expired_ask_resend);
           break;
         case AcceptPendingGroupInviteResult.revoked:
           _showSnackBar('Invite was revoked');
@@ -1189,6 +1213,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           localTransportPeerId,
         ),
         ownKeyPackagePublicMaterial: ownMlKemPublicKey,
+        onJoinConfigRequest: kOnJoinMetadataResyncEnabled
+            ? ({required group, required invite}) async {
+                final inviterMember = await groupRepository.getMember(
+                  group.id,
+                  invite.senderPeerId,
+                );
+                unawaited(
+                  sendOnJoinGroupConfigRequest(
+                    p2pService: widget.p2pService,
+                    bridge: widget.bridge,
+                    groupId: group.id,
+                    requesterPeerId: senderPeerId ?? '',
+                    inviterPeerId: invite.senderPeerId,
+                    inviterMlKemPublicKey: inviterMember?.mlKemPublicKey,
+                  ),
+                );
+              }
+            : null,
         drainAcceptedInboxAllPages: true,
         acceptedInboxDrainMaxAttempts: 4,
       );
@@ -1252,9 +1294,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     setState(() => _processingPendingInviteIds.add(invite.groupId));
     try {
+      // Best-effort decline-ack deps (the local decline never blocks on them).
+      final identity = await widget.identityRepo.loadIdentity();
       final result = await declinePendingGroupInvite(
         pendingInviteRepo: inviteListener.pendingInviteRepo,
         groupId: invite.groupId,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        contactRepo: widget.contactRepo,
+        declinerPeerId: identity?.peerId,
+        declinerPrivateKey: identity?.privateKey,
       );
       _refreshPendingIntroductionsOnPop = true;
       await _loadPendingGroupInvites();

@@ -16,6 +16,10 @@ String groupInviteStatusLabel(
       return l10n.invite_status_cannot_send;
     case GroupInviteDeliveryStatus.joined:
       return l10n.invite_status_joined;
+    case GroupInviteDeliveryStatus.revoked:
+      return l10n.invite_status_revoked;
+    case GroupInviteDeliveryStatus.declined:
+      return l10n.invite_status_declined;
     case GroupInviteDeliveryStatus.unknown:
       return l10n.invite_status_unknown;
   }

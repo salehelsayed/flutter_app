@@ -329,6 +329,26 @@ class _TimeoutJoinBridge extends FakeBridge {
   }
 }
 
+/// A bridge that throws a plain (non-bridge, non-timeout) Exception on
+/// group:join — exercises the generic catch branch of materialize.
+class _GenericFailJoinBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    sendCallCount++;
+    lastSentMessage = message;
+
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    lastCommand = cmd;
+
+    if (cmd == 'group:join') {
+      throw Exception('Simulated generic join failure');
+    }
+
+    return super.send(message);
+  }
+}
+
 /// A bridge that returns ok=false for message.decrypt
 class _FailDecryptBridge extends FakeBridge {
   @override
@@ -914,6 +934,102 @@ void main() {
         expect(await groupRepo.getMembers('grp-abc123'), isEmpty);
         expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
         expect(bridge.commandLog, contains('group:join'));
+      },
+    );
+
+    // --- Slice E: bound the half-materialized state ---
+    test(
+      'E: a non-repairable (transient) bridge join failure keeps the group and '
+      'enrolls it in the bounded rejoin retrier',
+      () async {
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'TOPIC_SUBSCRIBE_FAILED',
+          'errorMessage': 'could not subscribe to topic',
+        };
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeSignedV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.bridgeError));
+        expect(groupId, equals('grp-abc123'));
+        // Group stays materialized (key persisted) — NOT rolled back.
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        // ...and is enrolled in the bounded rejoin retrier.
+        final states = await groupRepo.loadGroupRejoinStates();
+        expect(states['grp-abc123'], isNotNull);
+        expect(states['grp-abc123']!.attemptCount, 1);
+      },
+    );
+
+    test(
+      'E: a group:join timeout keeps the group and enrolls it in the rejoin retrier',
+      () async {
+        final timeoutBridge = _TimeoutJoinBridge();
+
+        final (result, _) = await handleIncomingGroupInvite(
+          message: _makeV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: timeoutBridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.bridgeError));
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        final states = await groupRepo.loadGroupRejoinStates();
+        expect(states['grp-abc123'], isNotNull);
+      },
+    );
+
+    test(
+      'E: a generic join exception keeps the group and enrolls it in the rejoin retrier',
+      () async {
+        final genericBridge = _GenericFailJoinBridge();
+
+        final (result, _) = await handleIncomingGroupInvite(
+          message: _makeV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: genericBridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.bridgeError));
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        final states = await groupRepo.loadGroupRejoinStates();
+        expect(states['grp-abc123'], isNotNull);
+      },
+    );
+
+    test(
+      'E regression guard: a repairable join-material failure rolls back AND '
+      'does NOT enroll a rejoin row',
+      () async {
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'STALE_JOIN_MATERIAL',
+          'errorMessage': 'stale welcome key material',
+        };
+
+        final (result, _) = await handleIncomingGroupInvite(
+          message: _makeSignedV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.invalidPayload));
+        // Fully rolled back — the enrollment path must not resurrect it.
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        final states = await groupRepo.loadGroupRejoinStates();
+        expect(states['grp-abc123'], isNull);
       },
     );
 

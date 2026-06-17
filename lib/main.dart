@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
@@ -79,6 +81,14 @@ import 'package:flutter_app/core/database/migrations/081_group_pending_reactions
 import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
 import 'package:flutter_app/core/database/migrations/084_group_member_device_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/085_pending_sibling_devices.dart';
+import 'package:flutter_app/core/database/migrations/086_pending_group_broadcasts.dart';
+import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
+import 'package:flutter_app/core/database/migrations/088_group_rejoin_state.dart';
+import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
+import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
+import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
+import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
@@ -116,6 +126,7 @@ import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dar
 import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
@@ -214,6 +225,10 @@ import 'package:flutter_app/features/groups/application/group_membership_update_
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_backoff_timer.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository_impl.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
@@ -306,6 +321,7 @@ import 'package:flutter_app/features/posts/application/post_notification_open_co
 import 'package:flutter_app/features/posts/application/post_pin_listener.dart';
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
+import 'package:flutter_app/features/groups/application/sweep_expired_group_invites_use_case.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
@@ -487,6 +503,12 @@ void main() async {
       await runMessageReactionTombstoneMigration(db);
       await runGroupsLastMembershipEventIdMigration(db);
       await runGroupMemberDeviceSnapshotsMigration(db);
+      await runPendingSiblingDevicesMigration(db);
+      await runPendingGroupBroadcastsMigration(db);
+      await runGroupMessageRetryBackoffColumnsMigration(db);
+      await runGroupRejoinStateMigration(db);
+      await runMediaAttachmentDownloadRetryColumnMigration(db);
+      await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -740,6 +762,30 @@ void main() async {
       }
       if (oldVersion < 84) {
         await runGroupMemberDeviceSnapshotsMigration(db);
+      }
+      if (oldVersion < 85) {
+        await runPendingSiblingDevicesMigration(db);
+      }
+      // Finding 07 (S2b): durable queue for failed group system broadcasts.
+      if (oldVersion < 86) {
+        await runPendingGroupBroadcastsMigration(db);
+      }
+      // Finding 05 Phase 4: per-row retry backoff + terminal send_failed.
+      if (oldVersion < 87) {
+        await runGroupMessageRetryBackoffColumnsMigration(db);
+      }
+      // Finding 05 Phase 3: bounded per-group rejoin retry state.
+      if (oldVersion < 88) {
+        await runGroupRejoinStateMigration(db);
+      }
+      // Finding 09 Phase 3: bounded media download retries + terminal state.
+      if (oldVersion < 89) {
+        await runMediaAttachmentDownloadRetryColumnMigration(db);
+      }
+      // Review-08 findings C+F: widen invite delivery-attempt status CHECK to
+      // include 'revoked'/'declined' and add the invite_id column (HOLE-4).
+      if (oldVersion < 90) {
+        await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
       }
     },
   );
@@ -1166,6 +1212,23 @@ void main() async {
         dbUpsertGroupMemberDeviceSnapshot(db, row, savedAt),
     dbLoadGroupMemberDeviceSnapshot: (groupId, peerId) =>
         dbLoadGroupMemberDeviceSnapshot(db, groupId, peerId),
+    dbUpsertPendingSiblingDevice: (row) =>
+        dbUpsertPendingSiblingDevice(db, row),
+    dbLoadPendingSiblingDevicesForGroup: (groupId) =>
+        dbLoadPendingSiblingDevicesForGroup(db, groupId),
+    dbLoadPendingSiblingDevice: (groupId, memberPeerId, deviceId) =>
+        dbLoadPendingSiblingDevice(db, groupId, memberPeerId, deviceId),
+    dbDeletePendingSiblingDevice: (groupId, memberPeerId, deviceId) =>
+        dbDeletePendingSiblingDevice(db, groupId, memberPeerId, deviceId),
+    dbLoadGroupRejoinStatesFn: () => dbLoadGroupRejoinStates(db),
+    dbRecordGroupRejoinFailureFn: (groupId, {required nextEligibleAtMs}) =>
+        dbRecordGroupRejoinFailure(
+          db,
+          groupId,
+          nextEligibleAtMs: nextEligibleAtMs,
+        ),
+    dbClearGroupRejoinStateFn: (groupId) =>
+        dbClearGroupRejoinState(db, groupId),
     dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
     dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
     dbLoadGroupKeyByGeneration: (groupId, generation) =>
@@ -1331,6 +1394,18 @@ void main() async {
           dbUpdateGroupMessageInboxRetryPayload(executor, id, payload),
       dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
           dbUpdateGroupMessageWireEnvelope(executor, id, envelope),
+      dbRecordGroupMessageRetryFailureFn:
+          (id, {required nextEligibleAtMs, required markTerminal}) =>
+              dbRecordGroupMessageRetryFailure(
+                executor,
+                id,
+                nextEligibleAtMs: nextEligibleAtMs,
+                markTerminal: markTerminal,
+              ),
+      dbClearGroupMessageRetryBackoffFn: () =>
+          dbClearGroupMessageRetryBackoff(executor),
+      dbResetGroupMessageRetryStateFn: (id) =>
+          dbResetGroupMessageRetryState(executor, id),
       dbLoadGroupInboxCursorFn: (groupId) async {
         final row = await dbLoadGroupInboxCursor(executor, groupId);
         return row?['cursor'] as String?;
@@ -2289,6 +2364,31 @@ void main() async {
     groupRepo: groupRepository,
     msgRepo: groupMessageRepository,
     bridge: bridge,
+    // R2: an account-signed device_announce is HELD pending an explicit user
+    // trust decision (never auto-admitted). groupRepository implements the
+    // pending-device store.
+    holdPendingSiblingDevice:
+        ({
+          required groupId,
+          required memberPeerId,
+          required announcedDeviceId,
+          required announcedTransportPeerId,
+          required announcedDeviceSigningPublicKey,
+          required verifiedAccountSigningPublicKey,
+          announcedMlKemPublicKey,
+          announcedKeyPackageId,
+        }) => holdPendingSiblingDevice(
+          pendingRepo: groupRepository,
+          groupRepo: groupRepository,
+          groupId: groupId,
+          memberPeerId: memberPeerId,
+          announcedDeviceId: announcedDeviceId,
+          announcedTransportPeerId: announcedTransportPeerId,
+          announcedDeviceSigningPublicKey: announcedDeviceSigningPublicKey,
+          verifiedAccountSigningPublicKey: verifiedAccountSigningPublicKey,
+          announcedMlKemPublicKey: announcedMlKemPublicKey,
+          announcedKeyPackageId: announcedKeyPackageId,
+        ),
     getSelfPeerId: () async {
       final identity = await repository.loadIdentity();
       return identity?.peerId;
@@ -2420,6 +2520,35 @@ void main() async {
     );
   });
 
+  // Finding 07 (S2b): durable queue for group system broadcasts that failed to
+  // leave the device. The metadata-edit producer enqueues through the sink; the
+  // runner re-pushes on app resume / rejoin.
+  final groupPendingBroadcastRepository = GroupPendingBroadcastRepositoryImpl(
+    dbInsert: (row) => dbInsertPendingGroupBroadcast(db, row),
+    dbLoadForGroup: (groupId) =>
+        dbLoadPendingGroupBroadcastsForGroup(db, groupId),
+    dbLoadAll: () => dbLoadAllPendingGroupBroadcasts(db),
+    dbCountForGroup: (groupId) =>
+        dbCountPendingGroupBroadcastsForGroup(db, groupId),
+    dbDelete: (id) => dbDeletePendingGroupBroadcast(db, id),
+  );
+  final groupPendingBroadcastRunner = GroupPendingBroadcastRunner(
+    repository: groupPendingBroadcastRepository,
+    rePush: buildGroupPendingBroadcastRePush(
+      bridge: bridge,
+      groupRepo: groupRepository,
+      loadIdentity: repository.loadIdentity,
+    ),
+  );
+  setGroupPendingBroadcastEnqueueSink(groupPendingBroadcastRepository.enqueue);
+  setGroupPendingBroadcastCountSink(
+    groupPendingBroadcastRepository.countForGroup,
+  );
+  setGroupPendingBroadcastDrainSinks(
+    forGroup: groupPendingBroadcastRunner.drainForGroup,
+    all: groupPendingBroadcastRunner.drainAll,
+  );
+
   // Create group invite listener
   final groupIdentityCallbacks = buildGroupIdentityCallbacks(
     identityRepo: repository,
@@ -2451,6 +2580,9 @@ void main() async {
     bridge: bridge,
     msgRepo: groupMessageRepository,
     mediaAttachmentRepo: mediaAttachmentRepository,
+    deliveryRepo: groupInviteDeliveryAttemptRepository,
+    p2pService: p2pService,
+    loadOwnIdentity: () => repository.loadIdentity(),
     getOwnMlKemSecretKey: groupIdentityCallbacks.getOwnMlKemSecretKey,
     getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
     getOwnDeviceId: groupIdentityCallbacks.getOwnDeviceId,
@@ -2698,6 +2830,12 @@ void main() async {
         reactionReplayOutboxRepo: groupReactionReplayOutboxRepository,
       ),
     ),
+    // Finding 05 Phase 4: reconnect re-arms backed-off failed group rows (local
+    // DB op — no network gate needed).
+    clearGroupRetryBackoffFn: groupMessageRepository.clearRetryBackoff,
+    // Finding 05 Phase 4 (P1.6): jitter the background retry cadence in prod so
+    // reconnecting clients do not stampede the relay in lockstep.
+    jitterRandom: Random(),
     verifyInboxCustodyFn: () => runAccountRuntimeNetworkAction(
       operation: 'pending_retrier_inbox_custody_verify',
       blockedValue: 0,
@@ -2953,6 +3091,18 @@ void main() async {
         details: {'error': error.toString()},
       );
       return <String>[];
+    }),
+  );
+  unawaited(
+    sweepExpiredGroupInvites(
+      repo: pendingGroupInviteRepository,
+    ).catchError((Object error, StackTrace stackTrace) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_SWEEP_STARTUP_ERROR',
+        details: {'error': error.toString()},
+      );
+      return GroupInviteSweepResult.empty;
     }),
   );
 
@@ -3946,6 +4096,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     try {
       widget.p2pService.markResumeStarted();
+      // Finding 07 (S2b): re-push any group broadcasts that failed to leave the
+      // device. Fire-and-forget + idempotent — a still-offline retry is retained
+      // for the next resume.
+      unawaited(triggerGroupPendingBroadcastDrainAll());
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
@@ -4046,6 +4200,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       await sweepExpiredPosts(
         postRepo: widget.postRepository,
         mediaFileManager: widget.mediaFileManager,
+      );
+      // Placed last in the resume path: the 7d invite TTL never races the
+      // seconds-scale accept-recovery / inbox-drain work above.
+      await sweepExpiredGroupInvites(
+        repo: widget.groupInviteListener.pendingInviteRepo,
       );
       widget.p2pService.checkResumeAlreadyOnline();
     } finally {

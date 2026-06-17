@@ -432,6 +432,77 @@ void main() {
       expect(unknowns, isEmpty);
     });
 
+    test('routes group_invite_decline_ack to groupInviteStream', () async {
+      final groupInvites = <ChatMessage>[];
+      final unknowns = <ChatMessage>[];
+      router.groupInviteStream.listen(groupInvites.add);
+      router.unknownMessageStream.listen(unknowns.add);
+
+      p2pService.inject(
+        ChatMessage(
+          from: 'peer-a',
+          to: 'peer-b',
+          content: jsonEncode({
+            'type': 'group_invite_decline_ack',
+            'version': '1',
+            'id': 'invite-1',
+            'senderPeerId': 'peer-a',
+            'encrypted': {
+              'kem': 'fakeKem',
+              'ciphertext': 'fakeCt',
+              'nonce': 'fakeNonce',
+            },
+          }),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(groupInvites, hasLength(1));
+      expect(
+        groupInvites.first.content,
+        contains('"type":"group_invite_decline_ack"'),
+      );
+      expect(unknowns, isEmpty);
+    });
+
+    for (final type in ['group_config_request', 'group_config_response']) {
+      test('routes $type to groupInviteStream', () async {
+        final groupInvites = <ChatMessage>[];
+        final unknowns = <ChatMessage>[];
+        router.groupInviteStream.listen(groupInvites.add);
+        router.unknownMessageStream.listen(unknowns.add);
+
+        p2pService.inject(
+          ChatMessage(
+            from: 'peer-a',
+            to: 'peer-b',
+            content: jsonEncode({
+              'type': type,
+              'version': '1',
+              'id': 'grp-1',
+              'senderPeerId': 'peer-a',
+              'encrypted': {
+                'kem': 'fakeKem',
+                'ciphertext': 'fakeCt',
+                'nonce': 'fakeNonce',
+              },
+            }),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(groupInvites, hasLength(1));
+        expect(groupInvites.first.content, contains('"type":"$type"'));
+        expect(unknowns, isEmpty);
+      });
+    }
+
     test(
       'message_reaction not routed to chatMessageStream or unknownMessageStream',
       () async {

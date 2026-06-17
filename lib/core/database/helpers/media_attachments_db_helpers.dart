@@ -163,7 +163,13 @@ Future<void> dbUpdateMediaLocalPath(
   try {
     await db.update(
       'media_attachments',
-      {'local_path': localPath, 'download_status': downloadStatus},
+      {
+        'local_path': localPath,
+        'download_status': downloadStatus,
+        // A successful local-path commit resets the bounded download retry
+        // budget so a future transient failure starts fresh (INV-DL-2).
+        'download_retry_count': 0,
+      },
       where: 'id = ?',
       whereArgs: [id],
     );

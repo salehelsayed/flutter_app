@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
@@ -360,6 +361,62 @@ Future<MediaAttachment?> downloadMedia({
           );
         }
 
+        // Bounded download retry budget (Finding 09 Phase 3, INV-DL-1/2/5).
+        // Each transient download failure persists download_retry_count + 1:
+        // the status goes through updateDownloadStatus (single-column, kept for
+        // observability), and the counter through a full-row saveAttachment
+        // (updateDownloadStatus cannot carry it). At/over the ceiling the row
+        // flips to the terminal `download_failed` status. A successful local
+        // path commit resets the counter to 0 (see dbUpdateMediaLocalPath).
+        Future<String> persistTransientDownloadFailure({
+          bool clearLocalPath = false,
+        }) async {
+          final nextCount = (attachment.downloadRetryCount ?? 0) + 1;
+          final status = nextCount >= kMaxDownloadRetries
+              ? kMediaDownloadStatusDownloadFailed
+              : kMediaDownloadStatusFailed;
+          try {
+            await mediaAttachmentRepo.updateDownloadStatus(
+              attachment.id,
+              status,
+            );
+          } catch (_) {}
+          try {
+            await mediaAttachmentRepo.saveAttachment(
+              attachment.copyWith(
+                downloadStatus: status,
+                downloadRetryCount: nextCount,
+                clearLocalPath: clearLocalPath,
+              ),
+            );
+          } catch (_) {}
+          return status;
+        }
+
+        // Honest "expired / unavailable on the relay" terminal state, reached
+        // immediately on a relay "not found" / "not authorized" response,
+        // WITHOUT consuming the bounded retry budget (INV-DL-4).
+        Future<void> markRelayUnavailableDownloadFailed() async {
+          try {
+            await mediaAttachmentRepo.updateDownloadStatus(
+              attachment.id,
+              kMediaDownloadStatusDownloadFailed,
+            );
+          } catch (_) {}
+          try {
+            await mediaAttachmentRepo.saveAttachment(
+              attachment.copyWith(
+                downloadStatus: kMediaDownloadStatusDownloadFailed,
+              ),
+            );
+          } catch (_) {}
+        }
+
+        bool isRelayUnavailableError(Object? errorMessage) {
+          final text = errorMessage?.toString().toLowerCase() ?? '';
+          return text.contains('not found') || text.contains('not authorized');
+        }
+
         Future<MediaAttachment?> completedLocalAttachment({
           required bool allowStatusRepair,
         }) async {
@@ -532,10 +589,9 @@ Future<MediaAttachment?> downloadMedia({
               'fileBytes': bytes,
             },
           );
-          await mediaAttachmentRepo.updateDownloadStatus(
-            attachment.id,
-            kMediaDownloadStatusFailed,
-          );
+          // Durable path missing after commit: bounded transient failure, and
+          // clear the now-dangling local path.
+          await persistTransientDownloadFailure(clearLocalPath: true);
           return false;
         }
 
@@ -668,9 +724,12 @@ Future<MediaAttachment?> downloadMedia({
               );
               return null;
             }
-            final sizeValidation = GroupMediaSizePolicy.validateAttachments([
-              attachment,
-            ]);
+            // Receive side: permissive cross-type backstop, not per-type SEND
+            // caps (do not quarantine media already within the cross-type max).
+            final sizeValidation = GroupMediaSizePolicy.validateAttachments(
+              [attachment],
+              perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
+            );
             if (!sizeValidation.isValid) {
               await quarantineUnsafeGroupMedia(
                 event: 'MEDIA_DOWNLOAD_REJECTED_INVALID_GROUP_MEDIA',
@@ -751,11 +810,11 @@ Future<MediaAttachment?> downloadMedia({
             required String event,
             required Map<String, dynamic> details,
           }) async {
-            await mediaAttachmentRepo.updateDownloadStatus(
-              attachment.id,
-              status,
-            );
             if (status == kMediaDownloadStatusIntegrityFailed) {
+              await mediaAttachmentRepo.updateDownloadStatus(
+                attachment.id,
+                status,
+              );
               try {
                 await mediaAttachmentRepo.saveAttachment(
                   attachment.copyWith(
@@ -764,6 +823,10 @@ Future<MediaAttachment?> downloadMedia({
                   ),
                 );
               } catch (_) {}
+            } else {
+              // Transient direct transport failure: bounded retry budget. The
+              // staged ciphertext artifact is still preserved (KC-3) below.
+              await persistTransientDownloadFailure();
             }
             await reportPreservedDownloadArtifacts(
               reason: details['reason']?.toString() ?? event,
@@ -1252,6 +1315,8 @@ Future<MediaAttachment?> downloadMedia({
             final plaintextSizeValidation = GroupMediaSizePolicy.validateSize(
               sizeBytes: plaintextLength,
               mime: attachment.mime,
+              // Receive side: cross-type backstop, not per-type SEND caps.
+              perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
             );
             final hasPlaintextSizeMismatch = plaintextLength != attachment.size;
             if (!plaintextExists ||
@@ -1478,10 +1543,15 @@ Future<MediaAttachment?> downloadMedia({
 
             await reportPreservedDownloadArtifacts(reason: 'download_failed');
 
-            await mediaAttachmentRepo.updateDownloadStatus(
-              attachment.id,
-              kMediaDownloadStatusFailed,
-            );
+            // INV-DL-4: a relay "not found"/"not authorized" is an honest
+            // terminal "expired on server" state — flip straight to
+            // download_failed without burning the retry budget. Any other relay
+            // error is a bounded transient failure.
+            if (isRelayUnavailableError(result['errorMessage'])) {
+              await markRelayUnavailableDownloadFailed();
+            } else {
+              await persistTransientDownloadFailure();
+            }
 
             final repairedLocalAttachment =
                 await useCompletedLocalAttachmentIfAvailable(
@@ -1573,10 +1643,7 @@ Future<MediaAttachment?> downloadMedia({
               return localAttachment;
             }
 
-            await mediaAttachmentRepo.updateDownloadStatus(
-              attachment.id,
-              kMediaDownloadStatusFailed,
-            );
+            await persistTransientDownloadFailure();
             if (fileExists) {
               await deleteIfExists(
                 downloadedFile,
@@ -1794,6 +1861,8 @@ Future<MediaAttachment?> downloadMedia({
             final plaintextSizeValidation = GroupMediaSizePolicy.validateSize(
               sizeBytes: plaintextLength,
               mime: attachment.mime,
+              // Receive side: cross-type backstop, not per-type SEND caps.
+              perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
             );
             final hasPlaintextSizeMismatch = plaintextLength != attachment.size;
             if (!plaintextExists ||
@@ -1901,10 +1970,7 @@ Future<MediaAttachment?> downloadMedia({
           } catch (_) {}
 
           try {
-            await mediaAttachmentRepo.updateDownloadStatus(
-              attachment.id,
-              kMediaDownloadStatusFailed,
-            );
+            await persistTransientDownloadFailure();
           } catch (_) {}
 
           final localAttachment = await useCompletedLocalAttachmentIfAvailable(

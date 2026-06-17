@@ -1552,6 +1552,12 @@ abstract class AppLocalizations {
   /// **'Media unavailable'**
   String get media_unavailable;
 
+  /// No description provided for @media_could_not_verify.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t verify this media'**
+  String get media_could_not_verify;
+
   /// No description provided for @media_retry_unavailable.
   ///
   /// In en, this message translates to:
@@ -1978,11 +1984,29 @@ abstract class AppLocalizations {
   /// **'Failed to update group details'**
   String get group_info_details_update_failed;
 
+  /// No description provided for @group_info_details_update_queued.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved — will retry sending when reconnected'**
+  String get group_info_details_update_queued;
+
   /// No description provided for @group_info_invite_resend_failed.
   ///
   /// In en, this message translates to:
   /// **'Failed to resend invite'**
   String get group_info_invite_resend_failed;
+
+  /// No description provided for @group_info_invite_revoked.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite to {username} revoked'**
+  String group_info_invite_revoked(String username);
+
+  /// No description provided for @group_info_invite_revoke_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to revoke invite'**
+  String get group_info_invite_revoke_failed;
 
   /// No description provided for @group_info_invite_sent.
   ///
@@ -2085,6 +2109,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Resend'**
   String get group_member_resend;
+
+  /// No description provided for @group_member_revoke.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get group_member_revoke;
+
+  /// No description provided for @group_member_revoking.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoking...'**
+  String get group_member_revoking;
 
   /// No description provided for @group_member_manage_role.
   ///
@@ -2235,6 +2271,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Joined'**
   String get invite_status_joined;
+
+  /// No description provided for @invite_status_revoked.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoked'**
+  String get invite_status_revoked;
+
+  /// No description provided for @invite_status_declined.
+  ///
+  /// In en, this message translates to:
+  /// **'Declined'**
+  String get invite_status_declined;
 
   /// No description provided for @invite_status_unknown.
   ///
@@ -3005,7 +3053,7 @@ abstract class AppLocalizations {
   /// No description provided for @share_summary_skipped_gifs.
   ///
   /// In en, this message translates to:
-  /// **'{count, plural, =1{Skipped 1 oversized GIF.} other{Skipped {count} oversized GIFs.}}'**
+  /// **'{count, plural, =1{Skipped 1 oversized attachment.} other{Skipped {count} oversized attachments.}}'**
   String share_summary_skipped_gifs(int count);
 
   /// No description provided for @time_just_now.
@@ -3493,6 +3541,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Invite expired'**
   String get group_invite_expired;
+
+  /// No description provided for @group_invite_expired_ask_resend.
+  ///
+  /// In en, this message translates to:
+  /// **'This invite has expired. Ask the group admin to send a fresh one.'**
+  String get group_invite_expired_ask_resend;
+
+  /// No description provided for @group_joining_in_progress.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining…'**
+  String get group_joining_in_progress;
+
+  /// No description provided for @group_join_failed_retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t join — retry'**
+  String get group_join_failed_retry;
 
   /// No description provided for @group_invite_revoked.
   ///

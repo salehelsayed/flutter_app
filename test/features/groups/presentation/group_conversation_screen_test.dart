@@ -1819,11 +1819,10 @@ void main() {
   );
 
   testWidgets(
-    'MD-012 quarantined visual media shows unavailable placeholder and retry control',
+    'MD-012 quarantined visual media is a terminal couldn\'t-verify placeholder with NO retry (INV-DL-3)',
     (tester) async {
       var opened = false;
-      String? retriedMessageId;
-      String? retriedAttachmentId;
+      var retried = false;
       final message = GroupMessage(
         id: 'msg-quarantined-media',
         groupId: 'group-1',
@@ -1857,40 +1856,27 @@ void main() {
           messages: [message],
           initialLoadDone: true,
           onMediaTap: (_, _) => opened = true,
-          onRetryUnavailableMedia: (messageId, attachmentId) {
-            retriedMessageId = messageId;
-            retriedAttachmentId = attachmentId;
-          },
+          onRetryUnavailableMedia: (_, _) => retried = true,
         ),
       );
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('Media unavailable'), findsOneWidget);
+      // Tamper gets the distinct honest label and is terminal — no retry.
+      expect(find.text("Couldn't verify this media"), findsOneWidget);
       expect(
         find.byKey(
           const ValueKey(
             'unavailable-media-retry-msg-quarantined-media-att-quarantined-media',
           ),
         ),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(find.bySemanticsLabel('Retry unavailable media'), findsOneWidget);
+      expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
 
       await tester.tap(find.byType(MediaGridCell));
       await tester.pump();
       expect(opened, isFalse);
-
-      await tester.tap(
-        find.byKey(
-          const ValueKey(
-            'unavailable-media-retry-msg-quarantined-media-att-quarantined-media',
-          ),
-        ),
-      );
-      await tester.pump();
-
-      expect(retriedMessageId, 'msg-quarantined-media');
-      expect(retriedAttachmentId, 'att-quarantined-media');
+      expect(retried, isFalse);
     },
   );
 
@@ -1934,6 +1920,7 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 300));
 
+      // The transient `failed` attachment keeps its retry-unavailable control...
       expect(
         find.byKey(
           const ValueKey(
@@ -1942,13 +1929,14 @@ void main() {
         ),
         findsOneWidget,
       );
+      // ...but the quarantined (integrity_failed) one is terminal — no retry.
       expect(
         find.byKey(
           const ValueKey(
             'unavailable-media-retry-msg-readonly-unavailable-att-download-quarantined',
           ),
         ),
-        findsOneWidget,
+        findsNothing,
       );
       expect(
         find.byKey(
@@ -1966,16 +1954,13 @@ void main() {
       await tester.tap(
         find.byKey(
           const ValueKey(
-            'unavailable-media-retry-msg-readonly-unavailable-att-download-quarantined',
+            'unavailable-media-retry-msg-readonly-unavailable-att-download-failed',
           ),
         ),
       );
       await tester.pump();
 
-      expect(
-        retried,
-        equals(['msg-readonly-unavailable/att-download-quarantined']),
-      );
+      expect(retried, equals(['msg-readonly-unavailable/att-download-failed']));
     },
   );
 

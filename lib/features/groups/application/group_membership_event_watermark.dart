@@ -78,6 +78,22 @@ bool isStaleGroupMembershipEvent({
 /// the caller's own timestamp. When [now] is equal to or before the watermark
 /// (clock skew), the result is lifted to `lastMembershipEventAt + 1µs` so the
 /// minted event is always strictly newer than the watermark.
+/// The canonical, deterministic source event id for a locally-minted
+/// membership transition: `<type>:<groupId>:<actorPeerId>:<eventAt-µs>`.
+///
+/// Deriving the id from the *minted* [eventAt] (not the caller's wall clock)
+/// lets the sender record the same `(eventAt, eventId)` pair in its local
+/// watermark that it publishes in the signed audit, so a concurrent remote
+/// event with an equal instant tie-breaks against the same id on every device.
+String canonicalMembershipEventId({
+  required String transitionType,
+  required String groupId,
+  required String actorPeerId,
+  required DateTime eventAt,
+}) =>
+    '$transitionType:$groupId:$actorPeerId:'
+    '${eventAt.toUtc().microsecondsSinceEpoch}';
+
 DateTime nextMembershipEventAt(DateTime? lastMembershipEventAt, {DateTime? now}) {
   final candidate = (now ?? DateTime.now()).toUtc();
   final last = lastMembershipEventAt?.toUtc();

@@ -566,6 +566,64 @@ void main() {
     });
 
     test(
+      'D: a successful accept fires onJoinConfigRequest exactly once with the materialized group and invite',
+      () async {
+        await pendingInviteRepo.savePendingInvite(signedInvite(makeInvite()));
+
+        var fireCount = 0;
+        GroupModel? firedGroup;
+        PendingGroupInvite? firedInvite;
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          onJoinConfigRequest: ({required group, required invite}) async {
+            fireCount++;
+            firedGroup = group;
+            firedInvite = invite;
+          },
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(fireCount, 1);
+        expect(firedGroup!.id, 'grp-abc123');
+        // The hook addresses the inviter even though the invite row is consumed.
+        expect(firedInvite!.senderPeerId, '12D3KooWAlice');
+      },
+    );
+
+    test(
+      'D: a failed accept (expired) does NOT fire onJoinConfigRequest',
+      () async {
+        final receivedAt = DateTime.utc(2026, 4, 1, 13);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: receivedAt),
+        );
+
+        var fireCount = 0;
+        final (result, _) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: receivedAt.add(const Duration(days: 11)),
+          onJoinConfigRequest: ({required group, required invite}) async {
+            fireCount++;
+          },
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.expired);
+        expect(fireCount, 0);
+      },
+    );
+
+    test(
       'ML-016 valid invited non-contact member is accepted without saving inviter as contact',
       () async {
         contactRepo.seed([]);
@@ -3173,6 +3231,10 @@ void main() {
           now: receivedAt.add(const Duration(hours: 19)),
         );
 
+        // This proof's issue time is incompatible with the payload timestamp
+        // (an issue-time/structural failure), so it stays invalidPayload — it
+        // is NOT the aged-out-freshness case A2 humanises (see the dedicated
+        // expiredFreshness test below).
         expect(result, AcceptPendingGroupInviteResult.invalidPayload);
         expect(group, isNull);
         expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
@@ -3185,6 +3247,65 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:join')));
         expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
         expect(msgRepo.count, 0);
+      },
+    );
+
+    test(
+      'A2: accept returns expiredFreshness (not invalidPayload) for a correctly-signed invite whose freshness proof has simply aged out, deleting it and emitting EXPIRED_FRESHNESS (not INVALID_SIGNATURE)',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final receivedAt = DateTime.utc(2026, 3, 2, 12);
+        await pendingInviteRepo.savePendingInvite(
+          // Default proof issuedAt (== payload timestamp) keeps the issue time
+          // compatible and the TTL window sane; only the freshness deadline is
+          // in the past relative to `now`, so the SOLE failure is staleness.
+          makeInvite(
+            receivedAt: receivedAt,
+            membershipProofExpiresAt: receivedAt.add(const Duration(hours: 12)),
+          ),
+        );
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          // Card TTL (receivedAt + 7d) is still valid; only the freshness proof
+          // (expired at receivedAt + 12h) has aged out.
+          now: receivedAt.add(const Duration(days: 2)),
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.expiredFreshness);
+        expect(group, isNull);
+        // A >TTL-stale proof can never become fresh again → the dead row is
+        // still deleted (no resurrection).
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(msgRepo.count, 0);
+
+        // Telemetry: stale freshness gets its own distinct event and must NOT
+        // be miscounted as a signature forgery.
+        expect(
+          flowEvents.where(
+            (e) =>
+                e['event'] == 'PENDING_GROUP_INVITE_ACCEPT_EXPIRED_FRESHNESS',
+          ),
+          hasLength(1),
+        );
+        expect(
+          flowEvents.where(
+            (e) =>
+                e['event'] == 'PENDING_GROUP_INVITE_ACCEPT_INVALID_SIGNATURE',
+          ),
+          isEmpty,
+        );
       },
     );
 

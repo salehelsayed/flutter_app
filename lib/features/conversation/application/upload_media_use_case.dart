@@ -244,7 +244,9 @@ Future<MediaAttachment?> uploadMedia({
   // artifact (for the LAN leg), reuse it instead of re-encrypting — a
   // second encryption here would mint a key the LAN copy doesn't have.
   EncryptedMediaArtifact? preparedArtifact,
-  int groupMediaPerAttachmentLimitBytes = kGroupMediaPerAttachmentLimitBytes,
+  // Null => derive the per-type SEND cap from the mime (the new default). An
+  // explicit value (tests) overrides with a flat cap.
+  int? groupMediaPerAttachmentLimitBytes,
   Duration? transferStallTimeout,
   Duration? transferMaxTimeout,
 }) async {

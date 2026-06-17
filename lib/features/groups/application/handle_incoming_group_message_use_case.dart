@@ -1310,7 +1310,13 @@ GroupMediaValidationResult _validateIncomingMediaDescriptors(
     if (!thumbnailHashValidation.isValid) return thumbnailHashValidation;
   }
 
-  final sizeValidation = GroupMediaSizePolicy.validateRawDescriptors(media);
+  // Receive side: a permissive cross-type backstop (DoS ceiling), NOT the
+  // per-type SEND caps — a compliant sender already gated per-type, and we must
+  // not reject media that is legitimately within the cross-type maximum.
+  final sizeValidation = GroupMediaSizePolicy.validateRawDescriptors(
+    media,
+    perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
+  );
   if (!sizeValidation.isValid) return sizeValidation;
 
   return const GroupMediaValidationResult.valid();

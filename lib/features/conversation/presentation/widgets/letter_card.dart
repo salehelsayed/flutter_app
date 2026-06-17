@@ -602,7 +602,11 @@ class LetterCard extends StatelessWidget {
     if (status == 'delivered' || status == 'queued') {
       return Icons.done_all_rounded;
     }
-    if (status == 'failed') return Icons.error_outline_rounded;
+    // 'send_failed' = terminal group send (retry budget exhausted, finding 05
+    // Phase 4): renders with the same error indicator as 'failed'.
+    if (status == 'failed' || status == 'send_failed') {
+      return Icons.error_outline_rounded;
+    }
     // 'inboxed' = relay custody awaiting receiver confirmation (doc 115):
     // non-terminal pending family, never done_all.
     if (status == 'pending' || status == 'inboxed') {
@@ -620,7 +624,7 @@ class LetterCard extends StatelessWidget {
           ? readableColors.iconMuted
           : const Color.fromRGBO(255, 255, 255, 0.45);
     }
-    if (status == 'failed') {
+    if (status == 'failed' || status == 'send_failed') {
       return readableColors.isLightSurface
           ? const Color(0xFFB42318)
           : const Color.fromRGBO(255, 100, 100, 0.60);
@@ -640,7 +644,9 @@ class LetterCard extends StatelessWidget {
     if (status == 'delivered' || status == 'queued') {
       return l10n.message_status_delivered;
     }
-    if (status == 'failed') return l10n.message_status_failed;
+    if (status == 'failed' || status == 'send_failed') {
+      return l10n.message_status_failed;
+    }
     if (status == 'sending') return l10n.message_status_sending;
     if (status == 'sent') return l10n.message_status_sent;
     if (status == 'pending' || status == 'inboxed') {

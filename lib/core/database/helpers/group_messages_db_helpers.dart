@@ -782,15 +782,73 @@ Future<List<Map<String, dynamic>>> dbLoadFailedOutgoingGroupMessages(
 Future<List<Map<String, dynamic>>> dbLoadRetryableOutgoingGroupMessages(
   DatabaseExecutor db, {
   int? limit,
+  int? nowMs,
 }) async {
+  final now = nowMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+  // Finding 05 Phase 4: skip rows still inside their exponential-backoff
+  // window. The terminal 'send_failed' status is intentionally NOT included so
+  // an exhausted row is never auto-retried — only a manual retry re-arms it.
   final sql = StringBuffer(
-    "SELECT * FROM group_messages WHERE status IN ('failed', 'pending') AND is_incoming = 0 ORDER BY timestamp ASC, id ASC",
+    "SELECT * FROM group_messages WHERE status IN ('failed', 'pending') "
+    'AND is_incoming = 0 '
+    'AND (next_eligible_at IS NULL OR next_eligible_at <= ?) '
+    'ORDER BY timestamp ASC, id ASC',
   );
+  final args = <Object?>[now];
   if (limit != null) {
     sql.write(' LIMIT ?');
-    return db.rawQuery(sql.toString(), [limit]);
+    args.add(limit);
   }
-  return db.rawQuery(sql.toString());
+  return db.rawQuery(sql.toString(), args);
+}
+
+/// Records a failed background retry attempt for [messageId]: increments
+/// `retry_attempt_count`, schedules the next eligible time, and — when the
+/// attempt budget is exhausted ([markTerminal]) — flips the row to the terminal
+/// `send_failed` status so it is no longer auto-retried. Only affects a row
+/// that is still retryable (`failed`/`pending`) and outgoing.
+Future<void> dbRecordGroupMessageRetryFailure(
+  DatabaseExecutor db,
+  String messageId, {
+  required int nextEligibleAtMs,
+  required bool markTerminal,
+}) async {
+  final statusClause = markTerminal ? ", status = 'send_failed'" : '';
+  await db.rawUpdate(
+    'UPDATE group_messages '
+    'SET retry_attempt_count = retry_attempt_count + 1, '
+    'next_eligible_at = ?$statusClause '
+    "WHERE id = ? AND is_incoming = 0 AND status IN ('failed', 'pending')",
+    [nextEligibleAtMs, messageId],
+  );
+}
+
+/// Clears the backoff window for all retryable outgoing group rows so the next
+/// retrier pass re-attempts them immediately. Called on a fresh offline→online
+/// transition (a reconnect always grants one immediate attempt). Leaves
+/// terminal `send_failed` rows untouched. Returns the number of rows re-armed.
+Future<int> dbClearGroupMessageRetryBackoff(DatabaseExecutor db) async {
+  return db.rawUpdate(
+    'UPDATE group_messages SET next_eligible_at = NULL '
+    "WHERE is_incoming = 0 AND status IN ('failed', 'pending') "
+    'AND next_eligible_at IS NOT NULL',
+  );
+}
+
+/// Re-arms a terminal `send_failed` row for a user-initiated manual retry:
+/// clears the backoff window, resets the attempt counter, and returns the row
+/// to the retryable `failed` status so the normal send path can re-attempt it
+/// with a fresh budget. No-op for rows that are not `send_failed`.
+Future<void> dbResetGroupMessageRetryState(
+  DatabaseExecutor db,
+  String messageId,
+) async {
+  await db.rawUpdate(
+    "UPDATE group_messages SET status = 'failed', retry_attempt_count = 0, "
+    'next_eligible_at = NULL '
+    "WHERE id = ? AND is_incoming = 0 AND status = 'send_failed'",
+    [messageId],
+  );
 }
 
 /// Loads outgoing group messages where inbox store failed (inbox_stored = 0)

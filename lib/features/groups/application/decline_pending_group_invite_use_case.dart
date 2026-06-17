@@ -1,14 +1,29 @@
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/groups/application/send_group_invite_decline_ack_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository.dart';
 
 enum DeclinePendingGroupInviteResult { success, notFound, expired }
 
+/// Declines a pending invite locally (tombstone + delete). When the optional
+/// transport deps are supplied, it ALSO best-effort notifies the inviter with
+/// a signed decline-ack so their delivery-attempt row can flip to `declined`.
+/// The ack send never throws and never changes the local result: for a
+/// non-contact inviter (no resolvable ML-KEM key) it degrades to a
+/// DECLINE_ACK_ENCRYPTION_SKIPPED no-op.
 Future<DeclinePendingGroupInviteResult> declinePendingGroupInvite({
   required PendingGroupInviteRepository pendingInviteRepo,
   required String groupId,
   DateTime? now,
+  P2PService? p2pService,
+  Bridge? bridge,
+  ContactRepository? contactRepo,
+  String? declinerPeerId,
+  String? declinerPrivateKey,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -36,6 +51,18 @@ Future<DeclinePendingGroupInviteResult> declinePendingGroupInvite({
   );
   await pendingInviteRepo.deletePendingInvite(groupId);
 
+  // Best-effort decline-ack to the inviter (never blocks or fails the local
+  // decline above).
+  await _maybeSendDeclineAck(
+    invite: invite,
+    now: effectiveNow,
+    p2pService: p2pService,
+    bridge: bridge,
+    contactRepo: contactRepo,
+    declinerPeerId: declinerPeerId,
+    declinerPrivateKey: declinerPrivateKey,
+  );
+
   final result = invite.isExpiredAt(effectiveNow)
       ? DeclinePendingGroupInviteResult.expired
       : DeclinePendingGroupInviteResult.success;
@@ -49,6 +76,49 @@ Future<DeclinePendingGroupInviteResult> declinePendingGroupInvite({
     },
   );
   return result;
+}
+
+Future<void> _maybeSendDeclineAck({
+  required PendingGroupInvite invite,
+  required DateTime now,
+  P2PService? p2pService,
+  Bridge? bridge,
+  ContactRepository? contactRepo,
+  String? declinerPeerId,
+  String? declinerPrivateKey,
+}) async {
+  // Local-only mode: callers that don't wire transport just skip the ack.
+  if (p2pService == null ||
+      bridge == null ||
+      contactRepo == null ||
+      declinerPeerId == null ||
+      declinerPrivateKey == null) {
+    return;
+  }
+  try {
+    // The invite wire format carries no inviter ML-KEM key, so resolve it from
+    // contacts. A non-contact inviter has none → degrade to a skip (the send
+    // fn emits DECLINE_ACK_ENCRYPTION_SKIPPED).
+    final inviterContact = await contactRepo.getContact(invite.senderPeerId);
+    await sendGroupInviteDeclineAck(
+      p2pService: p2pService,
+      bridge: bridge,
+      inviteId: invite.inviteId,
+      groupId: invite.groupId,
+      inviterPeerId: invite.senderPeerId,
+      inviterMlKemPublicKey: inviterContact?.mlKemPublicKey,
+      declinerPeerId: declinerPeerId,
+      declinerPrivateKey: declinerPrivateKey,
+      now: now,
+    );
+  } catch (e) {
+    // Fire-and-forget: the user's local decline already succeeded.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_DECLINE_ACK_SEND_SUPPRESSED_ERROR',
+      details: {'error': e.toString()},
+    );
+  }
 }
 
 Future<void> _recordDeclinedInviteTombstone({

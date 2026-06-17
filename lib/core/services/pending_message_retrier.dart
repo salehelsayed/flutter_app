@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -11,6 +12,14 @@ import 'package:flutter_app/features/groups/application/drain_group_offline_inbo
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+
+/// Finding 05 Phase 4 (P1.6): a ±20% jittered copy of [interval], used to
+/// stagger the periodic retry + continuity timers across reconnecting clients
+/// so they do not stampede the relay in lockstep.
+Duration jitteredRetryInterval(Duration interval, Random random) {
+  final factor = 0.8 + random.nextDouble() * 0.4;
+  return Duration(microseconds: (interval.inMicroseconds * factor).round());
+}
 
 /// Service that automatically retries failed outgoing messages
 /// when the P2P node reconnects.
@@ -45,12 +54,23 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryFailedGroupMessagesFn;
   final Future<int> Function()? retryPendingIntroductionDeliveriesFn;
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
+
+  /// Finding 05 Phase 4: clears the per-row retry-backoff window for failed
+  /// group rows on reconnect, so a fresh offline→online transition grants every
+  /// backed-off row one immediate attempt.
+  final Future<int> Function()? clearGroupRetryBackoffFn;
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
   final Future<int> Function()? verifyInboxCustodyFn;
   final Duration retryDebounce;
   final Duration periodicRetryInterval;
   final Duration groupContinuitySweepInterval;
+
+  /// Finding 05 Phase 4 (P1.6): when non-null, the periodic retry + continuity
+  /// timers fire at a ±20% jittered, self-rescheduling interval to avoid a
+  /// thundering herd of reconnecting clients. Null (default, used by tests)
+  /// keeps deterministic fixed-interval `Timer.periodic` behavior.
+  final Random? jitterRandom;
 
   bool Function()? _isExternalRecoveryInProgressFn;
 
@@ -82,12 +102,14 @@ class PendingMessageRetrier {
     this.retryFailedGroupMessagesFn,
     this.retryPendingIntroductionDeliveriesFn,
     this.retryFailedGroupInboxStoresFn,
+    this.clearGroupRetryBackoffFn,
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
     this.verifyInboxCustodyFn,
     this.retryDebounce = defaultRetryDebounce,
     this.periodicRetryInterval = defaultPeriodicRetryInterval,
     this.groupContinuitySweepInterval = defaultGroupContinuitySweepInterval,
+    this.jitterRandom,
     bool Function()? isExternalRecoveryInProgressFn,
   }) : _isExternalRecoveryInProgressFn = isExternalRecoveryInProgressFn;
 
@@ -109,6 +131,13 @@ class PendingMessageRetrier {
       final nowNeedsGroupRecovery = state.needsGroupRecovery ?? false;
 
       if (nowOnline && !_wasOnline) {
+        // Finding 05 Phase 4: a reconnect grants every backed-off failed group
+        // row one immediate attempt — clear the backoff window before the
+        // debounced retry runs.
+        final clearBackoff = clearGroupRetryBackoffFn;
+        if (clearBackoff != null) {
+          unawaited(clearBackoff());
+        }
         // Transition to online — schedule retry with debounce and
         // keep group continuity catch-up on a shorter cadence.
         _startOnlineTimers();
@@ -197,16 +226,46 @@ class PendingMessageRetrier {
     _debounceTimer = Timer(retryDebounce, _retryIfNeeded);
 
     _periodicTimer?.cancel();
-    _periodicTimer = Timer.periodic(
-      periodicRetryInterval,
-      (_) => _retryIfNeeded(),
-    );
-
     _groupContinuityTimer?.cancel();
-    _groupContinuityTimer = Timer.periodic(
-      groupContinuitySweepInterval,
-      (_) => _runGroupContinuitySweepIfNeeded(),
-    );
+
+    final random = jitterRandom;
+    if (random == null) {
+      // Deterministic fixed cadence (default + tests).
+      _periodicTimer = Timer.periodic(
+        periodicRetryInterval,
+        (_) => _retryIfNeeded(),
+      );
+      _groupContinuityTimer = Timer.periodic(
+        groupContinuitySweepInterval,
+        (_) => _runGroupContinuitySweepIfNeeded(),
+      );
+      return;
+    }
+
+    // Self-rescheduling jittered cadence (production): each tick recomputes a
+    // ±20% delay so reconnecting clients do not retry in lockstep.
+    void schedulePeriodic() {
+      _periodicTimer = Timer(
+        jitteredRetryInterval(periodicRetryInterval, random),
+        () {
+          _retryIfNeeded();
+          schedulePeriodic();
+        },
+      );
+    }
+
+    void scheduleContinuity() {
+      _groupContinuityTimer = Timer(
+        jitteredRetryInterval(groupContinuitySweepInterval, random),
+        () {
+          _runGroupContinuitySweepIfNeeded();
+          scheduleContinuity();
+        },
+      );
+    }
+
+    schedulePeriodic();
+    scheduleContinuity();
   }
 
   void _stopRecurringOnlineTimers() {

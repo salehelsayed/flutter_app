@@ -26,10 +26,15 @@ class GroupInviteAttempt {
   final String? username;
   final SendGroupInviteResult result;
 
+  /// The exact invite id minted for this recipient, so the delivery-attempt
+  /// row can persist it for a later revocation match (HOLE-4).
+  final String? inviteId;
+
   const GroupInviteAttempt({
     required this.peerId,
     this.username,
     required this.result,
+    this.inviteId,
   });
 
   bool get wasDelivered =>
@@ -117,6 +122,10 @@ Future<SendGroupInviteResult> sendGroupInvite({
   required Map<String, dynamic> groupConfig,
   String? recipientDeviceId,
   GroupInviteReusePolicy reusePolicy = GroupInviteReusePolicy.singleUse,
+  // When supplied, the caller controls the invite id so it can persist the
+  // same id on the delivery-attempt row (HOLE-4). Otherwise a fresh id is
+  // minted internally as before.
+  String? inviteIdOverride,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -204,7 +213,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
     senderPublicKey: senderPublicKey,
     requestedDeviceId: senderDeviceId,
   );
-  final inviteId = _uuid.v4();
+  final inviteId = inviteIdOverride ?? _uuid.v4();
   final invitePolicy = _deriveInvitePolicy(
     recipientPeerId: recipientPeerId,
     recipientDevice: recipientDevice,
@@ -517,6 +526,9 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
 
   final attempts = await Future.wait(
     targets.map((r) async {
+      // Mint the invite id here so it can be persisted on the delivery-attempt
+      // row for a later revocation match (HOLE-4), even if the send throws.
+      final inviteId = _uuid.v4();
       try {
         final result = await sendGroupInvite(
           p2pService: p2pService,
@@ -535,11 +547,13 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
           groupConfig: groupConfig,
           recipientDeviceId: r.recipientDeviceId,
           reusePolicy: reusePolicy,
+          inviteIdOverride: inviteId,
         );
         return GroupInviteAttempt(
           peerId: r.peerId,
           username: r.username,
           result: result,
+          inviteId: inviteId,
         );
       } catch (e) {
         emitFlowEvent(
@@ -551,6 +565,7 @@ Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
           peerId: r.peerId,
           username: r.username,
           result: SendGroupInviteResult.sendFailed,
+          inviteId: inviteId,
         );
       }
     }),

@@ -1,12 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_decline_ack.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_config_resync_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_decline_ack_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation_payload.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -35,6 +44,16 @@ class GroupInviteListener {
   final GroupMessageRepository? msgRepo;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final AppendGroupEventLogEntry? appendGroupEventLogEntry;
+
+  /// Inviter-side per-peer delivery-attempt store, used to flip a row to
+  /// `declined` when an inbound decline-ack arrives. Null when not wired.
+  final GroupInviteDeliveryAttemptRepository? deliveryRepo;
+
+  /// On-join metadata resync (finding D), all null/false unless wired + flag on.
+  final P2PService? p2pService;
+  final Future<IdentityModel?> Function()? loadOwnIdentity;
+  final DownloadGroupAvatarFn? downloadGroupAvatarFn;
+  final bool onJoinMetadataResyncEnabled;
   final DateTime Function() now;
 
   StreamSubscription<ChatMessage>? _subscription;
@@ -59,6 +78,11 @@ class GroupInviteListener {
     this.msgRepo,
     this.mediaAttachmentRepo,
     this.appendGroupEventLogEntry,
+    this.deliveryRepo,
+    this.p2pService,
+    this.loadOwnIdentity,
+    this.downloadGroupAvatarFn,
+    this.onJoinMetadataResyncEnabled = kOnJoinMetadataResyncEnabled,
     DateTime Function()? now,
   }) : now = now ?? _defaultNow;
 
@@ -168,6 +192,38 @@ class GroupInviteListener {
       }
 
       final ownSecretKey = await getOwnMlKemSecretKey();
+
+      // On-join metadata resync (finding D) — most-specific discriminators
+      // first, flag-gated. config:response applies; config:request responds.
+      if (onJoinMetadataResyncEnabled) {
+        if (GroupConfigResyncEnvelope.isResponse(message.content)) {
+          await handleIncomingGroupConfigResponse(
+            message: message,
+            groupRepo: groupRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: ownSecretKey,
+            downloadGroupAvatarFn: downloadGroupAvatarFn,
+            now: now().toUtc(),
+          );
+          return;
+        }
+        if (GroupConfigResyncEnvelope.isRequest(message.content)) {
+          final p2p = p2pService;
+          if (p2p != null) {
+            await handleIncomingGroupConfigRequest(
+              message: message,
+              groupRepo: groupRepo,
+              p2pService: p2p,
+              bridge: bridge,
+              ownIdentity: await loadOwnIdentity?.call(),
+              ownMlKemSecretKey: ownSecretKey,
+              now: now().toUtc(),
+            );
+          }
+          return;
+        }
+      }
+
       final isRevocation =
           GroupInviteRevocationPayload.parseEncryptedEnvelope(
             message.content,
@@ -201,6 +257,22 @@ class GroupInviteListener {
           );
           _pendingInviteController.add(removedPendingInvite);
         }
+        return;
+      }
+
+      final isDeclineAck =
+          GroupInviteDeclineAckPayload.parseEncryptedEnvelope(
+            message.content,
+          ) !=
+          null;
+      if (isDeclineAck) {
+        await handleIncomingGroupInviteDeclineAck(
+          message: message,
+          deliveryRepo: deliveryRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: ownSecretKey,
+          now: now().toUtc(),
+        );
         return;
       }
 

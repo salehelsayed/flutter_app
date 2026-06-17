@@ -823,6 +823,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_unavailable => 'Media unavailable';
 
   @override
+  String get media_could_not_verify => 'Couldn\'t verify this media';
+
+  @override
   String get media_retry_unavailable => 'Retry unavailable media';
 
   @override
@@ -1082,7 +1085,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Failed to update group details';
 
   @override
+  String get group_info_details_update_queued =>
+      'Saved — will retry sending when reconnected';
+
+  @override
   String get group_info_invite_resend_failed => 'Failed to resend invite';
+
+  @override
+  String group_info_invite_revoked(String username) {
+    return 'Invite to $username revoked';
+  }
+
+  @override
+  String get group_info_invite_revoke_failed => 'Failed to revoke invite';
 
   @override
   String group_info_invite_sent(String username) {
@@ -1144,6 +1159,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get group_member_resend => 'Resend';
+
+  @override
+  String get group_member_revoke => 'Revoke';
+
+  @override
+  String get group_member_revoking => 'Revoking...';
 
   @override
   String get group_member_manage_role => 'Manage role';
@@ -1251,6 +1272,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get invite_status_joined => 'Joined';
+
+  @override
+  String get invite_status_revoked => 'Revoked';
+
+  @override
+  String get invite_status_declined => 'Declined';
 
   @override
   String get invite_status_unknown => 'Invite unknown';
@@ -1736,8 +1763,8 @@ class AppLocalizationsEn extends AppLocalizations {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
-      other: 'Skipped $count oversized GIFs.',
-      one: 'Skipped 1 oversized GIF.',
+      other: 'Skipped $count oversized attachments.',
+      one: 'Skipped 1 oversized attachment.',
     );
     return '$_temp0';
   }
@@ -2086,6 +2113,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get group_invite_expired => 'Invite expired';
+
+  @override
+  String get group_invite_expired_ask_resend =>
+      'This invite has expired. Ask the group admin to send a fresh one.';
+
+  @override
+  String get group_joining_in_progress => 'Joining…';
+
+  @override
+  String get group_join_failed_retry => 'Couldn\'t join — retry';
 
   @override
   String get group_invite_revoked => 'Invite was revoked';

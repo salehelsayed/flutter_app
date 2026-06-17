@@ -61,6 +61,7 @@ void main() {
     ValueChanged<GroupMember>? onToggleAdminRole,
     ValueChanged<GroupMember>? onRemoveMember,
     ValueChanged<GroupMember>? onResendInvite,
+    ValueChanged<GroupMember>? onRevokeInvite,
     VoidCallback? onAddMember,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
@@ -89,6 +90,7 @@ void main() {
         onToggleAdminRole: onToggleAdminRole,
         onAddMember: onAddMember,
         onResendInvite: onResendInvite,
+        onRevokeInvite: onRevokeInvite,
         backgroundPreference: backgroundPreference,
         securityStatus: securityStatus,
       ),
@@ -207,6 +209,91 @@ void main() {
     await tester.tap(resendButton, warnIfMissed: false);
     expect(resentMember?.peerId, 'peer-resend');
   });
+
+  testWidgets(
+    'C: shows revoke only for revocable statuses (sent/queued/needsResend), not joined/cannotSend',
+    (tester) async {
+      GroupMember? revokedMember;
+      GroupMember writer(String peerId) => GroupMember(
+            groupId: 'group-1',
+            peerId: peerId,
+            username: peerId,
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          members: [
+            testMembers.first,
+            writer('peer-sent'),
+            writer('peer-joined'),
+            writer('peer-cannot'),
+          ],
+          ownPeerId: 'peer-admin',
+          inviteStatusesByPeerId: const {
+            'peer-sent': GroupInviteDeliveryStatus.sent,
+            'peer-joined': GroupInviteDeliveryStatus.joined,
+            'peer-cannot': GroupInviteDeliveryStatus.cannotSend,
+          },
+          onRevokeInvite: (member) => revokedMember = member,
+        ),
+      );
+
+      // Revocable: a still-pending (sent) invite.
+      expect(
+        find.byKey(const ValueKey('group-member-revoke-invite-peer-sent')),
+        findsOneWidget,
+      );
+      // Not revocable: already joined, or unsendable.
+      expect(
+        find.byKey(const ValueKey('group-member-revoke-invite-peer-joined')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('group-member-revoke-invite-peer-cannot')),
+        findsNothing,
+      );
+
+      final revokeButton = find.byKey(
+        const ValueKey('group-member-revoke-invite-peer-sent'),
+      );
+      await tester.ensureVisible(revokeButton);
+      await tester.pump();
+      await tester.tap(revokeButton, warnIfMissed: false);
+      expect(revokedMember?.peerId, 'peer-sent');
+    },
+  );
+
+  testWidgets(
+    'C: non-admins never see the revoke action',
+    (tester) async {
+      GroupMember writer(String peerId) => GroupMember(
+            groupId: 'group-1',
+            peerId: peerId,
+            username: peerId,
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          members: [testMembers.first, writer('peer-sent')],
+          ownPeerId: 'peer-member',
+          isAdmin: false,
+          inviteStatusesByPeerId: const {
+            'peer-sent': GroupInviteDeliveryStatus.sent,
+          },
+          onRevokeInvite: (_) {},
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('group-member-revoke-invite-peer-sent')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('shows disabled invite resend busy state', (tester) async {
     await tester.pumpWidget(

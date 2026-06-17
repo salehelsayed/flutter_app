@@ -19,9 +19,11 @@ class GroupMemberRow extends StatelessWidget {
   final bool isAdmin;
   final bool isSelf;
   final bool isResendingInvite;
+  final bool isRevokingInvite;
   final VoidCallback? onToggleAdminRole;
   final VoidCallback? onRemove;
   final VoidCallback? onResendInvite;
+  final VoidCallback? onRevokeInvite;
 
   const GroupMemberRow({
     super.key,
@@ -32,9 +34,11 @@ class GroupMemberRow extends StatelessWidget {
     this.isAdmin = false,
     this.isSelf = false,
     this.isResendingInvite = false,
+    this.isRevokingInvite = false,
     this.onToggleAdminRole,
     this.onRemove,
     this.onResendInvite,
+    this.onRevokeInvite,
   });
 
   @override
@@ -92,7 +96,8 @@ class GroupMemberRow extends StatelessWidget {
               !isSelf &&
               (onToggleAdminRole != null ||
                   onRemove != null ||
-                  onResendInvite != null))
+                  onResendInvite != null ||
+                  onRevokeInvite != null))
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -106,6 +111,18 @@ class GroupMemberRow extends StatelessWidget {
                       isResendingInvite
                           ? l10n.group_member_sending
                           : l10n.group_member_resend,
+                    ),
+                  ),
+                if (onRevokeInvite != null)
+                  TextButton(
+                    key: ValueKey(
+                      'group-member-revoke-invite-${member.peerId}',
+                    ),
+                    onPressed: isRevokingInvite ? null : onRevokeInvite,
+                    child: Text(
+                      isRevokingInvite
+                          ? l10n.group_member_revoking
+                          : l10n.group_member_revoke,
                     ),
                   ),
                 if (onToggleAdminRole != null)
@@ -243,6 +260,8 @@ class _InviteStatusBadge extends StatelessWidget {
         return readableColors.isLightSurface
             ? const Color(0xFF9D1C12)
             : const Color(0xFFFFB3AD);
+      case GroupInviteDeliveryStatus.revoked:
+      case GroupInviteDeliveryStatus.declined:
       case GroupInviteDeliveryStatus.unknown:
         return readableColors.textMuted;
     }

@@ -112,6 +112,30 @@ void main() {
         final restored = MediaAttachment.fromMap(map);
         expect(restored.downloadStatus, 'pending');
       });
+
+      test('downloadRetryCount round-trips through toMap (conditional) / fromMap',
+          () {
+        final withCounter = testAttachment.copyWith(downloadRetryCount: 2);
+        final map = withCounter.toMap();
+        expect(map['download_retry_count'], 2);
+
+        final restored = MediaAttachment.fromMap(map);
+        expect(restored.downloadRetryCount, 2);
+      });
+
+      test('toMap omits download_retry_count when null', () {
+        final map = testAttachment.toMap();
+        expect(map.containsKey('download_retry_count'), isFalse);
+        expect(MediaAttachment.fromMap(map).downloadRetryCount, isNull);
+      });
+
+      test('copyWith updates downloadRetryCount', () {
+        expect(testAttachment.downloadRetryCount, isNull);
+        final bumped = testAttachment.copyWith(downloadRetryCount: 1);
+        expect(bumped.downloadRetryCount, 1);
+        // Preserved when not passed.
+        expect(bumped.copyWith(localPath: '/x').downloadRetryCount, 1);
+      });
     });
 
     group('fromJson / toJson round-trip', () {

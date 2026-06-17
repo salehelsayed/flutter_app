@@ -41,6 +41,8 @@ import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 Widget _localizedMaterialApp({required Widget home}) {
@@ -180,6 +182,57 @@ class _TrackingInviteDeliveryAttemptRepository
         : existing.copyWith(
             username: username,
             status: GroupInviteDeliveryStatus.joined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    final now = (revokedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.revoked,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.revoked,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final now = (declinedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    if (existing?.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.declined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.declined,
             updatedAt: now,
             clearLastError: true,
           );
@@ -2119,6 +2172,92 @@ void main() {
       });
     }
 
+    testWidgets(
+      'C: revoking a pending invite sends a revocation carrying the persisted invite_id (HOLE-4) and marks the row revoked',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-alice',
+            username: 'Alice',
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+          ),
+        );
+        await inviteStatusRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: 'group-1',
+            peerId: 'peer-alice',
+            username: 'Alice',
+            status: GroupInviteDeliveryStatus.sent,
+            attemptedAt: DateTime.utc(2026, 5, 7, 12),
+            updatedAt: DateTime.utc(2026, 5, 7, 12),
+            inviteId: 'invite-alice-1',
+          ),
+        );
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+          sendMessageResult: true,
+        );
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: p2pService,
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final button = find.byKey(
+          const ValueKey('group-member-revoke-invite-peer-alice'),
+        );
+        expect(button, findsOneWidget);
+        await tester.ensureVisible(button);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(button, warnIfMissed: false);
+        await pumpFrames(tester, count: 40);
+
+        // A revocation envelope was sent, carrying the EXACT invite id the
+        // receiver matches on (HOLE-4 — without it the live invite is never
+        // deleted).
+        expect(p2pService.sendMessageCallCount, 1);
+        final envelope =
+            jsonDecode(p2pService.lastSendMessageContent!)
+                as Map<String, dynamic>;
+        expect(envelope['type'], 'group_invite_revocation');
+        expect(envelope['id'], 'invite-alice-1');
+        expect(envelope['id'] as String, isNotEmpty);
+
+        // The local delivery-attempt row flips to revoked.
+        final attempt = await inviteStatusRepo.getAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-alice',
+        );
+        expect(attempt!.status, GroupInviteDeliveryStatus.revoked);
+      },
+    );
+
     testWidgets('shows identity warning when member keys differ from contact', (
       tester,
     ) async {
@@ -3174,6 +3313,60 @@ void main() {
         // The monotonicity-guarded revert must not clobber the newer remote
         // name back to 'Original Name'.
         expect(persisted!.name, 'Remote Name');
+        expect(find.text('Group details updated'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'S2b metadata soft publish failure enqueues a durable broadcast and keeps the edit',
+      (tester) async {
+        final enqueued = <GroupPendingBroadcast>[];
+        setGroupPendingBroadcastEnqueueSink((b) async => enqueued.add(b));
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final original = makeAdminGroup().copyWith(
+          name: 'Original Name',
+          description: 'Original Desc',
+        );
+        await _seedEditableGroup(groupRepo, group: original);
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': false,
+              'errorMessage': 'simulated publish failure',
+            },
+            'group:inboxStore': {'ok': true},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'New Name');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        // The edit is KEPT (durable retry), not reverted to S2a's fallback.
+        final persisted = await groupRepo.getGroup('group-1');
+        expect(persisted!.name, 'New Name');
+        // A signed broadcast was durably enqueued for retry.
+        expect(enqueued, hasLength(1));
+        expect(enqueued.single.kind, 'group_metadata_updated');
+        expect(enqueued.single.recipientPeerIds, contains('peer-alice'));
+        // Honest "will retry" message, never a false success.
+        expect(
+          find.text('Saved — will retry sending when reconnected'),
+          findsOneWidget,
+        );
         expect(find.text('Group details updated'), findsNothing);
       },
     );

@@ -10,10 +10,11 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
-import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
@@ -904,14 +905,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     ImageQualityPreference? videoQualityPreference,
     bool ownsProcessingLifecycle = true,
   }) async {
-    if (_mimeFromPath(path) == 'image/gif') {
-      final fileSize = File(path).lengthSync();
-      if (fileSize > kMaxGifFileSize) {
-        _showGifTooLargeMessage();
-        throw const _RejectedPendingMediaException();
-      }
-    }
-
+    // GIF is no longer special-cased on raw pre-compression bytes here; it flows
+    // through the same single send-time per-type size gate as every other type,
+    // validated on final budget bytes (INV-SZ-2).
     final processor = widget.imageProcessor;
     final isVideo = processor?.isProcessableVideo(path) ?? false;
     if (isVideo && ownsProcessingLifecycle) {
@@ -957,6 +953,35 @@ class _ConversationWiredState extends State<ConversationWired> {
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  /// Per-type SEND size gate for 1:1 media (OQ-2 — the per-type cap table now
+  /// applies to 1:1 + share, not just groups). Validates each pending
+  /// attachment's final (post-compression) budget bytes against its per-type cap
+  /// and surfaces the type-aware copy. Returns false (and shows a message) on the
+  /// first rejection; true when every attachment is within its cap.
+  bool _validatePendingMediaSizes(List<PendingComposerMedia> media) {
+    for (final pending in media) {
+      final mime = _mimeFromPath(pending.file.path);
+      final validation = GroupMediaSizePolicy.validateSize(
+        sizeBytes: pending.budgetBytes,
+        mime: mime,
+      );
+      if (validation.isValid) continue;
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_MEDIA_REJECTED_INVALID_SIZE',
+        details: {'mime': mime, 'reason': validation.reason},
+      );
+      if (validation.reason == 'gif_size_exceeded') {
+        _showGifTooLargeMessage();
+      } else {
+        _showAttachmentTooLargeMessage();
+      }
+      return false;
+    }
+    return true;
   }
 
   Future<void> _checkIntroBanner() async {
@@ -1210,9 +1235,29 @@ class _ConversationWiredState extends State<ConversationWired> {
           } catch (_) {
             downloaded = null;
           }
-          displayAttachments.add(
-            downloaded ?? resolved.copyWith(downloadStatus: 'failed'),
-          );
+          MediaAttachment fallback;
+          if (downloaded != null) {
+            fallback = downloaded;
+          } else {
+            // Re-read the authoritative persisted status so a terminal
+            // download_failed (relay not-found / budget exhausted) is never
+            // downgraded back to a retryable `failed` in the UI — which would
+            // re-arm recovery forever (INV-DL-1). Mirrors the group path.
+            MediaAttachment? persisted;
+            try {
+              final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+                message.id,
+              );
+              final matches = rows.where((a) => a.id == resolved.id);
+              persisted = matches.isEmpty ? null : matches.first;
+            } catch (_) {}
+            fallback =
+                persisted ??
+                resolved.copyWith(
+                  downloadStatus: kMediaDownloadStatusFailed,
+                );
+          }
+          displayAttachments.add(fallback);
           didMutateDisplayState = true;
           continue;
         }
@@ -1241,9 +1286,12 @@ class _ConversationWiredState extends State<ConversationWired> {
   }
 
   bool _shouldRecoverVisibleAttachment(MediaAttachment attachment) {
-    return attachment.downloadStatus == 'pending' ||
-        attachment.downloadStatus == 'downloading' ||
-        attachment.downloadStatus == 'failed';
+    return attachment.downloadStatus == kMediaDownloadStatusPending ||
+        attachment.downloadStatus == kMediaDownloadStatusDownloading ||
+        // A transient `failed` row is recoverable only while under the bounded
+        // retry budget; the terminal `download_failed` is never re-recovered
+        // (INV-DL-1) — mirrors the group recovery path.
+        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
   }
 
   Future<MediaAttachment> _resolveAttachmentForDisplay(
@@ -1429,8 +1477,20 @@ class _ConversationWiredState extends State<ConversationWired> {
         attachment: resolved,
         contactPeerId: _contact.peerId,
       );
-      final refreshedAttachment =
-          downloaded ?? resolved.copyWith(downloadStatus: 'failed');
+      MediaAttachment refreshedAttachment;
+      if (downloaded != null) {
+        refreshedAttachment = downloaded;
+      } else {
+        // Re-read the persisted status so a terminal download_failed isn't
+        // shown as a retryable `failed` (INV-DL-1) — mirrors the group path.
+        final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+          messageId,
+        );
+        final matches = rows.where((a) => a.id == resolved.id);
+        refreshedAttachment = matches.isEmpty
+            ? resolved.copyWith(downloadStatus: kMediaDownloadStatusFailed)
+            : matches.first;
+      }
       await _refreshMessageWithMediaSnapshot(
         messageId,
         _replaceAttachmentById(attachments, refreshedAttachment),
@@ -1731,6 +1791,13 @@ class _ConversationWiredState extends State<ConversationWired> {
           setState(() => _isSending = false);
         }
       }
+      return;
+    }
+
+    // Per-type SEND size gate (OQ-2). Runs before any state mutation/upload so a
+    // rejected attachment simply surfaces a message and leaves the composer
+    // intact (no optimistic message, no upload).
+    if (hasAttachments && !_validatePendingMediaSizes(_pendingAttachments)) {
       return;
     }
 

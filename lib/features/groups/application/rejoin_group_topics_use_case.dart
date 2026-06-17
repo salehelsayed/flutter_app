@@ -23,13 +23,17 @@ enum RejoinReason {
 /// Per-group result of a single rejoin pass. Exposed so callers (and a future
 /// per-group Go ack) can reason about which specific groups are still
 /// un-recovered rather than only the batch aggregates.
-enum RejoinOutcome { joined, skippedNoKey, error, skippedDissolved }
+enum RejoinOutcome { joined, skippedNoKey, error, skippedDissolved, deferred }
 
 class RejoinGroupTopicsResult {
   final int joinedGroupCount;
   final int skippedNoKeyCount;
   final int errorCount;
   final bool skipped;
+
+  /// Finding 05 Phase 3: groups skipped this pass because they are inside their
+  /// rejoin-backoff window (a prior attempt failed). Does not block the ack.
+  final int deferredCount;
 
   /// groupId → outcome for every group visited this pass.
   final Map<String, RejoinOutcome> perGroupOutcomes;
@@ -39,6 +43,7 @@ class RejoinGroupTopicsResult {
     required this.skippedNoKeyCount,
     required this.errorCount,
     required this.skipped,
+    this.deferredCount = 0,
     this.perGroupOutcomes = const {},
   });
 
@@ -55,6 +60,21 @@ class RejoinGroupTopicsResult {
   ///     we missed live messages for that group, and with a node-wide ack we
   ///     conservatively withhold the whole ack until a later pass clears it.
   bool get canAcknowledgeGroupRecovery => !skipped && errorCount == 0;
+}
+
+// Finding 05 Phase 3: bounded per-group rejoin retry. A persistently-failing
+// rejoin is backed off (base 30s ×2, cap 30min) instead of hammered every pass,
+// and a group that exceeds [_maxRejoinAttempts] is reported as permanently
+// stuck via GROUP_REJOIN_PERMANENTLY_STUCK.
+const Duration _rejoinBackoffBase = Duration(seconds: 30);
+const Duration _rejoinBackoffCap = Duration(minutes: 30);
+const int _maxRejoinAttempts = 10;
+
+Duration _rejoinBackoffDelay(int attempt) {
+  final baseMs = _rejoinBackoffBase.inMilliseconds;
+  final capMs = _rejoinBackoffCap.inMilliseconds;
+  final raw = baseMs * (1 << attempt.clamp(0, 20));
+  return Duration(milliseconds: raw > capMs ? capMs : raw);
 }
 
 /// Rejoins all group pubsub topics on startup or after watchdog restart.
@@ -88,10 +108,17 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   var joinedGroupCount = 0;
   var skippedNoKeyCount = 0;
   var errorCount = 0;
+  var deferredCount = 0;
   final perGroupOutcomes = <String, RejoinOutcome>{};
+
+  // Finding 05 Phase 3: per-group rejoin backoff state (sparse — only failing
+  // groups have an entry). Loaded once per pass.
+  final rejoinStates = await groupRepo.loadGroupRejoinStates();
+  final nowUtc = DateTime.now().toUtc();
 
   for (final group in groups) {
     final groupStopwatch = Stopwatch()..start();
+    final rejoinState = rejoinStates[group.id];
     try {
       if (group.isDissolved) {
         perGroupOutcomes[group.id] = RejoinOutcome.skippedDissolved;
@@ -149,6 +176,27 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
         continue;
       }
 
+      // Finding 05 Phase 3: skip a group still inside its rejoin-backoff window
+      // (a prior attempt failed); it retries once next_eligible_at passes. This
+      // does NOT block the node-wide ack — it was not attempted this pass so it
+      // is not an error (mirrors the no-key carve-out).
+      if (rejoinState?.nextEligibleAt != null &&
+          rejoinState!.nextEligibleAt!.isAfter(nowUtc)) {
+        deferredCount++;
+        perGroupOutcomes[group.id] = RejoinOutcome.deferred;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_TOPICS_SKIP_BACKOFF',
+          details: {
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+            'attempt': rejoinState.attemptCount,
+          },
+        );
+        continue;
+      }
+
       final members = await groupRepo.getMembers(group.id);
 
       final groupConfig = buildGroupConfigPayload(group, members);
@@ -162,6 +210,12 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
       );
       joinedGroupCount++;
       perGroupOutcomes[group.id] = RejoinOutcome.joined;
+      if (rejoinState != null) {
+        // Healthy again — drop the backoff row (best-effort cleanup).
+        try {
+          await groupRepo.clearGroupRejoinState(group.id);
+        } catch (_) {}
+      }
 
       emitFlowEvent(
         layer: 'FL',
@@ -186,6 +240,25 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
     } catch (e) {
       errorCount++;
       perGroupOutcomes[group.id] = RejoinOutcome.error;
+      final attempt = (rejoinState?.attemptCount ?? 0) + 1;
+      try {
+        await groupRepo.recordGroupRejoinFailure(
+          group.id,
+          nextEligibleAt: nowUtc.add(_rejoinBackoffDelay(attempt)),
+        );
+      } catch (_) {}
+      if (attempt >= _maxRejoinAttempts) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_PERMANENTLY_STUCK',
+          details: {
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+            'attempt': attempt,
+          },
+        );
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_REJOIN_TOPICS_ERROR',
@@ -212,6 +285,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
     skippedNoKeyCount: skippedNoKeyCount,
     errorCount: errorCount,
     skipped: false,
+    deferredCount: deferredCount,
     perGroupOutcomes: perGroupOutcomes,
   );
 
@@ -223,6 +297,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
       'joinedGroupCount': joinedGroupCount,
       'skippedNoKeyCount': skippedNoKeyCount,
       'errorCount': errorCount,
+      'deferredCount': deferredCount,
       // Node-wide ack eligibility: no-key groups no longer block it; only
       // transient errors do (see RejoinGroupTopicsResult.canAcknowledgeGroupRecovery).
       'canAcknowledgeGroupRecovery': result.canAcknowledgeGroupRecovery,

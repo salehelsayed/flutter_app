@@ -389,6 +389,57 @@ class _InMemoryInviteDeliveryAttemptRepository
   }
 
   @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    final now = (revokedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.revoked,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.revoked,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final key = _key(groupId, peerId);
+    final existing = _attempts[key];
+    if (existing?.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    final now = (declinedAt ?? DateTime.now()).toUtc();
+    _attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: GroupInviteDeliveryStatus.declined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: GroupInviteDeliveryStatus.declined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
   Future<int> deleteAttempt({
     required String groupId,
     required String peerId,
@@ -4348,9 +4399,10 @@ void main() {
     );
 
     test('accepts media at the configured size boundary', () async {
+      // testAttachment is image/jpeg, so the per-type SEND cap is the image cap.
       final boundaryAttachment = testAttachment.copyWith(
         id: 'boundary-att-1',
-        size: kGroupMediaPerAttachmentLimitBytes,
+        size: kGroupMediaImageLimitBytes,
       );
 
       final (result, message) = await sendGroupMessage(

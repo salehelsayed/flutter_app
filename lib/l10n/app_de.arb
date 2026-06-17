@@ -394,6 +394,7 @@
   "media_too_large_after_compress": "Die Medien sind auch nach der Komprimierung zu groß.",
   "media_gif_too_large": "GIF-Dateien größer als 25 MB können nicht hinzugefügt werden.",
   "media_unavailable": "Medien nicht verfügbar",
+  "media_could_not_verify": "Diese Medien konnten nicht verifiziert werden",
   "media_retry_unavailable": "Nicht verfügbare Medien erneut laden",
   "edit_save_failed": "Änderung konnte nicht gespeichert werden.",
   "sending_taking_longer": "Senden dauert länger…",
@@ -521,7 +522,10 @@
   "group_info_member_role_update_failed": "Mitgliedsrolle konnte nicht aktualisiert werden",
   "group_info_details_updated": "Gruppendetails aktualisiert",
   "group_info_details_update_failed": "Gruppendetails konnten nicht aktualisiert werden",
+  "group_info_details_update_queued": "Gespeichert – erneuter Sendeversuch bei erneuter Verbindung",
   "group_info_invite_resend_failed": "Einladung konnte nicht erneut gesendet werden",
+  "group_info_invite_revoked": "Einladung an {username} widerrufen",
+  "group_info_invite_revoke_failed": "Einladung konnte nicht widerrufen werden",
   "group_info_invite_sent": "Einladung an {username} gesendet",
   "@group_info_invite_sent": {
     "placeholders": {
@@ -567,6 +571,8 @@
   "btn_save": "Speichern",
   "group_member_sending": "Wird gesendet...",
   "group_member_resend": "Erneut senden",
+  "group_member_revoke": "Widerrufen",
+  "group_member_revoking": "Wird widerrufen...",
   "group_member_manage_role": "Rolle verwalten",
   "group_role_admin": "Admin",
   "group_role_writer": "Schreibberechtigt",
@@ -644,6 +650,8 @@
   "invite_status_needs_resend": "Erneutes Senden nötig",
   "invite_status_cannot_send": "Senden nicht möglich",
   "invite_status_joined": "Beigetreten",
+  "invite_status_revoked": "Widerrufen",
+  "invite_status_declined": "Abgelehnt",
   "invite_status_unknown": "Einladung unbekannt",
   "invite_cannot_send_missing_secure_key_detail": "Uns fehlen die sicheren Informationen, um diesen Freund einzuladen. Bitte ihn, die App zu öffnen oder neu zu installieren, und versuche es erneut.",
   "invite_cannot_send_group_key_missing_detail": "Dieser Gruppe fehlt der sichere Einladungsschlüssel. Öffne die App erneut und versuche es noch einmal.",
@@ -927,7 +935,7 @@
     }
   },
   "share_summary_nothing": "Es wurde nichts geteilt.",
-  "share_summary_skipped_gifs": "{count, plural, =1{1 zu großes GIF übersprungen.} other{{count} zu große GIFs übersprungen.}}",
+  "share_summary_skipped_gifs": "{count, plural, =1{1 zu großen Anhang übersprungen.} other{{count} zu große Anhänge übersprungen.}}",
   "@share_summary_skipped_gifs": {
     "placeholders": {
       "count": {
@@ -1189,6 +1197,9 @@
   },
   "group_invite_no_longer_available": "Einladung nicht mehr verfügbar",
   "group_invite_expired": "Einladung abgelaufen",
+  "group_invite_expired_ask_resend": "Diese Einladung ist abgelaufen. Bitte den Gruppen-Admin um eine neue.",
+  "group_joining_in_progress": "Beitreten…",
+  "group_join_failed_retry": "Beitritt fehlgeschlagen — erneut versuchen",
   "group_invite_revoked": "Einladung wurde widerrufen",
   "group_invite_already_used": "Einladung bereits verwendet",
   "group_invite_wrong_identity": "Einladung gehört zu einer anderen Identität",

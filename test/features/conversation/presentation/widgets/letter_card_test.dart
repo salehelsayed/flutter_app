@@ -910,17 +910,20 @@ void main() {
                   createdAt: '2026-02-27T10:00:00.000Z',
                 ),
                 MediaAttachment(
-                  id: 'quarantined-attachment',
+                  id: 'transient-failed-attachment',
                   messageId: 'failed-message',
                   mime: 'image/jpeg',
                   size: 10,
                   mediaType: 'image',
-                  localPath: '/tmp/quarantined.jpg',
-                  downloadStatus: kMediaDownloadStatusIntegrityFailed,
+                  localPath: '/tmp/transient-failed.jpg',
+                  // A transient `failed` download under the retry ceiling is
+                  // retryable; tamper (integrity_failed) would be terminal.
+                  downloadStatus: 'failed',
+                  downloadRetryCount: 1,
                   contentHash:
                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                  encryptionKeyBase64: 'key-quarantined',
-                  encryptionNonce: 'nonce-quarantined',
+                  encryptionKeyBase64: 'key-transient',
+                  encryptionNonce: 'nonce-transient',
                   encryptionScheme:
                       kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                   createdAt: '2026-02-27T10:00:00.000Z',
@@ -938,7 +941,7 @@ void main() {
 
           final unavailableRetry = find.byKey(
             const ValueKey(
-              'unavailable-media-retry-failed-message-quarantined-attachment',
+              'unavailable-media-retry-failed-message-transient-failed-attachment',
             ),
           );
           expect(unavailableRetry, findsOneWidget);
@@ -955,7 +958,7 @@ void main() {
           await tester.tap(unavailableRetry);
           await tester.pump();
 
-          expect(unavailableAttachmentId, 'quarantined-attachment');
+          expect(unavailableAttachmentId, 'transient-failed-attachment');
           expect(failedMessageRetried, isFalse);
           expect(failedMediaRetried, isFalse);
         },
@@ -1018,6 +1021,36 @@ void main() {
           expect(retried, isFalse);
         },
       );
+    });
+  });
+
+  group('terminal send_failed status (Finding 05 Phase 4)', () {
+    testWidgets('renders the same failed error indicator as a failed row', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(isIncoming: false, status: 'send_failed'),
+      );
+      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+    });
+
+    testWidgets('offers a working manual retry affordance', (tester) async {
+      var retried = false;
+      await tester.pumpWidget(
+        buildTestWidget(
+          isIncoming: false,
+          status: 'send_failed',
+          text: 'give up',
+          onRetryFailedMessage: () => retried = true,
+          failedMessageActionKeySuffix: 'sf1',
+        ),
+      );
+      final retryButton = find.byKey(
+        const ValueKey('failed-message-retry-sf1'),
+      );
+      expect(retryButton, findsOneWidget);
+      await tester.tap(retryButton);
+      expect(retried, isTrue);
     });
   });
 }

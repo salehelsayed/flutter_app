@@ -394,6 +394,7 @@
   "media_too_large_after_compress": "The media is too large even after compression.",
   "media_gif_too_large": "GIF files larger than 25 MB cannot be added.",
   "media_unavailable": "Media unavailable",
+  "media_could_not_verify": "Couldn't verify this media",
   "media_retry_unavailable": "Retry unavailable media",
   "edit_save_failed": "Failed to save edit.",
   "sending_taking_longer": "Sending is taking longer…",
@@ -521,7 +522,17 @@
   "group_info_member_role_update_failed": "Failed to update member role",
   "group_info_details_updated": "Group details updated",
   "group_info_details_update_failed": "Failed to update group details",
+  "group_info_details_update_queued": "Saved — will retry sending when reconnected",
   "group_info_invite_resend_failed": "Failed to resend invite",
+  "group_info_invite_revoked": "Invite to {username} revoked",
+  "@group_info_invite_revoked": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_invite_revoke_failed": "Failed to revoke invite",
   "group_info_invite_sent": "Invite sent to {username}",
   "@group_info_invite_sent": {
     "placeholders": {
@@ -567,6 +578,8 @@
   "btn_save": "Save",
   "group_member_sending": "Sending...",
   "group_member_resend": "Resend",
+  "group_member_revoke": "Revoke",
+  "group_member_revoking": "Revoking...",
   "group_member_manage_role": "Manage role",
   "group_role_admin": "admin",
   "group_role_writer": "writer",
@@ -644,6 +657,8 @@
   "invite_status_needs_resend": "Resend needed",
   "invite_status_cannot_send": "Cannot send",
   "invite_status_joined": "Joined",
+  "invite_status_revoked": "Revoked",
+  "invite_status_declined": "Declined",
   "invite_status_unknown": "Invite unknown",
   "invite_cannot_send_missing_secure_key_detail": "We don't have the secure info needed to invite this friend. Ask them to open or reinstall the app, then try again.",
   "invite_cannot_send_group_key_missing_detail": "This group is missing the secure invite key. Reopen the app and try again.",
@@ -927,7 +942,7 @@
     }
   },
   "share_summary_nothing": "Nothing was shared.",
-  "share_summary_skipped_gifs": "{count, plural, =1{Skipped 1 oversized GIF.} other{Skipped {count} oversized GIFs.}}",
+  "share_summary_skipped_gifs": "{count, plural, =1{Skipped 1 oversized attachment.} other{Skipped {count} oversized attachments.}}",
   "@share_summary_skipped_gifs": {
     "placeholders": {
       "count": {
@@ -1189,6 +1204,9 @@
   },
   "group_invite_no_longer_available": "Invite no longer available",
   "group_invite_expired": "Invite expired",
+  "group_invite_expired_ask_resend": "This invite has expired. Ask the group admin to send a fresh one.",
+  "group_joining_in_progress": "Joining…",
+  "group_join_failed_retry": "Couldn't join — retry",
   "group_invite_revoked": "Invite was revoked",
   "group_invite_already_used": "Invite already used",
   "group_invite_wrong_identity": "Invite is for another identity",

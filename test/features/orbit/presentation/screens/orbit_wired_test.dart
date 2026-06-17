@@ -1699,6 +1699,39 @@ void main() {
       expect(find.text('Alpha Group'), findsOneWidget);
     });
 
+    testWidgets(
+      'E: a half-materialized group (rejoin row) shows the "Joining…" badge in the orbit row',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-joining',
+            name: 'Joining Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-joining',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupRepo.recordGroupRejoinFailure(
+          'g-joining',
+          nextEligibleAt: DateTime.utc(2026, 3, 1),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('Joining Group'), findsOneWidget);
+        expect(find.text('Joining…'), findsOneWidget);
+      },
+    );
+
     testWidgets('displays structured group rows with latest message preview', (
       tester,
     ) async {
@@ -3003,6 +3036,65 @@ void main() {
         // B1: a successful accept auto-opens the joined group's conversation.
         expect(find.byType(GroupConversationWired), findsOneWidget);
         expect(find.text('Writers Room'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'A2: accepting a freshness-stale (card-valid) group invite shows the localized ask-resend prompt (HOLE-2 orbit surface)',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        // Card valid (~3h) but the membership freshness proof (anchored ~6h
+        // earlier than the card) is ~3h stale → expiredFreshness, not
+        // invalidPayload.
+        final invite = makePendingInvite(
+          groupId: 'grp-stale-fresh',
+          groupName: 'Aged Invite',
+          receivedAt: DateTime.now().toUtc().subtract(
+            const Duration(days: 6, hours: 21),
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+
+        expect(
+          find.text(
+            'This invite has expired. Ask the group admin to send a fresh one.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Invite is no longer valid'), findsNothing);
+        expect(await groupRepo.getGroup(invite.groupId), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
       },
     );
 

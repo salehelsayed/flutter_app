@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
@@ -189,6 +191,10 @@ Future<bool?> handleAppResumed({
     debugPrint('[RESUME] Step 3: drainOfflineInbox() done (took ${drainMs}ms)');
 
     final resumeGroupRecoveryEnabled = _resumeGroupRecoveryEnabled(p2pService);
+    // Phase 2: captured out of the recovery gate so the background drain
+    // continuation can be scheduled after the gate closes.
+    var drainHasMorePages = false;
+    String? continuationSelfPeerId;
 
     if (resumeGroupRecoveryEnabled &&
         groupRepo != null &&
@@ -204,6 +210,7 @@ Future<bool?> handleAppResumed({
             : RejoinReason.inPlaceRecovery;
 
         final identity = await identityRepo?.loadIdentity();
+        continuationSelfPeerId = identity?.peerId;
         debugPrint(
           '[RESUME] Step 3b: rejoinGroupTopics(reason=$reason, '
           'needsGroupRecovery=$needsGroupRecovery) starting...',
@@ -250,7 +257,11 @@ Future<bool?> handleAppResumed({
           historyGapRepairRepo: historyGapRepairRepo,
           requestGroupKeyRepair: requestGroupKeyRepair,
           selfPeerId: identity?.peerId,
+          // Phase 2: fast first page on the resume budget; feeds ack
+          // eligibility. Remaining pages drain in the background after the gate.
+          drainAllPages: false,
         );
+        drainHasMorePages = groupDrainResult.hasMorePages;
         final groupDrainMs = DateTime.now()
             .difference(groupDrainStart)
             .inMilliseconds;
@@ -282,6 +293,30 @@ Future<bool?> handleAppResumed({
           );
         }
       });
+
+      // Phase 2: drain the long tail OUTSIDE the gate (fire-and-forget) only
+      // when the fast first page left more pages on the relay. The recovery ack
+      // above only cleared the node's needsGroupRecovery flag (not the relay
+      // inbox) and the cursor advanced atomically, so this resumes from page 2
+      // without re-processing page 1 and without blocking group mutations
+      // behind the gate. Pages it does not reach are drained by a later
+      // resume/retrier pass via the same persisted cursor.
+      if (drainHasMorePages) {
+        unawaited(
+          drainGroupOfflineInboxContinuation(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: groupMsgRepo,
+            groupMessageListener: groupMessageListener,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            reactionRepo: reactionRepo,
+            pendingKeyRepairRepo: pendingKeyRepairRepo,
+            historyGapRepairRepo: historyGapRepairRepo,
+            requestGroupKeyRepair: requestGroupKeyRepair,
+            selfPeerId: continuationSelfPeerId,
+          ),
+        );
+      }
     } else if (groupRepo != null && resumeGroupRecoveryEnabled) {
       final needsGroupRecovery =
           p2pService.currentState.needsGroupRecovery ?? false;
@@ -343,68 +378,82 @@ Future<bool?> handleAppResumed({
     if (groupRepo != null &&
         groupMsgRepo != null &&
         resumeGroupRecoveryEnabled) {
-      // 3d. Recover stuck group 'sending' messages -> 'failed'
-      if (recoverStuckSendingGroupMessagesFn != null) {
-        try {
-          final count = await recoverStuckSendingGroupMessagesFn();
-          if (kDebugMode) {
-            debugPrint(
-              '[RESUME] Step 3d: recoverStuckSendingGroupMessages=$count',
+      // Phase 1b: hold the recovery gate across the outbound-repair follow-ons
+      // (recover-stuck, upload retry, failed-message retry) so
+      // isGroupRecoveryInProgress() stays true while resume re-sends group
+      // messages — matching the rejoin/drain/ack window above and the 30s
+      // continuity sweep — and so these resends cannot overlap a concurrent
+      // recovery pass (the serialized gate queues instead of interleaving).
+      // Per-step try/catch fault isolation is preserved. Steps 8a-8i (including
+      // finding-02's key-repair) stay outside: they are not message resends.
+      await runWithGroupRecoveryGate(() async {
+        // 3d. Recover stuck group 'sending' messages -> 'failed'
+        if (recoverStuckSendingGroupMessagesFn != null) {
+          try {
+            final count = await recoverStuckSendingGroupMessagesFn();
+            if (kDebugMode) {
+              debugPrint(
+                '[RESUME] Step 3d: recoverStuckSendingGroupMessages=$count',
+              );
+            }
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RECOVER_STUCK_SENDING_GROUP_RESUME_ERROR',
+              details: {'error': e.toString()},
             );
-          }
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RECOVER_STUCK_SENDING_GROUP_RESUME_ERROR',
-            details: {'error': e.toString()},
-          );
-          if (kDebugMode) {
-            debugPrint(
-              '[RESUME] Step 3d: recoverStuckSendingGroupMessages ERROR: $e',
-            );
+            if (kDebugMode) {
+              debugPrint(
+                '[RESUME] Step 3d: recoverStuckSendingGroupMessages ERROR: $e',
+              );
+            }
           }
         }
-      }
 
-      // 3e. Retry incomplete group media uploads from durable pending copies.
-      if (retryIncompleteGroupUploadsFn != null) {
-        try {
-          final count = await retryIncompleteGroupUploadsFn();
-          if (kDebugMode) {
-            debugPrint('[RESUME] Step 3e: retryIncompleteGroupUploads=$count');
-          }
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_INCOMPLETE_GROUP_UPLOADS_RESUME_ERROR',
-            details: {'error': e.toString()},
-          );
-          if (kDebugMode) {
-            debugPrint(
-              '[RESUME] Step 3e: retryIncompleteGroupUploads ERROR: $e',
+        // 3e. Retry incomplete group media uploads from durable pending copies.
+        if (retryIncompleteGroupUploadsFn != null) {
+          try {
+            final count = await retryIncompleteGroupUploadsFn();
+            if (kDebugMode) {
+              debugPrint(
+                '[RESUME] Step 3e: retryIncompleteGroupUploads=$count',
+              );
+            }
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_GROUP_UPLOADS_RESUME_ERROR',
+              details: {'error': e.toString()},
             );
+            if (kDebugMode) {
+              debugPrint(
+                '[RESUME] Step 3e: retryIncompleteGroupUploads ERROR: $e',
+              );
+            }
           }
         }
-      }
 
-      // 3f. Retry failed group messages (text-only in this phase)
-      if (retryFailedGroupMessagesFn != null) {
-        try {
-          final count = await retryFailedGroupMessagesFn();
-          if (kDebugMode) {
-            debugPrint('[RESUME] Step 3f: retryFailedGroupMessages=$count');
-          }
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_FAILED_GROUP_MESSAGES_RESUME_ERROR',
-            details: {'error': e.toString()},
-          );
-          if (kDebugMode) {
-            debugPrint('[RESUME] Step 3f: retryFailedGroupMessages ERROR: $e');
+        // 3f. Retry failed group messages (text-only in this phase)
+        if (retryFailedGroupMessagesFn != null) {
+          try {
+            final count = await retryFailedGroupMessagesFn();
+            if (kDebugMode) {
+              debugPrint('[RESUME] Step 3f: retryFailedGroupMessages=$count');
+            }
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_FAILED_GROUP_MESSAGES_RESUME_ERROR',
+              details: {'error': e.toString()},
+            );
+            if (kDebugMode) {
+              debugPrint(
+                '[RESUME] Step 3f: retryFailedGroupMessages ERROR: $e',
+              );
+            }
           }
         }
-      }
+      });
     }
 
     // 4. Retry incomplete key exchanges (contacts without ML-KEM key)
@@ -651,9 +700,7 @@ Future<bool?> handleAppResumed({
       try {
         final count = await retryAllPendingGroupKeyRepairsFn();
         if (kDebugMode) {
-          debugPrint(
-            '[RESUME] Step 8i: retryAllPendingGroupKeyRepairs=$count',
-          );
+          debugPrint('[RESUME] Step 8i: retryAllPendingGroupKeyRepairs=$count');
         }
       } catch (e) {
         emitFlowEvent(

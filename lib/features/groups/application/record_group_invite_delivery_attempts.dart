@@ -56,6 +56,7 @@ Future<void> recordGroupInviteDeliveryBatch({
         attemptedAt: timestamp,
         updatedAt: timestamp,
         lastError: groupInviteDeliveryErrorForSendResult(attempt.result),
+        inviteId: attempt.inviteId,
       ),
     );
   }

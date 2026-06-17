@@ -38,8 +38,15 @@ class GroupMessage {
   /// The key generation used to encrypt this message.
   final int keyGeneration;
 
-  /// Delivery status: 'sending', 'pending', 'sent', 'delivered', 'failed'.
+  /// Delivery status: 'sending', 'pending', 'sent', 'delivered', 'failed', or
+  /// the terminal [statusSendFailed] (retry budget exhausted — no longer
+  /// auto-retried; only a manual retry re-arms it).
   final String status;
+
+  /// Terminal send status: the background retrier exhausted its attempt budget
+  /// for this row and stopped auto-retrying. Distinct from 'failed' (still
+  /// retryable). Treated as a read-only superset of 'failed' on display paths.
+  static const String statusSendFailed = 'send_failed';
 
   /// Whether this message was received from another group member.
   final bool isIncoming;
@@ -66,6 +73,16 @@ class GroupMessage {
   /// `callGroupInboxStore` without guessing push recipients or payload structure.
   final String? inboxRetryPayload;
 
+  /// How many times the background retrier has re-sent this outgoing row.
+  /// Drives exponential backoff and the flip to [statusSendFailed]. Read from
+  /// the DB only; persisted exclusively via dedicated setters (never via
+  /// [toMap]) so ordinary row updates cannot reset the backoff state.
+  final int retryAttemptCount;
+
+  /// Earliest time the retrier should re-attempt this row; null means
+  /// immediately eligible. DB-read-only (see [retryAttemptCount]).
+  final DateTime? nextEligibleAt;
+
   const GroupMessage({
     required this.id,
     required this.groupId,
@@ -86,6 +103,8 @@ class GroupMessage {
     this.wireEnvelope,
     this.inboxStored = false,
     this.inboxRetryPayload,
+    this.retryAttemptCount = 0,
+    this.nextEligibleAt,
   });
 
   /// Creates a GroupMessage from a database row map.
@@ -113,6 +132,13 @@ class GroupMessage {
       wireEnvelope: map['wire_envelope'] as String?,
       inboxStored: (map['inbox_stored'] as int? ?? 0) == 1,
       inboxRetryPayload: map['inbox_retry_payload'] as String?,
+      retryAttemptCount: map['retry_attempt_count'] as int? ?? 0,
+      nextEligibleAt: map['next_eligible_at'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(
+              map['next_eligible_at'] as int,
+              isUtc: true,
+            )
+          : null,
     );
   }
 
@@ -164,6 +190,8 @@ class GroupMessage {
     Object? wireEnvelope = _sentinel,
     bool? inboxStored,
     Object? inboxRetryPayload = _sentinel,
+    int? retryAttemptCount,
+    Object? nextEligibleAt = _sentinel,
   }) {
     return GroupMessage(
       id: id ?? this.id,
@@ -197,6 +225,10 @@ class GroupMessage {
       inboxRetryPayload: inboxRetryPayload == _sentinel
           ? this.inboxRetryPayload
           : inboxRetryPayload as String?,
+      retryAttemptCount: retryAttemptCount ?? this.retryAttemptCount,
+      nextEligibleAt: nextEligibleAt == _sentinel
+          ? this.nextEligibleAt
+          : nextEligibleAt as DateTime?,
     );
   }
 

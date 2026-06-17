@@ -12,7 +12,9 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -93,6 +95,7 @@ class _GroupListWiredState extends State<GroupListWired>
   List<GroupModel> _groups = [];
   Map<String, GroupMessage?> _latestMessages = {};
   Map<String, int> _unreadCounts = {};
+  Map<String, int> _rejoinAttempts = {};
   List<PendingGroupInvite> _pendingInvites = [];
   bool _isLoading = true;
   String? _currentLoadErrorMessage;
@@ -138,6 +141,20 @@ class _GroupListWiredState extends State<GroupListWired>
       final latestMessages = <String, GroupMessage?>{};
       final unreadCounts = <String, int>{};
       final pendingInvites = await _loadPendingInvites();
+      // B2: drop invites whose group is already joined (a materialized
+      // orphan). Filter on membership only, never on expiry — expired-but-
+      // unjoined invites keep their card so the user can still dismiss them.
+      final joinedGroupIds = groups.map((group) => group.id).toSet();
+      final visibleInvites = pendingInvites
+          .where((invite) => !joinedGroupIds.contains(invite.groupId))
+          .toList();
+      // E: half-materialized groups (topic-join not yet succeeded) carry a
+      // bounded rejoin row; surface a "Joining…"/"Couldn't join" badge for them.
+      final rejoinStates = await widget.groupRepo.loadGroupRejoinStates();
+      final rejoinAttempts = <String, int>{
+        for (final entry in rejoinStates.entries)
+          entry.key: entry.value.attemptCount,
+      };
 
       for (final group in groups) {
         latestMessages[group.id] = await widget.msgRepo.getLatestMessage(
@@ -151,7 +168,8 @@ class _GroupListWiredState extends State<GroupListWired>
         _groups = groups;
         _latestMessages = latestMessages;
         _unreadCounts = unreadCounts;
-        _pendingInvites = pendingInvites;
+        _rejoinAttempts = rejoinAttempts;
+        _pendingInvites = visibleInvites;
         _isLoading = false;
         _currentLoadErrorMessage = null;
       });
@@ -325,6 +343,9 @@ class _GroupListWiredState extends State<GroupListWired>
         case AcceptPendingGroupInviteResult.expired:
           _showSnackBar(l10n.group_invite_expired);
           break;
+        case AcceptPendingGroupInviteResult.expiredFreshness:
+          _showSnackBar(l10n.group_invite_expired_ask_resend);
+          break;
         case AcceptPendingGroupInviteResult.revoked:
           _showSnackBar(l10n.group_invite_revoked);
           break;
@@ -402,6 +423,24 @@ class _GroupListWiredState extends State<GroupListWired>
           localTransportPeerId,
         ),
         ownKeyPackagePublicMaterial: ownMlKemPublicKey,
+        onJoinConfigRequest: kOnJoinMetadataResyncEnabled
+            ? ({required group, required invite}) async {
+                final inviterMember = await widget.groupRepo.getMember(
+                  group.id,
+                  invite.senderPeerId,
+                );
+                unawaited(
+                  sendOnJoinGroupConfigRequest(
+                    p2pService: widget.p2pService,
+                    bridge: widget.bridge,
+                    groupId: group.id,
+                    requesterPeerId: senderPeerId ?? '',
+                    inviterPeerId: invite.senderPeerId,
+                    inviterMlKemPublicKey: inviterMember?.mlKemPublicKey,
+                  ),
+                );
+              }
+            : null,
         drainAcceptedInboxAllPages: true,
         acceptedInboxDrainMaxAttempts: 4,
       );
@@ -463,9 +502,16 @@ class _GroupListWiredState extends State<GroupListWired>
 
     setState(() => _processingInviteIds.add(invite.groupId));
     try {
+      // Best-effort decline-ack deps (the local decline never blocks on them).
+      final identity = await widget.identityRepo.loadIdentity();
       final result = await declinePendingGroupInvite(
         pendingInviteRepo: inviteListener.pendingInviteRepo,
         groupId: invite.groupId,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        contactRepo: widget.contactRepo,
+        declinerPeerId: identity?.peerId,
+        declinerPrivateKey: identity?.privateKey,
       );
       await _loadGroups();
       if (!mounted) {
@@ -531,6 +577,7 @@ class _GroupListWiredState extends State<GroupListWired>
       unreadCounts: _unreadCounts,
       pendingInvites: _pendingInvites,
       processingInviteIds: _processingInviteIds,
+      rejoinAttempts: _rejoinAttempts,
       isLoading: _isLoading,
       loadErrorMessage: _currentLoadErrorMessage,
       onRetryLoad: _retryLoadGroups,

@@ -1004,11 +1004,19 @@ materializeAcceptedGroupInvitePayload({
       );
       return (HandleGroupInviteResult.invalidPayload, null);
     }
+    // Non-repairable bridge error (e.g. topic-subscribe failure): the group is
+    // already materialized (key persisted above), so treat it as a TRANSIENT
+    // join failure and enroll it in the bounded 088 rejoin retrier. The
+    // retrier re-attempts the join and, after the attempt cap, surfaces a
+    // "Couldn't join" badge — it never sits silently half-materialized. The
+    // genuinely-fatal/malformed-config cases are already caught and rolled back
+    // by the _isRepairableJoinMaterialError branch above.
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_HANDLE_BRIDGE_ERROR',
       details: {'error': e.toString()},
     );
+    await _enrollTransientJoinFailureForRejoin(groupRepo, payload.groupId);
     return (HandleGroupInviteResult.bridgeError, payload.groupId);
   } on TimeoutException {
     emitFlowEvent(
@@ -1020,7 +1028,9 @@ materializeAcceptedGroupInvitePayload({
             : payload.groupId,
       },
     );
-    // Group is already persisted — bridge error just means we need to retry join later
+    // Group is already persisted — enroll in the bounded rejoin retrier so the
+    // join is re-attempted later instead of leaking half-materialized.
+    await _enrollTransientJoinFailureForRejoin(groupRepo, payload.groupId);
     return (HandleGroupInviteResult.bridgeError, payload.groupId);
   } catch (e) {
     emitFlowEvent(
@@ -1028,6 +1038,7 @@ materializeAcceptedGroupInvitePayload({
       event: 'GROUP_INVITE_HANDLE_BRIDGE_ERROR',
       details: {'error': e.toString()},
     );
+    await _enrollTransientJoinFailureForRejoin(groupRepo, payload.groupId);
     return (HandleGroupInviteResult.bridgeError, payload.groupId);
   }
 
@@ -1104,6 +1115,25 @@ Future<void> _rollbackMaterializedInviteState({
   await groupRepo.removeAllKeys(groupId);
   await groupRepo.removeAllMembers(groupId);
   await groupRepo.deleteGroup(groupId);
+}
+
+/// Enrolls a half-materialized group (key persisted, topic-join failed
+/// transiently) into the bounded 088 `group_rejoin_state` retrier so the next
+/// rejoin pass re-attempts the join. Best-effort: any failure here must never
+/// mask the originating bridgeError. The 30s base mirrors the rejoin use-case's
+/// first backoff (whose constant is file-private there).
+Future<void> _enrollTransientJoinFailureForRejoin(
+  GroupRepository groupRepo,
+  String groupId,
+) async {
+  try {
+    await groupRepo.recordGroupRejoinFailure(
+      groupId,
+      nextEligibleAt: DateTime.now().toUtc().add(const Duration(seconds: 30)),
+    );
+  } catch (_) {
+    // The retrier's independent periodic sweep is the backstop.
+  }
 }
 
 GroupType _parseGroupType(String value) {

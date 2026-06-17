@@ -818,6 +818,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_unavailable => 'الوسائط غير متاحة';
 
   @override
+  String get media_could_not_verify => 'تعذّر التحقق من هذه الوسائط';
+
+  @override
   String get media_retry_unavailable => 'إعادة تحميل الوسائط غير المتاحة';
 
   @override
@@ -1083,7 +1086,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get group_info_details_update_failed => 'فشل تحديث تفاصيل المجموعة';
 
   @override
+  String get group_info_details_update_queued =>
+      'تم الحفظ — ستتم إعادة الإرسال عند إعادة الاتصال';
+
+  @override
   String get group_info_invite_resend_failed => 'فشل إعادة إرسال الدعوة';
+
+  @override
+  String group_info_invite_revoked(String username) {
+    return 'تم إلغاء دعوة $username';
+  }
+
+  @override
+  String get group_info_invite_revoke_failed => 'فشل إلغاء الدعوة';
 
   @override
   String group_info_invite_sent(String username) {
@@ -1145,6 +1160,12 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get group_member_resend => 'إعادة الإرسال';
+
+  @override
+  String get group_member_revoke => 'إلغاء';
+
+  @override
+  String get group_member_revoking => 'جارٍ الإلغاء...';
 
   @override
   String get group_member_manage_role => 'إدارة الدور';
@@ -1261,6 +1282,12 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get invite_status_joined => 'انضم';
+
+  @override
+  String get invite_status_revoked => 'أُلغيت';
+
+  @override
+  String get invite_status_declined => 'رُفضت';
 
   @override
   String get invite_status_unknown => 'الدعوة غير معروفة';
@@ -1747,11 +1774,11 @@ class AppLocalizationsAr extends AppLocalizations {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
-      other: 'تم تخطي $count ملف GIF كبير.',
-      many: 'تم تخطي $count ملف GIF كبيرًا.',
-      few: 'تم تخطي $count ملفات GIF كبيرة.',
-      two: 'تم تخطي ملفي GIF كبيرين.',
-      one: 'تم تخطي ملف GIF كبير واحد.',
+      other: 'تم تخطي $count مرفق كبير.',
+      many: 'تم تخطي $count مرفقًا كبيرًا.',
+      few: 'تم تخطي $count مرفقات كبيرة.',
+      two: 'تم تخطي مرفقين كبيرين.',
+      one: 'تم تخطي مرفق كبير واحد.',
     );
     return '$_temp0';
   }
@@ -2121,6 +2148,16 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get group_invite_expired => 'انتهت صلاحية الدعوة';
+
+  @override
+  String get group_invite_expired_ask_resend =>
+      'انتهت صلاحية هذه الدعوة. اطلب من مشرف المجموعة إرسال دعوة جديدة.';
+
+  @override
+  String get group_joining_in_progress => 'جارٍ الانضمام…';
+
+  @override
+  String get group_join_failed_retry => 'تعذّر الانضمام — أعد المحاولة';
 
   @override
   String get group_invite_revoked => 'تم إلغاء الدعوة';

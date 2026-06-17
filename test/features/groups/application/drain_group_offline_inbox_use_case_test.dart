@@ -2920,6 +2920,109 @@ void main() {
   });
 
   test(
+    'Phase 2: first-page drain reports hasMorePages and a continuation drains '
+    'the remaining pages from the persisted cursor (no page-1 re-process)',
+    () async {
+      await saveDefaultReplayKey();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-local',
+          username: 'Local',
+          role: MemberRole.writer,
+          joinedAt: DateTime.utc(2026, 5, 1),
+        ),
+      );
+      final page1 = [
+        await signedRelayMessage(
+          id: 'p2cont-page-1',
+          text: 'Phase 2 first page',
+          timestamp: DateTime.utc(2026, 6, 17, 12),
+        ),
+      ];
+      final page2 = [
+        await signedRelayMessage(
+          id: 'p2cont-page-2',
+          text: 'Phase 2 second page',
+          timestamp: DateTime.utc(2026, 6, 17, 12, 1),
+        ),
+      ];
+      bridge.addPage('group-1', '', page1, 'p2cont-cursor-2');
+      bridge.addPage('group-1', 'p2cont-cursor-2', page2, '');
+
+      // Fast first page only — reports more pages remain.
+      final firstPage = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+        drainAllPages: false,
+        pageSize: 1,
+      );
+      expect(firstPage.hasMorePages, isTrue);
+      expect(firstPage.isSuccessful, isTrue);
+      expect(await msgRepo.getMessage('p2cont-page-1'), isNotNull);
+      expect(await msgRepo.getMessage('p2cont-page-2'), isNull);
+      expect(await msgRepo.getInboxCursor('group-1'), 'p2cont-cursor-2');
+
+      // Background continuation drains the rest, resuming from the cursor.
+      final continuation = await drainGroupOfflineInboxContinuation(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+        pageSize: 1,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+      expect(continuation.hasMorePages, isFalse);
+      expect(await msgRepo.getMessage('p2cont-page-2'), isNotNull);
+      // Page 1 was never re-fetched at cursor '' during the continuation.
+      final continuationFetches = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:inboxRetrieveCursor')
+          .map((m) => m['payload']['cursor'] as String?)
+          .toList();
+      // Cursors fetched: '' (page1), 'p2cont-cursor-2' (continuation page2),
+      // and a final '' is NOT used to re-walk page 1 — the continuation starts
+      // from the persisted cursor.
+      expect(continuationFetches.last, 'p2cont-cursor-2');
+    },
+  );
+
+  test('Phase 2: a single-page first-page drain reports hasMorePages == false '
+      '(no continuation needed)', () async {
+    await saveDefaultReplayKey();
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-local',
+        username: 'Local',
+        role: MemberRole.writer,
+        joinedAt: DateTime.utc(2026, 5, 1),
+      ),
+    );
+    bridge.addPage('group-1', '', [
+      await signedRelayMessage(
+        id: 'p2single',
+        text: 'Phase 2 single page',
+        timestamp: DateTime.utc(2026, 6, 17, 12),
+      ),
+    ], '');
+
+    final result = await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      selfPeerId: 'peer-local',
+      drainAllPages: false,
+      pageSize: 50,
+    );
+    expect(result.hasMorePages, isFalse);
+    expect(result.isSuccessful, isTrue);
+    expect(await msgRepo.getMessage('p2single'), isNotNull);
+  });
+
+  test(
     'IR-002 cursor drain resumes after restart and delivers every page exactly once',
     () async {
       await saveDefaultReplayKey();
@@ -3233,97 +3336,96 @@ void main() {
     },
   );
 
-  test(
-    'GI-026b range-hash gate ignores a top-level id on repair messages '
-    '(locks 1A projection THROUGH the drain flow, finding 06)',
-    () async {
-      await saveDefaultReplayKey();
-      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: 'group-1',
-          peerId: 'peer-good',
-          username: 'Good Source',
-          role: MemberRole.reader,
-          joinedAt: DateTime.now().toUtc(),
-        ),
-      );
-
-      // The relay/peer stamps expectedRangeHash over the projected
-      // {from,message,timestamp} form — it never carries a top-level id.
-      final baseMessages = [
-        await signedRelayMessage(
-          id: 'gi026b-repaired-head',
-          text: 'Recovered GI-026b',
-          timestamp: DateTime.utc(2026, 5, 1, 12, 27),
-        ),
-      ];
-      final expectedRangeHash = computeGroupHistoryRangeHash(baseMessages);
-
-      // But the repair SOURCE delivers the SAME messages WITH a top-level id +
-      // recipientPeerIds (a future bridge serializer could forward them). 1A's
-      // projection must make the drain hash gate ignore those keys; a regression
-      // to full-map hashing would diverge from expectedRangeHash ->
-      // range_hash_mismatch (so this test is a through-flow canary for 1A).
-      final deliveredMessages = baseMessages
-          .map((m) => <String, dynamic>{
-                ...m,
-                'id': 'relay-seq-77',
-                'recipientPeerIds': const ['peer-good', 'peer-sender'],
-              })
-          .toList();
-      expect(
-        computeGroupHistoryRangeHash(deliveredMessages),
-        expectedRangeHash,
-        reason: '1A projection must hash delivered (with-id) == base (no-id)',
-      );
-
-      bridge.addPage(
-        'group-1',
-        '',
-        const <Map<String, dynamic>>[],
-        '',
-        historyGaps: [
-          {
-            'groupId': 'group-1',
-            'gapId': 'gap-gi026b-idproj',
-            'missingAfterMessageId': 'gi026b-before',
-            'missingBeforeMessageId': 'gi026b-after',
-            'expectedRangeHash': expectedRangeHash,
-            'expectedHeadMessageId': 'gi026b-repaired-head',
-            'candidateSourcePeerIds': const ['peer-good', 'peer-sender'],
-          },
-        ],
-      );
-
-      await drainGroupOfflineInbox(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        historyGapRepairRepo: historyRepo,
-        requestHistoryRepairRange:
-            ({required gap, required sourcePeerId, int limit = 50}) async {
-              return GroupHistoryRepairRangeResult(
-                groupId: gap.groupId,
-                gapId: gap.gapId,
-                sourcePeerId: sourcePeerId,
-                rangeHash: gap.expectedRangeHash,
-                headMessageId: gap.expectedHeadMessageId,
-                messages: deliveredMessages,
-              );
-            },
-      );
-
-      final repair = await historyRepo.getRepair(
+  test('GI-026b range-hash gate ignores a top-level id on repair messages '
+      '(locks 1A projection THROUGH the drain flow, finding 06)', () async {
+    await saveDefaultReplayKey();
+    final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+    await groupRepo.saveMember(
+      GroupMember(
         groupId: 'group-1',
-        gapId: 'gap-gi026b-idproj',
-      );
-      expect(repair, isNotNull);
-      expect(repair!.status, groupHistoryGapRepairStatusRepaired);
-      expect(repair.repairedMessageIds, ['gi026b-repaired-head']);
-      expect(await msgRepo.getMessage('gi026b-repaired-head'), isNotNull);
-    },
-  );
+        peerId: 'peer-good',
+        username: 'Good Source',
+        role: MemberRole.reader,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    // The relay/peer stamps expectedRangeHash over the projected
+    // {from,message,timestamp} form — it never carries a top-level id.
+    final baseMessages = [
+      await signedRelayMessage(
+        id: 'gi026b-repaired-head',
+        text: 'Recovered GI-026b',
+        timestamp: DateTime.utc(2026, 5, 1, 12, 27),
+      ),
+    ];
+    final expectedRangeHash = computeGroupHistoryRangeHash(baseMessages);
+
+    // But the repair SOURCE delivers the SAME messages WITH a top-level id +
+    // recipientPeerIds (a future bridge serializer could forward them). 1A's
+    // projection must make the drain hash gate ignore those keys; a regression
+    // to full-map hashing would diverge from expectedRangeHash ->
+    // range_hash_mismatch (so this test is a through-flow canary for 1A).
+    final deliveredMessages = baseMessages
+        .map(
+          (m) => <String, dynamic>{
+            ...m,
+            'id': 'relay-seq-77',
+            'recipientPeerIds': const ['peer-good', 'peer-sender'],
+          },
+        )
+        .toList();
+    expect(
+      computeGroupHistoryRangeHash(deliveredMessages),
+      expectedRangeHash,
+      reason: '1A projection must hash delivered (with-id) == base (no-id)',
+    );
+
+    bridge.addPage(
+      'group-1',
+      '',
+      const <Map<String, dynamic>>[],
+      '',
+      historyGaps: [
+        {
+          'groupId': 'group-1',
+          'gapId': 'gap-gi026b-idproj',
+          'missingAfterMessageId': 'gi026b-before',
+          'missingBeforeMessageId': 'gi026b-after',
+          'expectedRangeHash': expectedRangeHash,
+          'expectedHeadMessageId': 'gi026b-repaired-head',
+          'candidateSourcePeerIds': const ['peer-good', 'peer-sender'],
+        },
+      ],
+    );
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      historyGapRepairRepo: historyRepo,
+      requestHistoryRepairRange:
+          ({required gap, required sourcePeerId, int limit = 50}) async {
+            return GroupHistoryRepairRangeResult(
+              groupId: gap.groupId,
+              gapId: gap.gapId,
+              sourcePeerId: sourcePeerId,
+              rangeHash: gap.expectedRangeHash,
+              headMessageId: gap.expectedHeadMessageId,
+              messages: deliveredMessages,
+            );
+          },
+    );
+
+    final repair = await historyRepo.getRepair(
+      groupId: 'group-1',
+      gapId: 'gap-gi026b-idproj',
+    );
+    expect(repair, isNotNull);
+    expect(repair!.status, groupHistoryGapRepairStatusRepaired);
+    expect(repair.repairedMessageIds, ['gi026b-repaired-head']);
+    expect(await msgRepo.getMessage('gi026b-repaired-head'), isNotNull);
+  });
 
   test(
     'IR-010 drains valid cursor historyGaps into repair lifecycle and ignores invalid gaps',
@@ -13306,33 +13408,30 @@ void main() {
       );
     });
 
-    test(
-      'cross-language golden vector — must equal the Go relay golden hash',
-      () {
-        // Shared fixture asserted byte-for-byte against
-        // go-relay-server/group_inbox_test.go (TestComputeGroupHistoryRangeHashGoldenVector).
-        // If this hash diverges from the Go side, the gap-repair safety net is
-        // broken — treat as a blocking regression, NOT a re-baseline.
-        const goldenHash =
-            '957339b598643b0fa92d13cbf6e6e0f02a9a392e96ff07eedc8c6f0ec20f5ec9';
+    test('cross-language golden vector — must equal the Go relay golden hash', () {
+      // Shared fixture asserted byte-for-byte against
+      // go-relay-server/group_inbox_test.go (TestComputeGroupHistoryRangeHashGoldenVector).
+      // If this hash diverges from the Go side, the gap-repair safety net is
+      // broken — treat as a blocking regression, NOT a re-baseline.
+      const goldenHash =
+          '957339b598643b0fa92d13cbf6e6e0f02a9a392e96ff07eedc8c6f0ec20f5ec9';
 
-        final messages = <Map<String, dynamic>>[
-          {'from': 'peer-a', 'message': 'hello', 'timestamp': 1000},
-          {'from': 'peer-b', 'message': '', 'timestamp': 2000},
-          {'from': 'peer-c', 'message': 'héllo 世界 🎉', 'timestamp': 3000},
-          {'from': 'peer-d', 'message': 'a<b>c&d/e', 'timestamp': 4000},
-          {
-            'from': 'peer-e',
-            'message': 'big-ts',
-            'timestamp': 9223372036854775807,
-          },
-          // Row 6 exercises the absent-timestamp -> 0 coercion (no timestamp key).
-          {'from': 'peer-f', 'message': 'zero-ts'},
-        ];
+      final messages = <Map<String, dynamic>>[
+        {'from': 'peer-a', 'message': 'hello', 'timestamp': 1000},
+        {'from': 'peer-b', 'message': '', 'timestamp': 2000},
+        {'from': 'peer-c', 'message': 'héllo 世界 🎉', 'timestamp': 3000},
+        {'from': 'peer-d', 'message': 'a<b>c&d/e', 'timestamp': 4000},
+        {
+          'from': 'peer-e',
+          'message': 'big-ts',
+          'timestamp': 9223372036854775807,
+        },
+        // Row 6 exercises the absent-timestamp -> 0 coercion (no timestamp key).
+        {'from': 'peer-f', 'message': 'zero-ts'},
+      ];
 
-        expect(computeGroupHistoryRangeHash(messages), goldenHash);
-      },
-    );
+      expect(computeGroupHistoryRangeHash(messages), goldenHash);
+    });
 
     test(
       'realistic opaque-envelope golden vector — production payload shape',

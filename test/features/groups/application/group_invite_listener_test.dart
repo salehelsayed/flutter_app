@@ -5,7 +5,11 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/groups/domain/models/group_config_resync_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_decline_ack_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation_payload.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -390,6 +394,123 @@ ChatMessage _makeSignedV2RevocationMessage({
   );
 }
 
+ChatMessage _makeSignedV2DeclineAckMessage({
+  String inviteId = 'invite-uuid-001',
+  String groupId = 'grp-abc123',
+  String declinedByPeerId = '12D3KooWCharlie',
+  String? envelopeSenderPeerId,
+  String? from,
+}) {
+  final payload = GroupInviteDeclineAckPayload(
+    inviteId: inviteId,
+    groupId: groupId,
+    declinedByPeerId: declinedByPeerId,
+    declinedAt: '2026-03-02T12:00:00.000Z',
+    expiresAt: '2099-03-09T12:00:00.000Z',
+  ).withDeclineSignature(signature: 'signed-decline-by-charlie');
+  final envelope = GroupInviteDeclineAckPayload.buildEncryptedEnvelope(
+    senderPeerId: envelopeSenderPeerId ?? declinedByPeerId,
+    inviteId: inviteId,
+    kem: 'fake-kem',
+    ciphertext: payload.toInnerJson(),
+    nonce: 'fake-nonce',
+  );
+  return ChatMessage(
+    from: from ?? declinedByPeerId,
+    to: '12D3KooWBob',
+    content: envelope,
+    timestamp: '2026-03-02T12:00:00.000Z',
+    isIncoming: true,
+  );
+}
+
+Future<ChatMessage> _makeConfigResponseMessage({
+  required Bridge bridge,
+  String groupId = 'grp-abc123',
+  String actorPeerId = '12D3KooWAlice',
+  String actorUsername = 'Alice',
+  String actorPublicKey = 'alicePubKey64',
+  required String newName,
+  required DateTime updatedAt,
+}) async {
+  final responderGroup = GroupModel(
+    id: groupId,
+    name: newName,
+    type: GroupType.chat,
+    topicName: '/mknoon/group/$groupId',
+    createdAt: DateTime.utc(2026, 1, 1),
+    createdBy: actorPeerId,
+    myRole: GroupRole.admin,
+    lastMetadataEventAt: updatedAt,
+  );
+  final members = [
+    GroupMember(
+      groupId: groupId,
+      peerId: actorPeerId,
+      username: actorUsername,
+      role: MemberRole.admin,
+      publicKey: actorPublicKey,
+      joinedAt: DateTime.utc(2026, 1, 1),
+    ),
+  ];
+  final groupConfig = buildGroupConfigPayload(responderGroup, members);
+  final actorPayload = buildGroupMetadataActorEventPayload(
+    groupId: groupId,
+    updatedAt: updatedAt,
+    actorPeerId: actorPeerId,
+    actorUsername: actorUsername,
+    actorPublicKey: actorPublicKey,
+    groupConfig: groupConfig,
+  );
+  final canonical = canonicalizeGroupMetadataActorEventPayload(actorPayload);
+  final sign = await callSignPayload(
+    bridge: bridge,
+    dataToSign: canonical,
+    privateKey: 'priv',
+  );
+  final systemPayload = {
+    '__sys': groupMetadataUpdatedEventType,
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+    'groupConfig': groupConfig,
+    groupMetadataActorEventEnvelopeField:
+        buildSignedGroupMetadataActorEventEnvelope(
+          signedPayload: canonical,
+          signature: sign['signature'] as String,
+        ),
+  };
+  final envelope = GroupConfigResyncEnvelope.build(
+    type: groupConfigResponseType,
+    senderPeerId: actorPeerId,
+    groupId: groupId,
+    kem: 'fake-kem',
+    ciphertext: jsonEncode(systemPayload),
+    nonce: 'fake-nonce',
+  );
+  return ChatMessage(
+    from: actorPeerId,
+    to: '12D3KooWBob',
+    content: envelope,
+    timestamp: '2026-06-10T12:00:00.000Z',
+    isIncoming: true,
+  );
+}
+
+class _SpyDeliveryRepo implements GroupInviteDeliveryAttemptRepository {
+  final List<({String groupId, String peerId})> declinedCalls = [];
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    declinedCalls.add((groupId: groupId, peerId: peerId));
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _DelayRevocationDecryptBridge extends PassthroughCryptoBridge {
   @override
   Future<String> send(String message) async {
@@ -469,6 +590,139 @@ void main() {
   });
 
   group('GroupInviteListener', () {
+    test(
+      'routes a decline-ack to markDeclined and does not store it as a pending invite',
+      () async {
+        final deliveryRepo = _SpyDeliveryRepo();
+        final declineListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          deliveryRepo: deliveryRepo,
+          getOwnMlKemSecretKey: () async => 'mySecretKey',
+          getOwnPeerId: () async => '12D3KooWBob',
+          now: () => listenerNow,
+        );
+        addTearDown(declineListener.dispose);
+        declineListener.start();
+
+        incomingController.add(_makeSignedV2DeclineAckMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+        await declineListener.waitForIdle();
+
+        expect(deliveryRepo.declinedCalls, hasLength(1));
+        expect(deliveryRepo.declinedCalls.single.groupId, 'grp-abc123');
+        expect(deliveryRepo.declinedCalls.single.peerId, '12D3KooWCharlie');
+        // A decline-ack must NOT be mistaken for an incoming invite.
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+      },
+    );
+
+    test(
+      'D: with the resync flag ON, a config:response routes through the listener and applies strictly-newer admin metadata',
+      () async {
+        final t1 = DateTime.utc(2026, 6, 1);
+        final t2 = DateTime.utc(2026, 6, 10);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-abc123',
+            name: 'Old Name',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-abc123',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            lastMetadataEventAt: t1,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'alicePubKey64',
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+
+        final resyncListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => 'mySecretKey',
+          getOwnPeerId: () async => '12D3KooWBob',
+          onJoinMetadataResyncEnabled: true,
+          now: () => listenerNow,
+        );
+        addTearDown(resyncListener.dispose);
+        resyncListener.start();
+
+        incomingController.add(
+          await _makeConfigResponseMessage(
+            bridge: bridge,
+            newName: 'New Name',
+            updatedAt: t2,
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+        await resyncListener.waitForIdle();
+
+        final updated = await groupRepo.getGroup('grp-abc123');
+        expect(updated!.name, 'New Name');
+        expect(updated.lastMetadataEventAt, t2);
+      },
+    );
+
+    test(
+      'D: with the resync flag OFF (default), a config:response is ignored',
+      () async {
+        final t1 = DateTime.utc(2026, 6, 1);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-abc123',
+            name: 'Old Name',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-abc123',
+            createdAt: DateTime.utc(2026, 1, 1),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            lastMetadataEventAt: t1,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'alicePubKey64',
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+
+        // The setUp listener defaults to the (OFF) build flag.
+        listener.start();
+
+        incomingController.add(
+          await _makeConfigResponseMessage(
+            bridge: bridge,
+            newName: 'New Name',
+            updatedAt: DateTime.utc(2026, 6, 10),
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+        await listener.waitForIdle();
+
+        // Unchanged: the resync path is gated off.
+        expect((await groupRepo.getGroup('grp-abc123'))!.name, 'Old Name');
+      },
+    );
+
     test(
       'stores a valid v2 invite as pending and does not join immediately',
       () async {

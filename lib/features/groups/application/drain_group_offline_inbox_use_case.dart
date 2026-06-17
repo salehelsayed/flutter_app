@@ -33,10 +33,17 @@ class GroupOfflineInboxDrainResult {
   const GroupOfflineInboxDrainResult({
     required this.groupCount,
     required this.errorCount,
+    this.hasMorePages = false,
   });
 
   final int groupCount;
   final int errorCount;
+
+  /// True when at least one group stopped at the first page (`drainAllPages:
+  /// false`) with more pages still on the relay — i.e. a
+  /// [drainGroupOfflineInboxContinuation] is worth scheduling. Always false
+  /// for a full (`drainAllPages: true`) drain.
+  final bool hasMorePages;
 
   bool get isSuccessful => errorCount == 0;
 }
@@ -95,6 +102,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
 
   final groups = await groupRepo.getAllGroups();
   final groupSucceeded = List<bool>.filled(groups.length, false);
+  var anyFirstPageStopped = false;
   var nextGroupIndex = 0;
   final workerCount = min(maxConcurrentGroupDrains, groups.length);
 
@@ -126,6 +134,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
           drainAllPages: drainAllPages,
           pageSize: pageSize,
           maxPages: maxPages,
+          onFirstPageStopped: () => anyFirstPageStopped = true,
         );
         groupSucceeded[groupIndex] = true;
       } catch (e) {
@@ -181,7 +190,72 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   return GroupOfflineInboxDrainResult(
     groupCount: groups.length,
     errorCount: errorCount,
+    hasMorePages: anyFirstPageStopped,
   );
+}
+
+/// Background continuation of [drainGroupOfflineInbox] after a fast first-page
+/// drain (`drainAllPages: false`).
+///
+/// Each group resumes from its persisted inbox cursor (advanced atomically as
+/// the first page committed), so this drains only the remaining pages — page 1
+/// is never re-processed. Intended to be fire-and-forget (`unawaited`) OUTSIDE
+/// the resume recovery gate: the first page (which gates ack eligibility) stays
+/// on the resume budget while the long tail catches up in the background
+/// without blocking group mutations behind the gate.
+///
+/// Safe to interleave with the retrier's drain — the relay recovery ack only
+/// clears the node's needsGroupRecovery flag (it does not purge the relay
+/// inbox), and cursor advance is atomic + dedup-on-write idempotent, so any
+/// pages not reached here are drained by a later pass via the same cursor.
+Future<GroupOfflineInboxDrainResult> drainGroupOfflineInboxContinuation({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  GroupPendingReactionRepository? pendingReactionRepo,
+  GroupMessageListener? groupMessageListener,
+  GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+  GroupHistoryGapRepairRepository? historyGapRepairRepo,
+  RequestGroupKeyRepair? requestGroupKeyRepair,
+  RequestGroupHistoryRepairRange? requestHistoryRepairRange,
+  String? selfPeerId,
+  DateTime? retentionNowUtc,
+  int pageSize = 50,
+  int maxPages = defaultGroupInboxDrainMaxPages,
+  int maxConcurrentGroupDrains = defaultMaxConcurrentGroupInboxDrains,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_CONTINUATION_BEGIN',
+    details: {},
+  );
+  final result = await drainGroupOfflineInbox(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    pendingReactionRepo: pendingReactionRepo,
+    groupMessageListener: groupMessageListener,
+    pendingKeyRepairRepo: pendingKeyRepairRepo,
+    historyGapRepairRepo: historyGapRepairRepo,
+    requestGroupKeyRepair: requestGroupKeyRepair,
+    requestHistoryRepairRange: requestHistoryRepairRange,
+    selfPeerId: selfPeerId,
+    retentionNowUtc: retentionNowUtc,
+    drainAllPages: true,
+    pageSize: pageSize,
+    maxPages: maxPages,
+    maxConcurrentGroupDrains: maxConcurrentGroupDrains,
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_CONTINUATION_DONE',
+    details: {'groupCount': result.groupCount, 'errorCount': result.errorCount},
+  );
+  return result;
 }
 
 Future<void> drainGroupOfflineInboxForGroup({
@@ -290,6 +364,10 @@ Future<void> _drainGroupInbox({
   bool drainAllPages = true,
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
+  // Phase 2: invoked once if this group stops at the first page
+  // (drainAllPages: false) with more pages still on the relay, so the caller
+  // can decide whether a background continuation is worth scheduling.
+  void Function()? onFirstPageStopped,
 }) async {
   final drainStopwatch = Stopwatch()..start();
   final retentionCutoff = groupBacklogRetentionCutoff(
@@ -941,6 +1019,7 @@ Future<void> _drainGroupInbox({
           'drainAllPages': false,
         },
       );
+      onFirstPageStopped?.call();
       return;
     }
 
@@ -1477,11 +1556,13 @@ Future<List<String>> _applyRepairedHistoryMessages({
 /// parity.
 String computeGroupHistoryRangeHash(List<Map<String, dynamic>> messages) {
   final canonical = messages
-      .map((message) => jsonEncode(<String, dynamic>{
-            'from': message['from'],
-            'message': message['message'],
-            'timestamp': message['timestamp'] ?? 0,
-          }))
+      .map(
+        (message) => jsonEncode(<String, dynamic>{
+          'from': message['from'],
+          'message': message['message'],
+          'timestamp': message['timestamp'] ?? 0,
+        }),
+      )
       .join('\n');
   return sha256.convert(utf8.encode(canonical)).toString();
 }

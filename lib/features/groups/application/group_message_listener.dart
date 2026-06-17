@@ -41,7 +41,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_reaction_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
-import 'package:flutter_app/features/groups/application/admit_sibling_device_use_case.dart';
+import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
@@ -132,7 +132,7 @@ class GroupMessageListener {
   final RecoverGroupDispatcherOverflow? _recoverFromDispatcherOverflow;
   final RotateGroupKeyAfterRemoteRemoval? _rotateGroupKeyAfterRemoteRemoval;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
-  final AdmitSiblingDeviceFn _admitSiblingDevice;
+  final HoldPendingSiblingDeviceFn? _holdPendingSiblingDevice;
 
   StreamSubscription<void>? _subscription;
   StreamSubscription<void>? _reactionSubscription;
@@ -180,7 +180,7 @@ class GroupMessageListener {
     RotateGroupKeyAfterRemoteRemoval? rotateGroupKeyAfterRemoteRemoval,
     AccountMigrationNetworkGate accountMigrationNetworkGate =
         allowAccountMigrationNetworkSideEffects,
-    AdmitSiblingDeviceFn? admitSiblingDevice,
+    HoldPendingSiblingDeviceFn? holdPendingSiblingDevice,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -206,7 +206,7 @@ class GroupMessageListener {
        _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow,
        _rotateGroupKeyAfterRemoteRemoval = rotateGroupKeyAfterRemoteRemoval,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
-       _admitSiblingDevice = admitSiblingDevice ?? admitSiblingDeviceIfTrusted;
+       _holdPendingSiblingDevice = holdPendingSiblingDevice;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -2346,9 +2346,10 @@ class GroupMessageListener {
   /// B1b: handle a `device_announce` system event — a same-user sibling device
   /// announcing itself. Trust is the ACCOUNT-key signed audit (already verified
   /// upstream in [_handleSystemMessage]); this refuses any announce that did not
-  /// carry a verified audit, then hands the announced device to
-  /// [admitSiblingDeviceIfTrusted], which is itself flag-gated (default-OFF) and
-  /// re-checks the account-key trust before persisting + re-distributing the key.
+  /// carry a verified audit, then HOLDS the announced device as PENDING an
+  /// explicit user trust decision (R2) — it does NOT auto-admit, because
+  /// auto-admitting any account-signed device is a self-compromise vector. The
+  /// hold seam is wired in production; absent (null) it is a no-op.
   Future<void> _handleDeviceAnnounce({
     required String groupId,
     required String senderId,
@@ -2387,8 +2388,7 @@ class GroupMessageListener {
         announcedSigningKey.isEmpty) {
       return;
     }
-    await _admitSiblingDevice(
-      groupRepo: _groupRepo,
+    await _holdPendingSiblingDevice?.call(
       groupId: groupId,
       memberPeerId: senderId,
       announcedDeviceId: announcedDeviceId,
@@ -2397,8 +2397,6 @@ class GroupMessageListener {
       verifiedAccountSigningPublicKey: accountKey,
       announcedMlKemPublicKey: deviceMap['mlKemPublicKey'] as String?,
       announcedKeyPackageId: deviceMap['keyPackageId'] as String?,
-      announcedKeyPackagePublicMaterial:
-          deviceMap['keyPackagePublicMaterial'] as String?,
     );
   }
 

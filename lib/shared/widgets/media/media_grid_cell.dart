@@ -78,7 +78,12 @@ class MediaGridCell extends StatelessWidget {
   );
 
   bool get _hasAllowedSize =>
-      GroupMediaSizePolicy.validateAttachments([attachment]).isValid;
+      // Render eligibility: permissive cross-type backstop so already-received
+      // media is never newly hidden by the narrower per-type SEND caps.
+      GroupMediaSizePolicy.validateAttachments(
+        [attachment],
+        perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
+      ).isValid;
 
   bool get _hasRequiredGroupMetadata =>
       !requireVerifiedContentHash ||
@@ -241,7 +246,11 @@ class MediaGridCell extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                l10n.media_unavailable,
+                // Tamper (integrity_failed) gets an honest "couldn't verify"
+                // label, distinct from the generic unavailable/terminal copy.
+                GroupMediaIntegrityPolicy.isQuarantinedGroupMedia(attachment)
+                    ? l10n.media_could_not_verify
+                    : l10n.media_unavailable,
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,

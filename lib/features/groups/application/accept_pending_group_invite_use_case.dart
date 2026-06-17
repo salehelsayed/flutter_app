@@ -26,6 +26,10 @@ enum AcceptPendingGroupInviteResult {
   success,
   notFound,
   expired,
+  // A correctly-signed invite whose membership-freshness proof is genuinely
+  // older than the 7d freshness TTL. Distinct from [invalidPayload] so the UI
+  // can prompt "ask the admin to resend" instead of implying a forgery.
+  expiredFreshness,
   revoked,
   alreadyUsed,
   wrongIdentity,
@@ -35,7 +39,92 @@ enum AcceptPendingGroupInviteResult {
   bridgeError,
 }
 
+/// Signature of the best-effort on-join metadata resync trigger (finding D).
+/// Fired once, after a successful accept, with the materialized [group] and the
+/// [invite] (for the inviter peer id). Implementations must be fire-and-forget.
+typedef OnJoinConfigRequestFn =
+    Future<void> Function({
+      required GroupModel group,
+      required PendingGroupInvite invite,
+    });
+
 Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
+  required PendingGroupInviteRepository pendingInviteRepo,
+  required GroupRepository groupRepo,
+  required ContactRepository contactRepo,
+  required GroupMessageRepository msgRepo,
+  required Bridge bridge,
+  required String groupId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
+  String? senderPeerId,
+  String? senderPublicKey,
+  String? senderPrivateKey,
+  String? senderUsername,
+  String? ownDeviceId,
+  String? ownTransportPeerId,
+  String? ownMlKemPublicKey,
+  String? ownKeyPackageId,
+  String? ownKeyPackagePublicMaterial,
+  DateTime? now,
+  DownloadGroupAvatarFn? downloadGroupAvatarFn,
+  OnJoinConfigRequestFn? onJoinConfigRequest,
+  bool drainAcceptedInboxAllPages = true,
+  int acceptedInboxPageSize = 50,
+  int acceptedInboxDrainMaxAttempts = 1,
+  Duration acceptedInboxDrainRetryDelay = const Duration(milliseconds: 250),
+}) async {
+  // Capture the invite up-front (the core consumes/deletes it) so the success
+  // hook can address the inviter even after the row is gone.
+  final inviteForHook = onJoinConfigRequest == null
+      ? null
+      : await pendingInviteRepo.getPendingInvite(groupId);
+  final outcome = await _acceptPendingGroupInviteCore(
+    pendingInviteRepo: pendingInviteRepo,
+    groupRepo: groupRepo,
+    contactRepo: contactRepo,
+    msgRepo: msgRepo,
+    bridge: bridge,
+    groupId: groupId,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    groupMessageListener: groupMessageListener,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    senderUsername: senderUsername,
+    ownDeviceId: ownDeviceId,
+    ownTransportPeerId: ownTransportPeerId,
+    ownMlKemPublicKey: ownMlKemPublicKey,
+    ownKeyPackageId: ownKeyPackageId,
+    ownKeyPackagePublicMaterial: ownKeyPackagePublicMaterial,
+    now: now,
+    downloadGroupAvatarFn: downloadGroupAvatarFn,
+    drainAcceptedInboxAllPages: drainAcceptedInboxAllPages,
+    acceptedInboxPageSize: acceptedInboxPageSize,
+    acceptedInboxDrainMaxAttempts: acceptedInboxDrainMaxAttempts,
+    acceptedInboxDrainRetryDelay: acceptedInboxDrainRetryDelay,
+  );
+
+  // Fire the on-join metadata resync once, only on a genuine success.
+  final acceptedGroup = outcome.$2;
+  if (onJoinConfigRequest != null &&
+      inviteForHook != null &&
+      acceptedGroup != null &&
+      outcome.$1 == AcceptPendingGroupInviteResult.success) {
+    try {
+      await onJoinConfigRequest(group: acceptedGroup, invite: inviteForHook);
+    } catch (_) {
+      // Best-effort: convergence pull never affects the accept result.
+    }
+  }
+
+  return outcome;
+}
+
+Future<(AcceptPendingGroupInviteResult, GroupModel?)>
+_acceptPendingGroupInviteCore({
   required PendingGroupInviteRepository pendingInviteRepo,
   required GroupRepository groupRepo,
   required ContactRepository contactRepo,
@@ -109,6 +198,23 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     invite.payloadJson,
   );
   if (!parsedPayload.isSuccess) {
+    // Defensive: a stale freshness proof is classified as a "security failure"
+    // by the payload model, but it is an aged-out (not forged) invite. The
+    // current parse above passes no validationTime so this is unreachable for
+    // stale today, but special-case it before the signature branch so the
+    // honest mapping survives if any caller ever supplies a validationTime.
+    if (parsedPayload.failure ==
+        GroupInvitePayloadParseFailure.staleMembershipFreshness) {
+      await pendingInviteRepo.deletePendingInvite(groupId);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_GROUP_INVITE_ACCEPT_EXPIRED_FRESHNESS',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return (AcceptPendingGroupInviteResult.expiredFreshness, null);
+    }
     if (parsedPayload.isSecurityFailure) {
       await pendingInviteRepo.deletePendingInvite(groupId);
       emitFlowEvent(
@@ -166,10 +272,23 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     );
     return (AcceptPendingGroupInviteResult.invalidPayload, null);
   }
+  if (currentTimeFailure ==
+      GroupInvitePayloadParseFailure.staleMembershipFreshness) {
+    // Correctly-signed invite that simply aged out of the freshness window.
+    // Delete the dead row (a >7d proof can never become fresh again) and emit
+    // a distinct event so it is not miscounted as a forgery.
+    await pendingInviteRepo.deletePendingInvite(groupId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_EXPIRED_FRESHNESS',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    return (AcceptPendingGroupInviteResult.expiredFreshness, null);
+  }
   if (currentTimeFailure == GroupInvitePayloadParseFailure.invalidSignature ||
-      currentTimeFailure == GroupInvitePayloadParseFailure.missingSignature ||
-      currentTimeFailure ==
-          GroupInvitePayloadParseFailure.staleMembershipFreshness) {
+      currentTimeFailure == GroupInvitePayloadParseFailure.missingSignature) {
     await pendingInviteRepo.deletePendingInvite(groupId);
     emitFlowEvent(
       layer: 'FL',

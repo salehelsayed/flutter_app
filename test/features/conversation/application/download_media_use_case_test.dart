@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -262,9 +263,12 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
     localPathUpdates.add((id, localPath));
     _updateAttachment(
       id,
+      // Mirrors dbUpdateMediaLocalPath: a successful local-path commit resets
+      // the bounded download retry budget (INV-DL-2).
       (attachment) => attachment.copyWith(
         localPath: localPath,
         downloadStatus: kMediaDownloadStatusDone,
+        downloadRetryCount: 0,
       ),
     );
   }
@@ -615,10 +619,13 @@ void main() {
     });
 
     test('returns null and sets failed when bridge returns error', () async {
+      // A GENERIC transient relay error (NOT "not found"/"not authorized")
+      // keeps the row in the bounded `failed` state; the terminal short-circuit
+      // for relay-unavailable errors is covered separately below (INV-DL-4).
       bridge.downloadResponse = {
         'ok': false,
         'errorCode': 'DOWNLOAD_FAILED',
-        'errorMessage': 'Blob not found',
+        'errorMessage': 'relay temporarily unavailable',
       };
 
       final result = await downloadMedia(
@@ -635,6 +642,139 @@ void main() {
       expect(mediaRepo.downloadStatusUpdates[0].$2, 'downloading');
       expect(mediaRepo.downloadStatusUpdates[1].$2, 'failed');
     });
+
+    test(
+      'increments download_retry_count on a transient failure and flips to '
+      'download_failed at the ceiling (INV-DL-1)',
+      () async {
+        bridge.downloadResponse = {
+          'ok': false,
+          'errorMessage': 'relay temporarily unavailable',
+        };
+
+        // First transient failure: count 0 -> 1, still the retryable `failed`.
+        await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+        );
+        var stored = (await mediaRepo.getAttachmentsForMessage(
+          'msg-001',
+        )).firstWhere((a) => a.id == testAttachment.id);
+        expect(stored.downloadStatus, kMediaDownloadStatusFailed);
+        expect(stored.downloadRetryCount, 1);
+
+        // One short of the ceiling: the next failure becomes terminal.
+        await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment.copyWith(
+            downloadRetryCount: kMaxDownloadRetries - 1,
+          ),
+          contactPeerId: 'contact-A',
+        );
+        stored = (await mediaRepo.getAttachmentsForMessage(
+          'msg-001',
+        )).firstWhere((a) => a.id == testAttachment.id);
+        expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(stored.downloadRetryCount, kMaxDownloadRetries);
+      },
+    );
+
+    test(
+      'relay not found short-circuits to download_failed without burning the '
+      'retry budget (INV-DL-4)',
+      () async {
+        bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
+        // Seed a partially-used budget; the short-circuit must NOT increment it.
+        mediaRepo.seedAttachment(
+          testAttachment.copyWith(downloadRetryCount: 1),
+        );
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment.copyWith(downloadRetryCount: 1),
+          contactPeerId: 'contact-A',
+        );
+
+        expect(result, isNull);
+        final stored = (await mediaRepo.getAttachmentsForMessage(
+          'msg-001',
+        )).firstWhere((a) => a.id == testAttachment.id);
+        expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        // Budget unchanged: the relay-unavailable terminal burns 0 retries.
+        expect(stored.downloadRetryCount, 1);
+      },
+    );
+
+    test('a successful download resets download_retry_count to 0 (INV-DL-2)',
+        () async {
+      // Start from a partially-used budget.
+      mediaRepo.seedAttachment(testAttachment.copyWith(downloadRetryCount: 2));
+
+      final result = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment.copyWith(downloadRetryCount: 2),
+        contactPeerId: 'contact-A',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.downloadStatus, kMediaDownloadStatusDone);
+      final stored = (await mediaRepo.getAttachmentsForMessage(
+        'msg-001',
+      )).firstWhere((a) => a.id == testAttachment.id);
+      expect(stored.downloadRetryCount, 0);
+    });
+
+    test(
+      'repeated transient failures converge to terminal download_failed within '
+      'kMaxDownloadRetries (no infinite retry)',
+      () async {
+        bridge.downloadResponse = {
+          'ok': false,
+          'errorMessage': 'relay temporarily unavailable',
+        };
+
+        // Drive the auto-recovery loop by hand: keep re-downloading while the
+        // row is still recoverable, asserting it can never loop forever.
+        var attempts = 0;
+        var current = testAttachment;
+        while (current.downloadStatus == kMediaDownloadStatusPending ||
+            GroupMediaIntegrityPolicy.isRetryableDownloadFailure(current)) {
+          attempts++;
+          expect(
+            attempts,
+            lessThanOrEqualTo(kMaxDownloadRetries),
+            reason: 'bounded retries must converge, never retry forever',
+          );
+          await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: mediaRepo,
+            mediaFileManager: fileManager,
+            attachment: current,
+            contactPeerId: 'contact-A',
+          );
+          current = (await mediaRepo.getAttachmentsForMessage(
+            'msg-001',
+          )).firstWhere((a) => a.id == testAttachment.id);
+        }
+
+        expect(attempts, kMaxDownloadRetries);
+        expect(current.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(current.downloadRetryCount, kMaxDownloadRetries);
+        expect(
+          GroupMediaIntegrityPolicy.isRetryableDownloadFailure(current),
+          isFalse,
+        );
+      },
+    );
 
     test(
       'downloadMedia adopts canonical file before bridge download',
@@ -715,11 +855,13 @@ void main() {
         expect(bridge.sendCallCount, 1);
         expect(canonicalFile.existsSync(), isTrue);
         expect(canonicalFile.readAsBytesSync(), preExistingBytes);
+        // INV-DL-4: a relay "not found" flips straight to the terminal
+        // download_failed state (honest "expired on server"), not transient.
         expect(
           mediaRepo.downloadStatusUpdates,
           equals([
             (testAttachment.id, kMediaDownloadStatusDownloading),
-            (testAttachment.id, kMediaDownloadStatusFailed),
+            (testAttachment.id, kMediaDownloadStatusDownloadFailed),
           ]),
         );
         expect(mediaRepo.localPathUpdates, isEmpty);
@@ -1765,7 +1907,9 @@ void main() {
           ..downloadResponse = {
             'ok': false,
             'errorCode': 'DOWNLOAD_FAILED',
-            'errorMessage': 'Blob not found',
+            // Generic transient error keeps the bounded `failed` state (the
+            // concurrency behaviour under test); "not found" would be terminal.
+            'errorMessage': 'relay temporarily unavailable',
           };
 
         final firstFuture = downloadMedia(

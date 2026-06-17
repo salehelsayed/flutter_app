@@ -78,6 +78,14 @@ class GroupMessageRepositoryImpl
   dbUpdateGroupMessageInboxRetryPayloadFn;
   final Future<void> Function(String id, String? envelope)?
   dbUpdateGroupMessageWireEnvelopeFn;
+  final Future<void> Function(
+    String id, {
+    required int nextEligibleAtMs,
+    required bool markTerminal,
+  })?
+  dbRecordGroupMessageRetryFailureFn;
+  final Future<int> Function()? dbClearGroupMessageRetryBackoffFn;
+  final Future<void> Function(String id)? dbResetGroupMessageRetryStateFn;
   final Future<String?> Function(String groupId)? dbLoadGroupInboxCursorFn;
   final Future<List<Map<String, Object?>>> Function(
     String groupId,
@@ -114,6 +122,9 @@ class GroupMessageRepositoryImpl
     this.dbUpdateGroupMessageInboxStoredFn,
     this.dbUpdateGroupMessageInboxRetryPayloadFn,
     this.dbUpdateGroupMessageWireEnvelopeFn,
+    this.dbRecordGroupMessageRetryFailureFn,
+    this.dbClearGroupMessageRetryBackoffFn,
+    this.dbResetGroupMessageRetryStateFn,
     this.dbLoadGroupInboxCursorFn,
     this.dbLoadGroupMessageReceiptsFn,
     this.dbRunGroupInboxPageTransactionFn,
@@ -212,6 +223,39 @@ class GroupMessageRepositoryImpl
     final rows = await fn();
     final messages = rows.map((row) => GroupMessage.fromMap(row));
     return orderGroupMessagesForTimeline(messages);
+  }
+
+  @override
+  Future<void> recordRetryFailure(
+    String id, {
+    required DateTime nextEligibleAt,
+    required bool markTerminal,
+  }) async {
+    final fn = dbRecordGroupMessageRetryFailureFn;
+    if (fn == null) return;
+    await fn(
+      id,
+      nextEligibleAtMs: nextEligibleAt.toUtc().millisecondsSinceEpoch,
+      markTerminal: markTerminal,
+    );
+    _emitOutgoingRowsChangedIfNeeded(1);
+  }
+
+  @override
+  Future<int> clearRetryBackoff() async {
+    final fn = dbClearGroupMessageRetryBackoffFn;
+    if (fn == null) return 0;
+    final count = await fn();
+    _emitOutgoingRowsChangedIfNeeded(count);
+    return count;
+  }
+
+  @override
+  Future<void> resetRetryStateForManualRetry(String id) async {
+    final fn = dbResetGroupMessageRetryStateFn;
+    if (fn == null) return;
+    await fn(id);
+    _emitOutgoingRowsChangedIfNeeded(1);
   }
 
   @override

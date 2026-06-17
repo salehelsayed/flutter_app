@@ -8,6 +8,7 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:uuid/uuid.dart';
 
 enum ResendGroupInviteReason {
   delivered,
@@ -86,6 +87,9 @@ Future<ResendGroupInviteResult> resendGroupInvite({
 
   final members = await groupRepo.getMembers(groupId);
   final groupConfig = buildGroupConfigPayload(group, members);
+  // Mint the fresh invite id here so the delivery-attempt row records the
+  // exact id sent, keeping a later revocation match working (HOLE-4).
+  final inviteId = const Uuid().v4();
   final sendResult = await sendGroupInvite(
     p2pService: p2pService,
     bridge: bridge,
@@ -100,6 +104,7 @@ Future<ResendGroupInviteResult> resendGroupInvite({
     groupKey: keyInfo.encryptedKey,
     keyEpoch: keyInfo.keyGeneration,
     groupConfig: groupConfig,
+    inviteIdOverride: inviteId,
   );
 
   await recordGroupInviteDeliveryBatch(
@@ -110,6 +115,7 @@ Future<ResendGroupInviteResult> resendGroupInvite({
         peerId: member.peerId,
         username: member.username,
         result: sendResult,
+        inviteId: inviteId,
       ),
     ],
   );

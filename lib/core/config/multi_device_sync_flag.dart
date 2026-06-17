@@ -1,5 +1,5 @@
 /// Build-time feature flag gating the same-user multi-device group convergence
-/// build (Part B of `Test-Flight-Improv/.../12-P2-multi-device-honesty.md`).
+/// build (Part B of the `12-P2-multi-device-honesty` plan).
 ///
 /// Default-OFF. Enable in a build with
 /// `--dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC=true`.

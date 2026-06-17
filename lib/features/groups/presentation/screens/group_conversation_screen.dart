@@ -551,15 +551,18 @@ class GroupConversationScreen extends StatelessWidget {
         final isSent = message.senderPeerId == ownPeerId;
         final (quotedText, isQuoteUnavailable) = _resolveQuotedText(message);
         final messageMedia = mediaMap[message.id] ?? message.media;
+        // Finding 05 Phase 4: a terminal send_failed row offers the same manual
+        // retry affordance as a failed row — the retry re-arms it with a fresh
+        // attempt budget; the background retrier no longer auto-retries it.
+        final isFailedSend =
+            message.status == 'failed' ||
+            message.status == GroupMessage.statusSendFailed;
         final showFailedMediaActions =
-            canWrite &&
-            isSent &&
-            message.status == 'failed' &&
-            messageMedia.isNotEmpty;
+            canWrite && isSent && isFailedSend && messageMedia.isNotEmpty;
         final showFailedTextRetry =
             canWrite &&
             isSent &&
-            message.status == 'failed' &&
+            isFailedSend &&
             messageMedia.isEmpty &&
             message.text.trim().isNotEmpty &&
             onRetryFailedMessage != null;

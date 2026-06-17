@@ -8,6 +8,7 @@ import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dar
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
+import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -128,6 +129,7 @@ void main() {
     await runGroupMessageLocalDeletionsMigration(db);
     await runGroupMessageLastSendAttemptAtMigration(db);
     await runGroupMessageLogicalDeliveryIdMigration(db);
+    await runGroupMessageRetryBackoffColumnsMigration(db);
 
     repo = buildRepo(db, enableTransactions: true);
   });

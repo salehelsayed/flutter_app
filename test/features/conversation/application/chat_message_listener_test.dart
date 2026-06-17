@@ -218,14 +218,21 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 
   @override
   Future<void> saveAttachment(MediaAttachment attachment) async {
+    // Upsert by id (like the real repo / other fakes), not blind-append, so a
+    // re-read returns the latest status and rows don't accumulate duplicates.
     final list = _store.putIfAbsent(attachment.messageId, () => []);
+    list.removeWhere((stored) => stored.id == attachment.id);
     list.add(attachment);
   }
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
     String messageId,
-  ) async => _store[messageId] ?? [];
+  ) async =>
+      // Return a COPY (like the real repo + the other fakes): the auto-download
+      // loop iterates this list while downloadMedia upserts into the repo, so
+      // handing out the live backing list causes a concurrent-modification.
+      List<MediaAttachment>.of(_store[messageId] ?? const []);
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
@@ -1389,7 +1396,8 @@ void main() {
       },
     );
 
-    test('marks attachment as failed when download fails', () async {
+    test('marks attachment terminal download_failed on relay not-found',
+        () async {
       final senderPeerId = 'sender-peer-003';
       contactRepo.seedContact(_makeContact(senderPeerId));
 
@@ -1417,8 +1425,9 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 200));
 
       expect(emitted.length, 2);
-      // Re-emitted message should have failed status
-      expect(emitted[1].media[0].downloadStatus, 'failed');
+      // 'Blob not found' is a relay-unavailable response -> honest terminal
+      // download_failed, not a retryable failed (INV-DL-4).
+      expect(emitted[1].media[0].downloadStatus, 'download_failed');
 
       listener.dispose();
     });

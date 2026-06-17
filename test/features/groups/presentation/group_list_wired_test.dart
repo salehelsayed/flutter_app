@@ -652,6 +652,99 @@ void main() {
     });
 
     testWidgets(
+      'B2: hides a pending invite whose group is already joined, keeps a non-joined one',
+      (tester) async {
+        // Already-joined group → its invite is a materialized orphan: hide it.
+        await groupRepo.saveGroup(
+          makeGroup(id: 'grp-joined', name: 'Joined Group'),
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makePendingInvite(groupId: 'grp-joined', groupName: 'Joined Group'),
+        );
+        // Not-yet-joined invite → still rendered.
+        await pendingInviteRepo.savePendingInvite(
+          makePendingInvite(groupId: 'grp-fresh', groupName: 'Fresh Invite'),
+        );
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(
+          find.byKey(const ValueKey('pending-group-invite-grp-joined')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('pending-group-invite-grp-fresh')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'B2 negative guard: an expired but not-joined invite still renders (dismiss affordance preserved)',
+      (tester) async {
+        // Card-expired (receivedAt + 7d in the past) but its group is NOT
+        // joined, so the materialized filter must NOT strip it — the user can
+        // still Decline/dismiss it.
+        final expiredInvite = makePendingInvite(
+          groupId: 'grp-expired',
+          groupName: 'Expired Invite',
+          receivedAt: DateTime.now().toUtc().subtract(const Duration(days: 8)),
+        );
+        await pendingInviteRepo.savePendingInvite(expiredInvite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(
+          find.byKey(const ValueKey('pending-group-invite-grp-expired')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'E: a half-materialized group (rejoin row, attempt < cap) shows the "Joining…" badge',
+      (tester) async {
+        await groupRepo.saveGroup(
+          makeGroup(id: 'grp-joining', name: 'Joining Group'),
+        );
+        await groupRepo.recordGroupRejoinFailure(
+          'grp-joining',
+          nextEligibleAt: DateTime.now().toUtc().add(const Duration(seconds: 30)),
+        );
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(find.text('Joining…'), findsOneWidget);
+        expect(find.text("Couldn't join — retry"), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'E: a group that has hit the rejoin attempt cap shows the "Couldn\'t join — retry" badge and is NOT removed',
+      (tester) async {
+        await groupRepo.saveGroup(
+          makeGroup(id: 'grp-stuck', name: 'Stuck Group'),
+        );
+        for (var i = 0; i < 10; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            'grp-stuck',
+            nextEligibleAt: DateTime.now().toUtc(),
+          );
+        }
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(find.text("Couldn't join — retry"), findsOneWidget);
+        // Give-up must never hard-delete the group (it holds the key).
+        expect(await groupRepo.getGroup('grp-stuck'), isNotNull);
+      },
+    );
+
+    testWidgets(
       'refreshes pending invite list when pending invite stream emits',
       (tester) async {
         await tester.pumpWidget(buildWidget());
@@ -825,6 +918,47 @@ void main() {
         expect(reactions, hasLength(1));
         expect(reactions.single.senderPeerId, '12D3KooWAlice');
         expect(reactions.single.emoji, '👍');
+      },
+    );
+
+    testWidgets(
+      'A2: accepting a freshness-stale (card-valid) invite shows the ask-resend prompt, not the invalid string',
+      (tester) async {
+        // The card TTL is anchored at receivedAt (+7d); the membership
+        // freshness proof is anchored ~6h earlier. Choosing receivedAt ~6d21h
+        // ago leaves the card valid (~3h) while the proof is ~3h stale, so the
+        // real acceptPendingGroupInvite returns expiredFreshness (not expired,
+        // not invalidPayload).
+        final invite = makePendingInvite(
+          receivedAt: DateTime.now().toUtc().subtract(
+            const Duration(days: 6, hours: 21),
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        final acceptFinder = find.byKey(
+          ValueKey('pending-group-invite-accept-${invite.groupId}'),
+        );
+        // Card is not expired, so accept stays enabled.
+        expect(tester.widget<FilledButton>(acceptFinder).onPressed, isNotNull);
+        await tester.tap(acceptFinder);
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          find.text(
+            'This invite has expired. Ask the group admin to send a fresh one.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Invite is no longer valid'), findsNothing);
+        expect(await groupRepo.getGroup(invite.groupId), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
       },
     );
 

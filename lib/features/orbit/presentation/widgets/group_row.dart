@@ -5,12 +5,17 @@ import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart'
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Glassmorphic tappable group card for the orbit list.
 ///
 /// Parallels [FriendRow] in visual style but displays group-specific info
 /// (group name, type badge, latest message preview).
 class GroupRow extends StatelessWidget {
+  /// Mirrors the rejoin use-case's attempt cap; at/above it the bounded
+  /// retrier has given up and the row shows a manual-retry prompt.
+  static const int _joinGiveUpThreshold = 10;
+
   final OrbitGroup group;
   final VoidCallback onTap;
 
@@ -19,6 +24,14 @@ class GroupRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
+    final rejoinAttempt = group.rejoinAttemptCount;
+    String? joinStatusLabel;
+    if (rejoinAttempt != null) {
+      joinStatusLabel = rejoinAttempt >= _joinGiveUpThreshold
+          ? l10n.group_join_failed_retry
+          : l10n.group_joining_in_progress;
+    }
     final relativeTime = group.lastActivityTimestamp != null
         ? formatRelativeTime(
             group.lastActivityTimestamp!.toUtc().toIso8601String(),
@@ -84,7 +97,18 @@ class GroupRow extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 2),
-                  if (hasStructuredPreview)
+                  if (joinStatusLabel != null)
+                    Text(
+                      joinStatusLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: readableColors.textMuted,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  else if (hasStructuredPreview)
                     Row(
                       children: [
                         Flexible(

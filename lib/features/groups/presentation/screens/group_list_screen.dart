@@ -21,6 +21,11 @@ class GroupListScreen extends StatelessWidget {
   final Map<String, int> unreadCounts;
   final List<PendingGroupInvite> pendingInvites;
   final Set<String> processingInviteIds;
+
+  /// Group id → rejoin attempt count for groups that materialized but whose
+  /// topic-join has not yet succeeded (derived from the 088 group_rejoin_state
+  /// table). Drives the "Joining…" / "Couldn't join" badge.
+  final Map<String, int> rejoinAttempts;
   final bool isLoading;
   final String? loadErrorMessage;
   final VoidCallback? onRetryLoad;
@@ -37,6 +42,7 @@ class GroupListScreen extends StatelessWidget {
     this.unreadCounts = const {},
     this.pendingInvites = const [],
     this.processingInviteIds = const <String>{},
+    this.rejoinAttempts = const <String, int>{},
     this.isLoading = false,
     this.loadErrorMessage,
     this.onRetryLoad,
@@ -223,15 +229,30 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
+  /// Mirrors the rejoin use-case's attempt cap; at/above it the bounded
+  /// retrier has given up and surfaces a manual-retry affordance instead of
+  /// "Joining…".
+  static const int _joinGiveUpThreshold = 10;
+
   Widget _buildGroupCard(BuildContext context, GroupModel group) {
     final l10n = AppLocalizations.of(context)!;
     final lastMsg = latestMessages[group.id];
     final unread = unreadCounts[group.id] ?? 0;
     final retentionNotice = groupBacklogRetentionNoticeFor(group, l10n);
 
+    // A half-materialized group (key persisted, topic-join not yet succeeded)
+    // shows a join-status badge in place of the retention notice.
+    final rejoinAttempt = rejoinAttempts[group.id];
+    String? joinStatusText;
+    if (rejoinAttempt != null) {
+      joinStatusText = rejoinAttempt >= _joinGiveUpThreshold
+          ? l10n.group_join_failed_retry
+          : l10n.group_joining_in_progress;
+    }
+
     return GroupCard(
       group: group,
-      statusText: retentionNotice?.listSummary,
+      statusText: joinStatusText ?? retentionNotice?.listSummary,
       lastMessageSender: lastMsg != null
           ? lastMsg.senderUsername ?? l10n.groups_unknown_sender
           : null,

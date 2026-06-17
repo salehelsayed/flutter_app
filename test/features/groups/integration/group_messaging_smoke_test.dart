@@ -19285,6 +19285,55 @@ class _InMemoryGroupInviteDeliveryAttemptRepository
   }
 
   @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    final now = (revokedAt ?? DateTime.now()).toUtc();
+    final existing = _attempts[_key(groupId, peerId)];
+    _attempts[_key(groupId, peerId)] =
+        existing?.copyWith(
+          status: GroupInviteDeliveryStatus.revoked,
+          updatedAt: now,
+          clearLastError: true,
+        ) ??
+        GroupInviteDeliveryAttempt(
+          groupId: groupId,
+          peerId: peerId,
+          status: GroupInviteDeliveryStatus.revoked,
+          attemptedAt: now,
+          updatedAt: now,
+        );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final existing = _attempts[_key(groupId, peerId)];
+    if (existing?.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    final now = (declinedAt ?? DateTime.now()).toUtc();
+    _attempts[_key(groupId, peerId)] =
+        existing?.copyWith(
+          status: GroupInviteDeliveryStatus.declined,
+          updatedAt: now,
+          clearLastError: true,
+        ) ??
+        GroupInviteDeliveryAttempt(
+          groupId: groupId,
+          peerId: peerId,
+          status: GroupInviteDeliveryStatus.declined,
+          attemptedAt: now,
+          updatedAt: now,
+        );
+  }
+
+  @override
   Future<int> deleteAttempt({
     required String groupId,
     required String peerId,

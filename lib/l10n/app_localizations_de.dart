@@ -842,6 +842,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get media_unavailable => 'Medien nicht verfügbar';
 
   @override
+  String get media_could_not_verify =>
+      'Diese Medien konnten nicht verifiziert werden';
+
+  @override
   String get media_retry_unavailable => 'Nicht verfügbare Medien erneut laden';
 
   @override
@@ -1110,8 +1114,21 @@ class AppLocalizationsDe extends AppLocalizations {
       'Gruppendetails konnten nicht aktualisiert werden';
 
   @override
+  String get group_info_details_update_queued =>
+      'Gespeichert – erneuter Sendeversuch bei erneuter Verbindung';
+
+  @override
   String get group_info_invite_resend_failed =>
       'Einladung konnte nicht erneut gesendet werden';
+
+  @override
+  String group_info_invite_revoked(String username) {
+    return 'Einladung an $username widerrufen';
+  }
+
+  @override
+  String get group_info_invite_revoke_failed =>
+      'Einladung konnte nicht widerrufen werden';
 
   @override
   String group_info_invite_sent(String username) {
@@ -1174,6 +1191,12 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get group_member_resend => 'Erneut senden';
+
+  @override
+  String get group_member_revoke => 'Widerrufen';
+
+  @override
+  String get group_member_revoking => 'Wird widerrufen...';
 
   @override
   String get group_member_manage_role => 'Rolle verwalten';
@@ -1282,6 +1305,12 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get invite_status_joined => 'Beigetreten';
+
+  @override
+  String get invite_status_revoked => 'Widerrufen';
+
+  @override
+  String get invite_status_declined => 'Abgelehnt';
 
   @override
   String get invite_status_unknown => 'Einladung unbekannt';
@@ -1781,8 +1810,8 @@ class AppLocalizationsDe extends AppLocalizations {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
-      other: '$count zu große GIFs übersprungen.',
-      one: '1 zu großes GIF übersprungen.',
+      other: '$count zu große Anhänge übersprungen.',
+      one: '1 zu großen Anhang übersprungen.',
     );
     return '$_temp0';
   }
@@ -2135,6 +2164,17 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get group_invite_expired => 'Einladung abgelaufen';
+
+  @override
+  String get group_invite_expired_ask_resend =>
+      'Diese Einladung ist abgelaufen. Bitte den Gruppen-Admin um eine neue.';
+
+  @override
+  String get group_joining_in_progress => 'Beitreten…';
+
+  @override
+  String get group_join_failed_retry =>
+      'Beitritt fehlgeschlagen — erneut versuchen';
 
   @override
   String get group_invite_revoked => 'Einladung wurde widerrufen';
