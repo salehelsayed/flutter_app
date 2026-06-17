@@ -405,5 +405,58 @@ void main() {
         );
       },
     );
+
+    test(
+      'matches the shared SI-5 dedupe-key fixture (cross-process key parity '
+      'with the Swift NSE)',
+      () async {
+        // G-S5-1: test_fixtures/si5_dedupe_keys.json is the SINGLE source of
+        // truth for the NSE<->Dart dedupe key. The Swift XCTest
+        // (NotificationPreviewResolverTests.testGateMessageKeyMatchesSharedDedupeFixture)
+        // reads the SAME file and asserts RecentRemoteShownMarkerStore
+        // .gateMessageKey(push) == expectedKey. Here we assert the Dart side
+        // produces the same expectedKey, so any drift on either side fails both.
+        final cases =
+            jsonDecode(
+                  File('test_fixtures/si5_dedupe_keys.json').readAsStringSync(),
+                )
+                as List;
+        expect(cases, isNotEmpty);
+
+        for (final raw in cases) {
+          final c = (raw as Map).cast<String, dynamic>();
+          final description = c['description'];
+          final push = (c['push'] as Map).cast<String, dynamic>();
+          final expectedKey = c['expectedKey'] as String?;
+          final dartMessageId = c['dartMessageId'] as String?;
+          final dartPayload = c['dartPayload'] as String?;
+
+          // messageId derivation must mirror the Swift alias list (message_id /
+          // messageId / id / msgId, never 'm') — incl. null for non-keyed pushes.
+          expect(
+            remoteNotificationMessageIdFromData(push),
+            dartMessageId,
+            reason: 'messageId derivation drift for "$description"',
+          );
+
+          if (expectedKey == null) {
+            continue; // non-keyed push: no sidecar marker to consume.
+          }
+
+          // Gate key-shape parity: a marker named sha256(expectedKey) must be
+          // consumable via the route (payload,messageId), proving the gate's
+          // internal _messageKey == expectedKey byte-for-byte with the NSE.
+          await writeMarker(expectedKey, now);
+          expect(
+            await gate.consumeIfRecentAnnouncement(
+              payload: dartPayload!,
+              messageId: dartMessageId,
+            ),
+            isTrue,
+            reason: 'gate key-shape drift for "$description"',
+          );
+        }
+      },
+    );
   });
 }

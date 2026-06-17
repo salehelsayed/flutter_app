@@ -19,16 +19,32 @@ class GroupRow extends StatelessWidget {
   final OrbitGroup group;
   final VoidCallback onTap;
 
-  const GroupRow({super.key, required this.group, required this.onTap});
+  /// Invoked when the user taps "Retry now" on a group whose rejoin has given
+  /// up (attempt ≥ [_joinGiveUpThreshold]) — force-eligible + fresh rejoin (G2).
+  final VoidCallback? onRetryStuckRejoin;
+
+  /// Invoked when the user taps "Leave" on a stuck group — a reachable exit
+  /// from the dead-end (G2). Never auto-deletes.
+  final VoidCallback? onLeaveStuckGroup;
+
+  const GroupRow({
+    super.key,
+    required this.group,
+    required this.onTap,
+    this.onRetryStuckRejoin,
+    this.onLeaveStuckGroup,
+  });
 
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
     final rejoinAttempt = group.rejoinAttemptCount;
+    final isStuck =
+        rejoinAttempt != null && rejoinAttempt >= _joinGiveUpThreshold;
     String? joinStatusLabel;
     if (rejoinAttempt != null) {
-      joinStatusLabel = rejoinAttempt >= _joinGiveUpThreshold
+      joinStatusLabel = isStuck
           ? l10n.group_join_failed_retry
           : l10n.group_joining_in_progress;
     }
@@ -42,7 +58,7 @@ class GroupRow extends StatelessWidget {
     final latestMessageText = group.latestMessageText ?? group.latestMessage;
     final hasStructuredPreview = latestMessageText != null;
 
-    return GestureDetector(
+    final card = GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -191,6 +207,47 @@ class GroupRow extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+
+    // The give-up badge is a dead-end without an action: surface a manual
+    // "Retry now" (force-eligible + rejoin) and a "Leave" exit (G2).
+    if (isStuck && (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [card, _buildStuckActions(context)],
+      );
+    }
+
+    return card;
+  }
+
+  Widget _buildStuckActions(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final dangerColor = Theme.of(context).colorScheme.error;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, left: 8, right: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          if (onRetryStuckRejoin != null)
+            TextButton.icon(
+              key: ValueKey('orbit-group-stuck-retry-${group.groupId}'),
+              onPressed: onRetryStuckRejoin,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: Text(l10n.btn_retry),
+            ),
+          if (onLeaveStuckGroup != null)
+            TextButton.icon(
+              key: ValueKey('orbit-group-stuck-leave-${group.groupId}'),
+              onPressed: onLeaveStuckGroup,
+              icon: Icon(Icons.logout, size: 18, color: dangerColor),
+              label: Text(
+                l10n.group_leave,
+                style: TextStyle(color: dangerColor),
+              ),
+            ),
+        ],
       ),
     );
   }

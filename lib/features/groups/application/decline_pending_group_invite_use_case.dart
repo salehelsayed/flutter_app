@@ -96,17 +96,22 @@ Future<void> _maybeSendDeclineAck({
     return;
   }
   try {
-    // The invite wire format carries no inviter ML-KEM key, so resolve it from
-    // contacts. A non-contact inviter has none → degrade to a skip (the send
-    // fn emits DECLINE_ACK_ENCRYPTION_SKIPPED).
-    final inviterContact = await contactRepo.getContact(invite.senderPeerId);
+    // Prefer the inviter ML-KEM key captured from the invite's freshness proof
+    // (works for non-contact inviters, the common group case — G1); fall back
+    // to a contact lookup for legacy invites that stored no key. Only when both
+    // are absent does the send fn degrade to a DECLINE_ACK_ENCRYPTION_SKIPPED
+    // no-op.
+    final inviterMlKemPublicKey =
+        (invite.mlKemPublicKey != null && invite.mlKemPublicKey!.trim().isNotEmpty)
+        ? invite.mlKemPublicKey
+        : (await contactRepo.getContact(invite.senderPeerId))?.mlKemPublicKey;
     await sendGroupInviteDeclineAck(
       p2pService: p2pService,
       bridge: bridge,
       inviteId: invite.inviteId,
       groupId: invite.groupId,
       inviterPeerId: invite.senderPeerId,
-      inviterMlKemPublicKey: inviterContact?.mlKemPublicKey,
+      inviterMlKemPublicKey: inviterMlKemPublicKey,
       declinerPeerId: declinerPeerId,
       declinerPrivateKey: declinerPrivateKey,
       now: now,

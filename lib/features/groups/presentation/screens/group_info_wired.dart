@@ -945,13 +945,37 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     var removalBroadcast = false;
 
     try {
-      final removedAt = DateTime.now().toUtc();
       final identity = await widget.identityRepo.loadIdentity();
       preRemovalGroup = await widget.groupRepo.getGroup(widget.group.id);
       preRemovalMember = await widget.groupRepo.getMember(
         widget.group.id,
         member.peerId,
       );
+      final preTransitionStateHash = await buildGroupTransitionStateHash(
+        widget.groupRepo,
+        widget.group.id,
+      );
+
+      // 1. Remove from DB + update admin's Go config. Pass NO explicit eventAt:
+      // like the role toggle, the use case mints the canonical (eventAt,
+      // eventId) pair monotonically from the wall clock — lifted past a
+      // skew-advanced watermark so this legitimate local removal can never
+      // self-block as "stale" — and returns it. The broadcast + timeline below
+      // publish the SAME pair so a concurrent removal tie-breaks against one id
+      // on every device (G5), and the wired timeline row dedups against the one
+      // the use case already persisted under the normalized instant.
+      final minted = await removeGroupMember(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        groupId: widget.group.id,
+        memberPeerId: member.peerId,
+        selfPeerId: identity?.peerId,
+        actorUsername: identity?.username,
+        msgRepo: widget.msgRepo,
+      );
+      localRemovalAccepted = true;
+      final eventAt = minted.eventAt;
+      final sourceEventId = minted.eventId;
       if (identity != null) {
         removalTimelineMessageId = buildMemberRemovedTimelineMessage(
           groupId: widget.group.id,
@@ -959,26 +983,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           removedUsername: member.username,
           senderId: identity.peerId,
           senderUsername: identity.username,
-          eventAt: removedAt,
+          eventAt: eventAt,
         ).id;
       }
-      final preTransitionStateHash = await buildGroupTransitionStateHash(
-        widget.groupRepo,
-        widget.group.id,
-      );
-
-      // 1. Remove from DB + update admin's Go config
-      await removeGroupMember(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupId: widget.group.id,
-        memberPeerId: member.peerId,
-        selfPeerId: identity?.peerId,
-        actorUsername: identity?.username,
-        eventAt: removedAt,
-        msgRepo: widget.msgRepo,
-      );
-      localRemovalAccepted = true;
 
       // 2. Broadcast member_removed system message to remaining members
       if (identity != null) {
@@ -1004,15 +1011,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                 ),
           }.toList(growable: false);
 
-          final sourceEventId =
-              'member_removed:${widget.group.id}:${identity.peerId}:${removedAt.microsecondsSinceEpoch}';
           final sysPayload = await signGroupSystemTransitionPayload(
             bridge: widget.bridge,
             groupRepo: widget.groupRepo,
             groupId: widget.group.id,
             transitionType: 'member_removed',
             sourceEventId: sourceEventId,
-            eventAt: removedAt,
+            eventAt: eventAt,
             actorPeerId: identity.peerId,
             actorUsername: identity.username,
             actorSigningPublicKey: identity.publicKey,
@@ -1024,7 +1029,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             systemPayload: {
               '__sys': 'member_removed',
               'member': {'peerId': member.peerId, 'username': member.username},
-              'removedAt': removedAt.toIso8601String(),
+              'removedAt': eventAt.toIso8601String(),
               'groupConfig': groupConfig,
             },
           );
@@ -1035,7 +1040,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             removedUsername: member.username,
             senderId: identity.peerId,
             senderUsername: identity.username,
-            eventAt: removedAt,
+            eventAt: eventAt,
           );
           if (widget.msgRepo != null) {
             await widget.msgRepo!.saveMessage(removalTimelineMessage);
@@ -1049,7 +1054,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             if (senderBinding.transportPeerId != null)
               'transportPeerId': senderBinding.transportPeerId,
             'text': sysMessage,
-            'timestamp': removedAt.toIso8601String(),
+            'timestamp': eventAt.toIso8601String(),
             'messageId': sourceEventId,
           });
 
@@ -1068,17 +1073,53 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             messageId: sourceEventId,
           );
           if (publishResult['ok'] != true) {
-            final errorMessage = publishResult['errorMessage']?.toString();
-            throw StateError(
-              errorMessage != null && errorMessage.isNotEmpty
-                  ? errorMessage
-                  : AppLocalizations.of(
-                      context,
-                    )!.group_info_publish_member_removal_failed,
-            );
+            // Soft publish failure (e.g. BRIDGE_TIMEOUT / no fanout): the
+            // removal is already committed locally and must stand. Rather than
+            // rolling the member back (which would re-grant the rotated-away
+            // key — INV-R2) or reporting a false success, durably enqueue the
+            // already-signed member_removed broadcast for re-push on the next
+            // rejoin/foreground (G3), then fall through to the inbox store + key
+            // rotation so the removal still converges. Re-uses the original
+            // (eventAt, sourceEventId) so a retry can't resurrect stale state.
+            // Falls back to the hard throw only when no durable sink is wired.
+            if (hasGroupPendingBroadcastEnqueueSink) {
+              final nowUtc = DateTime.now().toUtc();
+              await enqueueGroupPendingBroadcast(
+                GroupPendingBroadcast(
+                  id: 'pending_group_broadcast:${widget.group.id}:$sourceEventId',
+                  groupId: widget.group.id,
+                  kind: 'member_removed',
+                  sysText: sysMessage,
+                  recipientPeerIds: removalReplayRecipientPeerIds,
+                  eventAt: eventAt,
+                  sourceMessageId: sourceEventId,
+                  createdAt: nowUtc,
+                  updatedAt: nowUtc,
+                ),
+              );
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_INFO_FL_REMOVE_BROADCAST_QUEUED',
+                details: {
+                  'groupId': widget.group.id.length > 8
+                      ? widget.group.id.substring(0, 8)
+                      : widget.group.id,
+                },
+              );
+            } else {
+              final errorMessage = publishResult['errorMessage']?.toString();
+              throw StateError(
+                errorMessage != null && errorMessage.isNotEmpty
+                    ? errorMessage
+                    : AppLocalizations.of(
+                        context,
+                      )!.group_info_publish_member_removal_failed,
+              );
+            }
           }
-          // member_removed is published: the removal is committed group-wide.
-          // From here, failures are surfaced as warnings, never rolled back.
+          // member_removed is published (or durably enqueued for re-push): the
+          // removal is committed group-wide. From here, failures are surfaced
+          // as warnings, never rolled back.
           removalBroadcast = true;
           final removalReplayEnvelope = await buildGroupOfflineReplayEnvelope(
             bridge: widget.bridge,
@@ -1114,7 +1155,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                 groupId: widget.group.id,
                 senderPeerId: identity.peerId,
                 replayEnvelope: removalReplayEnvelope,
-                timestamp: removedAt,
+                timestamp: eventAt,
                 messageId: sourceEventId,
               ),
             );

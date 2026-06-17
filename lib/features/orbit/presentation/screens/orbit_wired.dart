@@ -42,6 +42,8 @@ import 'package:flutter_app/features/contacts/application/archive_contact_use_ca
 import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
@@ -679,18 +681,28 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         msgRepo: groupMessageRepository,
         groupId: groupId,
       );
+      // Re-derive the bounded rejoin attempt count (the snapshot loader leaves
+      // it null) so a single-group refresh keeps the "Joining…" / "Couldn't
+      // join" badge and its G2 Retry/Leave affordances, mirroring the full
+      // loader — otherwise tapping "Retry now" (which refreshes this row) would
+      // make the still-stuck group's badge + actions silently vanish.
+      final rejoinStates = await groupRepository.loadGroupRejoinStates();
       if (!mounted) return;
+
+      final refreshed = group?.copyWith(
+        rejoinAttemptCount: rejoinStates[groupId]?.attemptCount,
+      );
 
       final activeGroups = List<OrbitGroup>.from(_activeGroups)
         ..removeWhere((entry) => entry.groupId == groupId);
       final archivedGroups = List<OrbitGroup>.from(_archivedGroups)
         ..removeWhere((entry) => entry.groupId == groupId);
 
-      if (group != null) {
-        if (group.group.isArchived) {
-          archivedGroups.add(group);
+      if (refreshed != null) {
+        if (refreshed.group.isArchived) {
+          archivedGroups.add(refreshed);
         } else {
-          activeGroups.add(group);
+          activeGroups.add(refreshed);
         }
       }
 
@@ -1961,6 +1973,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onArchiveGroup: _onArchiveGroup,
       onUnarchiveGroup: _onUnarchiveGroup,
       onDeleteGroup: _onDeleteGroup,
+      onRetryStuckRejoinGroup: _onRetryStuckRejoinGroup,
+      onLeaveStuckGroup: _onLeaveStuckGroup,
       activeTab: showPersistentNav
           ? widget.appShellController!.activeTab
           : null,
@@ -2046,6 +2060,56 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         event: 'ORBIT_FL_DELETE_GROUP_ERROR',
         details: {'error': e.toString()},
       );
+    }
+  }
+
+  /// "Retry now" on a stuck (given-up) rejoin row: force the row eligible so the
+  /// bounded retrier no longer skips it on backoff, kick a fresh rejoin pass,
+  /// and refresh the row (G2). Never auto-deletes the group.
+  Future<void> _onRetryStuckRejoinGroup(OrbitGroup group) async {
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null) return;
+    try {
+      await groupRepository.forceGroupRejoinEligible(group.group.id);
+      await rejoinGroupTopics(
+        bridge: widget.bridge,
+        groupRepo: groupRepository,
+        reason: RejoinReason.nodeRequestedRecovery,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_STUCK_REJOIN_RETRY_ERROR',
+        details: {'error': e.toString()},
+      );
+    } finally {
+      _markGroupChanged(group.group.id);
+      await _refreshOrbitGroup(group.group.id);
+    }
+  }
+
+  /// "Leave" from a stuck rejoin row — a reachable exit from the dead-end (G2).
+  /// Tears the group down via the normal leave path (never a silent auto-delete)
+  /// and refreshes the row.
+  Future<void> _onLeaveStuckGroup(OrbitGroup group) async {
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null) return;
+    try {
+      await leaveGroup(
+        bridge: widget.bridge,
+        groupRepo: groupRepository,
+        groupId: group.group.id,
+      );
+      _openRowNotifier.value = null;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_STUCK_LEAVE_ERROR',
+        details: {'error': e.toString()},
+      );
+    } finally {
+      _markGroupChanged(group.group.id);
+      await _refreshOrbitGroup(group.group.id);
     }
   }
 

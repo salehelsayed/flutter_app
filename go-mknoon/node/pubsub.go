@@ -1802,6 +1802,12 @@ func (n *Node) emitGroupDecryptionFailed(groupId string, env *internal.GroupEnve
 // and falls through to the normal signature Reject. Generous enough to cover
 // realistic key-distribution lag, bounded so a bound member cannot grief with
 // absurd epoch claims. Anti-grief hygiene only — Ignore never accepts traffic.
+//
+// NOTE (G-H): this is intentionally ~200x the 02-Slice-2 plan's suggested
+// N+1..N+K window (K=5). The departure is security-equivalent — Ignore grants
+// no traffic and no peer-score credit, so widening the window only widens the
+// penalty-dodge window, which the plan's threat model already accepts — while
+// avoiding false Rejects of honest senders during deep, multi-rotation lag.
 const maxFutureKeyEpochIgnoreWindow = 1024
 
 // emitGroupKeyEpochBehind reports a strictly-future (local key-behind) group

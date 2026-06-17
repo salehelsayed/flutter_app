@@ -23,6 +23,7 @@ import 'package:flutter_app/features/groups/application/group_avatar_storage.dar
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
@@ -3097,18 +3098,32 @@ class GroupMessageListener {
       return;
     }
     if (validMemberData != null) {
+      final priorMember = addedPeerId == null
+          ? null
+          : await _groupRepo.getMember(groupId, addedPeerId);
       final member = GroupMember.fromConfigMap(
         groupId: groupId,
         map: validMemberData,
         existing: addedPeerId == null
             ? null
-            : _existingMemberForMembershipAddEvent(
-                await _groupRepo.getMember(groupId, addedPeerId),
-                eventAt,
-              ),
+            : _existingMemberForMembershipAddEvent(priorMember, eventAt),
         joinedAt: eventAt ?? DateTime.now().toUtc(),
       );
       await _groupRepo.saveMember(member);
+      // G-A: a remote member whose usable ML-KEM key first lands here may be
+      // owed a deferred key distribution from an earlier rotation — drain it
+      // promptly. Gated so benign username-only refreshes never burn an attempt.
+      if (addedPeerId != null &&
+          addedPeerId.isNotEmpty &&
+          groupMemberRegainedDeliverableKey(
+            existing: priorMember,
+            saved: member,
+          )) {
+        await triggerDeferredDistributionDrainForPeer(
+          groupId: groupId,
+          peerId: addedPeerId,
+        );
+      }
     } else if (memberData != null) {
       emitFlowEvent(
         layer: 'FL',
@@ -3252,18 +3267,31 @@ class GroupMessageListener {
             username: data['username'] as String?,
           ));
         }
+        final priorMember = peerId == null
+            ? null
+            : await _groupRepo.getMember(groupId, peerId);
         final member = GroupMember.fromConfigMap(
           groupId: groupId,
           map: data,
           existing: peerId == null
               ? null
-              : _existingMemberForMembershipAddEvent(
-                  await _groupRepo.getMember(groupId, peerId),
-                  eventAt,
-                ),
+              : _existingMemberForMembershipAddEvent(priorMember, eventAt),
           joinedAt: eventAt ?? DateTime.now().toUtc(),
         );
         await _groupRepo.saveMember(member);
+        // G-A: prompt deferred-distribution drain when this member's usable
+        // ML-KEM key first lands (see _handleMemberAdded for rationale).
+        if (peerId != null &&
+            peerId.isNotEmpty &&
+            groupMemberRegainedDeliverableKey(
+              existing: priorMember,
+              saved: member,
+            )) {
+          await triggerDeferredDistributionDrainForPeer(
+            groupId: groupId,
+            peerId: peerId,
+          );
+        }
       }
     }
 
@@ -5248,21 +5276,34 @@ class GroupMessageListener {
         }
       }
 
-      await _groupRepo.saveMember(
-        GroupMember.fromConfigMap(
-          groupId: groupId,
-          map: memberData,
-          existing: existingMember,
-          joinedAt: _resolveAuthoritativeSnapshotJoinedAt(
-            peerId: peerId,
-            existingMember: existingMember,
-            groupCreatedAt: group.createdAt,
-            eventAt: eventAt,
-            eventMemberPeerIds: eventMemberPeerIds,
-          ),
-          preserveMissingPermissions: false,
+      final savedMember = GroupMember.fromConfigMap(
+        groupId: groupId,
+        map: memberData,
+        existing: existingMember,
+        joinedAt: _resolveAuthoritativeSnapshotJoinedAt(
+          peerId: peerId,
+          existingMember: existingMember,
+          groupCreatedAt: group.createdAt,
+          eventAt: eventAt,
+          eventMemberPeerIds: eventMemberPeerIds,
         ),
+        preserveMissingPermissions: false,
       );
+      await _groupRepo.saveMember(savedMember);
+      // G-A: an authoritative config snapshot is the canonical receive site
+      // where a member's ML-KEM key (or a new keyed device) first lands —
+      // drain any deferred distribution owed to it. The delta guard makes the
+      // common no-key-change member refresh a no-op (and avoids double-firing
+      // with the member_added/members_added save that precedes this snapshot).
+      if (groupMemberRegainedDeliverableKey(
+        existing: existingMember,
+        saved: savedMember,
+      )) {
+        await triggerDeferredDistributionDrainForPeer(
+          groupId: groupId,
+          peerId: peerId,
+        );
+      }
     }
 
     if (pruneOmittedMembers) {

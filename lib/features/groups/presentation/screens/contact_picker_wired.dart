@@ -21,6 +21,8 @@ import 'package:flutter_app/features/groups/application/group_media_allowed_peer
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
@@ -437,14 +439,44 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       } catch (e) {
         membersAddedPublishFailed = true;
       }
-      if (!membersAddedPublishFailed) {
+
+      // G3: a soft publish failure must not silently drop the broadcast (a
+      // false success — the members are kept locally but peers never learn).
+      // Durably enqueue the already-signed members_added broadcast for re-push
+      // on the next rejoin/foreground, re-using the canonical
+      // (publishedAt, sourceEventId) so a retry can't resurrect stale state.
+      var membersAddedEnqueuedForRetry = false;
+      if (membersAddedPublishFailed && hasGroupPendingBroadcastEnqueueSink) {
+        final nowUtc = DateTime.now().toUtc();
+        await enqueueGroupPendingBroadcast(
+          GroupPendingBroadcast(
+            id: 'pending_group_broadcast:${widget.groupId}:$sourceEventId',
+            groupId: widget.groupId,
+            kind: 'members_added',
+            sysText: sysMessage,
+            recipientPeerIds: existingRecipientPeerIds,
+            eventAt: publishedAt,
+            sourceMessageId: sourceEventId,
+            createdAt: nowUtc,
+            updatedAt: nowUtc,
+          ),
+        );
+        membersAddedEnqueuedForRetry = true;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_PICKER_FL_MEMBERS_ADDED_BROADCAST_QUEUED',
+          details: {'groupId': widget.groupId},
+        );
+      }
+      if (!membersAddedPublishFailed || membersAddedEnqueuedForRetry) {
         // Anchor the local membership watermark to the canonical members_added
-        // (eventAt, eventId) pair we just published — the per-member
-        // addGroupMember calls advanced it to their (earlier) joinedAt with no
-        // id, so a concurrent remote event would otherwise tie-break against a
-        // stale, id-less watermark. publishedAt is computed after the add loop,
-        // so it is strictly newer and advances the watermark. [sourceEventId]
-        // is already the canonical `members_added:<gid>:<actor>:<µs>` form.
+        // (eventAt, eventId) pair — the per-member addGroupMember calls advanced
+        // it to their (earlier) joinedAt with no id, so a concurrent remote
+        // event would otherwise tie-break against a stale, id-less watermark.
+        // On a clean publish OR a durable enqueue the add is committed locally,
+        // so the watermark must advance. publishedAt is computed after the add
+        // loop, so it is strictly newer; [sourceEventId] is already the
+        // canonical `members_added:<gid>:<actor>:<µs>` form.
         await recordGroupMembershipEventWatermark(
           groupRepo: widget.groupRepo,
           groupId: widget.groupId,
@@ -517,13 +549,21 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           );
         }
       }
-      if (membersAddedPublishFailed) {
+      if (membersAddedPublishFailed && !membersAddedEnqueuedForRetry) {
         emitFlowEvent(
           layer: 'FL',
           event: 'CONTACT_PICKER_FL_PUBLISH_WARNING',
           details: {'groupId': widget.groupId},
         );
-      } else if (widget.msgRepo != null) {
+      }
+      // Persist the local "<actor> added <members>" timeline row whenever the
+      // add is treated as committed — a clean publish OR a durable enqueue
+      // (G3) — so the adding admin's own conversation shows the event, matching
+      // the watermark advance and mirroring the remove path (otherwise a
+      // soft-publish-failure add would move the roster + queue the broadcast
+      // but silently omit the local system line).
+      if ((!membersAddedPublishFailed || membersAddedEnqueuedForRetry) &&
+          widget.msgRepo != null) {
         await widget.msgRepo!.saveMessage(
           buildMembersAddedTimelineMessage(
             groupId: widget.groupId,

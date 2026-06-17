@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -40,6 +41,55 @@ Future<void> triggerDeferredDistributionDrainForPeer({
       details: {'peerId': _safeId(peerId), 'error': e.toString()},
     );
   }
+}
+
+/// True when [saved] can now receive a deferred group-key distribution that it
+/// could NOT before: it carries at least one deliverable device (active, usable
+/// ML-KEM) AND that material is newly present relative to [existing] (existing
+/// was null, was previously keyless, or its deliverable device set changed).
+///
+/// Gates the member-key-arrival drain trigger at the config-apply RECEIVE sites
+/// (Finding 03 Slice 2, G-A) so a benign username-only roster refresh of an
+/// already-converged member never fires a drain — which would otherwise re-walk
+/// the queue and, for a still-keyless member, burn a deferred-distribution
+/// attempt against the cap with nothing to deliver. The local admin add path
+/// fires unconditionally instead because the added member just passed key-
+/// material validation, so there a fresh arrival is implied.
+bool groupMemberRegainedDeliverableKey({
+  required GroupMember? existing,
+  required GroupMember saved,
+}) {
+  final savedDevices = deliverableGroupKeyDevices(saved);
+  if (savedDevices.isEmpty) {
+    return false; // still keyless — nothing deliverable to drain
+  }
+  if (existing == null) {
+    return true; // first persisted save already carries a usable key
+  }
+  final existingDevices = deliverableGroupKeyDevices(existing);
+  if (existingDevices.isEmpty) {
+    return true; // keyless -> keyed transition
+  }
+  // Both keyed: fire only when the deliverable device set actually changed
+  // (e.g. a new device's ML-KEM landed); identical material is a no-op refresh.
+  return !_sameDeliverableMlKemSet(existingDevices, savedDevices);
+}
+
+bool _sameDeliverableMlKemSet(
+  List<GroupMemberDeviceIdentity> existing,
+  List<GroupMemberDeviceIdentity> saved,
+) {
+  if (existing.length != saved.length) return false;
+  final savedById = {for (final device in saved) device.deviceId: device};
+  if (savedById.length != saved.length) return false;
+  for (final device in existing) {
+    final other = savedById[device.deviceId];
+    if (other == null ||
+        (other.mlKemPublicKey ?? '') != (device.mlKemPublicKey ?? '')) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /// Slice 2 of Finding 03 (removal-rotation fails-closed): drains the durable

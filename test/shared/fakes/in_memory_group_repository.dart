@@ -45,6 +45,18 @@ class InMemoryGroupRepository
   }
 
   @override
+  Future<void> forceGroupRejoinEligible(String groupId) async {
+    final existing = _rejoinStates[groupId];
+    if (existing == null) return;
+    // Collapse the backoff window (eligible immediately) while preserving the
+    // attempt count and the row — mirrors the interface contract (G2 "Retry now").
+    _rejoinStates[groupId] = GroupRejoinState(
+      attemptCount: existing.attemptCount,
+      nextEligibleAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
+  }
+
+  @override
   Future<void> savePendingSiblingDevice(PendingSiblingDevice device) async {
     _pendingSiblingDevices[device.id] = device;
   }

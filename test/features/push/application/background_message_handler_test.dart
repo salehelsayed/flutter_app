@@ -391,6 +391,69 @@ void main() {
     );
 
     test(
+      'suppresses a muted group member end-to-end through the real fallback '
+      'resolver and helper (reason "muted", no .show)',
+      () async {
+        // 04-P0 / SI-1 — Tier A regression lock (G-NM-1). Instead of stubbing
+        // the outer eligibility seam with a hardcoded suppressed(...), this
+        // drives the REAL resolveBackgroundPushFallbackDisplayEligibility with
+        // the REAL groupMemberMessageDisplayEligibility helper (is_muted=1), so
+        // the helper -> fallback-routing -> handler-suppression wiring AND the
+        // literal 'muted' reason are locked end-to-end. A regression that
+        // inverts the helper's mute check, or stops the fallback resolver from
+        // routing a group_message to the group resolver, fails here while the
+        // existing stubbed suppression tests would still pass. The encrypted-DB
+        // glue (dbLoadGroup -> groupMemberMessageDisplayEligibility) is the
+        // separate device Tier-B proof — the host VM cannot open the SQLCipher
+        // identity.db.
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (message) => resolveBackgroundPushFallbackDisplayEligibility(
+            message,
+            groupMessageDisplayEligibilityResolver: (_) async =>
+                groupMemberMessageDisplayEligibility({'is_muted': 1}),
+          ),
+        );
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/background-group-muted-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        debugSetRecentRemoteNotificationGate(gate);
+        addTearDown(gate.clear);
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        const message = RemoteMessage(
+          messageId: 'fcm-session03-muted',
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-session03-muted',
+            'message_id': 'msg-session03-muted',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+        final suppressionEvent = events.lastWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+        );
+        expect(suppressionEvent['details'], containsPair('reason', 'muted'));
+      },
+    );
+
+    test(
       'GIRD-006 marks remote announcement after successful group fallback display',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;

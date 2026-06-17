@@ -12,6 +12,7 @@ void main() {
       required String groupId,
       required Map<String, dynamic> groupConfig,
       required DateTime issuedAt,
+      String? inviterMlKemPublicKey,
     }) {
       final stateHash = buildGroupConfigStateHash(
         groupId: groupId,
@@ -28,11 +29,13 @@ void main() {
         membershipWatermark: stateHash,
         issuedAt: issuedAt.toUtc(),
         expiresAt: issuedAt.toUtc().add(groupInviteMembershipFreshnessTtl),
-        inviterMemberSnapshot: const {
+        inviterMemberSnapshot: {
           'peerId': 'peer-admin',
           'username': 'Admin',
           'role': 'admin',
           'publicKey': 'pk-admin',
+          if (inviterMlKemPublicKey != null)
+            'mlKemPublicKey': inviterMlKemPublicKey,
         },
       );
     }
@@ -156,6 +159,103 @@ void main() {
       expect(roundTrip.senderPeerId, invite.senderPeerId);
       expect(roundTrip.metadataUpdatedAt, invite.metadataUpdatedAt);
       expect(roundTrip.expiresAt, invite.expiresAt);
+    });
+
+    test(
+      'G1: fromPayload extracts inviter mlKemPublicKey from the freshness proof snapshot',
+      () {
+        final keyedPayload = GroupInvitePayload(
+          id: 'invite-1',
+          groupId: 'group-1',
+          groupKey: 'base64-key',
+          keyEpoch: 1,
+          groupConfig: groupConfig,
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          timestamp: '2026-04-05T13:00:00.000Z',
+          recipientPeerId: 'peer-recipient',
+          invitePolicy: GroupInvitePolicy(
+            expiresAt: DateTime.utc(2026, 4, 8, 13),
+            allowedDevices: const ['peer-recipient'],
+            assignedRole: 'writer',
+            canInviteOthers: false,
+            joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+            keyEpoch: 1,
+          ),
+          membershipFreshnessProof: makeFreshnessProof(
+            inviteId: 'invite-1',
+            groupId: 'group-1',
+            groupConfig: groupConfig,
+            issuedAt: issuedAt,
+            inviterMlKemPublicKey: 'adminMlKem64',
+          ),
+        );
+
+        final invite = PendingGroupInvite.fromPayload(
+          keyedPayload,
+          receivedAt: DateTime.utc(2026, 4, 5, 13, 0),
+        );
+
+        expect(invite.mlKemPublicKey, 'adminMlKem64');
+      },
+    );
+
+    test(
+      'G1: fromPayload leaves mlKemPublicKey null when the proof carries no key',
+      () {
+        // The shared `payload` has a proof without an mlKemPublicKey.
+        final invite = PendingGroupInvite.fromPayload(
+          payload,
+          receivedAt: DateTime.utc(2026, 4, 5, 13, 0),
+        );
+
+        expect(invite.mlKemPublicKey, isNull);
+      },
+    );
+
+    test('G1: toMap/fromMap round-trips mlKemPublicKey', () {
+      final fixedTime = DateTime.utc(2026, 4, 5, 13);
+      final invite = PendingGroupInvite(
+        groupId: 'group-1',
+        inviteId: 'invite-1',
+        payloadJson: '{}',
+        groupName: 'Book Club',
+        groupType: GroupType.chat,
+        senderPeerId: 'peer-admin',
+        senderUsername: 'Admin',
+        mlKemPublicKey: 'adminMlKem64',
+        createdBy: 'peer-admin',
+        createdAt: fixedTime,
+        receivedAt: fixedTime,
+        expiresAt: fixedTime,
+      );
+
+      final map = invite.toMap();
+      expect(map['inviter_mlkem_public_key'], 'adminMlKem64');
+
+      final roundTrip = PendingGroupInvite.fromMap(
+        Map<String, dynamic>.from(map),
+      );
+      expect(roundTrip.mlKemPublicKey, 'adminMlKem64');
+    });
+
+    test('G1: fromMap tolerates a legacy row missing the inviter key', () {
+      final legacyMap = <String, dynamic>{
+        'group_id': 'group-1',
+        'invite_id': 'invite-1',
+        'payload_json': '{}',
+        'group_name': 'Book Club',
+        'group_type': 'chat',
+        'sender_peer_id': 'peer-admin',
+        'sender_username': 'Admin',
+        'created_by': 'peer-admin',
+        'created_at': '2026-04-05T13:00:00.000Z',
+        'received_at': '2026-04-05T13:00:00.000Z',
+        'expires_at': '2026-04-08T13:00:00.000Z',
+      };
+
+      final invite = PendingGroupInvite.fromMap(legacyMap);
+      expect(invite.mlKemPublicKey, isNull);
     });
 
     test('isExpiredAt returns true on or after expiry', () {

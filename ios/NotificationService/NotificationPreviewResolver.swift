@@ -436,6 +436,17 @@ final class AppGroupPushDedupeStore: PushDedupeStoring {
     )
   }
 
+  /// Test seam: inject the dedupe directory directly so the O_EXCL first-wins/
+  /// second-loses claim() semantics are exercisable on a real filesystem without
+  /// a real app-group container.
+  init(directory: URL) {
+    self.directory = directory
+    try? FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+  }
+
   func claim(type: String, messageId: String) -> Bool {
     let name = "\(safeFileComponent(type))-\(safeFileComponent(messageId))"
     let path = directory.appendingPathComponent(name).path

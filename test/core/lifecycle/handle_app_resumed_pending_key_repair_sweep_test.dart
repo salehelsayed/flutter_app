@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
@@ -45,6 +47,50 @@ void main() {
       );
 
       expect(order, ['8h_drain', '8i_sweep']);
+    },
+  );
+
+  // G-F (Finding 02 Slice 1): the pending-key-repair sweep must run AFTER the
+  // Step 3c offline-inbox drain. Step 3c calls the real drainGroupOfflineInbox
+  // directly (not an injectable Fn) and is gated on needsGroupRecovery, so the
+  // runtime order-recorder above cannot observe it — a source-order lock guards
+  // the 3c→8i relationship against a future reorder that would re-create the
+  // undecryptable-message bug (sweep running before fresh messages/keys land).
+  test(
+    'Step 3c drainGroupOfflineInbox precedes the Step 8i pending-key-repair '
+    'sweep in source (sweep must be after the drain)',
+    () async {
+      final source = await File(
+        'lib/core/lifecycle/handle_app_resumed.dart',
+      ).readAsString();
+
+      final step3cIndex = source.indexOf(
+        'Step 3c: drainGroupOfflineInbox() starting...',
+      );
+      expect(
+        step3cIndex,
+        isNonNegative,
+        reason: 'Step 3c drainGroupOfflineInbox marker must exist in source',
+      );
+
+      final step8iIndex = source.indexOf(
+        'Step 8i: retryAllPendingGroupKeyRepairs=',
+      );
+      expect(
+        step8iIndex,
+        isNonNegative,
+        reason:
+            'Step 8i pending-key-repair sweep marker must exist in source',
+      );
+
+      expect(
+        step3cIndex,
+        lessThan(step8iIndex),
+        reason:
+            'Step 3c offline-inbox drain must run before the Step 8i pending-'
+            'key-repair sweep so freshly drained group messages/keys are '
+            'present when the sweep re-fires persisted repairs',
+      );
     },
   );
 

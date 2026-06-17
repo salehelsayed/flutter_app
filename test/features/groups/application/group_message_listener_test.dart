@@ -21,6 +21,7 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -14597,4 +14598,219 @@ void main() {
       }
     },
   );
+
+  // G-A (Finding 03 Slice 2): the member-key-arrival drain trigger must fire at
+  // the config-apply RECEIVE sites — not just the local admin add path — so the
+  // deferred-distribution queue owner converges promptly when a previously
+  // keyless member's usable ML-KEM key first lands via a received config.
+  group('G-A member-key-arrival deferred-distribution drain trigger', () {
+    late List<({String groupId, String peerId})> drainCalls;
+
+    setUp(() {
+      drainCalls = <({String groupId, String peerId})>[];
+      setDeferredDistributionDrainSink(({
+        required String groupId,
+        required String peerId,
+      }) async {
+        drainCalls.add((groupId: groupId, peerId: peerId));
+      });
+    });
+
+    tearDown(() => setDeferredDistributionDrainSink(null));
+
+    GroupMember adminMember() => GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-admin',
+      username: 'Admin',
+      role: MemberRole.admin,
+      publicKey: 'pk-admin',
+      joinedAt: initialMemberJoinedAt,
+    );
+
+    GroupMember senderMember() => GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-sender',
+      username: 'Sender',
+      role: MemberRole.writer,
+      publicKey: 'pk-sender',
+      joinedAt: initialMemberJoinedAt,
+    );
+
+    test(
+      'member_added carrying a usable ML-KEM key fires the drain for that peer',
+      () async {
+        final keyedCharlie = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie',
+          joinedAt: initialMemberJoinedAt,
+        );
+        listener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'member_added',
+            'eventAt': initialMemberJoinedAt.toIso8601String(),
+            'member': keyedCharlie.toConfigJson(),
+            'groupConfig': buildGroupConfigPayload(testGroup, [
+              adminMember(),
+              senderMember(),
+              keyedCharlie,
+            ]),
+          }),
+          'timestamp': DateTime.utc(2026, 6, 6, 5, 20).toIso8601String(),
+          'messageId': 'ga-member-added-keyed',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          await groupRepo.getMember('group-1', 'peer-charlie'),
+          isNotNull,
+        );
+        expect(
+          drainCalls.map((call) => call.peerId),
+          contains('peer-charlie'),
+        );
+        expect(
+          drainCalls.every((call) => call.groupId == 'group-1'),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'member_added without ML-KEM key (keyless) does NOT fire the drain',
+      () async {
+        final keylessCharlie = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          joinedAt: initialMemberJoinedAt,
+        );
+        listener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'member_added',
+            'eventAt': initialMemberJoinedAt.toIso8601String(),
+            'member': keylessCharlie.toConfigJson(),
+            'groupConfig': buildGroupConfigPayload(testGroup, [
+              adminMember(),
+              senderMember(),
+              keylessCharlie,
+            ]),
+          }),
+          'timestamp': DateTime.utc(2026, 6, 6, 5, 20).toIso8601String(),
+          'messageId': 'ga-member-added-keyless',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          await groupRepo.getMember('group-1', 'peer-charlie'),
+          isNotNull,
+        );
+        expect(
+          drainCalls.where((call) => call.peerId == 'peer-charlie'),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'members_added batch fires the drain once per key-carrying member',
+      () async {
+        final keyedCharlie = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie',
+          joinedAt: initialMemberJoinedAt,
+        );
+        final keyedDave = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-dave',
+          username: 'Dave',
+          role: MemberRole.writer,
+          publicKey: 'pk-dave',
+          mlKemPublicKey: 'mlkem-dave',
+          joinedAt: initialMemberJoinedAt,
+        );
+        listener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'members_added',
+            'eventAt': initialMemberJoinedAt.toIso8601String(),
+            'members': [keyedCharlie.toConfigJson(), keyedDave.toConfigJson()],
+            'groupConfig': buildGroupConfigPayload(testGroup, [
+              adminMember(),
+              senderMember(),
+              keyedCharlie,
+              keyedDave,
+            ]),
+          }),
+          'timestamp': DateTime.utc(2026, 6, 6, 5, 20).toIso8601String(),
+          'messageId': 'ga-members-added-keyed',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        final drainedPeers = drainCalls.map((call) => call.peerId).toSet();
+        expect(drainedPeers, containsAll(['peer-charlie', 'peer-dave']));
+      },
+    );
+
+    test(
+      'member_role_updated (username/role only, no key change) does NOT fire the drain',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            mlKemPublicKey: 'mlkem-charlie',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        listener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'member_role_updated',
+            'member': {
+              'peerId': 'peer-charlie',
+              'username': 'Charlie',
+              'role': 'admin',
+            },
+            'eventAt': DateTime.utc(2026, 6, 6, 5, 25).toIso8601String(),
+          }),
+          'timestamp': DateTime.utc(2026, 6, 6, 5, 25).toIso8601String(),
+          'messageId': 'ga-role-updated',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(drainCalls, isEmpty);
+      },
+    );
+  });
 }

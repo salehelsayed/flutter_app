@@ -1,0 +1,37 @@
+[
+  {
+    "description": "1:1 new_message -> message:<peerId>|<messageId>",
+    "push": { "type": "new_message", "sender_id": "peer-123", "message_id": "msg-7" },
+    "dartPayload": "peer-123",
+    "dartMessageId": "msg-7",
+    "expectedKey": "message:peer-123|msg-7"
+  },
+  {
+    "description": "group_message -> double message: shape message:group:<gid>|message:<id>|<id>",
+    "push": { "type": "group_message", "groupId": "g-1", "message_id": "m-9" },
+    "dartPayload": "group:g-1|message:m-9",
+    "dartMessageId": "m-9",
+    "expectedKey": "message:group:g-1|message:m-9|m-9"
+  },
+  {
+    "description": "older-relay aliases: from (sender) + id (messageId)",
+    "push": { "type": "new_message", "from": "peer-bob", "id": "msg-2" },
+    "dartPayload": "peer-bob",
+    "dartMessageId": "msg-2",
+    "expectedKey": "message:peer-bob|msg-2"
+  },
+  {
+    "description": "m-only messageId alias is NOT accepted by either side -> no key",
+    "push": { "type": "new_message", "sender_id": "peer-x", "m": "msg-z" },
+    "dartPayload": null,
+    "dartMessageId": null,
+    "expectedKey": null
+  },
+  {
+    "description": "non-message push (no message-aware dedupe) -> no key",
+    "push": { "type": "group_invite" },
+    "dartPayload": null,
+    "dartMessageId": null,
+    "expectedKey": null
+  }
+]

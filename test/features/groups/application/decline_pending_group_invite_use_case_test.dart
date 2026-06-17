@@ -18,10 +18,37 @@ import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 void main() {
   late InMemoryPendingGroupInviteRepository pendingInviteRepo;
 
-  PendingGroupInvite makeInvite({DateTime? receivedAt}) {
+  PendingGroupInvite makeInvite({
+    DateTime? receivedAt,
+    String? inviterMlKemPublicKey,
+  }) {
     final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
     final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
     final inviteTimestamp = createdAt.add(const Duration(minutes: 5));
+    // When an inviter ML-KEM key is requested, attach a membership-freshness
+    // proof carrying it in the inviter snapshot — exactly how a real invite
+    // delivers the key (G1 extraction path).
+    final freshnessProof = inviterMlKemPublicKey == null
+        ? null
+        : GroupInviteMembershipFreshnessProof(
+            inviteId: 'invite-1',
+            groupId: 'grp-abc123',
+            recipientPeerId: '12D3KooWReceiver',
+            inviterPeerId: '12D3KooWAlice',
+            inviterPublicKey: 'alicePubKey64',
+            keyEpoch: 1,
+            groupConfigStateHash: 'state-hash',
+            membershipWatermark: 'state-hash',
+            issuedAt: inviteTimestamp,
+            expiresAt: inviteTimestamp.add(const Duration(hours: 1)),
+            inviterMemberSnapshot: {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': inviterMlKemPublicKey,
+            },
+          );
     final payload = GroupInvitePayload(
       id: 'invite-1',
       groupId: 'grp-abc123',
@@ -49,6 +76,7 @@ void main() {
         joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
         keyEpoch: 1,
       ),
+      membershipFreshnessProof: freshnessProof,
     );
     return PendingGroupInvite.fromPayload(
       payload,
@@ -217,6 +245,77 @@ void main() {
 
         expect(result, DeclinePendingGroupInviteResult.success);
         expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(
+          flowEvents.where(
+            (e) => e['event'] == 'DECLINE_ACK_ENCRYPTION_SKIPPED',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'G1: decline sends a signed decline-ack to a NON-CONTACT inviter using the invite-carried ML-KEM key',
+      () async {
+        // Invite carries the inviter ML-KEM key in its freshness proof, but the
+        // inviter is NOT a contact — the common group-invite case.
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(inviterMlKemPublicKey: 'aliceMlKem64'),
+        );
+        final contactRepo = FakeContactRepository(); // no inviter contact
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+          sendMessageResult: true,
+        );
+
+        final result = await declinePendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupId: 'grp-abc123',
+          p2pService: p2pService,
+          bridge: FakeBridge(),
+          contactRepo: contactRepo,
+          declinerPeerId: '12D3KooWReceiver',
+          declinerPrivateKey: 'recv-priv',
+        );
+
+        expect(result, DeclinePendingGroupInviteResult.success);
+        // The ack was sent despite there being no contact for the inviter.
+        expect(p2pService.sendMessageCallCount, 1);
+        expect(p2pService.lastSendMessagePeerId, '12D3KooWAlice');
+        final envelope =
+            jsonDecode(p2pService.lastSendMessageContent!)
+                as Map<String, dynamic>;
+        expect(envelope['type'], 'group_invite_decline_ack');
+      },
+    );
+
+    test(
+      'G1: decline still skips the ack for a non-contact inviter when the invite carries no ML-KEM key',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        // No freshness proof → invite.mlKemPublicKey is null; no contact either.
+        await pendingInviteRepo.savePendingInvite(makeInvite());
+        final contactRepo = FakeContactRepository();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+          sendMessageResult: true,
+        );
+
+        final result = await declinePendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupId: 'grp-abc123',
+          p2pService: p2pService,
+          bridge: FakeBridge(),
+          contactRepo: contactRepo,
+          declinerPeerId: '12D3KooWReceiver',
+          declinerPrivateKey: 'recv-priv',
+        );
+
+        expect(result, DeclinePendingGroupInviteResult.success);
         expect(p2pService.sendMessageCallCount, 0);
         expect(
           flowEvents.where(

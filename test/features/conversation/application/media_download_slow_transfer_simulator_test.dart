@@ -14,6 +14,16 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 /// a slow-but-moving transfer (progress events keep arriving) survives a
 /// short stall budget, while a genuinely stalled transfer fails with the
 /// typed watchdog code and PRESERVES its staged artifact.
+///
+/// 09-P1 NOTE (G-09-2): the bounded-download-retry sim proofs (INV-DL-1 retry
+/// counter increment + ceiling flip to terminal `download_failed`, INV-DL-2
+/// counter reset on transient-then-success, INV-DL-4 relay not-found/not-authorized
+/// 0-budget short-circuit, and convergence within kMaxDownloadRetries without
+/// infinite retry) live in `download_media_use_case_test.dart` (the INV-DL-1/2/4
+/// tests in the `downloadMedia` group), which drives the REAL downloadMedia +
+/// saveAttachment persistence against a fake bridge. They were placed there
+/// rather than re-deriving a `_NotFoundBridge` here, so this file's stall-only
+/// scope is not a coverage gap for finding 09.
 class _SlowWritingBridge extends Bridge {
   final Duration delay;
   final List<int> bytes;

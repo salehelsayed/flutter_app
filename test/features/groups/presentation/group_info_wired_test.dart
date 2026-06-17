@@ -5275,6 +5275,107 @@ void main() {
     );
 
     testWidgets(
+      'G3: member_removed soft publish failure durably enqueues the broadcast '
+      'and keeps the removal (no rollback)',
+      (tester) async {
+        final enqueued = <GroupPendingBroadcast>[];
+        setGroupPendingBroadcastEnqueueSink((b) async => enqueued.add(b));
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-alice',
+            username: 'Alice',
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-bob',
+            username: 'Bob',
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+          ),
+        );
+
+        // floodPublish soft-fails (no fanout), but the durable inbox store and
+        // the key rotation still succeed.
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': false,
+              'errorMessage': 'simulated publish failure',
+            },
+            'group:inboxStore': {'ok': true},
+            'group:generateNextKey': {
+              'ok': true,
+              'groupKey': 'fake-rotated-key',
+              'keyEpoch': 2,
+            },
+          },
+        );
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Alice'), findsOneWidget);
+        await _removeAliceFromGroupInfo(tester);
+        await pumpFrames(tester, count: 30);
+
+        // The removal STANDS — no rollback that re-adds Alice (which would
+        // re-grant the rotated-away key, INV-R2).
+        expect(await groupRepo.getMember('group-1', 'peer-alice'), isNull);
+        expect(find.text('Alice'), findsNothing);
+
+        // The already-signed member_removed broadcast is durably enqueued for
+        // re-push, carrying the canonical (eventAt, sourceMessageId) pair the
+        // use case minted (G3 durable resend + G5 canonical pair).
+        expect(enqueued, hasLength(1));
+        final broadcast = enqueued.single;
+        expect(broadcast.kind, 'member_removed');
+        expect(
+          broadcast.recipientPeerIds,
+          containsAll(<String>['peer-alice', 'peer-bob']),
+        );
+        expect(broadcast.sysText, contains('"__sys":"member_removed"'));
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(broadcast.sourceMessageId, updatedGroup!.lastMembershipEventId);
+        expect(broadcast.eventAt.toUtc(), updatedGroup.lastMembershipEventAt?.toUtc());
+
+        // Convergence still proceeds: durable inbox delivery + key rotation.
+        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(bridge.commandLog, contains('group:generateNextKey'));
+      },
+    );
+
+    testWidgets(
       'removal stands with a keyless bystander and shows a partial-distribution notice',
       (tester) async {
         // Headline P0 (INV-R1/INV-R2): admin removes Alice while remaining

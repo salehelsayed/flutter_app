@@ -270,6 +270,7 @@ class GroupInviteListener {
           message: message,
           deliveryRepo: deliveryRepo,
           bridge: bridge,
+          contactRepo: contactRepo,
           ownMlKemSecretKey: ownSecretKey,
           now: now().toUtc(),
         );

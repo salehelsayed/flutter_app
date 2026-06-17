@@ -54,6 +54,11 @@ Future<void> leaveGroup({
   // 4. Delete group from repo
   await groupRepo.deleteGroup(groupId);
 
+  // 5. Drop any orphaned rejoin-retry state so a later re-join under the same
+  // groupId doesn't resurface a stale "Couldn't join" stuck badge (the
+  // group_rejoin_state row has no FK cascade on the groups table). Best-effort.
+  await groupRepo.clearGroupRejoinState(groupId);
+
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_LEAVE_USE_CASE_SUCCESS',

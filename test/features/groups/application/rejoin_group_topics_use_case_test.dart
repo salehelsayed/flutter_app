@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -200,6 +201,86 @@ void main() {
           .toSet();
       expect(groupIds, {'group-1', 'group-2'});
     });
+
+    test(
+      'G4: triggers a per-group broadcast drain for each successfully rejoined '
+      'group',
+      () async {
+        final drained = <String>[];
+        setGroupPendingBroadcastDrainSinks(
+          forGroup: (groupId) async {
+            drained.add(groupId);
+            return 0;
+          },
+          all: null,
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastDrainSinks(forGroup: null, all: null),
+        );
+
+        final now = DateTime.now().toUtc();
+        await seedGroup(
+          groupId: 'group-1',
+          name: 'Group One',
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'key-1-base64',
+            createdAt: now,
+          ),
+        );
+        await seedGroup(
+          groupId: 'group-2',
+          name: 'Group Two',
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-2',
+            keyGeneration: 1,
+            encryptedKey: 'key-2-base64',
+            createdAt: now,
+          ),
+        );
+
+        await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+        expect(drained, containsAll(<String>['group-1', 'group-2']));
+        expect(drained, hasLength(2));
+      },
+    );
+
+    test(
+      'G4: does not trigger a per-group drain for a group skipped for no key',
+      () async {
+        final drained = <String>[];
+        setGroupPendingBroadcastDrainSinks(
+          forGroup: (groupId) async {
+            drained.add(groupId);
+            return 0;
+          },
+          all: null,
+        );
+        addTearDown(
+          () => setGroupPendingBroadcastDrainSinks(forGroup: null, all: null),
+        );
+
+        final now = DateTime.now().toUtc();
+        // group-1 has a key (joins); group-2 has none (skippedNoKey).
+        await seedGroup(
+          groupId: 'group-1',
+          name: 'Group One',
+          keyInfo: GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'key-1-base64',
+            createdAt: now,
+          ),
+        );
+        await seedGroup(groupId: 'group-2', name: 'Group Two');
+
+        await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+        expect(drained, <String>['group-1']);
+      },
+    );
 
     test('emits GROUP_REJOIN_TOPICS_TIMING with batch metadata', () async {
       final now = DateTime.now().toUtc();

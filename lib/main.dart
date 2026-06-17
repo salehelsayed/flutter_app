@@ -87,6 +87,7 @@ import 'package:flutter_app/core/database/migrations/087_group_message_retry_bac
 import 'package:flutter_app/core/database/migrations/088_group_rejoin_state.dart';
 import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
 import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
+import 'package:flutter_app/core/database/migrations/091_pending_group_invites_inviter_mlkem.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
@@ -509,6 +510,7 @@ void main() async {
       await runGroupRejoinStateMigration(db);
       await runMediaAttachmentDownloadRetryColumnMigration(db);
       await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
+      await runPendingGroupInvitesInviterMlKemMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -786,6 +788,11 @@ void main() async {
       // include 'revoked'/'declined' and add the invite_id column (HOLE-4).
       if (oldVersion < 90) {
         await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
+      }
+      // Review-08 finding F (gap G1): persist the inviter ML-KEM key on the
+      // pending invite so a decline-ack can reach a non-contact inviter.
+      if (oldVersion < 91) {
+        await runPendingGroupInvitesInviterMlKemMigration(db);
       }
     },
   );
@@ -1229,6 +1236,8 @@ void main() async {
         ),
     dbClearGroupRejoinStateFn: (groupId) =>
         dbClearGroupRejoinState(db, groupId),
+    dbForceGroupRejoinEligibleFn: (groupId) =>
+        dbForceGroupRejoinEligible(db, groupId),
     dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
     dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
     dbLoadGroupKeyByGeneration: (groupId, generation) =>

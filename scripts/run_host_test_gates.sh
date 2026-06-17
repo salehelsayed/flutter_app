@@ -53,6 +53,11 @@ readonly ONE_TO_ONE_HOST_TESTS=(
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"
+# Finding 02 Slice 2 (UDM-E/F) closure gate: the held-key grace ring and the
+# future-epoch Reject->Ignore split live in go-mknoon/node. The targeted -run
+# below is the plan's mandatory regression catcher (Makefile `test: go test
+# ./...` is manual + pulls vendored third_party, so it does not satisfy this).
+readonly GO_NODE_KEYROTATION_TEST="go-mknoon/node"
 
 usage() {
   cat <<'EOF'
@@ -155,6 +160,7 @@ case "$scope" in
     {
       rg --files test -g '*_test.dart' | awk '$0 !~ /^test\/performance\//' | sort
       printf '%s\n' "$GO_BRIDGE_CONNECTED_PEER_TEST"
+      printf '%s\n' "$GO_NODE_KEYROTATION_TEST"
     } >"$plan_file"
     ;;
   feature-host-all)
@@ -225,10 +231,18 @@ is_go_bridge_connected_peer_test() {
   [ "$1" = "$GO_BRIDGE_CONNECTED_PEER_TEST" ]
 }
 
+is_go_node_keyrotation_test() {
+  [ "$1" = "$GO_NODE_KEYROTATION_TEST" ]
+}
+
 print_command_for_path() {
   local path="$1"
   if is_go_bridge_connected_peer_test "$path"; then
     printf '(cd go-mknoon && go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)'
+    return
+  fi
+  if is_go_node_keyrotation_test "$path"; then
+    printf "(cd go-mknoon && go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -238,6 +252,10 @@ run_path() {
   local path="$1"
   if is_go_bridge_connected_peer_test "$path"; then
     (cd go-mknoon && go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)
+    return
+  fi
+  if is_go_node_keyrotation_test "$path"; then
+    (cd go-mknoon && go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)
     return
   fi
   flutter test "$path"

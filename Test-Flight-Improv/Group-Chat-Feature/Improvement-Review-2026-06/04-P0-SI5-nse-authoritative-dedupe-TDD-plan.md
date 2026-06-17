@@ -129,7 +129,9 @@ Proves: the marker writer lands the **correct key** at the **correct path**, **a
 flutter test integration_test/app_group_path_simulator_test.dart -d <booted-sim-udid>
 ```
 
-**Device-only (Phase B, TestFlight):** the genuine NSE-process→app-process round-trip — push arrives, NSE shows + writes the marker, app later reads it and suppresses the duplicate. Add to `Test-Flight-Improv/52-notification-journey-test-matrix.md` (e.g. RG-006 dedupe row).
+**Device-only (Phase B, TestFlight):** the genuine NSE-process→app-process round-trip — push arrives, NSE shows + writes the marker, app later reads it and suppresses the duplicate. Tracked as **RG-009** in `Test-Flight-Improv/52-notification-journey-test-matrix.md` (the Device-E2E row; the simulator-provable layers there are already green). _(Originally referenced "RG-006", but that ID already denotes the removed→rejoined eligibility scenario; the SI-5 dedupe row is RG-009.)_
+
+**Implementation reconciliation (G-S5-1, 2026-06-17):** the load-bearing byte-exact key-parity contract is now driven by a single shared fixture `test_fixtures/si5_dedupe_keys.json`, read by BOTH `ios/RunnerTests/NotificationPreviewResolverTests.swift` (`testGateMessageKeyMatchesSharedDedupeFixture`) and `test/core/notifications/recent_remote_notification_gate_test.dart` ("matches the shared SI-5 dedupe-key fixture"), so any drift fails both targets.
 
 **Gate sweeps:** `test/core/notifications/` + `test/features/push/` green; `flutter analyze` 0 new; the XCTest class green on the sim. Run iOS builds in a **flutter-quiet window** (a concurrent `flutter test` clobbers the shared `Generated.xcconfig` → kernel_snapshot failure; regenerate with `--config-only`).
 

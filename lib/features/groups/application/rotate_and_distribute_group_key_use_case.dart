@@ -1162,6 +1162,14 @@ List<GroupMember> _undeliverableActiveMembers({
       .toList(growable: false);
 }
 
+/// Public mirror of the rotation deferral deliverability predicate: the devices
+/// of [member] eligible to receive a group-key distribution (active, usable
+/// ML-KEM public key, with the legacy member-level fallback). Receive-side drain
+/// triggers use this so "regained a usable key" means exactly what rotation's
+/// promote/defer logic means — no second, drifting definition of "keyless".
+List<GroupMemberDeviceIdentity> deliverableGroupKeyDevices(GroupMember member) =>
+    _deliverableDevicesForRotation(member);
+
 List<GroupMemberDeviceIdentity> _deliverableDevicesForRotation(
   GroupMember member,
 ) {

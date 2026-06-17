@@ -68,7 +68,10 @@ void main() {
     List<GroupModel> groups = const [],
     List<PendingGroupInvite> pendingInvites = const [],
     Map<String, GroupMessage?> latestMessages = const {},
+    Map<String, int> rejoinAttempts = const <String, int>{},
     bool isLoading = false,
+    ValueChanged<GroupModel>? onRetryStuckRejoin,
+    ValueChanged<GroupModel>? onLeaveStuckGroup,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     Locale locale = const Locale('en'),
@@ -81,10 +84,13 @@ void main() {
         groups: groups,
         pendingInvites: pendingInvites,
         latestMessages: latestMessages,
+        rejoinAttempts: rejoinAttempts,
         isLoading: isLoading,
         onGroupTap: (_) {},
         onAcceptPendingInvite: (_) {},
         onDeclinePendingInvite: (_) {},
+        onRetryStuckRejoin: onRetryStuckRejoin,
+        onLeaveStuckGroup: onLeaveStuckGroup,
         onBack: () {},
         backgroundPreference: backgroundPreference,
       ),
@@ -96,6 +102,96 @@ void main() {
 
     expect(find.text('Alpha Group'), findsOneWidget);
     expect(find.text('Beta Announcements'), findsOneWidget);
+  });
+
+  group('G2 stuck-rejoin retry/leave UX', () {
+    testWidgets(
+      'a stuck group (attempt >= 10) shows the give-up badge with Retry + Leave',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            groups: [testGroups.first],
+            rejoinAttempts: const {'group-1': 11},
+            onRetryStuckRejoin: (_) {},
+            onLeaveStuckGroup: (_) {},
+          ),
+        );
+
+        expect(find.text("Couldn't join — retry"), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-stuck-retry-group-1')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-stuck-leave-group-1')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets('tapping "Retry now" invokes onRetryStuckRejoin with the group', (
+      tester,
+    ) async {
+      GroupModel? retried;
+      await tester.pumpWidget(
+        buildTestWidget(
+          groups: [testGroups.first],
+          rejoinAttempts: const {'group-1': 10},
+          onRetryStuckRejoin: (g) => retried = g,
+          onLeaveStuckGroup: (_) {},
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('group-stuck-retry-group-1')));
+      await tester.pump();
+
+      expect(retried?.id, 'group-1');
+    });
+
+    testWidgets('tapping "Leave" invokes onLeaveStuckGroup with the group', (
+      tester,
+    ) async {
+      GroupModel? left;
+      await tester.pumpWidget(
+        buildTestWidget(
+          groups: [testGroups.first],
+          rejoinAttempts: const {'group-1': 10},
+          onRetryStuckRejoin: (_) {},
+          onLeaveStuckGroup: (g) => left = g,
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('group-stuck-leave-group-1')));
+      await tester.pump();
+
+      expect(left?.id, 'group-1');
+    });
+
+    testWidgets(
+      'a non-stuck group (attempt < 10) shows the passive Joining… badge with '
+      'no actions',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            groups: [testGroups.first],
+            rejoinAttempts: const {'group-1': 3},
+            onRetryStuckRejoin: (_) {},
+            onLeaveStuckGroup: (_) {},
+          ),
+        );
+
+        expect(find.text('Joining…'), findsOneWidget);
+        expect(find.text("Couldn't join — retry"), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-stuck-retry-group-1')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('group-stuck-leave-group-1')),
+          findsNothing,
+        );
+      },
+    );
   });
 
   testWidgets('shows empty state when no groups', (tester) async {

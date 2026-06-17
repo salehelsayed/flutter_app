@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
@@ -1521,6 +1522,67 @@ void main() {
         expect(groupRepo.groupCount, 0);
         expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
         expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+  });
+
+  // G-A (Finding 03 Slice 2): when an accepted invite materializes a config that
+  // first lands a member's usable ML-KEM key, the deferred-distribution drain
+  // trigger must fire for that member — but never for a keyless member (whose
+  // drain would only burn a deferred-distribution attempt against no key).
+  group('G-A member-key-arrival deferred-distribution drain trigger', () {
+    late List<({String groupId, String peerId})> drainCalls;
+
+    setUp(() {
+      drainCalls = <({String groupId, String peerId})>[];
+      setDeferredDistributionDrainSink(({
+        required String groupId,
+        required String peerId,
+      }) async {
+        drainCalls.add((groupId: groupId, peerId: peerId));
+      });
+    });
+
+    tearDown(() => setDeferredDistributionDrainSink(null));
+
+    test(
+      'fires the drain for a key-carrying member, not for a keyless one',
+      () async {
+        final configWithKeylessCarol = {
+          ..._testGroupConfig,
+          'members': [
+            ...(_testGroupConfig['members'] as List),
+            {
+              'peerId': '12D3KooWCarol',
+              'username': 'Carol',
+              'role': 'writer',
+              'publicKey': 'carolPubKey64',
+            },
+          ],
+        };
+        final payload = _makePayload(
+          groupId: 'grp-drain-trigger',
+          groupConfig: configWithKeylessCarol,
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, HandleGroupInviteResult.success);
+        expect(groupId, 'grp-drain-trigger');
+
+        final drainedPeers = drainCalls.map((call) => call.peerId).toSet();
+        expect(drainedPeers, contains('12D3KooWAlice'));
+        expect(drainedPeers, isNot(contains('12D3KooWCarol')));
+        expect(
+          drainCalls.every((call) => call.groupId == 'grp-drain-trigger'),
+          isTrue,
+        );
       },
     );
   });

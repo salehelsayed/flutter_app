@@ -520,6 +520,72 @@ void main() {
       expect(find.text('Beta Group'), findsOneWidget);
     });
 
+    testWidgets(
+      'G2: "Retry now" on a stuck group force-eligibles it and triggers a '
+      'rejoin pass (collapsing a future backoff window)',
+      (tester) async {
+        final group = makeGroup(id: 'g-1', name: 'Stuck Group');
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'g-1',
+            keyGeneration: 1,
+            encryptedKey: 'key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        // Stuck: 11 failures, backoff a day out (would otherwise be deferred).
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure('g-1', nextEligibleAt: future);
+        }
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(find.text("Couldn't join — retry"), findsOneWidget);
+        // No rejoin attempted on init (the screen only displays the badge).
+        expect(bridge.commandLog, isNot(contains('group:join')));
+
+        await tester.tap(find.byKey(const ValueKey('group-stuck-retry-g-1')));
+        await pumpFrames(tester, count: 20);
+
+        // forceGroupRejoinEligible collapsed the future backoff so the rejoin
+        // pass attempted — and, succeeding, cleared the stuck row.
+        expect(bridge.commandLog, contains('group:join'));
+        expect(
+          (await groupRepo.loadGroupRejoinStates()).containsKey('g-1'),
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets(
+      'G2: "Leave" on a stuck group leaves it (group torn down, never silent)',
+      (tester) async {
+        final group = makeGroup(id: 'g-1', name: 'Stuck Group');
+        await groupRepo.saveGroup(group);
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure('g-1', nextEligibleAt: future);
+        }
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(
+          find.byKey(const ValueKey('group-stuck-leave-g-1')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('group-stuck-leave-g-1')));
+        await pumpFrames(tester, count: 20);
+
+        expect(bridge.commandLog, contains('group:leave'));
+        expect(await groupRepo.getGroup('g-1'), isNull);
+      },
+    );
+
     testWidgets('reloads renamed group metadata after a message refresh', (
       tester,
     ) async {

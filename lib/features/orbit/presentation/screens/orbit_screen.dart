@@ -201,6 +201,11 @@ class OrbitScreen extends StatelessWidget {
   final void Function(OrbitGroup) onArchiveGroup;
   final void Function(OrbitGroup) onUnarchiveGroup;
   final void Function(OrbitGroup) onDeleteGroup;
+
+  /// "Retry now" / "Leave" for a stuck (given-up) rejoin row (G2). Optional so
+  /// lightweight callers/tests can omit them.
+  final void Function(OrbitGroup)? onRetryStuckRejoinGroup;
+  final void Function(OrbitGroup)? onLeaveStuckGroup;
   final String? activeTab;
   final void Function(String)? onSwitchView;
   final ValueListenable<int>? feedUnreadCountListenable;
@@ -240,6 +245,8 @@ class OrbitScreen extends StatelessWidget {
     required this.onArchiveGroup,
     required this.onUnarchiveGroup,
     required this.onDeleteGroup,
+    this.onRetryStuckRejoinGroup,
+    this.onLeaveStuckGroup,
     this.activeTab,
     this.onSwitchView,
     this.feedUnreadCountListenable,
@@ -1004,7 +1011,16 @@ class OrbitScreen extends StatelessWidget {
           onArchive: () => onArchiveGroup(group),
           onUnarchive: () => onUnarchiveGroup(group),
           onDelete: () => onDeleteGroup(group),
-          child: GroupRow(group: group, onTap: () => onGroupTap(group)),
+          child: GroupRow(
+            group: group,
+            onTap: () => onGroupTap(group),
+            onRetryStuckRejoin: onRetryStuckRejoinGroup == null
+                ? null
+                : () => onRetryStuckRejoinGroup!(group),
+            onLeaveStuckGroup: onLeaveStuckGroup == null
+                ? null
+                : () => onLeaveStuckGroup!(group),
+          ),
         ),
       ),
     );

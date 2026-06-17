@@ -75,6 +75,32 @@ void main() {
     expect(key, isNull);
   });
 
+  test(
+    'G2: clears orphaned rejoin-retry state so a later re-join is not falsely '
+    'stuck',
+    () async {
+      // Simulate a stuck group (11 failures → attempt >= the give-up cap).
+      final future = DateTime.now().toUtc().add(const Duration(days: 1));
+      for (var i = 0; i < 11; i++) {
+        await groupRepo.recordGroupRejoinFailure(
+          'group-1',
+          nextEligibleAt: future,
+        );
+      }
+      expect((await groupRepo.loadGroupRejoinStates()).containsKey('group-1'),
+          isTrue);
+
+      await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: 'group-1');
+
+      // No orphaned row survives the leave (would otherwise resurface a false
+      // "Couldn't join" badge on a re-join under the same groupId).
+      expect(
+        (await groupRepo.loadGroupRejoinStates()).containsKey('group-1'),
+        isFalse,
+      );
+    },
+  );
+
   test('calls bridge leave command', () async {
     await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: 'group-1');
 

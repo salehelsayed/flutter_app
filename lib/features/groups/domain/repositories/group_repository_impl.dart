@@ -100,6 +100,7 @@ class GroupRepositoryImpl
   final Future<void> Function(String groupId, {required int nextEligibleAtMs})?
   dbRecordGroupRejoinFailureFn;
   final Future<void> Function(String groupId)? dbClearGroupRejoinStateFn;
+  final Future<void> Function(String groupId)? dbForceGroupRejoinEligibleFn;
 
   final Map<String, GroupKeyInfo> _pendingKeyRotationFallback = {};
 
@@ -129,6 +130,7 @@ class GroupRepositoryImpl
     this.dbLoadGroupRejoinStatesFn,
     this.dbRecordGroupRejoinFailureFn,
     this.dbClearGroupRejoinStateFn,
+    this.dbForceGroupRejoinEligibleFn,
     required this.dbInsertGroupKey,
     required this.dbLoadLatestGroupKey,
     required this.dbLoadGroupKeyByGeneration,
@@ -436,6 +438,13 @@ class GroupRepositoryImpl
   @override
   Future<void> clearGroupRejoinState(String groupId) async {
     final fn = dbClearGroupRejoinStateFn;
+    if (fn == null) return;
+    await fn(groupId);
+  }
+
+  @override
+  Future<void> forceGroupRejoinEligible(String groupId) async {
+    final fn = dbForceGroupRejoinEligibleFn;
     if (fn == null) return;
     await fn(groupId);
   }

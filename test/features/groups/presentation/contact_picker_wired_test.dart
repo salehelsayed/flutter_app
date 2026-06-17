@@ -12,8 +12,10 @@ import 'package:flutter_app/features/groups/application/send_group_invite_use_ca
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -1788,6 +1790,100 @@ void main() {
         expect(daveAttempt, isNotNull);
         expect(daveAttempt!.status, isNot(GroupInviteDeliveryStatus.joined));
         expect(daveAttempt.lastError, 'send_failed');
+      },
+    );
+
+    testWidgets(
+      'G3: members_added soft publish failure durably enqueues the broadcast '
+      'and keeps the members + advances the watermark',
+      (tester) async {
+        final enqueued = <GroupPendingBroadcast>[];
+        setGroupPendingBroadcastEnqueueSink((b) async => enqueued.add(b));
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        contactRepo.addTestContact(contactCharlie);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveMember(memberBob);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        // Config sync succeeds (members committed), but floodPublish soft-fails.
+        final bridge = PassthroughCryptoBridge();
+        bridge.responses['group:publish'] = {
+          'ok': false,
+          'errorMessage': 'simulated publish failure',
+        };
+        final msgRepo = InMemoryGroupMessageRepository();
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            msgRepo: msgRepo,
+            p2pService: FakeP2PService(
+              initialState: const NodeState(isStarted: true),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Charlie'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 20);
+
+        // The added members are KEPT locally (not a false-success that drops
+        // the broadcast, not a rollback).
+        final members = await groupRepo.getMembers('group-1');
+        expect(
+          members.map((m) => m.peerId).toSet(),
+          containsAll(<String>[
+            'peer-admin',
+            'peer-bob',
+            'peer-alice',
+            'peer-charlie',
+          ]),
+        );
+        // The membership watermark advanced to the canonical members_added pair
+        // even though the live publish failed (so a concurrent remote event
+        // tie-breaks against it, not a stale id-less watermark).
+        final group = await groupRepo.getGroup('group-1');
+        expect(group!.lastMembershipEventId, isNotNull);
+        expect(
+          group.lastMembershipEventId,
+          startsWith('members_added:group-1:peer-admin:'),
+        );
+
+        // The already-signed members_added broadcast was durably enqueued for
+        // re-push, carrying that same canonical pair (G3 durable resend).
+        expect(enqueued, hasLength(1));
+        final broadcast = enqueued.single;
+        expect(broadcast.kind, 'members_added');
+        expect(broadcast.sourceMessageId, group.lastMembershipEventId);
+        expect(broadcast.recipientPeerIds, contains('peer-bob'));
+        expect(broadcast.recipientPeerIds, isNot(contains('peer-admin')));
+        expect(broadcast.sysText, contains('"__sys":"members_added"'));
+
+        // The local "added" timeline row IS written on the enqueue path (so the
+        // adding admin's own conversation shows the event, matching the
+        // committed roster + watermark — not silently omitted).
+        final timeline = await msgRepo.getLatestMessage('group-1');
+        expect(timeline, isNotNull);
+        expect(timeline!.id, startsWith('sys-members_added:'));
       },
     );
 

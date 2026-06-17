@@ -14,6 +14,12 @@ class PendingGroupInvite {
   final String? avatarMime;
   final String senderPeerId;
   final String senderUsername;
+
+  /// The inviter's account-level ML-KEM public key, captured from the invite's
+  /// membership-freshness proof at receive time. Lets a decline-ack be
+  /// encrypted to a non-contact inviter (G1) without a contacts lookup.
+  /// Nullable: legacy rows and invites without a freshness proof carry none.
+  final String? mlKemPublicKey;
   final String createdBy;
   final DateTime createdAt;
   final DateTime? metadataUpdatedAt;
@@ -31,6 +37,7 @@ class PendingGroupInvite {
     this.avatarMime,
     required this.senderPeerId,
     required this.senderUsername,
+    this.mlKemPublicKey,
     required this.createdBy,
     required this.createdAt,
     this.metadataUpdatedAt,
@@ -50,6 +57,7 @@ class PendingGroupInvite {
       avatarMime: map['avatar_mime'] as String?,
       senderPeerId: map['sender_peer_id'] as String,
       senderUsername: map['sender_username'] as String,
+      mlKemPublicKey: map['inviter_mlkem_public_key'] as String?,
       createdBy: map['created_by'] as String,
       createdAt: DateTime.parse(map['created_at'] as String),
       metadataUpdatedAt: map['metadata_updated_at'] != null
@@ -78,6 +86,13 @@ class PendingGroupInvite {
         ? policyExpiry
         : localExpiry;
 
+    // The wire payload carries the inviter's ML-KEM key inside the membership
+    // freshness proof's inviter snapshot (GroupMember.toConfigJson). Capture it
+    // so a later decline-ack can encrypt to a non-contact inviter (G1).
+    final inviterMlKemPublicKey = _inviterMlKemFromProof(
+      payload.membershipFreshnessProof,
+    );
+
     return PendingGroupInvite(
       groupId: payload.groupId,
       inviteId: payload.id,
@@ -89,6 +104,7 @@ class PendingGroupInvite {
       avatarMime: config['avatarMime'] as String?,
       senderPeerId: payload.senderPeerId,
       senderUsername: payload.senderUsername,
+      mlKemPublicKey: inviterMlKemPublicKey,
       createdBy: config['createdBy'] as String? ?? payload.senderPeerId,
       createdAt: createdAt,
       metadataUpdatedAt: metadataUpdatedAt,
@@ -109,6 +125,7 @@ class PendingGroupInvite {
       'avatar_mime': avatarMime,
       'sender_peer_id': senderPeerId,
       'sender_username': senderUsername,
+      'inviter_mlkem_public_key': mlKemPublicKey,
       'created_by': createdBy,
       'created_at': createdAt.toUtc().toIso8601String(),
       'metadata_updated_at': metadataUpdatedAt?.toUtc().toIso8601String(),
@@ -120,6 +137,19 @@ class PendingGroupInvite {
   GroupInvitePayload? toPayload() => GroupInvitePayload.fromJson(payloadJson);
 
   bool isExpiredAt(DateTime now) => !expiresAt.isAfter(now.toUtc());
+
+  static String? _inviterMlKemFromProof(
+    GroupInviteMembershipFreshnessProof? proof,
+  ) {
+    if (proof == null) {
+      return null;
+    }
+    final raw = proof.inviterMemberSnapshot['mlKemPublicKey'];
+    if (raw is String && raw.trim().isNotEmpty) {
+      return raw;
+    }
+    return null;
+  }
 
   static GroupType _parseGroupType(String? value) {
     try {

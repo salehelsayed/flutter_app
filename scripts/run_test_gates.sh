@@ -88,6 +88,10 @@ readonly GROUP_TESTS=(
   "test/features/groups/integration/invite_round_trip_test.dart"
   "test/features/groups/integration/group_membership_smoke_test.dart"
   "test/features/groups/integration/group_startup_rejoin_smoke_test.dart"
+  "test/features/groups/integration/group_key_repair_pull_roundtrip_test.dart"
+  "test/features/groups/application/group_key_repair_request_sender_test.dart"
+  "test/features/groups/application/group_key_repair_responder_listener_test.dart"
+  "test/features/groups/application/group_key_repair_wiring_test.dart"
 )
 
 readonly POSTS_TESTS=(
@@ -537,6 +541,40 @@ classify_path() {
 
   if [[ "$path" =~ ^test/features/[^/]+/(application|domain|presentation|improvement|phase[1-5]|regression)/.*_test\.dart$ ]]; then
     printf 'feature-local direct suite'
+    return 0
+  fi
+
+  # G-D: manual device/sim proofs under integration_test/ are NOT host-gated
+  # (they require a device or simulator and carry @Tags(['device'])); they run
+  # via `flutter test integration_test/<proof>` on the device matrix. Recognize
+  # them as an explicit manual category so the completeness gate stops reporting
+  # them as un-classified (they are intentionally outside the automated host
+  # sweep, not silently dropped).
+  if [[ "$path" =~ ^integration_test/.*_proof_test\.dart$ ]]; then
+    printf 'manual device-proof suite'
+    return 0
+  fi
+
+  # G-D: group lifecycle simulator stubs under integration_test/ are pure
+  # libraries dispatched via --dart-define=GROUP_SIM_SCENARIO=<key>, not the
+  # default test runner.
+  if [[ "$path" =~ ^integration_test/.*_simulator_test\.dart$ ]]; then
+    printf 'group lifecycle simulator (GROUP_SIM_SCENARIO dispatch)'
+    return 0
+  fi
+
+  # G-D: feature-root and core-root tests (placed directly under
+  # test/features/<feature>/ or test/core/, not in a recognized subdir) are
+  # swept by the host-all / feature-host-all gates. Classify them so the
+  # completeness gate accounts for every host-run file. Placed last so the more
+  # specific subdir patterns above always win.
+  if [[ "$path" =~ ^test/features/[^/]+/[^/]+_test\.dart$ ]]; then
+    printf 'feature-root direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/core/[^/]+_test\.dart$ ]]; then
+    printf 'core-root direct suite'
     return 0
   fi
 

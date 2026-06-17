@@ -18,6 +18,8 @@ import 'package:flutter_app/features/groups/application/on_join_group_config_res
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
@@ -560,6 +562,54 @@ class _GroupListWiredState extends State<GroupListWired>
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// "Retry now" on a stuck (given-up) rejoin row: force the row eligible so the
+  /// bounded retrier no longer skips it on backoff, then kick a fresh rejoin
+  /// pass and refresh the badge (G2). Never auto-deletes the group.
+  Future<void> _onRetryStuckRejoin(GroupModel group) async {
+    final joiningMessage = AppLocalizations.of(context)!.group_joining_in_progress;
+    try {
+      await widget.groupRepo.forceGroupRejoinEligible(group.id);
+      if (mounted) _showSnackBar(joiningMessage);
+      await rejoinGroupTopics(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        reason: RejoinReason.nodeRequestedRecovery,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_LIST_FL_STUCK_REJOIN_RETRY_ERROR',
+        details: {'groupId': group.id, 'error': e.toString()},
+      );
+    } finally {
+      await _loadGroups();
+    }
+  }
+
+  /// "Leave" from a stuck rejoin row — a reachable exit from the dead-end (G2).
+  /// Tears the group down via the normal leave path (never a silent auto-delete)
+  /// and refreshes the list.
+  Future<void> _onLeaveStuckGroup(GroupModel group) async {
+    try {
+      await leaveGroup(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        groupId: group.id,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_LIST_FL_STUCK_LEAVE_ERROR',
+        details: {'groupId': group.id, 'error': e.toString()},
+      );
+      if (mounted) {
+        _showSnackBar(AppLocalizations.of(context)!.group_info_leave_failed);
+      }
+    } finally {
+      await _loadGroups();
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -584,6 +634,8 @@ class _GroupListWiredState extends State<GroupListWired>
       onGroupTap: _onGroupTap,
       onAcceptPendingInvite: _onAcceptPendingInvite,
       onDeclinePendingInvite: _onDeclinePendingInvite,
+      onRetryStuckRejoin: _onRetryStuckRejoin,
+      onLeaveStuckGroup: _onLeaveStuckGroup,
       onBack: _onBack,
       backgroundPreference: widget.backgroundPreference,
     );

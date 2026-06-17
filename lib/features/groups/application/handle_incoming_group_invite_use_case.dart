@@ -6,6 +6,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation_payload.dart';
@@ -931,6 +932,10 @@ materializeAcceptedGroupInvitePayload({
   final materializedAt = DateTime.now().toUtc();
   for (final memberMap in membersList) {
     final m = Map<String, dynamic>.from(memberMap as Map);
+    final priorMember = await groupRepo.getMember(
+      payload.groupId,
+      (m['peerId'] as String?) ?? '',
+    );
     final member = GroupMember.fromConfigMap(
       groupId: payload.groupId,
       map: m,
@@ -941,6 +946,18 @@ materializeAcceptedGroupInvitePayload({
       ),
     );
     await groupRepo.saveMember(member);
+    // G-A: if materializing this accepted invite first lands a member's usable
+    // ML-KEM key, drain any deferred key distribution owed to it. Gated so a
+    // keyless member never burns a deferred-distribution attempt.
+    if (groupMemberRegainedDeliverableKey(
+      existing: priorMember,
+      saved: member,
+    )) {
+      await triggerDeferredDistributionDrainForPeer(
+        groupId: payload.groupId,
+        peerId: member.peerId,
+      );
+    }
   }
 
   // 8. Persist GroupKeyInfo

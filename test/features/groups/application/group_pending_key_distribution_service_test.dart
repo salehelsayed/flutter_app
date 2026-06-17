@@ -220,6 +220,97 @@ void main() {
       peerId: 'peer-dave',
     );
   });
+
+  // G-A: the receive-site drain guard. Mirrors the rotation deferral
+  // deliverability definition so triggers fire exactly when a previously
+  // keyless member regains a usable key (or a new keyed device lands), and
+  // never on a benign username-only refresh of a still-keyless / unchanged one.
+  group('groupMemberRegainedDeliverableKey', () {
+    GroupMember member({
+      String peerId = 'peer-dave',
+      String? mlKemPublicKey,
+      List<GroupMemberDeviceIdentity> devices = const [],
+    }) => GroupMember(
+      groupId: groupId,
+      peerId: peerId,
+      username: 'Dave',
+      role: MemberRole.writer,
+      publicKey: 'pk-dave',
+      mlKemPublicKey: mlKemPublicKey,
+      devices: devices,
+      joinedAt: DateTime.utc(2026, 6, 16),
+    );
+
+    GroupMemberDeviceIdentity device(String id, {String? mlKem}) =>
+        GroupMemberDeviceIdentity(
+          deviceId: id,
+          transportPeerId: id,
+          deviceSigningPublicKey: 'sign-$id',
+          mlKemPublicKey: mlKem,
+        );
+
+    test('first persisted save carrying a usable key fires (existing null)', () {
+      expect(
+        groupMemberRegainedDeliverableKey(
+          existing: null,
+          saved: member(mlKemPublicKey: 'mlkem-dave'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('keyless -> keyed transition fires', () {
+      expect(
+        groupMemberRegainedDeliverableKey(
+          existing: member(), // publicKey only -> not deliverable
+          saved: member(mlKemPublicKey: 'mlkem-dave'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('still-keyless save does NOT fire (nothing to deliver)', () {
+      expect(
+        groupMemberRegainedDeliverableKey(
+          existing: null,
+          saved: member(), // publicKey only
+        ),
+        isFalse,
+      );
+      expect(
+        groupMemberRegainedDeliverableKey(
+          existing: member(mlKemPublicKey: 'mlkem-dave'),
+          saved: member(), // lost key material — not a fresh arrival
+        ),
+        isFalse,
+      );
+    });
+
+    test('unchanged keyed member (username-only refresh) does NOT fire', () {
+      expect(
+        groupMemberRegainedDeliverableKey(
+          existing: member(mlKemPublicKey: 'mlkem-dave'),
+          saved: member(mlKemPublicKey: 'mlkem-dave'),
+        ),
+        isFalse,
+      );
+    });
+
+    test('new keyed device landing on an already-keyed member fires', () {
+      expect(
+        groupMemberRegainedDeliverableKey(
+          existing: member(devices: [device('d1', mlKem: 'mlkem-d1')]),
+          saved: member(
+            devices: [
+              device('d1', mlKem: 'mlkem-d1'),
+              device('d2', mlKem: 'mlkem-d2'),
+            ],
+          ),
+        ),
+        isTrue,
+      );
+    });
+  });
 }
 
 class _InMemoryGroupPendingKeyDistributionRepository

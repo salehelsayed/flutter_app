@@ -43,6 +43,12 @@ abstract class GroupRepository {
   /// Default no-op.
   Future<void> clearGroupRejoinState(String groupId) async {}
 
+  /// Forces a stuck group's rejoin row immediately eligible (collapses its
+  /// backoff window) so the next rejoin pass attempts it right away — the
+  /// stuck-badge "Retry now" affordance (G2). Preserves the attempt count and
+  /// the row (no auto-delete). Default no-op.
+  Future<void> forceGroupRejoinEligible(String groupId) async {}
+
   /// Retrieves a single group by ID.
   Future<GroupModel?> getGroup(String id);
 

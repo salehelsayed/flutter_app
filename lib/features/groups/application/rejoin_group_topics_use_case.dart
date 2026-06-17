@@ -2,6 +2,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// The reason for calling rejoinGroupTopics.
@@ -216,6 +217,13 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
           await groupRepo.clearGroupRejoinState(group.id);
         } catch (_) {}
       }
+
+      // Finding 07 (S2b / G4): now that this group's topic is rejoined, drain
+      // any durable broadcasts (metadata/membership edits) that failed to leave
+      // the device — converging on the path that just reconnected instead of
+      // waiting for the next app-resume drainAll. Never throws (sink-wrapped);
+      // a no-op when nothing is queued or no sink is wired.
+      await triggerGroupPendingBroadcastDrainForGroup(group.id);
 
       emitFlowEvent(
         layer: 'FL',

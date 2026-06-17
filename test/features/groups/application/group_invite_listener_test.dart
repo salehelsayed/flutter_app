@@ -14,10 +14,14 @@ import 'package:flutter_app/features/groups/domain/models/group_welcome_key_pack
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -495,6 +499,43 @@ Future<ChatMessage> _makeConfigResponseMessage({
   );
 }
 
+/// Builds a `config:request` envelope (the joiner asking an admin to re-send the
+/// group config). Inner body is plaintext under PassthroughCryptoBridge.
+ChatMessage _makeConfigRequestMessage({
+  String groupId = 'grp-abc123',
+  String requesterPeerId = '12D3KooWAlice',
+}) {
+  final envelope = GroupConfigResyncEnvelope.build(
+    type: groupConfigRequestType,
+    senderPeerId: requesterPeerId,
+    groupId: groupId,
+    kem: 'fake-kem',
+    ciphertext: GroupConfigRequestBody(
+      groupId: groupId,
+      requesterPeerId: requesterPeerId,
+    ).toInnerJson(),
+    nonce: 'fake-nonce',
+  );
+  return ChatMessage(
+    from: requesterPeerId,
+    to: '12D3KooWBob',
+    content: envelope,
+    timestamp: '2026-06-10T12:00:00.000Z',
+    isIncoming: true,
+  );
+}
+
+IdentityModel _bobIdentity() => IdentityModel(
+  peerId: '12D3KooWBob',
+  publicKey: 'bobPubKey64',
+  privateKey: 'bobPriv',
+  mnemonic12: 'a b c d e f g h i j k l',
+  mlKemPublicKey: 'bobMlKem64',
+  username: 'Bob',
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+);
+
 class _SpyDeliveryRepo implements GroupInviteDeliveryAttemptRepository {
   final List<({String groupId, String peerId})> declinedCalls = [];
 
@@ -734,6 +775,173 @@ void main() {
 
         // Unchanged: the resync path is gated off.
         expect((await groupRepo.getGroup('grp-abc123'))!.name, 'Old Name');
+      },
+    );
+
+    GroupInviteListener buildConfigRequestListener({
+      required FakeP2PService p2pService,
+    }) {
+      return GroupInviteListener(
+        groupInviteStream: incomingController.stream,
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        p2pService: p2pService,
+        loadOwnIdentity: () async => _bobIdentity(),
+        getOwnMlKemSecretKey: () async => 'mySecretKey',
+        getOwnPeerId: () async => '12D3KooWBob',
+        onJoinMetadataResyncEnabled: true,
+        now: () => listenerNow,
+      );
+    }
+
+    Future<void> seedBobGroup({required MemberRole bobRole}) async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'grp-abc123',
+          name: 'Book Club',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/grp-abc123',
+          createdAt: DateTime.utc(2026, 1, 1),
+          createdBy: '12D3KooWBob',
+          myRole: bobRole == MemberRole.admin
+              ? GroupRole.admin
+              : GroupRole.member,
+          lastMetadataEventAt: DateTime.utc(2026, 6, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'grp-abc123',
+          peerId: '12D3KooWBob',
+          username: 'Bob',
+          role: bobRole,
+          publicKey: 'bobPubKey64',
+          mlKemPublicKey: 'bobMlKem64',
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+    }
+
+    test(
+      'T1: an admin responder answers a member\'s config:request with a '
+      'config:response and never stores it as a pending invite',
+      () async {
+        await seedBobGroup(bobRole: MemberRole.admin);
+        // Alice is a current member with an ML-KEM key (so the reply can be
+        // encrypted to her).
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            username: 'Alice',
+            role: MemberRole.writer,
+            publicKey: 'alicePubKey64',
+            mlKemPublicKey: 'aliceMlKem64',
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+          sendMessageResult: true,
+        );
+        final requestListener = buildConfigRequestListener(
+          p2pService: p2pService,
+        );
+        addTearDown(requestListener.dispose);
+        requestListener.start();
+
+        incomingController.add(_makeConfigRequestMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+        await requestListener.waitForIdle();
+
+        // The admin replied with a config:response.
+        expect(p2pService.sendMessageCallCount, 1);
+        expect(p2pService.lastSendMessagePeerId, '12D3KooWAlice');
+        expect(
+          GroupConfigResyncEnvelope.isResponse(p2pService.lastSendMessageContent!),
+          isTrue,
+        );
+        // Routing discrimination: a config:request is NOT an invite.
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+      },
+    );
+
+    test(
+      'T1: a config:request from a NON-member is rejected without a reply',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        // Bob is admin, but Alice (the requester) is NOT a member.
+        await seedBobGroup(bobRole: MemberRole.admin);
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+          sendMessageResult: true,
+        );
+        final requestListener = buildConfigRequestListener(
+          p2pService: p2pService,
+        );
+        addTearDown(requestListener.dispose);
+        requestListener.start();
+
+        incomingController.add(_makeConfigRequestMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+        await requestListener.waitForIdle();
+
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(
+          events.where(
+            (e) => e['event'] == 'GROUP_CONFIG_REQUEST_HANDLE_NOT_MEMBER',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'T1: a non-admin responder declines to answer a config:request',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        // Bob is only a writer, not an admin — only an admin reply is trusted.
+        await seedBobGroup(bobRole: MemberRole.writer);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            username: 'Alice',
+            role: MemberRole.writer,
+            publicKey: 'alicePubKey64',
+            mlKemPublicKey: 'aliceMlKem64',
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+          sendMessageResult: true,
+        );
+        final requestListener = buildConfigRequestListener(
+          p2pService: p2pService,
+        );
+        addTearDown(requestListener.dispose);
+        requestListener.start();
+
+        incomingController.add(_makeConfigRequestMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+        await requestListener.waitForIdle();
+
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(
+          events.where(
+            (e) => e['event'] == 'GROUP_CONFIG_REQUEST_HANDLE_NOT_ADMIN_RESPONDER',
+          ),
+          hasLength(1),
+        );
       },
     );
 

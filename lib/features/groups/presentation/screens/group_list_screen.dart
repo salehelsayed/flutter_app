@@ -33,6 +33,15 @@ class GroupListScreen extends StatelessWidget {
   final ValueChanged<GroupModel> onGroupTap;
   final ValueChanged<PendingGroupInvite>? onAcceptPendingInvite;
   final ValueChanged<PendingGroupInvite>? onDeclinePendingInvite;
+
+  /// Invoked when the user taps "Retry now" on a group whose rejoin has given
+  /// up (attempt ≥ [_joinGiveUpThreshold]). Forces the rejoin row eligible and
+  /// kicks a fresh rejoin pass (G2).
+  final ValueChanged<GroupModel>? onRetryStuckRejoin;
+
+  /// Invoked when the user taps "Leave" on a stuck group — a reachable exit
+  /// from the dead-end (G2). Never auto-deletes; the user chooses to leave.
+  final ValueChanged<GroupModel>? onLeaveStuckGroup;
   final VoidCallback onBack;
   final BackgroundPreference backgroundPreference;
 
@@ -50,6 +59,8 @@ class GroupListScreen extends StatelessWidget {
     required this.onGroupTap,
     this.onAcceptPendingInvite,
     this.onDeclinePendingInvite,
+    this.onRetryStuckRejoin,
+    this.onLeaveStuckGroup,
     required this.onBack,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
@@ -244,25 +255,71 @@ class GroupListScreen extends StatelessWidget {
     // A half-materialized group (key persisted, topic-join not yet succeeded)
     // shows a join-status badge in place of the retention notice.
     final rejoinAttempt = rejoinAttempts[group.id];
+    final isStuck =
+        rejoinAttempt != null && rejoinAttempt >= _joinGiveUpThreshold;
     String? joinStatusText;
     if (rejoinAttempt != null) {
-      joinStatusText = rejoinAttempt >= _joinGiveUpThreshold
+      joinStatusText = isStuck
           ? l10n.group_join_failed_retry
           : l10n.group_joining_in_progress;
     }
 
-    return GroupCard(
+    final card = GroupCard(
       group: group,
       statusText: joinStatusText ?? retentionNotice?.listSummary,
       lastMessageSender: lastMsg != null
           ? lastMsg.senderUsername ?? l10n.groups_unknown_sender
           : null,
-      lastMessageBody: lastMsg != null ? lastMsg.text : null,
+      lastMessageBody: lastMsg?.text,
       lastMessageTime: lastMsg != null
           ? _formatTime(context, lastMsg.timestamp)
           : null,
       unreadCount: unread,
       onTap: () => onGroupTap(group),
+    );
+
+    // The give-up badge is a user-facing dead-end without an action: surface a
+    // manual "Retry now" (force-eligible + rejoin) and a "Leave" exit (G2).
+    if (isStuck && (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          card,
+          _buildStuckGroupActions(context, group),
+        ],
+      );
+    }
+
+    return card;
+  }
+
+  Widget _buildStuckGroupActions(BuildContext context, GroupModel group) {
+    final l10n = AppLocalizations.of(context)!;
+    final dangerColor = Theme.of(context).colorScheme.error;
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, right: 8, bottom: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          if (onRetryStuckRejoin != null)
+            TextButton.icon(
+              key: ValueKey('group-stuck-retry-${group.id}'),
+              onPressed: () => onRetryStuckRejoin!(group),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: Text(l10n.btn_retry),
+            ),
+          if (onLeaveStuckGroup != null)
+            TextButton.icon(
+              key: ValueKey('group-stuck-leave-${group.id}'),
+              onPressed: () => onLeaveStuckGroup!(group),
+              icon: Icon(Icons.logout, size: 18, color: dangerColor),
+              label: Text(
+                l10n.group_leave,
+                style: TextStyle(color: dangerColor),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

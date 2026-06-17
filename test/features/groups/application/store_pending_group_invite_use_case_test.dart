@@ -300,6 +300,26 @@ void main() {
     );
 
     test(
+      'G1: stored invite persists the inviter ML-KEM key from the freshness proof',
+      () async {
+        final (result, invite) = await storeIncomingPendingGroupInvite(
+          message: makeMessage(),
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: 'myPeerId',
+        );
+
+        expect(result, StorePendingGroupInviteResult.storedPending);
+        // The inviter snapshot in _makeFreshnessProof carries 'aliceMlKem64'.
+        expect(invite!.mlKemPublicKey, 'aliceMlKem64');
+        final stored = await pendingInviteRepo.getPendingInvite('grp-abc123');
+        expect(stored!.mlKemPublicKey, 'aliceMlKem64');
+      },
+    );
+
+    test(
       'stores delayed policy-valid invite after old freshness window without creating group state',
       () async {
         final issuedAt = DateTime.utc(2026, 4, 29, 12);

@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_decline_ack_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -263,6 +264,55 @@ Future<GroupInviteAuthResult> verifyGroupInviteRevocationAttestation({
   }
 
   return GroupInviteAuthResult.authorized;
+}
+
+/// Outcome of cryptographically verifying a group-invite decline-ack's inner
+/// Ed25519 signature against the decliner's trusted (contact) signing key.
+enum GroupInviteDeclineAckVerifyOutcome {
+  /// The signature verified against the decliner's contact signing key.
+  verified,
+
+  /// The decliner IS a known contact but the signature did not verify — a
+  /// forged ack. The caller MUST reject it.
+  forged,
+
+  /// No trusted signing key is available (decliner not a contact / contact has
+  /// no key / ack carries no signature). Verification is skipped; authenticity
+  /// then rests on ML-KEM-encryption-to-the-inviter plus the
+  /// `declinedByPeerId == message.from` spoof guard.
+  unverifiable,
+}
+
+/// Cryptographically verifies a decline-ack's signature, mirroring
+/// [verifyGroupInviteRevocationAttestation] (G6). The decliner is typically a
+/// contact — the inviter picked them from their own contacts — so their signing
+/// key is resolvable and a forged ack is caught. For a non-contact decliner the
+/// inviter has no trusted key, so verification degrades to [unverifiable]
+/// rather than falsely rejecting a legitimate ack.
+Future<GroupInviteDeclineAckVerifyOutcome>
+verifyGroupInviteDeclineAckAttestation({
+  required GroupInviteDeclineAckPayload payload,
+  required ContactRepository? contactRepo,
+  required Bridge bridge,
+}) async {
+  final signature = payload.declineSignature;
+  if (signature == null) {
+    return GroupInviteDeclineAckVerifyOutcome.unverifiable;
+  }
+  final contact = await contactRepo?.getContact(payload.declinedByPeerId);
+  final publicKey = contact?.publicKey.trim() ?? '';
+  if (publicKey.isEmpty) {
+    return GroupInviteDeclineAckVerifyOutcome.unverifiable;
+  }
+  final isValid = await callVerifyPayload(
+    bridge: bridge,
+    publicKey: publicKey,
+    data: signature.signedPayload,
+    signature: signature.signature,
+  );
+  return isValid
+      ? GroupInviteDeclineAckVerifyOutcome.verified
+      : GroupInviteDeclineAckVerifyOutcome.forged;
 }
 
 bool isInviterAuthorizedBySignedSnapshot({

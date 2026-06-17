@@ -65,6 +65,7 @@ import 'package:flutter_app/core/database/migrations/065_group_history_gap_repai
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
+import 'package:flutter_app/core/database/migrations/091_pending_group_invites_inviter_mlkem.dart';
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
@@ -80,6 +81,11 @@ import 'package:flutter_app/core/database/migrations/081_group_pending_reactions
 import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
 import 'package:flutter_app/core/database/migrations/086_pending_group_broadcasts.dart';
+import 'package:flutter_app/core/database/migrations/084_group_member_device_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/085_pending_sibling_devices.dart';
+import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
+import 'package:flutter_app/core/database/migrations/088_group_rejoin_state.dart';
+import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -181,15 +187,20 @@ void main() {
     await runGroupPendingReactionsMigration(db);
     await runMessageReactionTombstoneMigration(db);
     await runGroupsLastMembershipEventIdMigration(db);
+    await runGroupMemberDeviceSnapshotsMigration(db);
+    await runPendingSiblingDevicesMigration(db);
     await runPendingGroupBroadcastsMigration(db);
+    await runGroupMessageRetryBackoffColumnsMigration(db);
+    await runGroupRejoinStateMigration(db);
+    await runMediaAttachmentDownloadRetryColumnMigration(db);
     await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
+    await runPendingGroupInvitesInviterMlKemMigration(db);
 
-    final chainIndexNames =
-        (await db.query(
-          'sqlite_master',
-          columns: ['name'],
-          where: "type = 'index'",
-        )).map((row) => row['name'] as String?).whereType<String>().toList();
+    final chainIndexNames = (await db.query(
+      'sqlite_master',
+      columns: ['name'],
+      where: "type = 'index'",
+    )).map((row) => row['name'] as String?).whereType<String>().toList();
     expect(
       chainIndexNames,
       contains('idx_group_pending_key_repairs_status_created'),
@@ -233,11 +244,56 @@ void main() {
     expect(groupMessageCols61, contains('transport_peer_id'));
     expect(groupMessageCols61, contains('last_send_attempt_at'));
     expect(groupMessageCols61, contains('logical_delivery_id'));
+    // Finding 05 Phase 4 (migration 087) backoff columns.
+    expect(groupMessageCols61, contains('retry_attempt_count'));
+    expect(groupMessageCols61, contains('next_eligible_at'));
+    // Finding 05 Phase 3 (migration 088) bounded per-group rejoin retry state.
+    expect(await getTableNames(db), contains('group_rejoin_state'));
     final pendingIntroResponseCols71 = await getColumnNames(
       db,
       'pending_introduction_responses',
     );
     expect(pendingIntroResponseCols71, contains('transport_sender_peer_id'));
+    // 12-P2 Part B (migration 084) per-member device snapshots.
+    expect(await getTableNames(db), contains('group_member_device_snapshots'));
+    final deviceSnapshotCols84 = await getColumnNames(
+      db,
+      'group_member_device_snapshots',
+    );
+    expect(
+      deviceSnapshotCols84,
+      containsAll([
+        'group_id',
+        'peer_id',
+        'public_key',
+        'ml_kem_public_key',
+        'devices_json',
+        'saved_at',
+      ]),
+    );
+    // 12-P2 Part B (migration 085) pending sibling devices.
+    expect(await getTableNames(db), contains('pending_sibling_devices'));
+    final pendingSiblingCols85 = await getColumnNames(
+      db,
+      'pending_sibling_devices',
+    );
+    expect(
+      pendingSiblingCols85,
+      containsAll([
+        'group_id',
+        'member_peer_id',
+        'device_id',
+        'transport_peer_id',
+        'device_signing_public_key',
+        'ml_kem_public_key',
+        'key_package_id',
+        'verified_account_signing_public_key',
+        'announced_at',
+      ]),
+    );
+    // Finding 09-P1 (migration 089) bounded media download retries.
+    final mediaCols89 = await getColumnNames(db, 'media_attachments');
+    expect(mediaCols89, contains('download_retry_count'));
   }
 
   Future<void> runUpgradePathFromV1ThroughV65(
@@ -523,6 +579,69 @@ void main() {
           }),
           throwsA(anything),
         );
+      },
+    );
+
+    test(
+      '091. pending_group_invites carries a nullable inviter_mlkem_public_key (v91)',
+      () async {
+        db = await databaseFactoryFfi.openDatabase(
+          inMemoryDatabasePath,
+          options: OpenDatabaseOptions(version: 1),
+        );
+        await runFreshInstallMigrations(db);
+
+        final columns = await db.rawQuery(
+          'PRAGMA table_info(pending_group_invites)',
+        );
+        final mlkemColumn = columns.firstWhere(
+          (col) => col['name'] == 'inviter_mlkem_public_key',
+          orElse: () => <String, Object?>{},
+        );
+        expect(mlkemColumn, isNotEmpty);
+        expect(mlkemColumn['type'], 'TEXT');
+        // Nullable: notnull flag is 0.
+        expect(mlkemColumn['notnull'], 0);
+
+        // A legacy-style row (no inviter key) is accepted and reads back NULL.
+        await db.insert('pending_group_invites', {
+          'group_id': 'g-legacy',
+          'invite_id': 'invite-legacy',
+          'payload_json': '{}',
+          'group_name': 'Legacy',
+          'group_type': 'chat',
+          'sender_peer_id': '12D3KooWAlice',
+          'sender_username': 'Alice',
+          'created_by': '12D3KooWAlice',
+          'created_at': '2026-06-17T00:00:00.000Z',
+          'received_at': '2026-06-17T00:00:00.000Z',
+          'expires_at': '2026-06-24T00:00:00.000Z',
+        });
+        // A new row persists the inviter ML-KEM key.
+        await db.insert('pending_group_invites', {
+          'group_id': 'g-keyed',
+          'invite_id': 'invite-keyed',
+          'payload_json': '{}',
+          'group_name': 'Keyed',
+          'group_type': 'chat',
+          'sender_peer_id': '12D3KooWBob',
+          'sender_username': 'Bob',
+          'created_by': '12D3KooWBob',
+          'created_at': '2026-06-17T00:00:00.000Z',
+          'received_at': '2026-06-17T00:00:00.000Z',
+          'expires_at': '2026-06-24T00:00:00.000Z',
+          'inviter_mlkem_public_key': 'bobMlKem64',
+        });
+
+        final rows = await db.query(
+          'pending_group_invites',
+          orderBy: 'group_id',
+        );
+        expect(rows, hasLength(2));
+        expect(rows[0]['group_id'], 'g-keyed');
+        expect(rows[0]['inviter_mlkem_public_key'], 'bobMlKem64');
+        expect(rows[1]['group_id'], 'g-legacy');
+        expect(rows[1]['inviter_mlkem_public_key'], isNull);
       },
     );
 

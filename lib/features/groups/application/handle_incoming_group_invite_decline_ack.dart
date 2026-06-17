@@ -1,5 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_decline_ack_payload.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -20,6 +22,7 @@ Future<HandleGroupInviteDeclineAckResult> handleIncomingGroupInviteDeclineAck({
   required ChatMessage message,
   required GroupInviteDeliveryAttemptRepository? deliveryRepo,
   required Bridge bridge,
+  ContactRepository? contactRepo,
   String? ownMlKemSecretKey,
   DateTime? now,
 }) async {
@@ -105,6 +108,33 @@ Future<HandleGroupInviteDeclineAckResult> handleIncomingGroupInviteDeclineAck({
       details: {},
     );
     return HandleGroupInviteDeclineAckResult.invalidPayload;
+  }
+
+  // Cryptographically verify the decliner's Ed25519 signature against their
+  // trusted (contact) signing key, mirroring the revocation handler (G6). The
+  // decliner is typically a contact — the inviter picked them from their own
+  // contacts — so a forged ack from a known peer is rejected. A non-contact
+  // decliner has no trusted key, so verification degrades to a no-op and
+  // authenticity rests on ML-KEM-encryption + the spoof guard above.
+  final verifyOutcome = await verifyGroupInviteDeclineAckAttestation(
+    payload: payload,
+    contactRepo: contactRepo,
+    bridge: bridge,
+  );
+  if (verifyOutcome == GroupInviteDeclineAckVerifyOutcome.forged) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_DECLINE_ACK_HANDLE_SIGNATURE_INVALID',
+      details: {},
+    );
+    return HandleGroupInviteDeclineAckResult.invalidPayload;
+  }
+  if (verifyOutcome == GroupInviteDeclineAckVerifyOutcome.unverifiable) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_DECLINE_ACK_HANDLE_VERIFY_SKIPPED',
+      details: {},
+    );
   }
 
   await deliveryRepo?.markDeclined(

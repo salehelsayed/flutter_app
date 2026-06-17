@@ -1106,6 +1106,75 @@ void main() {
   });
 
   test(
+    'INV-D5 an enqueue throw never aborts rotation (deferred member still '
+    'promoted + preserved, error telemetry emitted)',
+    () async {
+      // INV-D5: the per-peer deferred-distribution enqueue is best-effort. If
+      // the enqueue closure throws, rotation MUST still complete (epoch promoted,
+      // keyed members delivered, keyless member preserved in deferredPeerIds);
+      // only a GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR is emitted. A regression
+      // moving the await outside its try/catch would resurface the abort bug.
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-dave',
+          username: 'Dave',
+          role: MemberRole.writer,
+          publicKey: 'davePubKey',
+          mlKemPublicKey: null,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final enqueueAttempts = <(String, String, int)>[];
+
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        distributionAttemptCount: 2,
+        distributionRetryDelay: Duration.zero,
+        sendP2PMessage: (peerId, message) async => true,
+        enqueueDeferredDistribution:
+            ({
+              required String groupId,
+              required String peerId,
+              required int keyEpoch,
+            }) async {
+              enqueueAttempts.add((groupId, peerId, keyEpoch));
+              throw Exception('enqueue boom');
+            },
+      );
+
+      // Rotation succeeded despite the enqueue throw.
+      expect(result.rotated, isTrue);
+      expect(result.key!.keyGeneration, 2);
+      expect(result.fullyDistributed, isFalse);
+      expect(result.deferredPeerIds, <String>['peer-dave']);
+      // The enqueue closure was reached once for the deferred peer.
+      expect(enqueueAttempts, <(String, String, int)>[
+        (groupId, 'peer-dave', 2),
+      ]);
+      // The throw was caught and surfaced as telemetry, not propagated.
+      final enqueueError = flowEvents.singleWhere(
+        (event) =>
+            event['event'] == 'GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR',
+      );
+      final enqueueErrorDetails =
+          enqueueError['details'] as Map<String, dynamic>;
+      expect(enqueueErrorDetails['error'], contains('enqueue boom'));
+    },
+  );
+
+  test(
     'promotes then defers a member that has no deliverable key device',
     () async {
       // Headline promote-then-defer fix: a keyless remaining member (Dave) no

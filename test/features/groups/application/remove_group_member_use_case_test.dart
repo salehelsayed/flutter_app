@@ -85,6 +85,53 @@ void main() {
     expect(bystander, isNotNull);
   });
 
+  test(
+    'G5: live caller mints the canonical (eventAt, eventId) pair lifted past a '
+    'skew-advanced watermark, and records it — never self-blocks',
+    () async {
+      // A peer with a fast clock advanced the membership watermark into the
+      // future. The live admin caller passes NO explicit eventAt, so the use
+      // case must mint monotonically (lift past the watermark) rather than
+      // stale-block, and return the pair it recorded. The wired site must then
+      // publish THIS pair (not one reconstructed from its own wall clock — the
+      // G5 bug), so concurrent removals tie-break against one id everywhere.
+      final futureWatermark = DateTime.utc(2099, 1, 1);
+      await groupRepo.saveGroup(
+        testGroup.copyWith(lastMembershipEventAt: futureWatermark),
+      );
+
+      final minted = await removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        selfPeerId: 'peer-admin',
+        // No eventAt: mint monotonically (mirrors the role toggle).
+      );
+
+      // The minted instant was lifted to watermark + 1µs (monotonic, not a
+      // wall-clock-now that would have been < the future watermark).
+      expect(minted.eventAt.isAfter(futureWatermark), isTrue);
+      expect(
+        minted.eventAt,
+        futureWatermark.add(const Duration(microseconds: 1)),
+      );
+      // The id is the canonical pair embedding the NORMALIZED instant.
+      expect(
+        minted.eventId,
+        'member_removed:group-1:peer-admin:'
+            '${minted.eventAt.microsecondsSinceEpoch}',
+      );
+      // The same pair is what the group's watermark now carries (so the wired
+      // site can read it back / publish it consistently).
+      final updated = await groupRepo.getGroup('group-1');
+      expect(updated!.lastMembershipEventId, minted.eventId);
+      expect(updated.lastMembershipEventAt?.toUtc(), minted.eventAt);
+      // The removal still committed despite the skewed watermark.
+      expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNull);
+    },
+  );
+
   test('calls group:updateConfig to update Go validator', () async {
     await removeGroupMember(
       bridge: bridge,

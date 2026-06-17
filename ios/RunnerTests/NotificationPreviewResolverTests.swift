@@ -206,6 +206,49 @@ final class NotificationPreviewResolverTests: XCTestCase {
     try? FileManager.default.removeItem(at: dir)
   }
 
+  // G-S5-1: the SINGLE source of truth for the NSE<->Dart dedupe key is
+  // test_fixtures/si5_dedupe_keys.json. The Dart half reads the SAME file in
+  // recent_remote_notification_gate_test.dart (SI-5 group, "matches the shared
+  // SI-5 dedupe-key fixture") and asserts the gate produces each expectedKey.
+  // Here we assert the Swift NSE's gateMessageKey reproduces it byte-for-byte,
+  // so any drift on either side fails both targets.
+  func testGateMessageKeyMatchesSharedDedupeFixture() throws {
+    let cases = try loadDedupeKeyFixture()
+    XCTAssertFalse(cases.isEmpty)
+    for testCase in cases {
+      let description = (testCase["description"] as? String) ?? "<no description>"
+      let push = try XCTUnwrap(testCase["push"] as? [String: Any], description)
+      // expectedKey is a String, or nil when the JSON value is null (NSNull).
+      let expectedKey = testCase["expectedKey"] as? String
+      XCTAssertEqual(
+        RecentRemoteShownMarkerStore.gateMessageKey(userInfo: push),
+        expectedKey,
+        description
+      )
+    }
+  }
+
+  // G-S5-2: lock the AppGroupPushDedupeStore O_EXCL claim() on a real filesystem
+  // (first-wins / second-loses), closing the coverage gap where dedupe was only
+  // exercised via the in-memory MemoryPushDedupeStore fake.
+  func testAppGroupPushDedupeStoreClaimIsFirstWinsSecondLoses() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dedupe-claim-\(UUID().uuidString)")
+    let store = AppGroupPushDedupeStore(directory: dir)
+
+    // First claim wins (creates the marker via O_CREAT|O_EXCL).
+    XCTAssertTrue(store.claim(type: "new_message", messageId: "msg-1"))
+    // Second identical claim loses (EEXIST -> open fails -> false).
+    XCTAssertFalse(store.claim(type: "new_message", messageId: "msg-1"))
+    // A distinct message still claims independently.
+    XCTAssertTrue(store.claim(type: "new_message", messageId: "msg-2"))
+
+    let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+    XCTAssertEqual(Set(contents), ["new_message-msg-1", "new_message-msg-2"])
+
+    try? FileManager.default.removeItem(at: dir)
+  }
+
   func testDecryptsNativeV3GroupPreviewFromEncryptedExtra() throws {
     let plaintext = try jsonString([
       "text": "Hello group",
@@ -620,6 +663,21 @@ final class NotificationPreviewResolverTests: XCTestCase {
     let data = try Data(contentsOf: url)
     let object = try JSONSerialization.jsonObject(with: data)
     return try XCTUnwrap(object as? [String: Any])
+  }
+
+  /// Loads the repo-root test_fixtures/si5_dedupe_keys.json array shared with the
+  /// Dart gate test (the single source of truth for cross-process dedupe keys).
+  private func loadDedupeKeyFixture() throws -> [[String: Any]] {
+    let iosRoot = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let appRoot = iosRoot.deletingLastPathComponent()
+    let url = appRoot
+      .appendingPathComponent("test_fixtures")
+      .appendingPathComponent("si5_dedupe_keys.json")
+    let data = try Data(contentsOf: url)
+    let object = try JSONSerialization.jsonObject(with: data)
+    return try XCTUnwrap(object as? [[String: Any]])
   }
 
   private func fixturePlaintextJSON(_ fixture: [String: Any]) throws -> String {

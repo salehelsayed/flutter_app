@@ -41,3 +41,21 @@ Future<void> dbClearGroupRejoinState(
     whereArgs: [groupId],
   );
 }
+
+/// Forces [groupId]'s rejoin row immediately eligible by collapsing its backoff
+/// window (`next_eligible_at = 0`, i.e. the epoch — always in the past) so the
+/// next rejoin pass attempts it right away. Used by the stuck-rejoin "Retry now"
+/// affordance (G2). Preserves the attempt count and the row itself (no
+/// auto-delete — the row clears only on a successful rejoin); a no-op when no
+/// row exists (a healthy group is never stuck).
+Future<void> dbForceGroupRejoinEligible(
+  DatabaseExecutor db,
+  String groupId,
+) async {
+  await db.update(
+    'group_rejoin_state',
+    {'next_eligible_at': 0},
+    where: 'group_id = ?',
+    whereArgs: [groupId],
+  );
+}

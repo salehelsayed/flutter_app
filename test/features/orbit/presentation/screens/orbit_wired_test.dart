@@ -680,6 +680,66 @@ void main() {
       expect(find.text('Alpha Group'), findsOneWidget);
     });
 
+    testWidgets(
+      'G2: tapping "Retry now" on a still-stuck orbit group keeps the badge + '
+      'actions after the single-group refresh',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        // A half-materialized group with NO key: a retry's rejoin pass skips it
+        // (no key), so the rejoin_state row stays at attempt >= cap — the group
+        // is genuinely still stuck after the retry.
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-1',
+            name: 'Stuck Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-1',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure('g-1', nextEligibleAt: future);
+        }
+
+        await tester.pumpWidget(buildOrbitWired());
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text("Couldn't join — retry"), findsOneWidget);
+        final retryButton = find.byKey(
+          const ValueKey('orbit-group-stuck-retry-g-1'),
+        );
+        expect(retryButton, findsOneWidget);
+
+        await tester.ensureVisible(retryButton);
+        await tester.tap(retryButton, warnIfMissed: false);
+        // Let the retry handler (force-eligible + rejoin + single-group refresh)
+        // complete and re-publish the list projection.
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+
+        // The single-group refresh re-derived rejoinAttemptCount, so the badge
+        // and its Retry/Leave affordances survive (regression: they used to
+        // vanish because _refreshOrbitGroup dropped the count).
+        expect(find.text("Couldn't join — retry"), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('orbit-group-stuck-retry-g-1')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('orbit-group-stuck-leave-g-1')),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('All badge equals merged active items for a groups-only roster', (
       tester,
     ) async {
