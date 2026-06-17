@@ -679,7 +679,7 @@ void main() {
     );
 
     test(
-      'D: with the resync flag OFF (default), a config:response is ignored',
+      'D: with the resync flag explicitly OFF, a config:response is ignored',
       () async {
         final t1 = DateTime.utc(2026, 6, 1);
         await groupRepo.saveGroup(
@@ -705,8 +705,22 @@ void main() {
           ),
         );
 
-        // The setUp listener defaults to the (OFF) build flag.
-        listener.start();
+        // Build the default is now ON, so prove the gate by explicitly
+        // disabling it (the path a build takes via
+        // `--dart-define=MKNOON_ENABLE_ONJOIN_METADATA_RESYNC=false`).
+        final disabledListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => 'mySecretKey',
+          getOwnPeerId: () async => '12D3KooWBob',
+          onJoinMetadataResyncEnabled: false,
+          now: () => listenerNow,
+        );
+        addTearDown(disabledListener.dispose);
+        disabledListener.start();
 
         incomingController.add(
           await _makeConfigResponseMessage(
@@ -716,7 +730,7 @@ void main() {
           ),
         );
         await Future.delayed(const Duration(milliseconds: 100));
-        await listener.waitForIdle();
+        await disabledListener.waitForIdle();
 
         // Unchanged: the resync path is gated off.
         expect((await groupRepo.getGroup('grp-abc123'))!.name, 'Old Name');
