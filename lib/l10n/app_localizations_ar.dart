@@ -240,6 +240,68 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get orbit_preview_voice_message => 'رسالة صوتية';
+
+  @override
+  String get orbit_preview_gif => 'صورة متحركة';
+
+  @override
+  String orbit_preview_photo(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count صورة',
+      many: '$count صورة',
+      few: '$count صور',
+      two: 'صورتان',
+      one: 'صورة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_preview_video(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count فيديو',
+      many: '$count فيديو',
+      few: '$count فيديوهات',
+      two: 'فيديوهان',
+      one: 'فيديو',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_preview_file(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count ملف',
+      many: '$count ملفًا',
+      few: '$count ملفات',
+      two: 'ملفان',
+      one: 'ملف',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_preview_attachment(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count مرفق',
+      many: '$count مرفقًا',
+      few: '$count مرفقات',
+      two: 'مرفقان',
+      one: 'مرفق',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get compose_pick_people => 'اختر أشخاصًا';
 
   @override
@@ -2393,4 +2455,144 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get account_migration_blocked_message =>
       'هذا الهاتف محظور من فتح الحساب بعد النقل. لا تمحُ النسخة المحلية إلا عندما تتأكد من أن الهاتف الجديد يعمل.';
+
+  @override
+  String get contact_profile_verified_peer => 'جهة موثوقة';
+
+  @override
+  String get contact_profile_blocked => 'محظور';
+
+  @override
+  String get contact_profile_archived => 'مؤرشف';
+
+  @override
+  String get contact_profile_peer_id_label => 'معرّف الند';
+
+  @override
+  String get contact_profile_peer_id_copied => 'تم نسخ معرّف الند';
+
+  @override
+  String get contact_profile_tap_to_copy => 'اضغط للنسخ';
+
+  @override
+  String get contact_profile_safety_number_label => 'رقم الأمان';
+
+  @override
+  String get contact_profile_safety_number_hint =>
+      'قارن هذا الرقم شخصيًا للتأكد من أن اتصالك آمن.';
+
+  @override
+  String get contact_profile_copied => 'تم النسخ إلى الحافظة';
+
+  @override
+  String get contact_profile_connected_since_label => 'متصل منذ';
+
+  @override
+  String get contact_profile_introduced_by_label => 'عرّفك به';
+
+  @override
+  String get contact_profile_message_button => 'مراسلة';
+
+  @override
+  String get nav_orbit2 => 'أوربت٢';
+
+  @override
+  String get orbit2_prototype_chip => 'نموذج · بيانات تجريبية';
+
+  @override
+  String get orbit2_size_legend =>
+      'الأكبر = الأقرب · انقر للمحادثة · اسحب لإعادة الترتيب';
+
+  @override
+  String get orbit2_simulate => 'محاكاة';
+
+  @override
+  String get orbit2_reset => 'إعادة';
+
+  @override
+  String get orbit2_search_hint => 'ابحث عن صديق';
+
+  @override
+  String get orbit2_template_gravity => 'جاذبية';
+
+  @override
+  String get orbit2_template_nebula => 'سديم';
+
+  @override
+  String get orbit2_template_honeycomb => 'خلية';
+
+  @override
+  String get orbit2_template_tiered => 'طبقات';
+
+  @override
+  String get orbit2_mock_chat_demo_chip => 'تجريبي · الرسائل لا تُرسل';
+
+  @override
+  String get orbit2_mock_chat_send_disabled => 'الإرسال معطّل في هذه المعاينة';
+
+  @override
+  String get orbit2_mock_chat_composer_hint => 'رسالة';
+
+  @override
+  String get orbit2_hint =>
+      'اسحب المدار إلى أي مكان · اضغط مطوّلاً على صديق لإدخاله';
+
+  @override
+  String get orbit2_drop_hint => 'أفلِت هنا لإضافته إلى دائرتك';
+
+  @override
+  String orbit2_release_to_add(String name) {
+    return 'أفلِت لإضافة $name';
+  }
+
+  @override
+  String orbit2_promoted(String name) {
+    return 'تمت إضافة $name إلى دائرتك الداخلية';
+  }
+
+  @override
+  String get orbit2_new_group => 'مجموعة جديدة';
+
+  @override
+  String get orbit2_group_created =>
+      'تم إنشاء مجموعة جديدة — أفلِت المزيد من الأصدقاء لتكبيرها';
+
+  @override
+  String orbit2_group_members(int count) {
+    return 'مجموعة · $count أعضاء';
+  }
+
+  @override
+  String get orbit2_show_less => 'عرض أقل';
+
+  @override
+  String orbit2_removed(String name) {
+    return 'تمت إزالة $name من دائرتك الداخلية';
+  }
+
+  @override
+  String get orbit2_you => 'أنت';
+
+  @override
+  String get orbit2_manage => 'إدارة';
+
+  @override
+  String get orbit2_manage_done => 'تم';
+
+  @override
+  String get orbit2_names_show => 'إظهار الأسماء';
+
+  @override
+  String get orbit2_names_hide => 'إخفاء الأسماء';
+
+  @override
+  String orbit2_promoted_group(String name) {
+    return 'تمت إضافة مجموعة $name إلى دائرتك الداخلية';
+  }
+
+  @override
+  String get orbit2_view_messages => 'الرسائل';
+
+  @override
+  String get orbit2_inbox_empty => 'لا محادثات بعد';
 }

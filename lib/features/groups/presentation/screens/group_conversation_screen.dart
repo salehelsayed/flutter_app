@@ -603,6 +603,13 @@ class GroupConversationScreen extends StatelessWidget {
           isQuoteUnavailable: isQuoteUnavailable,
           media: messageMedia,
           requireVerifiedContentHash: true,
+          // 128 (round 5): render-boundary fallback to the durable owned copy.
+          // Group durable media is keyed under media/<groupId>/<blob> (see
+          // group_conversation_wired relativePathForAttachment(contactPeerId:
+          // widget.group.id)), so the owned-copy dir id is the group id. The
+          // verified-content-hash gate above still applies — the fallback only
+          // supplies the path; it never bypasses verification.
+          ownedMediaPeerId: group.id,
           onMediaTap: onMediaTap != null
               ? (index) => onMediaTap!(message.id, index)
               : null,

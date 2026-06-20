@@ -305,6 +305,29 @@ void main() {
       remoteServer.dispose();
     });
 
+    test('sendMessage treats legacy ack as successful receipt', () async {
+      // The raw WS wrapper answers whether the peer acknowledged receipt. The
+      // higher LocalP2PService wrapper is still committed-only.
+      final remoteServer = LocalWsServer();
+      try {
+        final remotePort = await remoteServer.start();
+
+        await server.start();
+
+        final sent = await server.sendMessage(
+          'localhost',
+          remotePort,
+          '{"type":"chat","version":"1","payload":{"text":"legacy ack"}}',
+          'peerA',
+          'peerB',
+        );
+
+        expect(sent, isTrue);
+      } finally {
+        remoteServer.dispose();
+      }
+    });
+
     test(
       'sendMessageWithAck classifies committed ack, legacy ack, and nack',
       () async {

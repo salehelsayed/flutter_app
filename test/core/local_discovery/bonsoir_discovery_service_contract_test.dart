@@ -123,28 +123,108 @@ void main() {
       expect(peer!.host, '192.168.0.7');
     });
 
-    test('resolvePeer nudges a re-resolve for a retained found handle', () async {
+    test(
+      'resolvePeer single-flights against an in-flight found resolve, then '
+      'allows a fresh resolve once it completes (B1.2)',
+      () async {
+        await service.startAdvertising('me-peer', 54321);
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService('peer-c', 50002),
+          ),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(1));
+
+        // B1.2: a resolve for peer-c is already in flight, so discover-on-send
+        // must NOT issue a duplicate (each extra native resolve is a UAF window).
+        final pending = service.resolvePeer(
+          'peer-c',
+          timeout: const Duration(seconds: 5),
+        );
+        await flush();
+        expect(
+          discovery().resolver.resolved,
+          hasLength(1),
+          reason: 'single-flight: no duplicate resolve while one is in flight',
+        );
+
+        // The in-flight resolve answering still wakes the awaiting send.
+        discovery()
+            .emit(_resolvedEvent('peer-c', host: '192.168.0.9', port: 50002));
+        final peer = await pending;
+        expect(peer, isNotNull);
+        expect(peer!.host, '192.168.0.9');
+
+        // Once it completed, a fresh found resolves again (flag cleared).
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService('peer-c', 50002),
+          ),
+        );
+        await flush();
+        expect(
+          discovery().resolver.resolved,
+          hasLength(2),
+          reason: 'a fresh found after completion resolves again',
+        );
+      },
+    );
+
+    test('does not resolve our OWN advertised service (B1.1)', () async {
       await service.startAdvertising('me-peer', 54321);
+
+      // A found event echoing our own peerId must NOT trigger a resolve.
       discovery().emit(
         BonsoirDiscoveryEvent(
           type: BonsoirDiscoveryEventType.discoveryServiceFound,
-          service: _peerService('peer-c', 50002),
+          service: _peerService('me-peer', 54321),
         ),
-      );
-      await flush();
-      expect(discovery().resolver.resolved, hasLength(1));
-
-      final pending = service.resolvePeer(
-        'peer-c',
-        timeout: const Duration(milliseconds: 50),
       );
       await flush();
       expect(
         discovery().resolver.resolved,
-        hasLength(2),
-        reason: 'discover-on-send must re-resolve the retained handle',
+        isEmpty,
+        reason: 'own advertised service must never be resolved',
       );
-      expect(await pending, isNull, reason: 'nothing answered the nudge');
+
+      // A foreign peer IS resolved.
+      discovery().emit(
+        BonsoirDiscoveryEvent(
+          type: BonsoirDiscoveryEventType.discoveryServiceFound,
+          service: _peerService('peer-x', 50005),
+        ),
+      );
+      await flush();
+      expect(discovery().resolver.resolved, hasLength(1));
+    });
+
+    test('resolvePeer is a no-op after stopAdvertising (B1.4)', () async {
+      await service.startAdvertising('me-peer', 54321);
+      discovery().emit(
+        BonsoirDiscoveryEvent(
+          type: BonsoirDiscoveryEventType.discoveryServiceFound,
+          service: _peerService('peer-d', 50006),
+        ),
+      );
+      await flush();
+      final resolver = discovery().resolver;
+      final countBefore = resolver.resolved.length;
+
+      await service.stopAdvertising();
+      final peer = await service.resolvePeer(
+        'peer-d',
+        timeout: const Duration(milliseconds: 50),
+      );
+
+      expect(peer, isNull);
+      expect(
+        resolver.resolved,
+        hasLength(countBefore),
+        reason: 'no resolve may be issued after teardown (B1.4)',
+      );
     });
 
     test(

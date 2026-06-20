@@ -5,6 +5,7 @@ import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart'
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_media_preview_label.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Glassmorphic tappable group card for the orbit list.
@@ -55,8 +56,16 @@ class GroupRow extends StatelessWidget {
         : '';
     final senderUsername = group.latestMessageSenderUsername;
     final senderDisplayName = senderUsername ?? 'Unknown';
-    final latestMessageText = group.latestMessageText ?? group.latestMessage;
-    final hasStructuredPreview = latestMessageText != null;
+    final rawLatestText = group.latestMessageText ?? group.latestMessage;
+    // Caption wins; else a localized media label ("Photo"/"2 photos"/"Voice
+    // message"). Empty-but-present text on a media-only message no longer
+    // renders "Sender: " then a blank body.
+    final previewText = orbitMediaPreviewLabel(
+      l10n: l10n,
+      caption: rawLatestText,
+      media: group.latestMedia,
+    );
+    final hasStructuredPreview = previewText.isNotEmpty;
 
     final card = GestureDetector(
       onTap: onTap,
@@ -151,14 +160,12 @@ class GroupRow extends StatelessWidget {
                         ),
                         Expanded(
                           child: Text(
-                            latestMessageText,
+                            previewText,
                             style: TextStyle(
                               fontSize: 12,
                               color: readableColors.textMuted,
                             ),
-                            textDirection: detectTextDirection(
-                              latestMessageText,
-                            ),
+                            textDirection: detectTextDirection(previewText),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -167,14 +174,11 @@ class GroupRow extends StatelessWidget {
                     )
                   else
                     Text(
-                      latestMessageText ?? 'No messages yet',
+                      'No messages yet',
                       style: TextStyle(
                         fontSize: 12,
                         color: readableColors.textMuted,
                       ),
-                      textDirection: latestMessageText != null
-                          ? detectTextDirection(latestMessageText)
-                          : null,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

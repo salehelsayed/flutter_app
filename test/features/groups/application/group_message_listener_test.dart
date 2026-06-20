@@ -146,7 +146,6 @@ class GateableMediaAttachmentRepository
   }
 }
 
-
 class _TrackingInviteDeliveryAttemptRepository
     implements GroupInviteDeliveryAttemptRepository {
   final Map<String, GroupInviteDeliveryAttempt> attempts = {};
@@ -3260,74 +3259,80 @@ void main() {
       },
     );
 
-    test('creator does not double-rotate on a duplicate member_removed', () async {
-      await saveBobWriter();
-      final rotateCalls = <String>[];
-      listener.dispose();
-      listener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        bridge: bridge,
-        getSelfPeerId: () async => 'peer-admin',
-        rotateGroupKeyAfterRemoteRemoval: (groupId) async {
-          rotateCalls.add(groupId);
-          return true;
-        },
-      );
-      listener.start(sourceController.stream);
+    test(
+      'creator does not double-rotate on a duplicate member_removed',
+      () async {
+        await saveBobWriter();
+        final rotateCalls = <String>[];
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-admin',
+          rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+            rotateCalls.add(groupId);
+            return true;
+          },
+        );
+        listener.start(sourceController.stream);
 
-      sourceController.add(
-        memberRemovedEvent(
-          messageId: 'wl-dup-1',
-          senderId: 'peer-sender',
-          senderUsername: 'Sender',
-        ),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      // A redelivery of the same departure (different envelope id, peer already
-      // gone) must not trigger a second rotation.
-      sourceController.add(
-        memberRemovedEvent(
-          messageId: 'wl-dup-2',
-          senderId: 'peer-sender',
-          senderUsername: 'Sender',
-          removedAt: '2026-04-05T12:00:05.000Z',
-        ),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+        sourceController.add(
+          memberRemovedEvent(
+            messageId: 'wl-dup-1',
+            senderId: 'peer-sender',
+            senderUsername: 'Sender',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // A redelivery of the same departure (different envelope id, peer already
+        // gone) must not trigger a second rotation.
+        sourceController.add(
+          memberRemovedEvent(
+            messageId: 'wl-dup-2',
+            senderId: 'peer-sender',
+            senderUsername: 'Sender',
+            removedAt: '2026-04-05T12:00:05.000Z',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(rotateCalls, ['group-1']);
-    });
+        expect(rotateCalls, ['group-1']);
+      },
+    );
 
-    test('a non-creator member does not auto-rotate on member_removed', () async {
-      await saveBobWriter();
-      final rotateCalls = <String>[];
-      listener.dispose();
-      listener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        bridge: bridge,
-        // Self is peer-bob — a remaining writer, NOT the group creator.
-        getSelfPeerId: () async => 'peer-bob',
-        rotateGroupKeyAfterRemoteRemoval: (groupId) async {
-          rotateCalls.add(groupId);
-          return true;
-        },
-      );
-      listener.start(sourceController.stream);
+    test(
+      'a non-creator member does not auto-rotate on member_removed',
+      () async {
+        await saveBobWriter();
+        final rotateCalls = <String>[];
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          // Self is peer-bob — a remaining writer, NOT the group creator.
+          getSelfPeerId: () async => 'peer-bob',
+          rotateGroupKeyAfterRemoteRemoval: (groupId) async {
+            rotateCalls.add(groupId);
+            return true;
+          },
+        );
+        listener.start(sourceController.stream);
 
-      sourceController.add(
-        memberRemovedEvent(
-          messageId: 'wl-noncreator',
-          senderId: 'peer-sender',
-          senderUsername: 'Sender',
-        ),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+        sourceController.add(
+          memberRemovedEvent(
+            messageId: 'wl-noncreator',
+            senderId: 'peer-sender',
+            senderUsername: 'Sender',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
-      expect(rotateCalls, isEmpty);
-    });
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+        expect(rotateCalls, isEmpty);
+      },
+    );
 
     test('creator does not rotate on a removal it authored itself', () async {
       await saveBobWriter();
@@ -7502,7 +7507,11 @@ void main() {
             'name': 'Test Group',
             'groupType': 'chat',
             'members': [
-              {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
               {
                 'peerId': 'peer-charlie',
                 'role': 'writer',
@@ -7657,7 +7666,10 @@ void main() {
 
         // A visible self-removal timeline message is written (not an empty cutoff).
         final retained = await msgRepo.getMessagesPage('group-1');
-        expect(retained.map((message) => message.text), contains('Admin removed Me'));
+        expect(
+          retained.map((message) => message.text),
+          contains('Admin removed Me'),
+        );
 
         await sub.cancel();
         selfListener.dispose();
@@ -11361,7 +11373,13 @@ void main() {
         // Bytes must survive the FULL group validation chain (hash check,
         // decrypt via the byte-copying fake, plaintext size check, JPEG
         // magic-byte mime validation) — both callers run the group policy.
-        final jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, ...List.filled(31, 0xff)];
+        final jpegBytes = <int>[
+          0xff,
+          0xd8,
+          0xff,
+          0xe0,
+          ...List.filled(31, 0xff),
+        ];
         final jpegBytesHash = sha256.convert(jpegBytes).toString();
         final delayedBridge = _DelayedMediaDownloadBridge()
           ..downloadBytes = jpegBytes;
@@ -12524,96 +12542,104 @@ void main() {
       notifListener.dispose();
     });
 
-    test('does not notify after self-removal retains the group read-only', () async {
-      final notifService = FakeNotificationService();
-      final tracker = ActiveConversationTracker();
-      final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
-      final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
+    test(
+      'does not notify after self-removal retains the group read-only',
+      () async {
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
+        final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
 
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: 'group-1',
-          peerId: 'peer-self',
-          username: 'Me',
-          role: MemberRole.writer,
-          joinedAt: selfJoinedAt,
-        ),
-      );
-      await groupRepo.updateGroup(testGroup.copyWith(myRole: GroupRole.member));
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-self',
+            username: 'Me',
+            role: MemberRole.writer,
+            joinedAt: selfJoinedAt,
+          ),
+        );
+        await groupRepo.updateGroup(
+          testGroup.copyWith(myRole: GroupRole.member),
+        );
 
-      final notifListener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        bridge: bridge,
-        getSelfPeerId: () async => 'peer-self',
-        notificationService: notifService,
-        groupConversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.paused,
-      );
-      notifListener.start(sourceController.stream);
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
 
-      final removedGroups = <String>[];
-      final sub = notifListener.groupRemovedStream.listen(removedGroups.add);
+        final removedGroups = <String>[];
+        final sub = notifListener.groupRemovedStream.listen(removedGroups.add);
 
-      final sysText = jsonEncode({
-        '__sys': 'member_removed',
-        'member': {'peerId': 'peer-self', 'username': 'Me'},
-        'removedAt': removedAt.toIso8601String(),
-        'groupConfig': {
-          'name': 'Test Group',
-          'groupType': 'chat',
-          'members': [
-            {'peerId': 'peer-admin', 'role': 'admin'},
-          ],
-          'createdBy': 'peer-admin',
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      });
+        final sysText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-self', 'username': 'Me'},
+          'removedAt': removedAt.toIso8601String(),
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {'peerId': 'peer-admin', 'role': 'admin'},
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': sysText,
-        'timestamp': removedAt.toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': removedAt.toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(await groupRepo.getGroup('group-1'), isNotNull);
-      expect(removedGroups, <String>['group-1']);
-      expect(
-        bridge.commandLog.where((command) => command == 'group:leave'),
-        hasLength(1),
-      );
+        expect(await groupRepo.getGroup('group-1'), isNotNull);
+        expect(removedGroups, <String>['group-1']);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-sender',
-        'senderUsername': 'Sender',
-        'keyEpoch': 0,
-        'text': 'After removal',
-        'messageId': 'post-removal-message-1',
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'After removal',
+          'messageId': 'post-removal-message-1',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(notifService.shown, isEmpty);
-      // The retained group holds only the visible removal notice; the
-      // post-removal content message is dropped (a removed member sees no
-      // traffic after the cutoff) and the system notice does not notify.
-      final retained = await msgRepo.getMessagesPage('group-1');
-      expect(retained.map((message) => message.text), contains('Admin removed Me'));
-      expect(
-        retained.map((message) => message.text),
-        isNot(contains('After removal')),
-      );
+        expect(notifService.shown, isEmpty);
+        // The retained group holds only the visible removal notice; the
+        // post-removal content message is dropped (a removed member sees no
+        // traffic after the cutoff) and the system notice does not notify.
+        final retained = await msgRepo.getMessagesPage('group-1');
+        expect(
+          retained.map((message) => message.text),
+          contains('Admin removed Me'),
+        );
+        expect(
+          retained.map((message) => message.text),
+          isNot(contains('After removal')),
+        );
 
-      await sub.cancel();
-      notifListener.dispose();
-    });
+        await sub.cancel();
+        notifListener.dispose();
+      },
+    );
 
     test('does not notify when notification deps are null', () async {
       // Default listener without notification params (current behavior)
@@ -12726,6 +12752,215 @@ void main() {
         expect(reactionRepo.saveReactionCallCount, 1);
 
         await sub.cancel();
+        rxnListener.dispose();
+      },
+    );
+
+    test(
+      '127-Bug-D: incoming ADD group reaction notifies (route + emoji)',
+      () async {
+        await saveGroupReactionTargetMessage('msg-1');
+        final notifService = FakeNotificationService();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          notificationService: notifService,
+          groupConversationTracker: ActiveConversationTracker(),
+          // resumed + not-viewing: no background-guard delay and no viewing
+          // suppression, so a fired notification is observable within the pump.
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-notify-add',
+            'messageId': 'msg-1',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(notifService.shown, hasLength(1));
+        expect(notifService.shown.single.contactPeerId, 'group:group-1');
+        expect(notifService.shown.single.messageText, contains('\u{1F44D}'));
+
+        rxnListener.dispose();
+      },
+    );
+
+    test('127-Bug-D: incoming REMOVE group reaction does NOT notify', () async {
+      await saveGroupReactionTargetMessage('msg-1');
+      await reactionRepo.saveReaction(
+        const MessageReaction(
+          id: 'rxn-existing',
+          messageId: 'msg-1',
+          emoji: '\u{1F44D}',
+          senderPeerId: 'peer-sender',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      final notifService = FakeNotificationService();
+      final rxnListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        notificationService: notifService,
+        groupConversationTracker: ActiveConversationTracker(),
+        // resumed + not-viewing: no background-guard delay and no viewing
+        // suppression, so a fired notification is observable within the pump.
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+      );
+      rxnListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      reactionSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'reaction': jsonEncode({
+          'id': 'rxn-existing',
+          'messageId': 'msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'remove',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-01-01T00:01:00.000Z',
+        }),
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, isEmpty);
+
+      rxnListener.dispose();
+    });
+
+    test('127-Bug-D: ADD reaction in a MUTED group does NOT notify', () async {
+      await saveGroupReactionTargetMessage('msg-1');
+      await groupRepo.updateGroup(testGroup.copyWith(isMuted: true));
+      final notifService = FakeNotificationService();
+      final rxnListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        notificationService: notifService,
+        groupConversationTracker: ActiveConversationTracker(),
+        // resumed + not-viewing: no background-guard delay and no viewing
+        // suppression, so a fired notification is observable within the pump.
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+      );
+      rxnListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      reactionSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'reaction': jsonEncode({
+          'id': 'rxn-muted',
+          'messageId': 'msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+        }),
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, isEmpty);
+
+      rxnListener.dispose();
+    });
+
+    test('127-Bug-D: own reaction (mesh echo) does NOT self-notify', () async {
+      await saveGroupReactionTargetMessage('msg-1');
+      final notifService = FakeNotificationService();
+      final rxnListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        notificationService: notifService,
+        groupConversationTracker: ActiveConversationTracker(),
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+        // Self == the reactor: a reaction echoing back through the mesh must
+        // never notify the author of the reaction.
+        getSelfPeerId: () async => 'peer-sender',
+      );
+      rxnListener.start(
+        sourceController.stream,
+        incomingGroupReactions: reactionSource.stream,
+      );
+
+      reactionSource.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'reaction': jsonEncode({
+          'id': 'rxn-own-echo',
+          'messageId': 'msg-1',
+          'emoji': '\u{1F44D}',
+          'action': 'add',
+          'senderPeerId': 'peer-sender',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+        }),
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, isEmpty);
+
+      rxnListener.dispose();
+    });
+
+    test(
+      '127-Bug-D: reaction is suppressed while viewing the group conversation',
+      () async {
+        await saveGroupReactionTargetMessage('msg-1');
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker()..setActive('group:group-1');
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-viewing',
+            'messageId': 'msg-1',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(notifService.shown, isEmpty);
+
         rxnListener.dispose();
       },
     );
@@ -14669,18 +14904,9 @@ void main() {
         });
         await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        expect(
-          await groupRepo.getMember('group-1', 'peer-charlie'),
-          isNotNull,
-        );
-        expect(
-          drainCalls.map((call) => call.peerId),
-          contains('peer-charlie'),
-        );
-        expect(
-          drainCalls.every((call) => call.groupId == 'group-1'),
-          isTrue,
-        );
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNotNull);
+        expect(drainCalls.map((call) => call.peerId), contains('peer-charlie'));
+        expect(drainCalls.every((call) => call.groupId == 'group-1'), isTrue);
       },
     );
 
@@ -14716,10 +14942,7 @@ void main() {
         });
         await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        expect(
-          await groupRepo.getMember('group-1', 'peer-charlie'),
-          isNotNull,
-        );
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNotNull);
         expect(
           drainCalls.where((call) => call.peerId == 'peer-charlie'),
           isEmpty,

@@ -584,6 +584,43 @@ void main() {
       },
     );
 
+    test(
+      '127-Bug-B: defers (no re-encrypt/re-upload) when the blob is in-flight '
+      'from the foreground send',
+      () async {
+        final msg = _makeMsg(
+          'msg-00001',
+          status: 'sending',
+          contactPeerId: 'peer-bob',
+        );
+        messageRepo.seed([msg]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        mediaRepo.seed([
+          _pendingAtt(id: 'blob-inflight', messageId: 'msg-00001'),
+        ]);
+        // If the guard failed, this would be returned and the row marked done.
+        fakeUploadFn.willReturn(_doneAttachment('blob-inflight', 'msg-00001'));
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          isUploadInFlight: (blobId) => blobId == 'blob-inflight',
+        );
+
+        // The foreground send owns this blob: no re-encrypt, no send, no
+        // terminalization — the row stays retryable.
+        expect(count, 0);
+        expect(fakeUploadFn.callCount, 0);
+        final latest = await mediaRepo.getAttachmentsForMessage('msg-00001');
+        expect(latest.single.downloadStatus, 'upload_pending');
+      },
+    );
+
     test('also retries when message is still in sending status', () async {
       final msg = _makeMsg(
         'msg-00001',

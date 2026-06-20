@@ -10,6 +10,7 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -299,6 +300,24 @@ class TrackingDurableConversationMediaFileManager extends FakeMediaFileManager {
     if (dir.existsSync()) {
       dir.deleteSync(recursive: true);
     }
+  }
+}
+
+/// 127-Bug-B: records whether each attachment was already marked in-flight at
+/// its FIRST persist. The optimistic persist happens BEFORE the upload loop, so
+/// this proves the in-flight mark is set early enough (the timing-hole fix),
+/// not only at the later relay-upload step where the retrier could already have
+/// raced in.
+class InFlightAtFirstSaveMediaRepository extends FakeMediaAttachmentRepository {
+  final Map<String, bool> inFlightAtFirstSave = {};
+
+  @override
+  Future<void> saveAttachment(MediaAttachment attachment) async {
+    inFlightAtFirstSave.putIfAbsent(
+      attachment.id,
+      () => mediaUploadInFlightTracker.isInFlight(attachment.id),
+    );
+    await super.saveAttachment(attachment);
   }
 }
 
@@ -674,6 +693,81 @@ class FakeP2PService implements P2PService {
   String? get lastRecoveryMethod => null;
 }
 
+/// 131: simulates the relay offline-inbox drain landing a new message in the
+/// local DB. Each `drainOfflineInbox()` writes the next pending message
+/// straight into [repo.store] (no `messageChanges` emit — mirroring a DB write
+/// the open screen's no-replay live stream would miss), so only an explicit
+/// re-fetch can surface it.
+class DrainPersistsP2PService extends FakeP2PService {
+  final FakeMessageRepository repo;
+  final List<ConversationMessage> pending;
+  int drainCallCount = 0;
+
+  DrainPersistsP2PService({required this.repo, required this.pending});
+
+  @override
+  Future<void> drainOfflineInbox() async {
+    drainCallCount++;
+    if (pending.isNotEmpty) {
+      final msg = pending.removeAt(0);
+      repo.store[msg.id] = msg;
+    }
+  }
+}
+
+/// 131: like [DrainPersistsP2PService] but the FIRST drain blocks on [gate], so
+/// a second recovery trigger (resume) can arrive while the first is in-flight.
+class GatedDrainP2PService extends FakeP2PService {
+  final FakeMessageRepository repo;
+  final List<ConversationMessage> pending;
+  Completer<void>? gate;
+  int drainCallCount = 0;
+
+  GatedDrainP2PService({required this.repo, required this.pending});
+
+  @override
+  Future<void> drainOfflineInbox() async {
+    drainCallCount++;
+    final g = gate;
+    if (g != null && !g.isCompleted) {
+      gate = null; // only the first drain is gated
+      await g.future;
+    }
+    if (pending.isNotEmpty) {
+      final msg = pending.removeAt(0);
+      repo.store[msg.id] = msg;
+    }
+  }
+}
+
+/// 131: throws on the first [throwTimes] drains, then persists like
+/// [DrainPersistsP2PService] — exercises the recovery error path + guard reset.
+class ThrowingDrainP2PService extends FakeP2PService {
+  final FakeMessageRepository repo;
+  final List<ConversationMessage> pending;
+  int throwTimes;
+  int drainCallCount = 0;
+
+  ThrowingDrainP2PService({
+    required this.repo,
+    required this.pending,
+    this.throwTimes = 1,
+  });
+
+  @override
+  Future<void> drainOfflineInbox() async {
+    drainCallCount++;
+    if (throwTimes > 0) {
+      throwTimes--;
+      throw StateError('drain failed');
+    }
+    if (pending.isNotEmpty) {
+      final msg = pending.removeAt(0);
+      repo.store[msg.id] = msg;
+    }
+  }
+}
+
 class TrackingLocalMediaP2PService extends FakeP2PService {
   final List<String> callOrder;
 
@@ -809,6 +903,7 @@ void main() {
     ImageQualityPreference videoQualityPreference =
         ImageQualityPreference.compressed,
     int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
+    DateTime? notificationTappedAt,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -821,6 +916,7 @@ void main() {
           messageRepo: messageRepo,
           chatMessageListener: chatListener,
           p2pService: p2pService ?? FakeP2PService(),
+          notificationTappedAt: notificationTappedAt,
           bridge: bridge,
           sendChatMessageFn: sendFn,
           editChatMessageFn: editFn ?? editChatMessage,
@@ -1911,6 +2007,567 @@ void main() {
     );
 
     testWidgets(
+      'outgoing message changes preserve displayable media over stale hydrated paths',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_preserve_media_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+
+        const messageId = 'msg-preserve-displayable-media';
+        const attachmentId = 'att-preserve-displayable-media';
+        final visibleFile = File('${tempDir.path}/visible.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final visibleAttachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          localPath: visibleFile.path,
+          downloadStatus: 'done',
+          createdAt: '2026-06-18T12:00:00.000Z',
+        );
+        final staleAttachment = visibleAttachment.copyWith(
+          localPath: 'pending_uploads/$messageId/$attachmentId.png',
+          downloadStatus: 'done',
+        );
+        final message = ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: '',
+          timestamp: '2026-06-18T12:00:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-06-18T12:00:00.000Z',
+          media: [visibleAttachment],
+        );
+        messageRepo.store[messageId] = message.copyWith(media: const []);
+        mediaAttachmentRepo.seed([staleAttachment]);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: TrackingDurableConversationMediaFileManager(
+            tempDir,
+          ),
+          initialMessages: [message],
+        );
+        await tester.pump();
+
+        expect(find.text('Media unavailable'), findsNothing);
+
+        await messageRepo.saveMessage(message.copyWith(media: const []));
+        await pumpUntil(tester, () {
+          final screen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          final visible = screen.messages.firstWhere(
+            (candidate) => candidate.id == messageId,
+          );
+          return visible.media.single.localPath == visibleFile.path;
+        });
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final visible = screen.messages.firstWhere(
+          (candidate) => candidate.id == messageId,
+        );
+        expect(visible.media.single.localPath, visibleFile.path);
+        expect(find.text('Media unavailable'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      '127-Bug-A: own-sent media renders (not "Media unavailable") when send '
+      'returns a null message and localPath is relative',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_bug_a_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final attachment = File('${tempDir.path}/pick.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        var sendCalled = false;
+        // The crux: the send use case returns NO persisted message. Pre-fix,
+        // this branch only updated status and left the optimistic message
+        // pointing at the deleted picker temp -> "Media unavailable".
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          sendCalled = true;
+          return (SendChatMessageResult.success, null);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          // mediaFileManager present (needed by the resolution-under-test) but
+          // NO mediaAttachmentRepo, so durable-prep is skipped and the relay
+          // result's RELATIVE localPath reaches the post-send branch verbatim
+          // (exactly the production shape that triggered Bug A).
+          mediaFileManager: TrackingDurableConversationMediaFileManager(
+            tempDir,
+          ),
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                // Production: own-sent media is stored with a RELATIVE path and
+                // the durable plaintext copy lives under media/<peer>/<blob>.png.
+                final relPath = 'media/${makeContact().peerId}/$blobId.png';
+                File('${tempDir.path}/$relPath')
+                  ..createSync(recursive: true)
+                  ..writeAsBytesSync(_tinyPngBytes);
+                // Mirror production deleteSourceWhenDone: the picker temp the
+                // optimistic message points at is gone after upload, so pre-fix
+                // the message==null branch would render "Media unavailable".
+                if (deleteSourceWhenDone && File(localFilePath).existsSync()) {
+                  File(localFilePath).deleteSync();
+                }
+                return MediaAttachment(
+                  id: blobId ?? 'fallback-id',
+                  messageId: '',
+                  mime: mime,
+                  size: _tinyPngBytes.length,
+                  mediaType: 'image',
+                  localPath: relPath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'photo');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => sendCalled);
+        await tester.pump(const Duration(milliseconds: 500));
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final outgoing = screen.messages.where((m) => !m.isIncoming).toList();
+        expect(outgoing, isNotEmpty);
+        final media = outgoing.last.media;
+        expect(media, isNotEmpty);
+        // The on-screen attachment must carry the RESOLVED ABSOLUTE durable
+        // path (not the deleted picker temp), and the file must exist.
+        expect(media.single.localPath, startsWith(tempDir.path));
+        expect(media.single.localPath, contains('/media/'));
+        expect(File(media.single.localPath!).existsSync(), isTrue);
+        expect(find.text('Media unavailable'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      '127-Bug-A: own-sent MULTI-image (3) all render when send returns null',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_bug_a_multi_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final files = List.generate(3, (i) {
+          return File('${tempDir.path}/pick$i.png')
+            ..writeAsBytesSync(_tinyPngBytes);
+        });
+
+        var sendCalled = false;
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          sendCalled = true;
+          return (SendChatMessageResult.success, null);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          mediaFileManager: TrackingDurableConversationMediaFileManager(
+            tempDir,
+          ),
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                final relPath = 'media/${makeContact().peerId}/$blobId.png';
+                File('${tempDir.path}/$relPath')
+                  ..createSync(recursive: true)
+                  ..writeAsBytesSync(_tinyPngBytes);
+                if (deleteSourceWhenDone && File(localFilePath).existsSync()) {
+                  File(localFilePath).deleteSync();
+                }
+                return MediaAttachment(
+                  id: blobId ?? 'fallback-id',
+                  messageId: '',
+                  mime: mime,
+                  size: _tinyPngBytes.length,
+                  mediaType: 'image',
+                  localPath: relPath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: files,
+        );
+
+        await tester.enterText(find.byType(TextField), 'photos');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => sendCalled);
+        await tester.pump(const Duration(milliseconds: 500));
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final outgoing = screen.messages.where((m) => !m.isIncoming).toList();
+        expect(outgoing, isNotEmpty);
+        final media = outgoing.last.media;
+        expect(media, hasLength(3));
+        for (final m in media) {
+          expect(m.localPath, contains('/media/'));
+          expect(File(m.localPath!).existsSync(), isTrue);
+        }
+        expect(find.text('Media unavailable'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      '127-Bug-B: foreground send marks the blob in-flight during upload and '
+      'clears it after',
+      (tester) async {
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(mediaUploadInFlightTracker.clearAll);
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final tempDir = Directory.systemTemp.createTempSync('conv_bug_b_wire_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final attachment = File('${tempDir.path}/stable.jpg')
+          ..writeAsStringSync('image');
+
+        String? capturedBlobId;
+        var inFlightDuringUpload = false;
+        String? sentMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          sentMessageId = messageId;
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (
+            SendChatMessageResult.success,
+            delivered.copyWith(media: mediaAttachments ?? const []),
+          );
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                // The retrier consults this exact tracker — prove the live send
+                // owns the blob WHILE uploading so the retrier can't race it.
+                capturedBlobId = blobId;
+                inFlightDuringUpload =
+                    blobId != null &&
+                    mediaUploadInFlightTracker.isInFlight(blobId);
+                return MediaAttachment(
+                  id: blobId ?? 'fallback-upload-id',
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'photo');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => sentMessageId != null);
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(capturedBlobId, isNotNull);
+        expect(
+          inFlightDuringUpload,
+          isTrue,
+          reason: 'blob must be in-flight DURING the live upload',
+        );
+        expect(
+          mediaUploadInFlightTracker.isInFlight(capturedBlobId!),
+          isFalse,
+          reason: 'in-flight mark must be cleared once the send completes',
+        );
+      },
+    );
+
+    testWidgets(
+      '127-Bug-B: blob is in-flight at the FIRST (optimistic) persist — before '
+      'any upload, closing the LAN-window retrier race',
+      (tester) async {
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(mediaUploadInFlightTracker.clearAll);
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = InFlightAtFirstSaveMediaRepository();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_bug_b_early_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final attachment = File('${tempDir.path}/stable.jpg')
+          ..writeAsStringSync('image');
+
+        String? capturedBlobId;
+        String? sentMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          sentMessageId = messageId;
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (
+            SendChatMessageResult.success,
+            delivered.copyWith(media: mediaAttachments ?? const []),
+          );
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                capturedBlobId = blobId;
+                return MediaAttachment(
+                  id: blobId ?? 'fallback-upload-id',
+                  messageId: '',
+                  mime: mime,
+                  size: 1,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'photo');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => sentMessageId != null);
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(capturedBlobId, isNotNull);
+        // The optimistic persist runs BEFORE the upload loop; with the fix the
+        // blob is already in-flight there. Pre-fix (begin only at the relay
+        // step) this was false and the retrier could race in.
+        expect(
+          mediaAttachmentRepo.inFlightAtFirstSave[capturedBlobId],
+          isTrue,
+          reason:
+              'blob must be in-flight at the optimistic persist, before any upload',
+        );
+      },
+    );
+
+    testWidgets(
       'local-peer GIF transport is attempted before relay upload fallback',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -2509,6 +3166,359 @@ void main() {
         expect(screen.messages.single.media.single.id, attachmentId);
         expect(screen.messages.single.media.single.downloadStatus, 'done');
         expect(screen.messages.single.media.single.localPath, isNotNull);
+      },
+    );
+  });
+
+  group('ConversationWired 131 stale-on-open recovery', () {
+    ConversationMessage makeMsg({
+      required String id,
+      required String text,
+      required bool isIncoming,
+      required String ts,
+    }) => ConversationMessage(
+      id: id,
+      contactPeerId: makeContact().peerId,
+      senderPeerId: makeContact().peerId,
+      text: text,
+      timestamp: ts,
+      status: 'delivered',
+      isIncoming: isIncoming,
+      createdAt: ts,
+    );
+
+    testWidgets(
+      'notification-tap entry drains and re-fetches to surface a message that '
+      'arrived after the initial load',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        // Existing history is what the one-shot initial DB read returns.
+        final old = makeMsg(
+          id: 'old-1',
+          text: 'old history',
+          isIncoming: false,
+          ts: '2026-05-04T09:39:00.000Z',
+        );
+        messageRepo.store[old.id] = old;
+        // The just-received reply only lands in the DB once the relay drains.
+        final fresh = makeMsg(
+          id: 'fresh-1',
+          text: 'just received reply',
+          isIncoming: true,
+          ts: '2026-05-04T14:05:00.000Z',
+        );
+        final p2p = DrainPersistsP2PService(
+          repo: messageRepo,
+          pending: [fresh],
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'fresh-1'),
+        );
+
+        expect(p2p.drainCallCount, 1);
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(screen.messages.any((m) => m.id == 'old-1'), isTrue);
+        expect(screen.messages.any((m) => m.id == 'fresh-1'), isTrue);
+      },
+    );
+
+    testWidgets('plain (orbit) entry does NOT auto-drain on open', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final p2p = DrainPersistsP2PService(repo: messageRepo, pending: []);
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        p2pService: p2p,
+        // No notificationTappedAt — this is an orbit/contact-list open.
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(p2p.drainCallCount, 0);
+    });
+
+    testWidgets(
+      'app resume drains and re-fetches to surface a backgrounded message',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh = makeMsg(
+          id: 'resume-fresh-1',
+          text: 'arrived while backgrounded',
+          isIncoming: true,
+          ts: '2026-05-04T14:06:00.000Z',
+        );
+        final p2p = DrainPersistsP2PService(
+          repo: messageRepo,
+          pending: [fresh],
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(p2p.drainCallCount, 0);
+
+        // The test binding starts in `detached`; the only valid transition is
+        // to `resumed`, which is exactly the foreground event Fix B handles.
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'resume-fresh-1'),
+        );
+        expect(p2p.drainCallCount, greaterThanOrEqualTo(1));
+      },
+    );
+
+    testWidgets(
+      'an INCOMING message persisted via the repo-change stream is rendered',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        // saveMessage emits on messageChanges (NOT on incomingMessageStream),
+        // mirroring a relay drain persisting an incoming message while open.
+        await messageRepo.saveMessage(
+          makeMsg(
+            id: 'repo-incoming-1',
+            text: 'surfaced via repo change',
+            isIncoming: true,
+            ts: '2026-05-04T14:07:00.000Z',
+          ),
+        );
+
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'repo-incoming-1'),
+        );
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(screen.messages.any((m) => m.id == 'repo-incoming-1'), isTrue);
+      },
+    );
+
+    testWidgets(
+      'a resume during an in-flight notif_tap drain is coalesced, not dropped',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh1 = makeMsg(
+          id: 'co-1',
+          text: 'first backlog',
+          isIncoming: true,
+          ts: '2026-05-04T14:05:00.000Z',
+        );
+        final fresh2 = makeMsg(
+          id: 'co-2',
+          text: 'second backlog',
+          isIncoming: true,
+          ts: '2026-05-04T14:06:00.000Z',
+        );
+        final gate = Completer<void>();
+        final p2p = GatedDrainP2PService(
+          repo: messageRepo,
+          pending: [fresh1, fresh2],
+        )..gate = gate;
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+        // notif_tap drain is in-flight, blocked on the gate.
+        await tester.pump();
+        expect(p2p.drainCallCount, 1);
+
+        // A resume arrives mid-drain — must be remembered, not dropped.
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        expect(p2p.drainCallCount, 1, reason: 'still coalesced behind the gate');
+
+        // Release the in-flight drain → the coalesced pass runs a 2nd drain.
+        gate.complete();
+        await pumpUntil(tester, () => p2p.drainCallCount >= 2);
+        expect(p2p.drainCallCount, greaterThanOrEqualTo(2));
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(screen.messages.any((m) => m.id == 'co-1'), isTrue);
+        expect(screen.messages.any((m) => m.id == 'co-2'), isTrue);
+      },
+    );
+
+    testWidgets(
+      'a throwing drain does not crash and clears the guard so a later resume retries',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh = makeMsg(
+          id: 'err-then-ok-1',
+          text: 'lands on retry',
+          isIncoming: true,
+          ts: '2026-05-04T14:07:00.000Z',
+        );
+        final p2p = ThrowingDrainP2PService(
+          repo: messageRepo,
+          pending: [fresh],
+          throwTimes: 1,
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 7),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        // First drain threw — screen survived, no exception escaped.
+        expect(find.byType(ConversationScreen), findsOneWidget);
+        expect(p2p.drainCallCount, 1);
+
+        // Guard was cleared in finally, so a later resume drains successfully.
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'err-then-ok-1'),
+        );
+        expect(p2p.drainCallCount, greaterThanOrEqualTo(2));
+      },
+    );
+
+    testWidgets(
+      'a live incoming message arriving on BOTH streams renders exactly once',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = _FakeIncomingConversationListener(
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        addTearDown(chatListener.dispose);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        final m = makeMsg(
+          id: 'dual-1',
+          text: 'arrives on both streams',
+          isIncoming: true,
+          ts: '2026-05-04T14:08:00.000Z',
+        );
+        // Production order: persist (messageChanges) then live emit.
+        await messageRepo.saveMessage(m);
+        chatListener.emitIncomingMessage(m);
+
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((x) => x.id == 'dual-1'),
+        );
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(
+          screen.messages.where((x) => x.id == 'dual-1').length,
+          1,
+          reason: 'id-keyed upsert dedupes the double-path',
+        );
       },
     );
   });
@@ -4955,9 +5965,9 @@ void main() {
         // (the injected stub copySync's it) before sendLocalMedia.
         final recorder = FakeAudioRecorderService()
           ..fakeDurationMs = 1200
-          ..fakeOutputPath = (File('/tmp/quoted_voice_pending.m4a')
-                ..writeAsBytesSync(List<int>.filled(64, 1)))
-              .path;
+          ..fakeOutputPath = (File(
+            '/tmp/quoted_voice_pending.m4a',
+          )..writeAsBytesSync(List<int>.filled(64, 1))).path;
         addTearDown(() {
           for (final path in const [
             '/tmp/quoted_voice_pending.m4a',
@@ -5037,9 +6047,9 @@ void main() {
         // (the injected stub copySync's it) before sendLocalMedia.
         final recorder = FakeAudioRecorderService()
           ..fakeDurationMs = 1200
-          ..fakeOutputPath = (File('/tmp/voice_local_stable.m4a')
-                ..writeAsBytesSync(List<int>.filled(64, 1)))
-              .path;
+          ..fakeOutputPath = (File(
+            '/tmp/voice_local_stable.m4a',
+          )..writeAsBytesSync(List<int>.filled(64, 1))).path;
         addTearDown(() {
           for (final path in const [
             '/tmp/voice_local_stable.m4a',

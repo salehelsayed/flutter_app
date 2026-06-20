@@ -98,5 +98,15 @@ void main() {
 
       expect(friend.avatarPath, isNull);
     });
+
+    test('latestMedia defaults to null and isLatestDeleted to false', () {
+      final friend = OrbitFriend(
+        contact: contact,
+        messageCount: 1,
+      );
+
+      expect(friend.latestMedia, isNull);
+      expect(friend.isLatestDeleted, isFalse);
+    });
   });
 }

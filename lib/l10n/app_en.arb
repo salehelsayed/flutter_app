@@ -84,6 +84,40 @@
       }
     }
   },
+  "orbit_preview_voice_message": "Voice message",
+  "orbit_preview_gif": "GIF",
+  "orbit_preview_photo": "{count, plural, =1{Photo} other{{count} photos}}",
+  "@orbit_preview_photo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_preview_video": "{count, plural, =1{Video} other{{count} videos}}",
+  "@orbit_preview_video": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_preview_file": "{count, plural, =1{File} other{{count} files}}",
+  "@orbit_preview_file": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_preview_attachment": "{count, plural, =1{Attachment} other{{count} attachments}}",
+  "@orbit_preview_attachment": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "compose_pick_people": "Pick People",
   "compose_posting": "Posting...",
   "compose_post": "Post",
@@ -1305,5 +1339,62 @@
     }
   },
   "account_migration_blocked_title": "Account moved to another phone",
-  "account_migration_blocked_message": "This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works."
+  "account_migration_blocked_message": "This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.",
+  "contact_profile_verified_peer": "Verified peer",
+  "contact_profile_blocked": "Blocked",
+  "contact_profile_archived": "Archived",
+  "contact_profile_peer_id_label": "Peer ID",
+  "contact_profile_peer_id_copied": "Peer ID copied",
+  "contact_profile_tap_to_copy": "Tap to copy",
+  "contact_profile_safety_number_label": "Safety number",
+  "contact_profile_safety_number_hint": "Compare this number in person to confirm your connection is secure.",
+  "contact_profile_copied": "Copied to clipboard",
+  "contact_profile_connected_since_label": "Connected since",
+  "contact_profile_introduced_by_label": "Introduced by",
+  "contact_profile_message_button": "Message",
+  "nav_orbit2": "Orbit2",
+  "orbit2_prototype_chip": "Prototype · sample data",
+  "orbit2_size_legend": "Bigger = closer · tap to chat · drag to rearrange",
+  "orbit2_simulate": "Simulate",
+  "orbit2_reset": "Reset",
+  "orbit2_search_hint": "Find a friend",
+  "orbit2_template_gravity": "Gravity",
+  "orbit2_template_nebula": "Nebula",
+  "orbit2_template_honeycomb": "Honeycomb",
+  "orbit2_template_tiered": "Tiered",
+  "orbit2_mock_chat_demo_chip": "Demo · messages aren't sent",
+  "orbit2_mock_chat_send_disabled": "Sending is disabled in this preview",
+  "orbit2_mock_chat_composer_hint": "Message",
+  "orbit2_hint": "Drag the orbit anywhere · long-press a friend to bring them in",
+  "orbit2_drop_hint": "Drop here to add to your circle",
+  "orbit2_release_to_add": "Release to add {name}",
+  "@orbit2_release_to_add": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "orbit2_promoted": "{name} added to your inner circle",
+  "@orbit2_promoted": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "orbit2_new_group": "New group",
+  "orbit2_group_created": "New group created — drop in more friends to grow it",
+  "orbit2_group_members": "Group · {count} members",
+  "@orbit2_group_members": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "orbit2_show_less": "Show less",
+  "orbit2_removed": "{name} removed from your inner circle",
+  "@orbit2_removed": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "orbit2_you": "You",
+  "orbit2_manage": "Manage",
+  "orbit2_manage_done": "Done",
+  "orbit2_names_show": "Show names",
+  "orbit2_names_hide": "Hide names",
+  "orbit2_promoted_group": "Group {name} added to your inner circle",
+  "@orbit2_promoted_group": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "orbit2_view_messages": "Messages",
+  "orbit2_inbox_empty": "No conversations yet"
 }

@@ -3303,6 +3303,80 @@ void main() {
     });
 
     testWidgets(
+      '131: resume re-fetch surfaces an incoming message that landed while '
+      'backgrounded (the path a notification tap triggers)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'g131-old',
+            text: 'old group message',
+            groupId: group.id,
+            isIncoming: true,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+        final loadsAfterInitial = msgRepo.getMessagesPageCalls;
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .messages
+              .any((m) => m.id == 'g131-fresh'),
+          isFalse,
+          reason: 'fresh message has not arrived yet',
+        );
+
+        // A new incoming message lands in the repo (the app-level group drain
+        // persisted it) — NOT via the live group stream, so the open screen does
+        // not catch it live. Only a re-fetch can surface it.
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'g131-fresh',
+            text: 'arrived while backgrounded',
+            groupId: group.id,
+            isIncoming: true,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+          ),
+        );
+
+        // Resume — exactly what a notification tap does to a backgrounded app.
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .messages
+              .any((m) => m.id == 'g131-fresh'),
+        );
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .messages
+              .any((m) => m.id == 'g131-fresh'),
+          isTrue,
+        );
+        expect(
+          msgRepo.getMessagesPageCalls,
+          greaterThan(loadsAfterInitial),
+          reason: 'resume must re-fetch the page to surface the new message',
+        );
+      },
+    );
+
+    testWidgets(
       'local status subscription switches when message repository changes',
       (tester) async {
         final group = makeChatGroup();

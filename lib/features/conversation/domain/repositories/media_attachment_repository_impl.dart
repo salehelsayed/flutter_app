@@ -4,11 +4,15 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 import '../models/media_attachment.dart';
+import '../models/media_preview_descriptor.dart';
 import 'media_attachment_repository.dart';
 
 /// Implementation of MediaAttachmentRepository using database helper functions.
 class MediaAttachmentRepositoryImpl
-    implements MediaAttachmentRepository, MediaAttachmentByIdLookup {
+    implements
+        MediaAttachmentRepository,
+        MediaAttachmentByIdLookup,
+        MediaPreviewDescriptorLookup {
   final Future<void> Function(Map<String, Object?> row) dbInsertMediaAttachment;
   final Future<List<Map<String, Object?>>> Function(String messageId)
   dbLoadMediaForMessage;
@@ -111,6 +115,30 @@ class MediaAttachmentRepositoryImpl
     for (final attachment in await _attachmentsFromRows(rows)) {
       result.putIfAbsent(attachment.messageId, () => []).add(attachment);
     }
+    return result;
+  }
+
+  @override
+  Future<Map<String, MediaPreviewDescriptor>> getMediaPreviewDescriptors(
+    List<String> messageIds,
+  ) async {
+    if (messageIds.isEmpty) return {};
+
+    final rows = await dbLoadMediaForMessages(messageIds);
+    // Parse rows WITHOUT _hydrateRow: a preview label is derived purely from
+    // media_type/mime/count and never needs the decryption key, so we skip the
+    // per-attachment SecureKeyStore.read this path would otherwise pay once per
+    // contact/group on every orbit load.
+    final Map<String, List<MediaAttachment>> byMessage = {};
+    for (final row in rows) {
+      final attachment = MediaAttachment.fromMap(row);
+      byMessage.putIfAbsent(attachment.messageId, () => []).add(attachment);
+    }
+    final Map<String, MediaPreviewDescriptor> result = {};
+    byMessage.forEach((messageId, attachments) {
+      final descriptor = MediaPreviewDescriptor.fromAttachments(attachments);
+      if (descriptor != null) result[messageId] = descriptor;
+    });
     return result;
   }
 

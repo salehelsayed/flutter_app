@@ -39,6 +39,10 @@ Environment:
                                     MKNOON_RELAY_ADDRESSES is not set.
                                     Defaults to the app's built-in relay
                                     addresses.
+  RELIABILITY_GROUP_TIER            Multi-party group scenario tier:
+                                    smoke or full (default: full). The smoke
+                                    tier is a routine subset; full remains the
+                                    nightly/release requirement.
   RELIABILITY_SINGLE_DEVICE_ID      Passed as -d to one-device Flutter tests/runners.
   RELIABILITY_MULTI_DEVICE_IDS      Comma-separated pair passed to two-device runners.
   FLUTTER_DEVICE_ID                 Fallback for one-device runs when it is not comma-separated.
@@ -116,8 +120,8 @@ plan_file="$(mktemp)"
 indexed_plan_file="$(mktemp)"
 active_plan_file="$(mktemp)"
 failures_file="$(mktemp)"
-group_multi_party_scenarios_file="$(mktemp)"
-trap 'rm -f "$records_file" "$selected_file" "$targeted_tests_file" "$raw_plan_file" "$plan_file" "$indexed_plan_file" "$active_plan_file" "$failures_file" "$group_multi_party_scenarios_file"' EXIT
+group_multi_party_all_scenarios_file="$(mktemp)"
+trap 'rm -f "$records_file" "$selected_file" "$targeted_tests_file" "$raw_plan_file" "$plan_file" "$indexed_plan_file" "$active_plan_file" "$failures_file" "$group_multi_party_all_scenarios_file"' EXIT
 
 printf 'Checking reliability simulation discovery...\n'
 "$CHECKER" --records-tsv >"$records_file"
@@ -189,31 +193,112 @@ else
   ' "$selected_file" >"$raw_plan_file"
 fi
 
-group_multi_party_scenarios() {
-  if [ ! -s "$group_multi_party_scenarios_file" ]; then
+group_multi_party_tier() {
+  local tier="${RELIABILITY_GROUP_TIER:-full}"
+  case "$tier" in
+    full|smoke)
+      printf '%s\n' "$tier"
+      ;;
+    *)
+      printf 'Invalid RELIABILITY_GROUP_TIER: %s (expected smoke or full).\n' "$tier" >&2
+      return 2
+      ;;
+  esac
+}
+
+group_multi_party_tier_scenario_arg() {
+  local tier
+
+  if ! tier="$(group_multi_party_tier)"; then
+    return 2
+  fi
+  if [ "$tier" = "smoke" ]; then
+    printf 'smoke\n'
+  else
+    printf 'all\n'
+  fi
+}
+
+all_group_multi_party_scenarios() {
+  if [ ! -s "$group_multi_party_all_scenarios_file" ]; then
     if ! dart integration_test/scripts/run_group_multi_party_device_real.dart \
       --scenario all \
       --list-scenarios |
-      awk 'NF { print }' >"$group_multi_party_scenarios_file"; then
-      printf 'Failed to list group multi-party reliability scenarios.\n' >&2
+      awk 'NF { print }' >"$group_multi_party_all_scenarios_file"; then
+      printf 'Failed to list full group multi-party reliability scenarios.\n' >&2
       return 1
     fi
   fi
-  cat "$group_multi_party_scenarios_file"
+  cat "$group_multi_party_all_scenarios_file"
+}
+
+is_group_multi_party_scenario() {
+  local scenario="$1"
+
+  case "$scenario" in
+    all|smoke|slice_b_live)
+      return 0
+      ;;
+  esac
+  all_group_multi_party_scenarios | grep -Fxq -- "$scenario"
+}
+
+group_multi_party_only_scenario() {
+  local path="$1"
+  local selector="$only_selector"
+  local scenario=""
+
+  [ -n "$selector" ] || return 1
+  if [ "$selector" = "$path" ]; then
+    return 1
+  fi
+
+  case "$selector" in
+    "$path":*)
+      scenario="${selector#"$path:"}"
+      ;;
+    "$path --scenario "*)
+      scenario="${selector#"$path --scenario "}"
+      ;;
+    *)
+      scenario="$selector"
+      ;;
+  esac
+
+  if is_group_multi_party_scenario "$scenario"; then
+    printf '%s\n' "$scenario"
+    return 0
+  fi
+  return 1
+}
+
+group_lifecycle_sim_scenarios() {
+  cat <<'EOF'
+ADMIN_METADATA
+DELETE_PRESERVES_FRIENDS
+INVITE_ACCEPT_SPINNER
+NEW_MEMBER_MEDIA
+EOF
 }
 
 while IFS=$'\t' read -r kind path scenario; do
   [ -n "$kind" ] || continue
-  if [ "$path" = "integration_test/scripts/run_group_multi_party_device_real.dart" ]; then
-    expanded_scenarios="$(group_multi_party_scenarios)"
-    if [ -z "$expanded_scenarios" ]; then
-      printf 'No group multi-party reliability scenarios were listed.\n' >&2
-      exit 1
-    fi
+  if [ "$path" = "integration_test/group_lifecycle_simulator_harness.dart" ]; then
     while IFS= read -r expanded_scenario; do
       [ -n "$expanded_scenario" ] || continue
       printf '%s\t%s\t%s\n' "$kind" "$path" "$expanded_scenario"
-    done <<<"$expanded_scenarios"
+    done < <(group_lifecycle_sim_scenarios)
+    continue
+  fi
+  if [ "$path" = "integration_test/scripts/run_group_multi_party_device_real.dart" ]; then
+    if expanded_scenario="$(group_multi_party_only_scenario "$path")"; then
+      printf '%s\t%s\t%s\n' "$kind" "$path" "$expanded_scenario"
+      continue
+    fi
+    if ! expanded_scenario="$(group_multi_party_tier_scenario_arg)"; then
+      exit 2
+    fi
+    printf '%s\t%s\t%s\n' "$kind" "$path" "$expanded_scenario"
     continue
   fi
   printf '%s\t%s\t%s\n' "$kind" "$path" "$scenario"
@@ -246,6 +331,9 @@ awk -F '\t' -v start_at="$start_at" -v only_selector="$only_selector" '
         selector_matches = path == only_selector
         if (scenario != "") {
           if (path_scenario == only_selector || path_arg == only_selector) {
+            selector_matches = 1
+          }
+          if (scenario == only_selector) {
             selector_matches = 1
           }
         }
@@ -347,7 +435,9 @@ path_needs_four_device() {
 path_needs_multi_device() {
   case "$1" in
     integration_test/scripts/run_foreground_group_push_simulator_smoke.dart|\
+    integration_test/scripts/run_b1b_sibling_device_convergence.dart|\
     integration_test/scripts/run_group_multi_device_real.dart|\
+    integration_test/scripts/run_invite_reliability_multi_device.dart|\
     integration_test/scripts/run_notification_open_during_other_chat.dart|\
     integration_test/scripts/run_notification_sound_smoke.dart|\
     integration_test/scripts/run_routing_smoke_e2e.dart)
@@ -442,6 +532,9 @@ print_command_for_path() {
         printf ' -d %s' "$(quote_for_display "$device_id")"
       fi
       printf ' %s' "$(quote_for_display "--dart-define=MKNOON_RELAY_ADDRESSES=$(relay_addresses)")"
+      if [ "$path" = "integration_test/group_lifecycle_simulator_harness.dart" ] && [ -n "$scenario" ]; then
+        printf ' %s' "$(quote_for_display "--dart-define=GROUP_SIM_SCENARIO=$scenario")"
+      fi
       printf ' %s' "$path"
       ;;
     *)
@@ -513,6 +606,9 @@ run_path() {
         cmd+=(-d "$device_id")
       fi
       cmd+=("--dart-define=MKNOON_RELAY_ADDRESSES=$(relay_addresses)")
+      if [ "$path" = "integration_test/group_lifecycle_simulator_harness.dart" ] && [ -n "$scenario" ]; then
+        cmd+=("--dart-define=GROUP_SIM_SCENARIO=$scenario")
+      fi
       cmd+=("$path")
       MKNOON_RELAY_ADDRESSES="$(relay_addresses)" "${cmd[@]}"
       ;;
@@ -525,6 +621,31 @@ run_path() {
 
 printf '\nReliability simulation command plan: %s\n' "$scope"
 printf 'Relay addresses: %s\n' "$(relay_addresses)"
+group_multi_party_active_count="$(
+  awk -F '\t' '
+    $3 == "integration_test/scripts/run_group_multi_party_device_real.dart" {
+      count++
+    }
+    END { print count + 0 }
+  ' "$active_plan_file"
+)"
+if [ "$group_multi_party_active_count" -gt 0 ]; then
+  group_multi_party_active_scenarios="$(
+    awk -F '\t' '
+      $3 == "integration_test/scripts/run_group_multi_party_device_real.dart" {
+        if ($4 != "") {
+          if (scenarios != "") scenarios = scenarios ","
+          scenarios = scenarios $4
+        }
+      }
+      END { print scenarios }
+    ' "$active_plan_file"
+  )"
+  printf 'Group multi-party tier: %s (%s active plan row(s): %s; full remains nightly/release requirement)\n' \
+    "$(group_multi_party_tier)" \
+    "$group_multi_party_active_count" \
+    "$group_multi_party_active_scenarios"
+fi
 if [ "$start_at" -ne 1 ]; then
   printf 'Resume filter: starting at planned item #%s\n' "$start_at"
 fi

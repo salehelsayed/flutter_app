@@ -49,6 +49,7 @@ void main() {
   late List<NotificationRouteTarget> routedTargets;
   late Future<RemoteMessage?> Function() getInitialRemoteMessage;
   late int clearDeliveredNotificationsCount;
+  late int startupHomeReadyCount;
 
   final identity = IdentityModel(
     peerId: 'peer-self',
@@ -105,6 +106,7 @@ void main() {
     routedTargets = <NotificationRouteTarget>[];
     getInitialRemoteMessage = () async => null;
     clearDeliveredNotificationsCount = 0;
+    startupHomeReadyCount = 0;
 
     contactRequestListener = ContactRequestListener(
       contactRequestStream: const Stream<ChatMessage>.empty(),
@@ -165,6 +167,7 @@ void main() {
         onNotificationRouteTarget: (routeTarget) async {
           routedTargets.add(routeTarget);
         },
+        onStartupHomeReady: () => startupHomeReadyCount += 1,
       ),
     );
   }
@@ -228,4 +231,17 @@ void main() {
     );
     expect(clearDeliveredNotificationsCount, 0);
   });
+
+  testWidgets(
+    '133: fires onStartupHomeReady after the home surface is pushed',
+    (tester) async {
+      await tester.pumpWidget(buildRouterApp());
+      await pumpFrames(tester);
+
+      // The home (Feed) was established via _pushStartupReplacement, so the app
+      // shell is signalled it can now release a deferred notification route on
+      // top of it (rather than racing — and losing to — the home replacement).
+      expect(startupHomeReadyCount, greaterThanOrEqualTo(1));
+    },
+  );
 }

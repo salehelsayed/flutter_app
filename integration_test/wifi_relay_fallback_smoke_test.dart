@@ -27,7 +27,6 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
@@ -119,9 +118,9 @@ Future<_SmokeTestStack> _setupStack() async {
   final db = await openE2EDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 77,
+    version: 79,
   );
-  print('[SMOKE] Database initialized (version 77)');
+  print('[SMOKE] Database initialized (version 79)');
 
   final contactRepo = ContactRepositoryImpl(
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -150,6 +149,14 @@ Future<_SmokeTestStack> _setupStack() async {
     dbUpdateMessageStatus: (id, status) =>
         dbUpdateMessageStatus(db, id, status),
     dbLoadMessage: (id) => dbLoadMessage(db, id),
+    dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
+        dbExistsMessageByContent(
+          db,
+          contactPeerId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
     dbCountMessagesForContact: (contactPeerId) =>
         dbCountMessagesForContact(db, contactPeerId),
     dbMarkConversationAsRead: (contactPeerId) =>

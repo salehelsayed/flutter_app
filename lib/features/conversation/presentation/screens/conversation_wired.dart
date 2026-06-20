@@ -17,6 +17,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -26,6 +27,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
@@ -265,7 +267,8 @@ class ConversationWired extends StatefulWidget {
   State<ConversationWired> createState() => _ConversationWiredState();
 }
 
-class _ConversationWiredState extends State<ConversationWired> {
+class _ConversationWiredState extends State<ConversationWired>
+    with WidgetsBindingObserver {
   static const _uuid = Uuid();
   static const _pageSize = 50;
   static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
@@ -473,6 +476,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _contact = widget.contact;
     _draftText = widget.initialText ?? '';
     widget.appShellController?.addListener(_onAppShellChanged);
@@ -526,6 +530,15 @@ class _ConversationWiredState extends State<ConversationWired> {
     _startListeningForReactions();
     _checkIntroBanner();
     _checkHasOtherFriends();
+    // 131: a notification tap opens this screen before the relay offline inbox
+    // has been drained, so the one-shot DB read above renders stale history
+    // missing the just-received message. The live incoming stream has no replay
+    // and nothing re-reads the DB on entry, so recover by draining and
+    // re-fetching the latest page once (scrolling to the new message, since the
+    // user tapped a notification expecting to see it).
+    if (widget.notificationTappedAt != null) {
+      unawaited(_drainAndReloadOnce('notif_tap', scrollToLiveEdge: true));
+    }
   }
 
   bool _notificationTimingEmitted = false;
@@ -1158,6 +1171,98 @@ class _ConversationWiredState extends State<ConversationWired> {
     }
   }
 
+  bool _drainReloadInFlight = false;
+  bool _drainReloadPending = false;
+
+  /// 131: drains the relay offline inbox then re-reads the latest page so a
+  /// message that landed after the one-shot initial load (notification-tap
+  /// entry, or app-resume while this screen is open) is surfaced. The live
+  /// `incomingMessageStream` is a no-replay broadcast and the screen never
+  /// re-fetched on entry/resume, so a message persisted in the pre-subscribe
+  /// window was otherwise only visible on the next fresh open (orbit re-entry).
+  /// Non-blocking and idempotent: the cached page is already on screen; the new
+  /// message is upsert-merged in when the drain completes. A trigger arriving
+  /// while a drain is in flight (e.g. a resume during a notif_tap drain) is
+  /// coalesced into one more pass rather than dropped; only the FIRST pass may
+  /// scroll to the live edge — coalesced re-runs stand in for resumes.
+  Future<void> _drainAndReloadOnce(
+    String trigger, {
+    required bool scrollToLiveEdge,
+  }) async {
+    if (_drainReloadInFlight) {
+      _drainReloadPending = true;
+      return;
+    }
+    _drainReloadInFlight = true;
+    try {
+      var first = true;
+      do {
+        _drainReloadPending = false;
+        final before = _messages.length;
+        try {
+          await widget.p2pService.drainOfflineInbox();
+          if (mounted) {
+            await _reloadLatestPageForRecovery(
+              scrollToLiveEdge: first && scrollToLiveEdge,
+            );
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_DRAIN_REFETCH_ERROR',
+            details: {'trigger': trigger, 'error': e.toString()},
+          );
+        }
+        if (mounted) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_NOTIF_DRAIN_REFETCH',
+            details: {
+              'trigger': trigger,
+              'before': before,
+              'after': _messages.length,
+            },
+          );
+        }
+        first = false;
+      } while (_drainReloadPending && mounted);
+    } finally {
+      _drainReloadInFlight = false;
+      _drainReloadPending = false;
+    }
+  }
+
+  /// Re-reads the latest page and upsert-merges it into the current list without
+  /// disturbing already-loaded older (paginated) messages. Only scrolls to the
+  /// live edge when [scrollToLiveEdge] is set AND a genuinely new row appeared,
+  /// so an app-resume recovery never yanks a user who scrolled up.
+  Future<void> _reloadLatestPageForRecovery({
+    required bool scrollToLiveEdge,
+  }) async {
+    final messages = await loadConversationPage(
+      messageRepo: widget.messageRepo,
+      contactPeerId: _contact.peerId,
+      pageSize: _pageSize,
+      mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      mediaFileManager: widget.mediaFileManager,
+    );
+    if (!mounted) return;
+    var addedIncoming = false;
+    setState(() {
+      for (final message in messages) {
+        final existed = _messages.any((m) => m.id == message.id);
+        _upsertMessageById(_mergeLoadedMessageWithCurrentState(message));
+        if (!existed && message.isIncoming) addedIncoming = true;
+      }
+    });
+    await _loadReactions(messages);
+    unawaited(_recoverVisibleMedia(messages));
+    if (addedIncoming) {
+      _markAsRead();
+      if (scrollToLiveEdge) _scrollToBottom();
+    }
+  }
+
   void _onScroll() {
     if (!_hasMoreOlderMessages || _isLoadingMore) return;
     if (!_scrollController.hasClients) return;
@@ -1253,9 +1358,7 @@ class _ConversationWiredState extends State<ConversationWired> {
             } catch (_) {}
             fallback =
                 persisted ??
-                resolved.copyWith(
-                  downloadStatus: kMediaDownloadStatusFailed,
-                );
+                resolved.copyWith(downloadStatus: kMediaDownloadStatusFailed);
           }
           displayAttachments.add(fallback);
           didMutateDisplayState = true;
@@ -1392,13 +1495,20 @@ class _ConversationWiredState extends State<ConversationWired> {
         .where(
           (message) =>
               message.contactPeerId == _contact.peerId &&
-              ((!message.isIncoming &&
+              // 131: also accept INCOMING inserts. saveMessage emits every save
+              // (incoming included) on this durable stream, so a message
+              // persisted by the relay drain while the screen is open surfaces
+              // here even if the no-replay incomingMessageStream emit was missed
+              // — previously only outgoing status changes / deletes refreshed.
+              (message.isIncoming ||
+                  (!message.isIncoming &&
                       _shouldRefreshFromRepositoryChange(message.status)) ||
                   message.isDeleted),
         )
         .listen(
           (message) async {
             if (!mounted) return;
+            final alreadyShown = _messages.any((m) => m.id == message.id);
             final hydratedMedia = message.isDeleted
                 ? message.media
                 : await _resolveHydratedMediaForMessage(
@@ -1407,8 +1517,20 @@ class _ConversationWiredState extends State<ConversationWired> {
                   );
             if (!mounted) return;
             setState(() {
-              _upsertMessageById(message.copyWith(media: hydratedMedia));
+              final current = _messages
+                  .where((existing) => existing.id == message.id)
+                  .firstOrNull;
+              final mergedMedia = current == null
+                  ? hydratedMedia
+                  : _mergeLoadedMediaWithCurrentState(
+                      loaded: hydratedMedia,
+                      current: current.media,
+                    );
+              _upsertMessageById(message.copyWith(media: mergedMedia));
             });
+            if (message.isIncoming && !alreadyShown) {
+              _markAsRead();
+            }
           },
           onError: (error) {
             emitFlowEvent(
@@ -1807,6 +1929,12 @@ class _ConversationWiredState extends State<ConversationWired> {
     });
     _startSendingHint(messenger);
 
+    // 127-Bug-B: blob ids this foreground send is uploading. The background
+    // retrier consults `mediaUploadInFlightTracker` and skips these so it can
+    // never re-encrypt + re-upload them mid-send (divergent ciphertext vs the
+    // contentHash advertised in the envelope). Cleared in the outer finally.
+    final inFlightUploadIds = <String>{};
+
     try {
       emitFlowEvent(
         layer: 'FL',
@@ -1855,6 +1983,18 @@ class _ConversationWiredState extends State<ConversationWired> {
             createdAt: now,
           );
         }).toList();
+        // 127-Bug-B: own these blobs from the EARLIEST point — BEFORE durable
+        // prep and the LAN-direct send — not only at the later relay-upload
+        // step. The optimistic ids ARE the upload blobIds (the upload loop falls
+        // back to optimisticMedia[index].id, and durable prep preserves the id),
+        // so the background retrier (which fires on connectivity edges and can
+        // land during the LAN-send window) now always sees the blob in-flight
+        // and defers, instead of racing in to re-encrypt + re-upload. Released
+        // in the outer finally.
+        for (final optimistic in optimisticMedia) {
+          mediaUploadInFlightTracker.begin(optimistic.id);
+          inFlightUploadIds.add(optimistic.id);
+        }
       }
 
       _pendingAttachments = [];
@@ -1989,10 +2129,11 @@ class _ConversationWiredState extends State<ConversationWired> {
               if (widget.p2pService.isLocalPeer(_contact.peerId) &&
                   widget.bridge != null) {
                 try {
-                  preparedArtifact = await widget.prepareEncryptedMediaArtifactFn(
-                    bridge: widget.bridge!,
-                    localFilePath: sourcePath,
-                  );
+                  preparedArtifact = await widget
+                      .prepareEncryptedMediaArtifactFn(
+                        bridge: widget.bridge!,
+                        localFilePath: sourcePath,
+                      );
                   await widget.p2pService.sendLocalMedia(
                     peerId: _contact.peerId,
                     filePath: preparedArtifact.encryptedPath,
@@ -2018,6 +2159,8 @@ class _ConversationWiredState extends State<ConversationWired> {
                 relayTrackingStarted = true;
               }
               _markRelayUploadStarted(mediaId);
+              mediaUploadInFlightTracker.begin(mediaId);
+              inFlightUploadIds.add(mediaId);
               final result = await widget.uploadMediaFn(
                 bridge: widget.bridge!,
                 localFilePath: sourcePath,
@@ -2138,21 +2281,17 @@ class _ConversationWiredState extends State<ConversationWired> {
 
         if (!mounted) return;
 
+        // 127-Bug-A: own-sent media is persisted with a RELATIVE local_path
+        // (media/<peer>/<blob>.jpg). MediaGridCell checks File(localPath)
+        // .existsSync() verbatim, so a relative path renders "Media unavailable"
+        // even though the durable file exists. Resolve to absolute ONCE and
+        // apply in BOTH result branches — previously only the message != null
+        // branch resolved, leaving a null-message result showing the optimistic
+        // message's now-deleted picker-temp paths as unavailable.
+        final displayMedia = await _resolveDisplayMedia(uploadedAttachments);
+        if (!mounted) return;
+
         if (message != null) {
-          // Resolve relative paths from uploaded attachments to absolute for display
-          List<MediaAttachment>? displayMedia;
-          if (uploadedAttachments != null && widget.mediaFileManager != null) {
-            displayMedia = [];
-            for (final a in uploadedAttachments) {
-              if (a.localPath != null) {
-                final absPath = await widget.mediaFileManager!
-                    .resolveStoredPath(a.localPath!);
-                displayMedia.add(a.copyWith(localPath: absPath));
-              } else {
-                displayMedia.add(a);
-              }
-            }
-          }
           final persistedMedia =
               displayMedia ?? uploadedAttachments ?? optimisticMedia;
           final messageWithMedia = message.copyWith(
@@ -2168,7 +2307,21 @@ class _ConversationWiredState extends State<ConversationWired> {
             SendChatMessageResult.success => 'sent',
             _ => 'failed',
           };
-          _updateLocalMessageStatus(optimisticMessage.id, fallbackStatus);
+          final resolvedMedia = displayMedia ?? uploadedAttachments;
+          if (resolvedMedia != null && resolvedMedia.isNotEmpty) {
+            // Re-point the on-screen optimistic message at the resolved absolute
+            // durable copies (its picker temps were deleted post-upload).
+            setState(() {
+              _upsertMessageById(
+                optimisticMessage.copyWith(
+                  media: resolvedMedia,
+                  status: fallbackStatus,
+                ),
+              );
+            });
+          } else {
+            _updateLocalMessageStatus(optimisticMessage.id, fallbackStatus);
+          }
           await _persistMessageStatus(optimisticMessage.id, fallbackStatus);
         }
 
@@ -2219,6 +2372,12 @@ class _ConversationWiredState extends State<ConversationWired> {
         }
       }
     } finally {
+      // 127-Bug-B: release foreground ownership of every uploaded blob across
+      // ALL exit paths (early returns in the upload loop, exceptions, success)
+      // so the retrier can resume a genuinely-incomplete send later.
+      for (final blobId in inFlightUploadIds) {
+        mediaUploadInFlightTracker.end(blobId);
+      }
       _stopSendingHint();
       if (mounted) {
         setState(() => _isSending = false);
@@ -2226,6 +2385,31 @@ class _ConversationWiredState extends State<ConversationWired> {
         _isSending = false;
       }
     }
+  }
+
+  /// 127-Bug-A: resolves each attachment's stored (relative) `localPath` to an
+  /// absolute filesystem path for in-memory display. `MediaGridCell` checks
+  /// `File(localPath).existsSync()` verbatim, so a relative path would render
+  /// "Media unavailable" even though the durable file exists. Returns the input
+  /// unchanged when there is nothing to resolve (no manager / null list).
+  Future<List<MediaAttachment>?> _resolveDisplayMedia(
+    List<MediaAttachment>? attachments,
+  ) async {
+    final manager = widget.mediaFileManager;
+    if (attachments == null || manager == null) {
+      return attachments;
+    }
+    final resolved = <MediaAttachment>[];
+    for (final attachment in attachments) {
+      final localPath = attachment.localPath;
+      if (localPath != null) {
+        final absPath = await manager.resolveStoredPath(localPath);
+        resolved.add(attachment.copyWith(localPath: absPath));
+      } else {
+        resolved.add(attachment);
+      }
+    }
+    return resolved;
   }
 
   void _onDraftChanged(String text) {
@@ -2917,6 +3101,9 @@ class _ConversationWiredState extends State<ConversationWired> {
       // Upload + send (relay fallback)
       await _startRelayUploadTracking(recording.sizeBytes);
       _markRelayUploadStarted(voiceAttachmentId);
+      // 127-Bug-B: own this blob so the background retrier can't race + re-encrypt
+      // it mid-send. Released in the outer finally below.
+      mediaUploadInFlightTracker.begin(voiceAttachmentId);
       final (result, voiceMessage) = await widget.sendVoiceMessageFn(
         p2pService: widget.p2pService,
         messageRepo: widget.messageRepo,
@@ -2985,6 +3172,8 @@ class _ConversationWiredState extends State<ConversationWired> {
         }
       }
     } finally {
+      // 127-Bug-B: release foreground ownership of the voice blob on every exit.
+      mediaUploadInFlightTracker.end(voiceAttachmentId);
       await _stopRelayUploadTracking();
       if (bgTaskId != null && widget.bridge != null) {
         await callBgEnd(widget.bridge!, bgTaskId);
@@ -3407,8 +3596,12 @@ class _ConversationWiredState extends State<ConversationWired> {
           if (currentAttachment == null) {
             return loadedAttachment;
           }
-          if (_isResolvedAttachment(currentAttachment) &&
-              !_isResolvedAttachment(loadedAttachment)) {
+          if (_hasCompletedLocalPath(currentAttachment) &&
+              !_hasCompletedLocalPath(loadedAttachment)) {
+            return currentAttachment;
+          }
+          if (_isDisplayableResolvedAttachment(currentAttachment) &&
+              !_isDisplayableResolvedAttachment(loadedAttachment)) {
             return currentAttachment;
           }
           return loadedAttachment;
@@ -3416,10 +3609,16 @@ class _ConversationWiredState extends State<ConversationWired> {
         .toList(growable: false);
   }
 
-  bool _isResolvedAttachment(MediaAttachment attachment) {
+  bool _hasCompletedLocalPath(MediaAttachment attachment) {
+    final localPath = attachment.localPath;
     return attachment.downloadStatus == 'done' &&
-        attachment.localPath != null &&
-        attachment.localPath!.isNotEmpty;
+        localPath != null &&
+        localPath.isNotEmpty;
+  }
+
+  bool _isDisplayableResolvedAttachment(MediaAttachment attachment) {
+    final localPath = attachment.localPath;
+    return _hasCompletedLocalPath(attachment) && File(localPath!).existsSync();
   }
 
   List<MediaAttachment> _replaceAttachmentById(
@@ -3813,6 +4012,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.conversationTracker?.clearIfActive(widget.contact.peerId);
     widget.appShellController?.removeListener(_onAppShellChanged);
     _scrollController.removeListener(_onScroll);
@@ -3857,6 +4057,16 @@ class _ConversationWiredState extends State<ConversationWired> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 131: on resume, a message that arrived while backgrounded lands via the
+    // async app-resume drain AFTER this screen's one-shot DB read and may miss
+    // the no-replay live stream. Re-fetch (without yanking the scroll position).
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_drainAndReloadOnce('resume', scrollToLiveEdge: false));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final (activeQuoteText, isActiveQuoteUnavailable) =
         _resolveActiveQuotePreview();
@@ -3880,6 +4090,8 @@ class _ConversationWiredState extends State<ConversationWired> {
           isBlocked: _contact.isBlocked,
           onUnblock: _onUnblock,
           onOverflow: widget.contactRepo != null ? _onOverflow : null,
+          onAvatarTap: () =>
+              ContactProfileScreen.open(context, contact: _contact),
           isLoadingMore: _isLoadingMore,
           hasMoreOlderMessages: _hasMoreOlderMessages,
           initialLoadDone: _initialLoadDone,

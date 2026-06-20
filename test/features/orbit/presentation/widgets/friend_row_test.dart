@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -9,6 +10,8 @@ OrbitFriend _makeFriend({
   int unreadCount = 3,
   String? lastActivity,
   String username = 'Alice',
+  MediaPreviewDescriptor? latestMedia,
+  bool isLatestDeleted = false,
 }) {
   return OrbitFriend(
     contact: ContactModel(
@@ -22,6 +25,8 @@ OrbitFriend _makeFriend({
     messageCount: 5,
     lastActivity: lastActivity,
     unreadCount: unreadCount,
+    latestMedia: latestMedia,
+    isLatestDeleted: isLatestDeleted,
   );
 }
 
@@ -125,6 +130,114 @@ void main() {
       );
 
       expect(_textFor(tester, lastActivity).textDirection, TextDirection.ltr);
+    });
+
+    testWidgets('media-only voice note shows a localized label', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          FriendRow(
+            friend: _makeFriend(
+              lastActivity: '',
+              unreadCount: 0,
+              latestMedia: const MediaPreviewDescriptor(
+                type: 'audio',
+                count: 1,
+              ),
+            ),
+            onTap: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Voice message'), findsOneWidget);
+    });
+
+    testWidgets('multiple images show a counted label', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          FriendRow(
+            friend: _makeFriend(
+              lastActivity: '',
+              unreadCount: 0,
+              latestMedia: const MediaPreviewDescriptor(
+                type: 'image',
+                count: 2,
+              ),
+            ),
+            onTap: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 photos'), findsOneWidget);
+    });
+
+    testWidgets('caption wins over the media label', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          FriendRow(
+            friend: _makeFriend(
+              lastActivity: 'My caption',
+              unreadCount: 0,
+              latestMedia: const MediaPreviewDescriptor(
+                type: 'image',
+                count: 1,
+              ),
+            ),
+            onTap: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('My caption'), findsOneWidget);
+      expect(find.text('Photo'), findsNothing);
+    });
+
+    testWidgets('deleted latest shows the deleted placeholder', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          FriendRow(
+            friend: _makeFriend(
+              lastActivity: null,
+              unreadCount: 0,
+              isLatestDeleted: true,
+            ),
+            onTap: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('This message was deleted'), findsOneWidget);
+    });
+
+    testWidgets('Arabic locale media label is RTL', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('ar'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: FriendRow(
+              friend: _makeFriend(
+                lastActivity: '',
+                unreadCount: 0,
+                latestMedia: const MediaPreviewDescriptor(
+                  type: 'audio',
+                  count: 1,
+                ),
+              ),
+              onTap: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_textFor(tester, 'رسالة صوتية').textDirection, TextDirection.rtl);
     });
   });
 }

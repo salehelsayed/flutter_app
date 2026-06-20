@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 
 typedef VideoThumbnailResolver = Future<String?> Function(String mediaPath);
@@ -89,7 +90,7 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return widget.placeholder ?? const SizedBox.shrink();
         }
-        if (File(widget.mediaPath).existsSync()) {
+        if (File(_resolvedMediaPath).existsSync()) {
           return widget.placeholder ?? const SizedBox.shrink();
         }
         return widget.error ?? widget.placeholder ?? const SizedBox.shrink();
@@ -97,11 +98,18 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
     );
   }
 
+  /// 127 (round 3): resolve a RELATIVE stored path to an absolute one at the
+  /// render boundary (the DB stores relative; iOS needs the Documents dir).
+  String get _resolvedMediaPath =>
+      MediaFileManager.resolveStoredPathSync(widget.mediaPath);
+
   Widget _buildImage(String path) {
+    final resolvedPath = MediaFileManager.resolveStoredPathSync(path);
     final isGifImage =
-        widget.mediaType == 'image' && path.toLowerCase().endsWith('.gif');
+        widget.mediaType == 'image' &&
+        resolvedPath.toLowerCase().endsWith('.gif');
     return Image.file(
-      File(path),
+      File(resolvedPath),
       fit: widget.fit,
       cacheWidth: isGifImage ? null : widget.cacheWidth,
       cacheHeight: isGifImage ? null : widget.cacheHeight,
@@ -112,7 +120,7 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
         // null-thumbnail + source-present branch in build()). Reserve `error`
         // for a genuinely corrupt/missing non-video image.
         if (widget.mediaType == 'video' &&
-            File(widget.mediaPath).existsSync()) {
+            File(_resolvedMediaPath).existsSync()) {
           return widget.placeholder ?? const SizedBox.shrink();
         }
         return widget.error ?? widget.placeholder ?? const SizedBox.shrink();

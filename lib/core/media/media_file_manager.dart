@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -13,6 +15,85 @@ import 'package:path_provider/path_provider.dart';
 /// changes across app restarts. Use [resolveStoredPath] to get an absolute
 /// path for file I/O or display.
 class MediaFileManager {
+  /// Process-wide cached documents-dir for SYNCHRONOUS path resolution at the
+  /// render boundary.
+  ///
+  /// 127 (round 3): the conversation render gate (`MediaGridCell`,
+  /// `MediaThumbnailImage`) checks `File(localPath).existsSync()` and the DB
+  /// stores a RELATIVE path. On iOS a relative path resolves against the
+  /// process CWD (not Documents), so the gate fails. The async
+  /// [resolveStoredPath] cannot run inside a synchronous `build()`, so the
+  /// render boundary needs this seeded, sync resolver — mirroring
+  /// `UserAvatar.setDocumentsDir`. Seeded once at startup via
+  /// [cacheDocumentsDir].
+  static String? _cachedDocumentsDir;
+
+  static bool _emittedNoCacheDiagnostic = false;
+
+  /// Seeds the cached documents dir for [resolveStoredPathSync]. Call once at
+  /// startup (after `getApplicationDocumentsDirectory()`).
+  static void cacheDocumentsDir(String path) {
+    _cachedDocumentsDir = path;
+  }
+
+  /// The cached documents dir, or null if not yet seeded (tests/non-iOS).
+  static String? get cachedDocumentsDir => _cachedDocumentsDir;
+
+  /// Test-only: clears the process-wide cache + diagnostic latch.
+  @visibleForTesting
+  static void debugResetDocumentsDirCache() {
+    _cachedDocumentsDir = null;
+    _emittedNoCacheDiagnostic = false;
+  }
+
+  /// Synchronous twin of [resolveStoredPath] for the render boundary.
+  ///
+  /// Pure string work over the cached documents dir. Returns [storedPath]
+  /// unchanged when the cache is unseeded or the format is unknown; idempotent
+  /// on already-absolute paths and self-correcting for stale absolute paths
+  /// left by a prior iOS container (the legacy `/media/` extraction re-roots
+  /// them under the current documents dir).
+  static String resolveStoredPathSync(String storedPath) {
+    final docsDir = _cachedDocumentsDir;
+    if (docsDir == null) {
+      // 128: the cache should be seeded at startup. If a render-boundary resolve
+      // hits a null cache, the seed never ran (stale build / ordering) — emit
+      // once so a device log pinpoints it instead of silently passing through.
+      if (!_emittedNoCacheDiagnostic) {
+        _emittedNoCacheDiagnostic = true;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_RESOLVE_SYNC_NO_CACHE',
+          details: const {},
+        );
+      }
+      return storedPath;
+    }
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
+        storedPath.startsWith('media\\') ||
+        storedPath.startsWith('local_media/') ||
+        storedPath.startsWith('local_media\\') ||
+        storedPath.startsWith('post_media/') ||
+        storedPath.startsWith('post_media\\')) {
+      return p.join(docsDir, storedPath);
+    }
+    final mediaIndex = storedPath.indexOf('/media/');
+    if (mediaIndex != -1) {
+      return p.join(docsDir, storedPath.substring(mediaIndex + 1));
+    }
+    final localMediaIndex = storedPath.indexOf('/local_media/');
+    if (localMediaIndex != -1) {
+      return p.join(docsDir, storedPath.substring(localMediaIndex + 1));
+    }
+    final postMediaIndex = storedPath.indexOf('/post_media/');
+    if (postMediaIndex != -1) {
+      return p.join(docsDir, storedPath.substring(postMediaIndex + 1));
+    }
+    return storedPath;
+  }
+
   /// Returns the absolute local file path for a media attachment.
   ///
   /// Creates the parent directory if it doesn't exist.

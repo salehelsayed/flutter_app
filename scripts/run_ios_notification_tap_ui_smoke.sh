@@ -286,7 +286,21 @@ install_app_on_device() {
 
   printf 'Installing %s on %s (%s)\n' "$APP_PATH" "$name" "$device"
   xcrun simctl install "$device" "$APP_PATH"
-  xcrun simctl get_app_container "$device" "$BUNDLE_ID" >/dev/null
+  write_auto_setup_config "$device" "TapSmoke"
+}
+
+write_auto_setup_config() {
+  local device="$1"
+  local username="$2"
+  local container
+  container=$(xcrun simctl get_app_container "$device" "$BUNDLE_ID" data 2>/dev/null || true)
+  if [[ -z "$container" ]]; then
+    xcrun simctl launch "$device" "$BUNDLE_ID" >/dev/null
+    xcrun simctl terminate "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    container=$(xcrun simctl get_app_container "$device" "$BUNDLE_ID" data)
+  fi
+  mkdir -p "$container/Documents"
+  printf '{"username":"%s"}\n' "$username" > "$container/Documents/auto_setup.json"
 }
 
 run_xcode_ui_test() {
@@ -508,8 +522,7 @@ main() {
   mkdir -p "$RESULT_ROOT"
 
   if [[ "$skip_build" -eq 0 ]]; then
-    flutter build ios --simulator --debug \
-      --dart-define=AUTO_SETUP_USERNAME=TapSmoke
+    flutter build ios --simulator --debug
   fi
 
   if [[ ! -d "$APP_PATH" ]]; then

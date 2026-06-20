@@ -17,12 +17,17 @@ class MediaGrid extends StatelessWidget {
   final void Function(MediaAttachment attachment)? onRetryUnavailableMedia;
   final bool requireVerifiedContentHash;
 
+  /// 128 (round 5): owned-media dir id (1:1 contact peerId / groupId) for the
+  /// render-boundary fallback to the durable `media/<id>/<blob>` copy.
+  final String? ownedMediaPeerId;
+
   const MediaGrid({
     super.key,
     required this.media,
     this.onTap,
     this.onRetryUnavailableMedia,
     this.requireVerifiedContentHash = false,
+    this.ownedMediaPeerId,
   });
 
   @override
@@ -101,6 +106,7 @@ class MediaGrid extends StatelessWidget {
                       ? () => onRetryUnavailableMedia!(media[3])
                       : null,
                   requireVerifiedContentHash: requireVerifiedContentHash,
+                  ownedMediaPeerId: ownedMediaPeerId,
                 ),
               ),
             ),
@@ -118,6 +124,7 @@ class MediaGrid extends StatelessWidget {
           ? () => onRetryUnavailableMedia!(media[index])
           : null,
       requireVerifiedContentHash: requireVerifiedContentHash,
+      ownedMediaPeerId: ownedMediaPeerId,
     );
   }
 }

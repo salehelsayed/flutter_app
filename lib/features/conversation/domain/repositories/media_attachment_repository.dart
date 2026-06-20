@@ -1,4 +1,5 @@
 import '../models/media_attachment.dart';
+import '../models/media_preview_descriptor.dart';
 
 /// Repository interface for managing media attachments.
 abstract class MediaAttachmentRepository {
@@ -47,4 +48,17 @@ abstract class MediaAttachmentRepository {
 /// event with an attachment row regardless of current download status.
 abstract class MediaAttachmentByIdLookup {
   Future<MediaAttachment?> getAttachmentById(String id);
+}
+
+/// Optional capability: a key-free batch lookup of [MediaPreviewDescriptor]s
+/// for messages, used by the orbit chat-list to label media without paying a
+/// `SecureKeyStore.read` per attachment on the hot screen-load path.
+///
+/// Callers that only have a plain [MediaAttachmentRepository] should fall back
+/// to `getAttachmentsForMessages` + [MediaPreviewDescriptor.fromAttachments]
+/// (correct, just not key-free) when a repo does not implement this.
+abstract class MediaPreviewDescriptorLookup {
+  Future<Map<String, MediaPreviewDescriptor>> getMediaPreviewDescriptors(
+    List<String> messageIds,
+  );
 }

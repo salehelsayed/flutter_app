@@ -2006,6 +2006,50 @@ void main() {
     // receiver never displays.
     group('115 P2 — delivery receipt hook', () {
       test(
+        '132 Phase 0 (OFF mode): a skipped mint emits DELIVERY_RECEIPT_MINT_SKIPPED with the reason',
+        () async {
+          final lines = await captureDebugPrintedLines(() async {
+            await handleIncomingChatMessage(
+              message: buildP2PMessage(
+                buildValidChatJson(id: 'msg-skip-direct-01'),
+              ),
+              messageRepo: messageRepo,
+              contactRepo: contactRepo,
+              transport: 'direct',
+              stagedEntryId: 'direct:n1',
+              sendDeliveryReceipt: (_) async {},
+              confirmatoryDirectLanEnabled: false,
+            );
+          });
+          final skip = lines.firstWhere(
+            (l) => l.contains('"event":"DELIVERY_RECEIPT_MINT_SKIPPED"'),
+            orElse: () => '',
+          );
+          expect(skip, contains('"reason":"direct"'));
+        },
+      );
+
+      test(
+        '132 Phase 1 (live default): a direct-staged durable message DOES mint a confirmatory receipt',
+        () async {
+          final receiptIds = <String>[];
+          final (result, _, __) = await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildValidChatJson(id: 'msg-phase1-direct-01'),
+            ),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'direct',
+            stagedEntryId: 'direct:p1',
+            sendDeliveryReceipt: (id) async => receiptIds.add(id),
+            // no confirmatoryDirectLanEnabled → uses the live const default (true)
+          );
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(receiptIds, ['msg-phase1-direct-01']);
+        },
+      );
+
+      test(
         'invokes sendDeliveryReceipt after durable persist of an inbox-originated message, and re-invokes on duplicate receive',
         () async {
           final receiptIds = <String>[];
@@ -2046,8 +2090,8 @@ void main() {
           expect(second, HandleChatMessageResult.duplicate);
           expect(receiptIds, ['msg-uuid-001', 'msg-uuid-001']);
 
-          // Live-direct origin → NOT called (confirmNonce owns that ack).
-          // Distinct content so it is a genuinely new message, not an F8
+          // Live-direct origin in OFF mode → NOT called (confirmNonce owns that
+          // ack). Distinct content so it is a genuinely new message, not an F8
           // content-duplicate of the relay message saved above.
           final (third, _, __3) = await handleIncomingChatMessage(
             message: buildP2PMessage(
@@ -2058,6 +2102,7 @@ void main() {
             transport: 'direct',
             stagedEntryId: 'direct:nonce-1',
             sendDeliveryReceipt: hook,
+            confirmatoryDirectLanEnabled: false,
           );
           expect(third, HandleChatMessageResult.chatMessage);
           expect(receiptIds, hasLength(2));
@@ -2065,14 +2110,14 @@ void main() {
       );
 
       test(
-        "origin-marker contract: 'direct:' and 'lan:' staged replays skip receipts; relay-drain entries send receipts; quarantined replays never mint receipts",
+        "OFF-mode origin-marker contract (dark fallback): 'direct:'/'lan:' staged replays skip receipts; relay-drain entries send receipts; quarantined replays never mint",
         () async {
           final receiptIds = <String>[];
           Future<void> hook(String messageId) async {
             receiptIds.add(messageId);
           }
 
-          // 'direct:<nonce>' — the live deferred-ack owns confirmation.
+          // 'direct:<nonce>' — in OFF mode the live deferred-ack owns confirmation.
           await handleIncomingChatMessage(
             message: buildP2PMessage(buildValidChatJson(id: 'msg-direct-01')),
             messageRepo: messageRepo,
@@ -2080,10 +2125,11 @@ void main() {
             transport: 'direct',
             stagedEntryId: 'direct:n1',
             sendDeliveryReceipt: hook,
+            confirmatoryDirectLanEnabled: false,
           );
           expect(receiptIds, isEmpty);
 
-          // 'lan:<nonce>' — doc 114's committed-ack owns confirmation.
+          // 'lan:<nonce>' — in OFF mode doc 114's committed-ack owns confirmation.
           await handleIncomingChatMessage(
             message: buildP2PMessage(buildValidChatJson(id: 'msg-lan-00001')),
             messageRepo: messageRepo,
@@ -2091,6 +2137,7 @@ void main() {
             transport: 'wifi',
             stagedEntryId: 'lan:n1',
             sendDeliveryReceipt: hook,
+            confirmatoryDirectLanEnabled: false,
           );
           expect(receiptIds, isEmpty);
 
@@ -2116,13 +2163,14 @@ void main() {
           );
           expect(receiptIds, ['msg-relay-001', 'msg-relay-002']);
 
-          // Live direct with no staging id and no inbox transport → never.
+          // Live direct with no staging id and no inbox transport → never (OFF).
           await handleIncomingChatMessage(
             message: buildP2PMessage(buildValidChatJson(id: 'msg-direct-02')),
             messageRepo: messageRepo,
             contactRepo: contactRepo,
             transport: 'direct',
             sendDeliveryReceipt: hook,
+            confirmatoryDirectLanEnabled: false,
           );
           expect(receiptIds, ['msg-relay-001', 'msg-relay-002']);
 

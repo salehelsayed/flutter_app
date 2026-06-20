@@ -2,8 +2,11 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
+import 'package:flutter_app/features/orbit/application/load_latest_media_descriptors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
 /// Loads all contacts with their message activity, sorted by most recent message first.
@@ -12,6 +15,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 Future<List<OrbitFriend>> loadOrbitData({
   required ContactRepository contactRepo,
   required MessageRepository messageRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
   bool includeArchived = false,
 }) async {
   emitFlowEvent(layer: 'UC', event: 'LOAD_ORBIT_DATA_START', details: {});
@@ -24,12 +28,17 @@ Future<List<OrbitFriend>> loadOrbitData({
       messageRepo: messageRepo,
       contactPeerIds: contacts.map((contact) => contact.peerId),
     );
+    final descriptors = await loadLatestMediaDescriptors(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      messageIds: _previewableLatestIds(summaries.values),
+    );
     final friends = contacts
         .map(
           (contact) => _buildOrbitFriend(
             contact: contact,
             summary: summaries[contact.peerId] ??
                 ConversationThreadSummary(contactPeerId: contact.peerId),
+            descriptors: descriptors,
           ),
         )
         .toList(growable: false);
@@ -57,6 +66,7 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
   required ContactRepository contactRepo,
   required MessageRepository messageRepo,
   required String contactPeerId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -79,7 +89,15 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
       messageRepo: messageRepo,
       contactPeerId: contactPeerId,
     );
-    final friend = _buildOrbitFriend(contact: contact, summary: summary);
+    final descriptors = await loadLatestMediaDescriptors(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      messageIds: _previewableLatestIds([summary]),
+    );
+    final friend = _buildOrbitFriend(
+      contact: contact,
+      summary: summary,
+      descriptors: descriptors,
+    );
 
     emitFlowEvent(
       layer: 'UC',
@@ -100,14 +118,41 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
 OrbitFriend _buildOrbitFriend({
   required ContactModel contact,
   required ConversationThreadSummary summary,
+  Map<String, MediaPreviewDescriptor> descriptors =
+      const <String, MediaPreviewDescriptor>{},
 }) {
+  final latest = summary.latestMessage;
+  final isDeleted = latest?.deletedAt != null;
+  // A soft-deleted latest message must NOT resurrect its (still-present) media
+  // attachments as a preview label — the row shows the deleted placeholder.
+  // The summary SQL filters hidden_at but not deleted_at, so this is the gate.
+  final descriptor = (latest != null && !isDeleted)
+      ? descriptors[latest.id]
+      : null;
   return OrbitFriend(
     contact: contact,
     messageCount: summary.messageCount,
-    lastActivity: summary.latestMessage?.text,
-    lastMessageTimestamp: summary.latestMessage?.timestamp,
+    lastActivity: isDeleted ? null : latest?.text,
+    lastMessageTimestamp: latest?.timestamp,
     unreadCount: summary.unreadCount,
+    latestMedia: descriptor,
+    isLatestDeleted: isDeleted,
   );
+}
+
+/// Latest-message ids worth a media lookup: present and not soft-deleted.
+/// Deleted latests are skipped so we never label a deleted message's media.
+List<String> _previewableLatestIds(
+  Iterable<ConversationThreadSummary> summaries,
+) {
+  final ids = <String>[];
+  for (final summary in summaries) {
+    final latest = summary.latestMessage;
+    if (latest != null && latest.deletedAt == null) {
+      ids.add(latest.id);
+    }
+  }
+  return ids;
 }
 
 Future<ConversationThreadSummary> _loadConversationThreadSummary({

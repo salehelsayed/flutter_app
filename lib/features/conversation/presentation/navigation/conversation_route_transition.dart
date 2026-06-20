@@ -1,34 +1,23 @@
 import 'package:flutter/material.dart';
 
-/// Builds the slide-up transition used when entering a conversation.
+/// Builds the route used when entering a 1:1 conversation.
 ///
-/// Follows the same pattern as `feed_route_transition.dart`:
-/// 420ms easeOutCubic slide-up with fade.
-Route<T> buildConversationSlideUpRoute<T>({
+/// Uses [MaterialPageRoute] so that on iOS the conversation gets the platform
+/// edge-swipe-back gesture for free — identical to the group conversation
+/// screen (`GroupConversationWired`, also pushed via `MaterialPageRoute`).
+///
+/// Previously this was a `PageRouteBuilder` slide-up + fade, which silently
+/// dropped the iOS edge-swipe-back gesture (the gesture lives inside the same
+/// `buildTransitions` that owned the bespoke transition). See
+/// Test-Flight-Improv/1to1-swipe-back-navigation-tdd-plan.md (Option A): the
+/// accepted trade-off is the enter animation changing from slide-up to the
+/// platform slide-from-right, in exchange for swipe-back parity with groups.
+Route<T> buildConversationRoute<T>({
   required WidgetBuilder builder,
   RouteSettings? settings,
 }) {
-  return PageRouteBuilder<T>(
+  return MaterialPageRoute<T>(
     settings: settings,
-    transitionDuration: const Duration(milliseconds: 420),
-    reverseTransitionDuration: const Duration(milliseconds: 280),
-    pageBuilder: (context, animation, secondaryAnimation) => builder(context),
-    transitionsBuilder: (context, animation, secondaryAnimation, child) {
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      );
-      final slide = Tween<Offset>(
-        begin: const Offset(0, 1),
-        end: Offset.zero,
-      ).animate(curved);
-      final fade = Tween<double>(begin: 0.92, end: 1).animate(curved);
-
-      return FadeTransition(
-        opacity: fade,
-        child: SlideTransition(position: slide, child: child),
-      );
-    },
+    builder: builder,
   );
 }

@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -30,6 +31,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/media/video_thumbnail_overlay.dart';
 
 import '../../../shared/helpers/readability_test_helpers.dart';
@@ -38,6 +40,19 @@ const _validContentHash =
     '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
 const _validEncryptionKey = 'test-encryption-key';
 const _validEncryptionNonce = 'test-encryption-nonce';
+// A real, decodable 1x1 PNG so the render-boundary wiring test doesn't trip the
+// thumbnail decode-error fallback (which itself shows "Media unavailable").
+const _validPngBytes = <int>[
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, //
+  0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, //
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, //
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, //
+  0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, //
+  0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, //
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, //
+  0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, //
+  0x42, 0x60, 0x82, //
+];
 
 void main() {
   final l10n = lookupAppLocalizations(const Locale('en'));
@@ -1056,6 +1071,67 @@ void main() {
     expect(find.byType(AudioPlayerWidget), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
   });
+
+  testWidgets(
+    '128 group wiring: own-sent group image with a stale display path renders '
+    'from the durable owned copy keyed under media/<group.id>',
+    (tester) async {
+      // Locks the group-screen wiring of `ownedMediaPeerId: group.id` (the
+      // sender "Media unavailable" fix, extended from 1:1 to groups). The
+      // displayed attachment carries the DELETED optimistic pending path; the
+      // durable owned copy lives under media/<group.id>/<blob>. If the screen
+      // stops threading ownedMediaPeerId, the render gate cannot find the file
+      // and this row shows "Media unavailable" — i.e. the bug returns and this
+      // test fails. testWidgets sync-IO only (see feedback_testwidgets_sync_io).
+      MediaGridCell.debugResetUnavailableDiagnostics();
+      final tempDir = Directory.systemTemp.createTempSync('grp_media_wiring_');
+      addTearDown(() {
+        MediaFileManager.debugResetDocumentsDirCache();
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+
+      const blob = 'att-grp-stale-1';
+      // The durable owned copy EXISTS under the group dir (testGroup.id).
+      File('${tempDir.path}/media/group-1/$blob.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(_validPngBytes);
+      // Displayed attachment still holds the DELETED optimistic pending path.
+      final stalePending =
+          '${tempDir.path}/pending_uploads/msg-grp-media/$blob.jpg';
+      expect(File(stalePending).existsSync(), isFalse);
+
+      final mediaMessage = GroupMessage(
+        id: 'msg-grp-media',
+        groupId: 'group-1',
+        senderPeerId: 'peer-1', // own-sent (ownPeerId in buildTestWidget)
+        senderUsername: 'You',
+        text: '',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+        isIncoming: false,
+        media: [
+          makeImageAttachment(
+            id: blob,
+            messageId: 'msg-grp-media',
+            localPath: stalePending,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(messages: [mediaMessage], initialLoadDone: true),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Render gate falls back to media/group-1/<blob>.jpg -> verified thumbnail.
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.text('Media unavailable'), findsNothing);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+    },
+  );
 
   testWidgets('renders active quote preview and dismisses it', (tester) async {
     var cleared = false;

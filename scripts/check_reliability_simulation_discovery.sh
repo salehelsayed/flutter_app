@@ -134,6 +134,10 @@ classify_path() {
       record "move-feature" "$path" "test" "Move Account SQLCipher migration capability companion"
       return
       ;;
+    integration_test/app_group_path_simulator_test.dart)
+      record "1to1" "$path" "test" "iOS app-group notification dedupe simulator proof"
+      return
+      ;;
     integration_test/benchmark_harness.dart|\
     integration_test/performance_harness.dart)
       record "ignored" "$path" "ignored" "single dispatched benchmark/performance entrypoint (BENCHMARK/PERF_TARGET=<key>) outside reliability simulation discovery"
@@ -209,6 +213,8 @@ classify_path() {
   case "$path" in
     integration_test/scripts/run_group_recovery_e2e.dart|\
     integration_test/scripts/run_group_multi_device_real.dart|\
+    integration_test/scripts/run_b1b_sibling_device_convergence.dart|\
+    integration_test/scripts/run_invite_reliability_multi_device.dart|\
     integration_test/scripts/run_group_invite_status_matrix_sim.dart|\
     integration_test/scripts/run_group_multi_party_device_real.dart|\
     integration_test/scripts/run_foreground_group_push_simulator_smoke.dart)
@@ -226,9 +232,26 @@ classify_path() {
       record "support" "$path" "support" "group multi-party device criteria helper"
       return
       ;;
+    integration_test/scripts/group_multi_party_runtime_config.dart)
+      record "support" "$path" "support" "group multi-party runtime config helper"
+      return
+      ;;
+    integration_test/group_multi_party_phase0_runtime_channel_probe.dart)
+      record "support" "$path" "support" "group multi-party Phase 0 runtime-channel probe target"
+      return
+      ;;
   esac
 
   case "$path" in
+    integration_test/conversation_swipe_back_proof_test.dart)
+      record "1to1" "$path" "test" "1:1 edge-swipe-back navigation device proof"
+      return
+      ;;
+    integration_test/sender_media_unavailable_fallback_proof_test.dart)
+      record "1to1" "$path" "test" "sender media-unavailable render fallback proof (1:1)"
+      record "group" "$path" "test" "sender media-unavailable render fallback proof (group)"
+      return
+      ;;
     integration_test/transport_e2e_test.dart|\
     integration_test/wifi_relay_fallback_smoke_test.dart|\
     integration_test/wifi_transport_test.dart|\
@@ -274,6 +297,17 @@ classify_path() {
       record "group" "$path" "test" "single dispatched group-lifecycle simulator entrypoint (GROUP_SIM_SCENARIO=<key>)"
       return
       ;;
+    integration_test/group_invite_reliability_proof_test.dart|\
+    integration_test/group_message_retry_backoff_db_proof_test.dart|\
+    integration_test/group_mute_notification_db_proof_test.dart|\
+    integration_test/group_reaction_reliability_db_proof_test.dart|\
+    integration_test/group_recovery_gate_serialization_proof_test.dart|\
+    integration_test/group_rejoin_state_db_proof_test.dart|\
+    integration_test/group_removal_rotation_keyless_converge_proof_test.dart|\
+    integration_test/group_removal_rotation_keyless_proof_test.dart)
+      record "group" "$path" "test" "group reliability device proof"
+      return
+      ;;
     integration_test/group_admin_metadata_convergence_simulator_test.dart|\
     integration_test/group_delete_preserves_friends_simulator_test.dart|\
     integration_test/group_invite_accept_spinner_simulator_test.dart|\
@@ -287,6 +321,7 @@ classify_path() {
     integration_test/bidi_text_smoke_test.dart|\
     integration_test/feed_performance_test.dart|\
     integration_test/feed_wired_init_performance_harness.dart|\
+    integration_test/group_conversation_polish_proof_test.dart|\
     integration_test/identity_progress_performance_test.dart|\
     integration_test/loading_states_smoke_test.dart|\
     integration_test/orbit_performance_harness.dart|\

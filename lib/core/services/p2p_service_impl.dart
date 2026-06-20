@@ -89,6 +89,7 @@ class P2PServiceImpl
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxReaction;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxMessageDeletion;
   final TransportMetrics? _transportMetrics;
+  final Duration? _keyRotationGracePeriodOverride;
   StreamSubscription<LocalChatMessage>? _localMessageSub;
   StreamSubscription<Map<String, LocalPeer>>? _localPeersSub;
   StreamSubscription<LocalMediaReady>? _localMediaSub;
@@ -250,6 +251,7 @@ class P2PServiceImpl
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxReaction,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxMessageDeletion,
     TransportMetrics? transportMetrics,
+    Duration? keyRotationGracePeriodOverride,
   }) : _bridge = bridge,
        _localP2P = localP2PService,
        _pushTokenStore = pushTokenStore,
@@ -263,7 +265,8 @@ class P2PServiceImpl
        _replayRecoveredInboxReaction = replayRecoveredInboxReaction,
        _replayRecoveredInboxMessageDeletion =
            replayRecoveredInboxMessageDeletion,
-       _transportMetrics = transportMetrics {
+       _transportMetrics = transportMetrics,
+       _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
       final transport =
@@ -457,6 +460,7 @@ class P2PServiceImpl
         privateKeyHex: privateKeyHex,
         autoRegister: true,
         namespace: namespace,
+        keyRotationGracePeriod: _keyRotationGracePeriodOverride,
       );
 
       if (response['ok'] == true) {
@@ -947,7 +951,8 @@ class P2PServiceImpl
         committedEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_COMMITTED',
         retryableEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_RETRYABLE',
         rejectedEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_REJECTED',
-        quarantinedEvent: 'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_QUARANTINED',
+        quarantinedEvent:
+            'P2P_SERVICE_DIRECT_STAGED_${eventSuffix}_QUARANTINED',
       );
     } catch (e) {
       await repo.markRetryable(
@@ -1537,7 +1542,8 @@ class P2PServiceImpl
     while (true) {
       final inFlight = _drainInProgress;
       if (inFlight == null) break;
-      final inFlightCoversUs = _drainInProgressWaitsAllPages || !waitForAllPages;
+      final inFlightCoversUs =
+          _drainInProgressWaitsAllPages || !waitForAllPages;
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_DRAIN_COALESCED',
@@ -3156,7 +3162,8 @@ class P2PServiceImpl
     final ReplayRecoveredInboxChatMessage? lanReplay;
     switch (envelopeType) {
       case 'chat_message':
-        lanReplay = _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
+        lanReplay =
+            _replayLiveLanChatMessage ?? _replayRecoveredInboxChatMessage;
         break;
       case 'message_reaction':
         lanReplay = _replayRecoveredInboxReaction;

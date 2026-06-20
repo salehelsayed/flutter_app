@@ -207,6 +207,10 @@ class StartupRouter extends StatefulWidget {
   final AccountMigrationReceiverStopFn? accountMigrationStopReceiver;
   final AccountMigrationReceiverEvents? accountMigrationReceiverEvents;
   final Future<void> Function()? onAccountMigrationReceiverActivated;
+  // 133: fired once the startup home surface has been pushed, so the app shell
+  // can release a deferred notification route ON TOP of it (instead of racing
+  // — and losing to — the home's pushReplacement).
+  final VoidCallback? onStartupHomeReady;
 
   const StartupRouter({
     super.key,
@@ -261,6 +265,7 @@ class StartupRouter extends StatefulWidget {
     this.accountMigrationStopReceiver,
     this.accountMigrationReceiverEvents,
     this.onAccountMigrationReceiverActivated,
+    this.onStartupHomeReady,
   });
 
   @override
@@ -1018,6 +1023,9 @@ class _StartupRouterState extends State<StartupRouter> {
       context,
     ).pushReplacement(buildStartupReplacementRoute(builder: builder));
     StartupTiming.instance.mark('route_pushed');
+    // 133: the home surface now owns the top of the stack — let the app shell
+    // release any deferred notification route on top of it.
+    widget.onStartupHomeReady?.call();
   }
 
   Future<void> _handleAccountMigrationReceiverActivated(

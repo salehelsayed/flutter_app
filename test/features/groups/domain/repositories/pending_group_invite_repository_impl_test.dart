@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/migrations/055_group_invite_revocation
 import 'package:flutter_app/core/database/migrations/056_group_invite_consumptions.dart';
 import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
 import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
+import 'package:flutter_app/core/database/migrations/091_pending_group_invites_inviter_mlkem.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
@@ -72,6 +73,7 @@ void main() {
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runPendingGroupInvitesMigration(db);
+    await runPendingGroupInvitesInviterMlKemMigration(db);
     await runGroupInviteRevocationsMigration(db);
     await runGroupInviteConsumptionsMigration(db);
     await runGroupWelcomeKeyPackageTombstonesMigration(db);

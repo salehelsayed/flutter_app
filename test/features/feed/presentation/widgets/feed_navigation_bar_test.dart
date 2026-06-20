@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_theme.dart';
+import 'package:flutter_app/features/orbit2/orbit2_prototype.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
@@ -29,16 +30,25 @@ void main() {
   );
 
   group('FeedNavigationBar', () {
-    testWidgets('renders 2 NavBarButtons with correct labels', (tester) async {
+    testWidgets('renders Feed/Orbit (+ Orbit2 prototype) NavBarButtons', (
+      tester,
+    ) async {
       suppressAssetErrors(tester);
       await tester.pumpWidget(
         wrap(FeedNavigationBar(activeTab: 'feed', onSwitchView: (_) {})),
       );
       await tester.pump();
 
-      expect(find.byType(NavBarButton), findsNWidgets(2));
+      expect(
+        find.byType(NavBarButton),
+        findsNWidgets(kOrbit2PrototypeEnabled ? 3 : 2),
+      );
       expect(find.text('Feed'), findsOneWidget);
       expect(find.text('Orbit'), findsOneWidget);
+      expect(
+        find.text('Orbit2'),
+        kOrbit2PrototypeEnabled ? findsOneWidget : findsNothing,
+      );
       expect(find.text('Remember'), findsNothing);
       expect(find.text('Posts'), findsNothing);
     });
@@ -171,8 +181,8 @@ void main() {
           .widgetList<SizedBox>(find.byType(SizedBox))
           .where((s) => s.width == NavBarTheme.buttonSpacing)
           .toList();
-      // 1 spacer between 2 buttons
-      expect(spacers.length, 1);
+      // One spacer between each adjacent pair of buttons.
+      expect(spacers.length, kOrbit2PrototypeEnabled ? 2 : 1);
     });
 
     testWidgets('tap callbacks fire correctly', (tester) async {

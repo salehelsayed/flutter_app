@@ -138,4 +138,94 @@ void main() {
       },
     );
   });
+
+  group('deliveryReceiptMintDecision (132)', () {
+    test('OFF mode (flag=false): mints only for relay-inbox, names skip reasons', () {
+      // Relay-inbox arrivals mint regardless of the flag.
+      expect(
+        deliveryReceiptMintDecision(
+          transport: 'inbox',
+          confirmatoryDirectLanEnabled: false,
+        ).shouldMint,
+        isTrue,
+      );
+      expect(
+        deliveryReceiptMintDecision(
+          stagedEntryId: 'relay-1',
+          transport: 'inbox',
+          confirmatoryDirectLanEnabled: false,
+        ).shouldMint,
+        isTrue,
+      );
+      // Direct/LAN staged replays skip in OFF mode — with a named reason.
+      final direct = deliveryReceiptMintDecision(
+        stagedEntryId: 'direct:n1',
+        transport: 'direct',
+        confirmatoryDirectLanEnabled: false,
+      );
+      expect(direct.shouldMint, isFalse);
+      expect(direct.skipReason, DeliveryReceiptMintSkipReason.direct);
+      final lan = deliveryReceiptMintDecision(
+        stagedEntryId: 'lan:n1',
+        transport: 'wifi',
+        confirmatoryDirectLanEnabled: false,
+      );
+      expect(lan.shouldMint, isFalse);
+      expect(lan.skipReason, DeliveryReceiptMintSkipReason.lan);
+      // No staged id + non-inbox transport skips as nonInbox.
+      expect(
+        deliveryReceiptMintDecision(
+          transport: 'direct',
+          confirmatoryDirectLanEnabled: false,
+        ).skipReason,
+        DeliveryReceiptMintSkipReason.nonInbox,
+      );
+      expect(
+        deliveryReceiptMintDecision(
+          confirmatoryDirectLanEnabled: false,
+        ).skipReason,
+        DeliveryReceiptMintSkipReason.nonInbox,
+      );
+    });
+
+    test(
+      'INV-132-0 parity: shouldMintDeliveryReceipt == decision.shouldMint (at the live default)',
+      () {
+        for (final staged in <String?>[null, 'direct:n', 'lan:n', 'relay-1']) {
+          for (final t in <String?>[null, 'inbox', 'direct', 'wifi']) {
+            expect(
+              shouldMintDeliveryReceipt(stagedEntryId: staged, transport: t),
+              deliveryReceiptMintDecision(
+                stagedEntryId: staged,
+                transport: t,
+              ).shouldMint,
+              reason: 'staged=$staged transport=$t',
+            );
+          }
+        }
+      },
+    );
+
+    test(
+      'Phase 1 (flag on): broadens minting to direct/LAN/non-inbox arrivals',
+      () {
+        bool mint(String? staged, String? t) => deliveryReceiptMintDecision(
+          stagedEntryId: staged,
+          transport: t,
+          confirmatoryDirectLanEnabled: true,
+        ).shouldMint;
+        expect(mint('direct:n1', 'direct'), isTrue);
+        expect(mint('lan:n1', 'wifi'), isTrue);
+        expect(mint(null, 'direct'), isTrue);
+        expect(mint(null, null), isTrue);
+        // Relay-inbox still mints (unchanged).
+        expect(mint(null, 'inbox'), isTrue);
+        expect(mint('relay-1', 'inbox'), isTrue);
+      },
+    );
+
+    test('Phase 1 is LIVE by default (device-verified 2026-06-19)', () {
+      expect(kConfirmatoryDirectLanReceiptEnabled, isTrue);
+    });
+  });
 }

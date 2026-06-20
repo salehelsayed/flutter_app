@@ -50,9 +50,19 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   String? _ownPeerId;
 
+  // B1.2: peers with a resolve currently in flight, so we never issue a second
+  // overlapping `service.resolve(...)` for the same peer — each extra native
+  // resolve is another use-after-free window (Test-Flight-Improv plan 130).
+  // Cleared on the resolved or lost event for that peer.
+  final _resolvingPeerIds = <String>{};
+  // B1.3/B1.4: set once teardown begins so no new resolves are issued while or
+  // after discovery is being stopped.
+  bool _stopping = false;
+
   @override
   Future<void> startAdvertising(String peerId, int wsPort) async {
     _ownPeerId = peerId;
+    _stopping = false;
 
     // Advertise our service.
     final service = BonsoirService(
@@ -103,7 +113,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         if (now.difference(e.value.discoveredAt) >
             const Duration(seconds: 15)) {
           final svc = _resolvable[e.key];
-          if (svc != null) unawaited(svc.resolve(disc.serviceResolver));
+          if (svc != null) _issueResolve(e.key, svc, disc);
         }
       }
     });
@@ -118,13 +128,19 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         // Retain the handle so periodic re-resolution can refresh host:port.
         final foundPeerId = service.attributes['peerId'];
         if (foundPeerId != null) _resolvable[foundPeerId] = service;
+        // B1.1: never resolve our OWN advertised service. (The own-peer skip
+        // used to happen only on the resolved event, AFTER the resolve had
+        // already been issued — wasted resolve + extra UAF window, doubled when
+        // two iOS devices both advertise `_mknoon._tcp`.)
+        if (foundPeerId == null || foundPeerId == _ownPeerId) break;
         // Bonsoir requires explicit resolution after a service is found.
-        unawaited(service.resolve(discovery.serviceResolver));
+        _issueResolve(foundPeerId, service, discovery);
         break;
       case BonsoirDiscoveryEventType.discoveryServiceResolved:
         final service = event.service as ResolvedBonsoirService;
         final peerId = service.attributes['peerId'];
         if (peerId == null || peerId == _ownPeerId) return;
+        _resolvingPeerIds.remove(peerId); // B1.2: resolve completed.
 
         final host = service.host;
         if (host == null) return;
@@ -162,6 +178,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   void _markPeerLost(String peerId) {
     _resolvable.remove(peerId);
+    _resolvingPeerIds.remove(peerId); // B1.2: stop tracking a lost peer.
 
     final cachedPeer = _peers[peerId];
     if (cachedPeer != null && !cachedPeer.isStale(DateTime.now().toUtc())) {
@@ -183,8 +200,25 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     );
   }
 
+  /// Issues a single-flight `resolve` for [peerId]: skips when teardown has
+  /// begun (B1.4) or a resolve for the same peer is already in flight (B1.2).
+  /// The in-flight flag clears on the resolved or lost event for that peer.
+  void _issueResolve(
+    String peerId,
+    BonsoirService service,
+    BonsoirDiscovery discovery,
+  ) {
+    if (_stopping || _discovery == null) return;
+    if (!_resolvingPeerIds.add(peerId)) return;
+    unawaited(service.resolve(discovery.serviceResolver));
+  }
+
   @override
   Future<void> stopAdvertising() async {
+    // B1.3: stop issuing resolves before tearing discovery down, so no new
+    // native resolve dispatch source is created during or after teardown.
+    _stopping = true;
+    _resolvingPeerIds.clear();
     _refreshTimer?.cancel();
     _refreshTimer = null;
 
@@ -264,6 +298,9 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     final fresh = getLocalPeer(peerId);
     if (fresh != null) return fresh;
 
+    // B1.4: never issue a resolve once teardown has begun / discovery is gone.
+    if (_stopping || _discovery == null) return null;
+
     emitFlowEvent(
       layer: 'FL',
       event: 'LOCAL_MDNS_RESOLVE_ON_SEND',
@@ -277,7 +314,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     final svc = _resolvable[peerId];
     final disc = _discovery;
     if (svc != null && disc != null) {
-      unawaited(svc.resolve(disc.serviceResolver));
+      _issueResolve(peerId, svc, disc);
     }
 
     try {
@@ -285,6 +322,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     } finally {
       // Clean up so we never leak completers across send attempts.
       _pendingResolves.remove(peerId);
+      _resolvingPeerIds.remove(peerId);
     }
   }
 

@@ -14,6 +14,9 @@ class ConversationHeader extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback? onOverflow;
 
+  /// Invoked when the avatar / name block is tapped (opens the contact profile).
+  final VoidCallback? onAvatarTap;
+
   const ConversationHeader({
     super.key,
     required this.contactPeerId,
@@ -21,6 +24,7 @@ class ConversationHeader extends StatelessWidget {
     required this.connectionDate,
     required this.onBack,
     this.onOverflow,
+    this.onAvatarTap,
   });
 
   @override
@@ -68,39 +72,48 @@ class ConversationHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              // Avatar
-              UserAvatar(peerId: contactPeerId, size: 36),
-              const SizedBox(width: 14),
-              // Name and status
+              // Avatar + name (tappable → contact profile)
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      contactUsername,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: readableColors.textPrimary,
+                child: GestureDetector(
+                  onTap: onAvatarTap,
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
+                    children: [
+                      UserAvatar(peerId: contactPeerId, size: 36),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              contactUsername,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: readableColors.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              AppLocalizations.of(
+                                context,
+                              )!.connected_date(connectionDate),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
+                                color: readableColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      AppLocalizations.of(
-                        context,
-                      )!.connected_date(connectionDate),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w400,
-                        color: readableColors.textMuted,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               // Overflow button

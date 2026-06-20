@@ -4,6 +4,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/brand_header.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/choice_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -34,7 +35,7 @@ void main() {
       expect(find.byType(BrandHeader), findsOneWidget);
     });
 
-    testWidgets('renders the primary card and the compact move button', (
+    testWidgets('renders the primary card and the secondary move card', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -49,6 +50,10 @@ void main() {
       await pumpPastAnimations(tester);
       expect(find.text("I'm new here"), findsOneWidget);
       expect(find.text('Move from old phone'), findsOneWidget);
+      // Both paths are now equal-width ChoiceCards sharing one alignment
+      // edge; hierarchy is carried by the secondary variant's weight/tone,
+      // not by width. (Previously the move action was an orphaned pill.)
+      expect(find.byType(ChoiceCard), findsNWidgets(2));
       // "Load my key" is intentionally hidden from onboarding; Move Account
       // is the supported path for bringing an existing identity over.
       expect(find.text('Load my key'), findsNothing);
@@ -84,10 +89,12 @@ void main() {
       );
       await pumpPastAnimations(tester);
       expect(find.text('Move from old phone'), findsOneWidget);
-      // The compact button drops the description row by design.
+      // The secondary move card now restores its description so the vital
+      // migration path is self-explanatory (clamped to two lines for long
+      // locales). The string already ships in EN/AR/DE.
       expect(
         find.text('Bring your existing account to this device'),
-        findsNothing,
+        findsOneWidget,
       );
     });
 

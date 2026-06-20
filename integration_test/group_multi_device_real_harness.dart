@@ -107,6 +107,7 @@ import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_upd
 import 'package:flutter_app/core/database/migrations/076_post_media_attachment_crypto_columns.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/migrations/078_group_pending_key_distributions.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -180,8 +181,29 @@ const configuredScenario = String.fromEnvironment(
   'MD004_SCENARIO',
   defaultValue: 'same_user',
 );
+const configuredKeyRotationGracePeriodMs = int.fromEnvironment(
+  'MKNOON_KEY_ROTATION_GRACE_PERIOD_MS',
+  defaultValue: 0,
+);
 
-String sharedPath(String name) => '$configuredSharedDir/$name';
+Duration? configuredKeyRotationGracePeriod() {
+  if (configuredKeyRotationGracePeriodMs <= 0) return null;
+  return Duration(milliseconds: configuredKeyRotationGracePeriodMs);
+}
+
+String? _runtimeSharedDirOverride;
+
+void setGroupMultiDeviceRuntimeSharedDir(String? sharedDir) {
+  final normalized = sharedDir?.trim();
+  _runtimeSharedDirOverride = normalized == null || normalized.isEmpty
+      ? null
+      : normalized;
+}
+
+String groupMultiDeviceRuntimeSharedDir() =>
+    _runtimeSharedDirOverride ?? configuredSharedDir;
+
+String sharedPath(String name) => '${groupMultiDeviceRuntimeSharedDir()}/$name';
 
 void initializeSqliteForCurrentPlatform() {
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
@@ -205,7 +227,7 @@ Map<String, dynamic>? loadCliPeerFixture() {
 }
 
 void _writeSharedAtomically(String name, String value) {
-  Directory(configuredSharedDir).createSync(recursive: true);
+  Directory(groupMultiDeviceRuntimeSharedDir()).createSync(recursive: true);
   final targetPath = sharedPath(name);
   final tempPath =
       '$targetPath.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}';
@@ -372,7 +394,7 @@ Future<sqlcipher.Database> _openTestDatabase({
   return openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 77,
+    version: 79,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -455,6 +477,7 @@ Future<sqlcipher.Database> _openTestDatabase({
       // harness schema must have it (else reopen/drain sinks throw and the
       // sibling never converges).
       await runGroupPendingKeyDistributionsMigration(db);
+      await runMessageDedupKeyMigration(db);
       // Finding 10 reaction reliability: durable buffer (081) + message_reactions
       // removed_at tombstone (082). 082 is REQUIRED — reaction insert/load/remove
       // all reference removed_at once Phase 5 lands.
@@ -564,6 +587,8 @@ Future<sqlcipher.Database> _openTestDatabase({
         await runPostMediaAttachmentCryptoColumnsMigration(db);
       }
       if (oldVersion < 77) await runMessageRelayCustodyMigration(db);
+      if (oldVersion < 78) await runGroupPendingKeyDistributionsMigration(db);
+      if (oldVersion < 79) await runMessageDedupKeyMigration(db);
     },
   );
 }
@@ -925,8 +950,12 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     dbLoadActiveOrTombstonedReactionForSender: (messageId, senderPeerId) =>
         dbLoadActiveOrTombstonedReactionForSender(db, messageId, senderPeerId),
     dbDeleteReaction: (messageId, senderPeerId, {removedAtTimestamp}) =>
-        dbDeleteReaction(db, messageId, senderPeerId,
-            removedAtTimestamp: removedAtTimestamp),
+        dbDeleteReaction(
+          db,
+          messageId,
+          senderPeerId,
+          removedAtTimestamp: removedAtTimestamp,
+        ),
     dbDeleteReactionsForMessage: (messageId) =>
         dbDeleteReactionsForMessage(db, messageId),
     dbDeleteReactionsForContact: (contactPeerId) =>
@@ -1044,6 +1073,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   final p2pService = P2PServiceImpl(
     bridge: bridge,
     inboxStagingRepository: InMemoryInboxStagingRepository(),
+    keyRotationGracePeriodOverride: configuredKeyRotationGracePeriod(),
   );
   final started = await p2pService.startNode(
     transportPrivateKey,
@@ -1692,7 +1722,9 @@ Future<void> _runInviteReliabilityPrimary() async {
       _peerIdentityFixture(stack.identity),
     );
 
-    final bobFixture = await waitForSharedJson(_signalName('bob_identity.json'));
+    final bobFixture = await waitForSharedJson(
+      _signalName('bob_identity.json'),
+    );
     final bobContact = _contactFromFixture(bobFixture, 'Bob');
     await stack.contactRepo.addContact(bobContact);
 

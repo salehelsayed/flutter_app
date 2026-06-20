@@ -49,6 +49,9 @@ import 'package:flutter_app/core/database/migrations/025_introduction_already_co
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
+import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
+import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -82,7 +85,7 @@ void main() {
     final db = await openEncryptedDatabase(
       secureKeyStore: secureKeyStore,
       dbName: dbName,
-      version: 44,
+      version: 79,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
@@ -111,6 +114,9 @@ void main() {
         await runGroupQuotedMessageIdMigration(db);
         await runMessagesEditedAtMigration(db);
         await runMessagesDeletedStateMigration(db);
+        await runContactsMlKemKeyUpdatedTsMigration(db);
+        await runMessageRelayCustodyMigration(db);
+        await runMessageDedupKeyMigration(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -139,6 +145,9 @@ void main() {
         if (oldVersion < 26) await runGroupQuotedMessageIdMigration(db);
         if (oldVersion < 43) await runMessagesEditedAtMigration(db);
         if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
+        if (oldVersion < 75) await runContactsMlKemKeyUpdatedTsMigration(db);
+        if (oldVersion < 77) await runMessageRelayCustodyMigration(db);
+        if (oldVersion < 79) await runMessageDedupKeyMigration(db);
       },
     );
     print('[TEST] Database initialized');
@@ -183,6 +192,15 @@ void main() {
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
           dbLoadMessagesPage(
             db,
@@ -331,7 +349,7 @@ void main() {
     print('[TEST] Message: $msg');
 
     // The message should be persisted regardless of delivery outcome.
-    // With a real relay, inbox store succeeds → 'delivered'.
+    // With a real relay, inbox store succeeds → 'inboxed' custody.
     // Without relay connectivity, all retries fail → 'failed'.
     // Either way, the message should be in the DB.
     expect(msg, isNotNull, reason: 'Message should be persisted');
@@ -346,16 +364,17 @@ void main() {
     print('[TEST] Message verified in DB: status=${stored.first.status}');
 
     // 9. Verify the message status is reasonable
-    // With relay: 'delivered' (inbox accepted)
+    // With relay: 'inboxed' (inbox custody accepted) or 'delivered' (live ack)
     // Without relay: 'failed' (all retries exhausted)
     expect(
       stored.first.status,
-      anyOf('delivered', 'failed'),
-      reason: 'Status should be delivered (inbox) or failed (no relay)',
+      anyOf('delivered', 'inboxed', 'failed'),
+      reason:
+          'Status should be delivered, inboxed custody, or failed (no relay)',
     );
 
     if (result == SendChatMessageResult.success) {
-      print('[TEST] PASS: Message delivered via inbox fallback');
+      print('[TEST] PASS: Message accepted by live or inbox transport');
     } else {
       print('[TEST] PASS: Message persisted as failed (relay unreachable)');
     }

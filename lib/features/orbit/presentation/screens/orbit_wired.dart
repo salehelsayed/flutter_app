@@ -23,6 +23,7 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -466,6 +467,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final active = await loadOrbitData(
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
       );
       if (!mounted) return;
 
@@ -492,6 +494,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final archived = await loadOrbitData(
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
         includeArchived: true,
       );
       if (!mounted) return;
@@ -530,6 +533,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final active = await loadOrbitGroups(
         groupRepo: groupRepository,
         msgRepo: groupMessageRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
       );
       // E: tag half-materialized groups (topic-join not yet succeeded) with
       // their bounded rejoin attempt count so the row can badge "Joining…" /
@@ -562,6 +566,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final archived = await loadOrbitGroups(
         groupRepo: groupRepository,
         msgRepo: groupMessageRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
         includeArchived: true,
       );
       if (!mounted) return;
@@ -634,6 +639,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
         contactPeerId: peerId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
       );
       if (!mounted) return;
 
@@ -680,6 +686,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         groupRepo: groupRepository,
         msgRepo: groupMessageRepository,
         groupId: groupId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
       );
       // Re-derive the bounded rejoin attempt count (the snapshot loader leaves
       // it null) so a single-group refresh keeps the "Joining…" / "Couldn't
@@ -1681,7 +1688,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     late final Future<Object?> pushedRoute;
     try {
       pushedRoute = Navigator.of(context).push(
-        buildConversationSlideUpRoute(
+        buildConversationRoute(
           builder: (_) => ConversationWired(
             contact: friend.contact,
             identityRepo: widget.identityRepo,
@@ -1722,6 +1729,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     unawaited(_markConversationReadInBackground(friend.peerId));
   }
 
+  /// Opens the contact profile for [friend]; "Message" jumps into the chat.
+  void _onFriendAvatarTap(OrbitFriend friend) {
+    if (!mounted) return;
+    ContactProfileScreen.open(
+      context,
+      contact: friend.contact,
+      onMessage: () {
+        Navigator.of(context).pop();
+        _onFriendTap(friend);
+      },
+    );
+  }
+
   Future<void> _deleteContactFromOrbit(String peerId) {
     return deleteContactAndMessages(
       contactRepo: widget.contactRepo,
@@ -1752,7 +1772,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _onMyQR() {
     Navigator.of(context).push(
-      buildConversationSlideUpRoute(
+      buildConversationRoute(
         builder: (_) => QRDisplayWired(
           repo: widget.identityRepo,
           bridgeClient: widget.bridge,
@@ -1804,7 +1824,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   void _onScanQR() {
     Navigator.of(context)
         .push(
-          buildConversationSlideUpRoute(
+          buildConversationRoute(
             builder: (scannerContext) => QRScannerWired(
               bridge: widget.bridge,
               contactRepository: widget.contactRepo,
@@ -1853,7 +1873,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 );
                 if (!scannerContext.mounted) return;
                 await Navigator.of(scannerContext).pushReplacement<void, void>(
-                  buildConversationSlideUpRoute(
+                  buildConversationRoute(
                     builder: (_) => AccountMigrationJourneyWired.oldPhone(
                       secureKeyStore: widget.secureKeyStore,
                       identityRepository: widget.identityRepo,
@@ -1955,6 +1975,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       ),
       onClose: _onClose,
       onFriendTap: _onFriendTap,
+      onFriendAvatarTap: _onFriendAvatarTap,
       onMyQR: _onMyQR,
       onScanQR: _onScanQR,
       onSearchOpen: _onSearchOpen,

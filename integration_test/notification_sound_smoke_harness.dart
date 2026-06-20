@@ -199,10 +199,7 @@ void _runAlice() {
       username: 'AliceNotif',
       cliPeerFixture: null,
     );
-    await waitForOnline(
-      stack.p2pService,
-      timeout: const Duration(seconds: 60),
-    );
+    await waitForOnline(stack.p2pService, timeout: const Duration(seconds: 60));
 
     // ── 1:1 message repo (not created by setupGroupMultiDeviceStack) ──
     final messageRepo = MessageRepositoryImpl(
@@ -212,6 +209,15 @@ void _runAlice() {
           dbLoadLatestMessageForContact(stack.db, p),
       dbUpdateMessageStatus: (id, s) => dbUpdateMessageStatus(stack.db, id, s),
       dbLoadMessage: (id) => dbLoadMessage(stack.db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                stack.db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbCountMessagesForContact: (p) => dbCountMessagesForContact(stack.db, p),
       dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(stack.db, p),
       dbCountUnreadForContact: (p) => dbCountUnreadForContact(stack.db, p),
@@ -529,10 +535,7 @@ void _runBob() {
       username: 'BobNotif',
       cliPeerFixture: null,
     );
-    await waitForOnline(
-      stack.p2pService,
-      timeout: const Duration(seconds: 60),
-    );
+    await waitForOnline(stack.p2pService, timeout: const Duration(seconds: 60));
 
     // Publish identity before initializing the local notification plugin. On a
     // fresh iOS simulator the permission request can block an unattended run;
@@ -582,6 +585,15 @@ void _runBob() {
           dbLoadLatestMessageForContact(stack.db, p),
       dbUpdateMessageStatus: (id, s) => dbUpdateMessageStatus(stack.db, id, s),
       dbLoadMessage: (id) => dbLoadMessage(stack.db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                stack.db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbCountMessagesForContact: (p) => dbCountMessagesForContact(stack.db, p),
       dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(stack.db, p),
       dbCountUnreadForContact: (p) => dbCountUnreadForContact(stack.db, p),

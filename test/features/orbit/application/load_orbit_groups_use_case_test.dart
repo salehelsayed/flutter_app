@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_cas
 
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 class _CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
   int getGroupThreadSummariesCallCount = 0;
@@ -272,6 +274,40 @@ void main() {
       );
 
       expect(result, isNull);
+    });
+
+    test('labels a media-only group latest message', () async {
+      await groupRepo.saveGroup(_makeGroup(id: 'g-1', name: 'Alpha'));
+      await msgRepo.saveMessage(
+        _makeMessage(
+          id: 'msg-1',
+          groupId: 'g-1',
+          text: '',
+          timestamp: DateTime.utc(2026, 3, 1),
+        ),
+      );
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await mediaRepo.saveAttachment(
+        MediaAttachment(
+          id: 'b1',
+          messageId: 'msg-1',
+          mime: 'image/jpeg',
+          size: 1000,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-03-01T00:00:00.000Z',
+        ),
+      );
+
+      final result = await loadOrbitGroups(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result.single.latestMedia, isNotNull);
+      expect(result.single.latestMedia!.type, 'image');
+      expect(result.single.latestMedia!.count, 1);
     });
   });
 }

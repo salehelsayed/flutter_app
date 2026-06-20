@@ -84,6 +84,8 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit2/orbit2_prototype.dart';
+import 'package:flutter_app/features/orbit2/presentation/screens/orbit2_screen.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
@@ -1428,7 +1430,7 @@ class _FeedWiredState extends State<FeedWired>
     _clearFeedComposerFocus();
     Navigator.of(context)
         .push(
-          buildConversationSlideUpRoute(
+          buildConversationRoute(
             builder: (_) => ConversationWired(
               contact: contact,
               identityRepo: widget.repository,
@@ -1465,7 +1467,7 @@ class _FeedWiredState extends State<FeedWired>
     _clearFeedComposerFocus();
     Navigator.of(context)
         .push(
-          buildConversationSlideUpRoute(
+          buildConversationRoute(
             builder: (_) => ConversationWired(
               contact: contact,
               identityRepo: widget.repository,
@@ -1877,7 +1879,7 @@ class _FeedWiredState extends State<FeedWired>
 
       Navigator.of(context)
           .push(
-            buildConversationSlideUpRoute(
+            buildConversationRoute(
               builder: (_) => ConversationWired(
                 contact: contact,
                 identityRepo: widget.repository,
@@ -3073,6 +3075,20 @@ class _FeedWiredState extends State<FeedWired>
   @override
   Widget build(BuildContext context) {
     final activeTab = _activeTab;
+    // Temporary Orbit2 visuals prototype: render it directly when its tab is
+    // active (bypasses the 2-pane Feed/Orbit swipe host on purpose).
+    if (kOrbit2PrototypeEnabled && activeTab == AppShellTab.orbit2) {
+      return Scaffold(
+        resizeToAvoidBottomInset: false,
+        body: Orbit2Screen(
+          userPeerId: _peerId,
+          userAvatarBytes: _avatarBytes,
+          backgroundPreference: widget.appShellController.backgroundPreference,
+          activeTab: activeTab,
+          onSwitchView: _onSwitchView,
+        ),
+      );
+    }
     final activeFocusPeerId = _visibleActiveFocusPeerId;
     final feedBody = FeedScreen(
       username: _username,

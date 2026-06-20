@@ -625,7 +625,9 @@ void main() {
         expect(again, HandleMessageDeletionResult.success);
         expect(receiptIds, ['msg-del-rcpt-1', 'msg-del-rcpt-1']);
 
-        // 'direct:' / 'lan:' origins skip (their acks own confirmation).
+        // 132 Phase 1 (LIVE by default): 'direct:'/'lan:' origins ALSO mint a
+        // confirmatory receipt now (the lost-ack repair), so the deleter's
+        // tombstone converges even when the live/LAN ack was lost.
         final (direct, _) = await handleIncomingMessageDeletion(
           message: message,
           messageRepo: messageRepo,
@@ -642,7 +644,7 @@ void main() {
           sendDeliveryReceipt: hook,
         );
         expect(lan, HandleMessageDeletionResult.success);
-        expect(receiptIds, hasLength(2));
+        expect(receiptIds, hasLength(4));
       },
     );
   });

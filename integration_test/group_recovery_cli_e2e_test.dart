@@ -89,6 +89,9 @@ import 'package:flutter_app/core/database/migrations/071_pending_introduction_re
 import 'package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
 import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
+import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
+import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
+import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
@@ -195,7 +198,7 @@ Future<_TestStack> _setupStack() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: _dbName,
-    version: 74,
+    version: 90,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -270,6 +273,9 @@ Future<_TestStack> _setupStack() async {
       await runGroupPendingMembershipMessagesMigration(db);
       await runGroupMessageLastSendAttemptAtMigration(db);
       await runGroupMessageLogicalDeliveryIdMigration(db);
+      await runContactsMlKemKeyUpdatedTsMigration(db);
+      await runGroupsLastMembershipEventIdMigration(db);
+      await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -364,6 +370,15 @@ Future<_TestStack> _setupStack() async {
       }
       if (oldVersion < 74) {
         await runGroupMessageLogicalDeliveryIdMigration(db);
+      }
+      if (oldVersion < 75) {
+        await runContactsMlKemKeyUpdatedTsMigration(db);
+      }
+      if (oldVersion < 83) {
+        await runGroupsLastMembershipEventIdMigration(db);
+      }
+      if (oldVersion < 90) {
+        await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
       }
     },
   );

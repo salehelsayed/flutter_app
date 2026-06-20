@@ -1,9 +1,12 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_thread_summary_repository.dart';
+import 'package:flutter_app/features/orbit/application/load_latest_media_descriptors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 
 /// Loads groups with their latest message and unread count,
@@ -16,6 +19,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 Future<List<OrbitGroup>> loadOrbitGroups({
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
   bool includeArchived = false,
 }) async {
   emitFlowEvent(
@@ -36,11 +40,16 @@ Future<List<OrbitGroup>> loadOrbitGroups({
       msgRepo: msgRepo,
       groupIds: groups.map((group) => group.id),
     );
+    final descriptors = await loadLatestMediaDescriptors(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      messageIds: _latestMessageIds(summaries.values),
+    );
     final orbitGroups = groups
         .map(
           (group) => _buildOrbitGroup(
             group: group,
             summary: summaries[group.id] ?? GroupThreadSummary(groupId: group.id),
+            descriptors: descriptors,
           ),
         )
         .toList(growable: false);
@@ -68,6 +77,7 @@ Future<OrbitGroup?> loadOrbitGroupSnapshot({
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
   required String groupId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -90,7 +100,15 @@ Future<OrbitGroup?> loadOrbitGroupSnapshot({
       msgRepo: msgRepo,
       groupId: groupId,
     );
-    final orbitGroup = _buildOrbitGroup(group: group, summary: summary);
+    final descriptors = await loadLatestMediaDescriptors(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      messageIds: _latestMessageIds([summary]),
+    );
+    final orbitGroup = _buildOrbitGroup(
+      group: group,
+      summary: summary,
+      descriptors: descriptors,
+    );
 
     emitFlowEvent(
       layer: 'UC',
@@ -111,6 +129,8 @@ Future<OrbitGroup?> loadOrbitGroupSnapshot({
 OrbitGroup _buildOrbitGroup({
   required GroupModel group,
   required GroupThreadSummary summary,
+  Map<String, MediaPreviewDescriptor> descriptors =
+      const <String, MediaPreviewDescriptor>{},
 }) {
   final latestMessage = summary.latestMessage;
   return OrbitGroup(
@@ -120,7 +140,19 @@ OrbitGroup _buildOrbitGroup({
     latestMessage: latestMessage?.text,
     unreadCount: summary.unreadCount,
     lastActivityTimestamp: latestMessage?.timestamp ?? group.createdAt,
+    latestMedia: latestMessage == null ? null : descriptors[latestMessage.id],
   );
+}
+
+/// Latest-message ids for a media lookup. Group messages carry no soft-delete
+/// state ([GroupMessage] has no deletedAt), so every present latest qualifies.
+List<String> _latestMessageIds(Iterable<GroupThreadSummary> summaries) {
+  final ids = <String>[];
+  for (final summary in summaries) {
+    final latest = summary.latestMessage;
+    if (latest != null) ids.add(latest.id);
+  }
+  return ids;
 }
 
 Future<GroupThreadSummary> _loadGroupThreadSummary({

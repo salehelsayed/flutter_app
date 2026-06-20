@@ -987,7 +987,7 @@ class _PostsWiredState extends State<PostsWired> {
     }
 
     await Navigator.of(context).push(
-      buildConversationSlideUpRoute(
+      buildConversationRoute(
         builder: (_) => ConversationWired(
           contact: contact,
           identityRepo: widget.identityRepo,

@@ -1063,6 +1063,13 @@ func TestStartNode_MissingPrivateKeyHex(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestStartNode_InvalidKeyRotationGracePeriod(t *testing.T) {
+	withFreshSingletonNode(t)
+	result := StartNode(`{"privateKeyHex":"deadbeef","keyRotationGracePeriodMs":-1}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
 func TestStartNode_InvalidPrivateKeyHex(t *testing.T) {
 	withFreshSingletonNode(t)
 	// "zzzz" is not valid hex, but even valid hex that doesn't decode

@@ -10438,6 +10438,34 @@ void main() {
       );
     });
 
+    test('rejects GM-016 live-only post-removal send without topic proof', () {
+      final invalid = _validGm016Verdicts();
+      final aliceSent =
+          (invalid[0]['sentMessages'] as List<Map<String, Object?>>)
+              .map((entry) => Map<String, Object?>.from(entry))
+              .toList(growable: false);
+      aliceSent[0]
+        ..['actualDurablePayloadProof'] = false
+        ..['actualTopicPeerProof'] = false
+        ..['topicPeers'] = 0
+        ..['recipientPeerIds'] = const <String>[];
+      invalid[0] = {...invalid[0], 'sentMessages': aliceSent};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm016',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: invalid,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceAfterCharlieUnsubscribe must report actual durable payload proof or live topic peer proof',
+        ),
+      );
+    });
+
     test('rejects GM-015 writerless zombie state', () {
       final invalid = _validGm015Verdicts();
       final aliceProof =
@@ -10707,6 +10735,43 @@ void main() {
       );
     });
 
+    test('rejects GM-014 live-only post-readd send without topic proof', () {
+      final missingTopicProof = _validGm014Verdicts();
+      missingTopicProof[0] = {
+        ...missingTopicProof[0],
+        'sentMessages': const <Map<String, Object?>>[
+          {
+            'key': 'aliceAfterReadd',
+            'messageId': 'gm014-a-after',
+            'text': 'alice after readd',
+            'outcome': 'success',
+            'senderPeerId': 'alice-peer',
+            'keyEpoch': 2,
+            'recipientPeerIds': <String>[],
+            'actualDurablePayloadProof': false,
+            'actualTopicPeerProof': false,
+            'deliveryMode': 'live_only',
+            'inboxStored': false,
+            'topicPeers': 1,
+          },
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm014',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingTopicProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceAfterReadd must report actual durable payload proof or live topic peer proof',
+        ),
+      );
+    });
+
     test('rejects GM-014 cross-role re-add timestamp drift', () {
       final drifted = _validGm014Verdicts();
       final bobProof = Map<String, Object?>.from(
@@ -10962,6 +11027,43 @@ void main() {
       expect(
         duplicateRejected.detail,
         contains('bob: received charlieBeforeCutoff count=2'),
+      );
+    });
+
+    test('rejects GM-013 live-only post-removal send without topic proof', () {
+      final missingTopicProof = _validGm013Verdicts();
+      missingTopicProof[0] = {
+        ...missingTopicProof[0],
+        'sentMessages': const <Map<String, Object?>>[
+          {
+            'key': 'aliceAfterCharlieRemove',
+            'messageId': 'gm013-a-after',
+            'text': 'alice after charlie remove',
+            'outcome': 'success',
+            'senderPeerId': 'alice-peer',
+            'keyEpoch': 2,
+            'recipientPeerIds': <String>[],
+            'actualDurablePayloadProof': false,
+            'actualTopicPeerProof': false,
+            'deliveryMode': 'live_only',
+            'inboxStored': false,
+            'topicPeers': 1,
+          },
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm013',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingTopicProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceAfterCharlieRemove must report actual durable payload proof or live topic peer proof',
+        ),
       );
     });
 
@@ -11246,6 +11348,7 @@ void main() {
             'senderPeerId': 'alice-peer',
             'keyEpoch': 2,
             'recipientPeerIds': <String>['bob-peer'],
+            'actualDurablePayloadProof': true,
           },
         ],
       };
@@ -11277,6 +11380,43 @@ void main() {
       expect(
         rejected.detail,
         contains('charlie: received aliceAfterStaleRemove count=0'),
+      );
+    });
+
+    test('rejects GM-012 live-only send without topic peer proof', () {
+      final missingTopicProof = _validGm012Verdicts();
+      missingTopicProof[0] = {
+        ...missingTopicProof[0],
+        'sentMessages': const <Map<String, Object?>>[
+          {
+            'key': 'aliceAfterStaleRemove',
+            'messageId': 'gm012-a-after',
+            'text': 'alice after stale remove',
+            'outcome': 'success',
+            'senderPeerId': 'alice-peer',
+            'keyEpoch': 2,
+            'recipientPeerIds': <String>[],
+            'actualDurablePayloadProof': false,
+            'actualTopicPeerProof': false,
+            'deliveryMode': 'live_only',
+            'inboxStored': false,
+            'topicPeers': 2,
+          },
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm012',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingTopicProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceAfterStaleRemove must report actual durable payload proof or live topic peer proof',
+        ),
       );
     });
 
@@ -11490,6 +11630,7 @@ void main() {
             'senderPeerId': 'alice-peer',
             'keyEpoch': 2,
             'recipientPeerIds': <String>['bob-peer', 'charlie-peer'],
+            'actualDurablePayloadProof': true,
           },
         ],
       };
@@ -11622,6 +11763,7 @@ void main() {
             'senderPeerId': 'charlie-peer',
             'keyEpoch': 2,
             'recipientPeerIds': <String>['alice-peer', 'bob-peer', 'bob-peer'],
+            'actualDurablePayloadProof': true,
           },
         ],
       };
@@ -11637,6 +11779,43 @@ void main() {
         rejected.detail,
         contains(
           'charlie: sent charlieAfterDuplicateReadd recipientPeerIds contain duplicates',
+        ),
+      );
+    });
+
+    test('rejects GM-010 live-only send without topic peer proof', () {
+      final missingLiveProof = _validGm010Verdicts();
+      missingLiveProof[0] = {
+        ...missingLiveProof[0],
+        'sentMessages': const <Map<String, Object?>>[
+          {
+            'key': 'aliceAfterDuplicateReadd',
+            'messageId': 'gm010-a-after',
+            'text': 'alice after duplicate readd',
+            'outcome': 'success',
+            'senderPeerId': 'alice-peer',
+            'keyEpoch': 2,
+            'recipientPeerIds': <String>[],
+            'actualDurablePayloadProof': false,
+            'actualTopicPeerProof': false,
+            'deliveryMode': 'live_only',
+            'inboxStored': false,
+            'topicPeers': 0,
+          },
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm010',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingLiveProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: sent aliceAfterDuplicateReadd must report actual durable payload proof or live topic peer proof',
         ),
       );
     });
@@ -14579,6 +14758,56 @@ void main() {
     );
 
     test(
+      'rejects private_concurrent_admin_membership_edits removed Charlie cleanup gaps',
+      () {
+        final weak = _validPrivateConcurrentAdminMembershipVerdicts();
+        weak[2] = {
+          ...weak[2],
+          'memberPeerIds': const <String>[
+            'alice-peer',
+            'bob-peer',
+            'charlie-peer',
+            'dana-peer',
+          ],
+          'ml012ConcurrentAdminEditsProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              weak[2]['ml012ConcurrentAdminEditsProof'] as Map,
+            ),
+            'postRemovalGroupPresent': false,
+            'retainedLocalHistoryAfterRemoval': false,
+            'currentMemberAfterRemoval': true,
+            'postRemovalKeyAbsent': false,
+            'removedCharlieExcluded': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_concurrent_admin_membership_edits',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: weak,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: ml012ConcurrentAdminEditsProof.postRemovalGroupPresent must be true',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: ml012ConcurrentAdminEditsProof.currentMemberAfterRemoval must be false',
+          ),
+        );
+        expect(
+          rejected.detail,
+          contains('charlie: active members must exclude removed Charlie'),
+        );
+      },
+    );
+
+    test(
       'rejects private_concurrent_admin_membership_edits member divergence',
       () {
         final divergent = _validPrivateConcurrentAdminMembershipVerdicts();
@@ -15773,43 +16002,35 @@ void main() {
       );
     });
 
-    test('rejects partial key distribution when sender promotes epoch', () {
-      final unblocked = _validPrivatePartialKeyDistributionVerdicts();
-      unblocked[0] = {
-        ...unblocked[0],
-        'keyEpoch': 2,
-        'sentMessages': const <Map<String, Object?>>[
-          {
-            'key': 'aliceAfterPartialKeyDistributionFailure',
-            'messageId': 'ke015-a-after',
-            'text': 'alice after partial distribution failure',
-            'outcome': 'success',
-            'senderPeerId': 'alice-peer',
-            'keyEpoch': 2,
-          },
-        ],
+    test('rejects partial key distribution without deferred repair', () {
+      final unrepaired = _validPrivatePartialKeyDistributionVerdicts();
+      unrepaired[0] = {
+        ...unrepaired[0],
         'ke015PartialKeyDistributionProof': <String, Object?>{
           ...Map<String, Object?>.from(
-            unblocked[0]['ke015PartialKeyDistributionProof'] as Map,
+            unrepaired[0]['ke015PartialKeyDistributionProof'] as Map,
           ),
-          'rotationBlocked': false,
-          'keptSenderEpochAfterFailure': false,
-          'blockedKeyRotatedPublish': false,
-          'finalEpoch': 2,
-          'postFailureMessageEpoch': 2,
+          'failedRecipientDeferred': false,
+          'redistributedDeferredKeyToFailedRecipient': false,
+          'postRepairMessageEpoch': 1,
+          'finalEpoch': 1,
         },
       };
 
       final rejected = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_partial_key_distribution',
         relayAddresses: expectedMultiPartyRelayAddresses,
-        verdicts: unblocked,
+        verdicts: unrepaired,
       );
 
       expect(rejected.ok, isFalse);
-      expect(rejected.detail, contains('rotationBlocked must be true'));
-      expect(rejected.detail, contains('finalEpoch must remain 1'));
-      expect(rejected.detail, contains('postFailureMessageEpoch must be 1'));
+      expect(rejected.detail, contains('failedRecipientDeferred must be true'));
+      expect(
+        rejected.detail,
+        contains('redistributedDeferredKeyToFailedRecipient must be true'),
+      );
+      expect(rejected.detail, contains('finalEpoch must be 2'));
+      expect(rejected.detail, contains('postRepairMessageEpoch must be 2'));
     });
 
     test('rejects partial key distribution when failed recipient is deaf', () {
@@ -15822,8 +16043,8 @@ void main() {
           ...Map<String, Object?>.from(
             deaf[2]['ke015PartialKeyDistributionProof'] as Map,
           ),
-          'receivedPostFailureAtPreviousEpoch': false,
-          'notDeafAfterFailedKeyUpdate': false,
+          'receivedPostRepairAtPromotedEpoch': false,
+          'notDeafAfterDeferredKeyUpdate': false,
         },
       };
 
@@ -16320,7 +16541,7 @@ void main() {
           ...Map<String, Object?>.from(
             staleCharlie[2]['gm009DuplicateRemovalProof'] as Map,
           ),
-          'groupPresentAfterDuplicateRemoval': true,
+          'selfMemberPresentAfterDuplicateRemoval': true,
           'postRemovalPublishAccepted': true,
           'receivedAlicePostDuplicateRemove': true,
           'postRemovalPlaintextCount': 1,
@@ -16340,7 +16561,7 @@ void main() {
       );
       expect(
         rejected.detail,
-        contains('groupPresentAfterDuplicateRemoval must be false'),
+        contains('selfMemberPresentAfterDuplicateRemoval must be false'),
       );
       expect(
         rejected.detail,
@@ -16680,6 +16901,49 @@ void main() {
         contains('receivedPostReaddMessage must be true'),
       );
     });
+
+    test('rejects GM-007 Charlie without live or drained post-readd proof', () {
+      final missingReplayProof = _validGm007Verdicts();
+      missingReplayProof[2] = {
+        ...missingReplayProof[2],
+        'ke018HistoryReplayEpochWindowProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingReplayProof[2]['ke018HistoryReplayEpochWindowProof'] as Map,
+          ),
+          'postReaddMissingBeforeDrain': true,
+          'postReaddLiveBeforeDrain': false,
+          'drainedPostReaddReplayAtCurrentEpoch': false,
+        },
+        'ir005ReaddReplayProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingReplayProof[2]['ir005ReaddReplayProof'] as Map,
+          ),
+          'postReaddMissingBeforeDrain': true,
+          'postReaddLiveBeforeDrain': false,
+          'receivedPostReaddReplayAfterDrain': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingReplayProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'ke018HistoryReplayEpochWindowProof.postReaddLiveBeforeDrain or drainedPostReaddReplayAtCurrentEpoch must be true',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'ir005ReaddReplayProof.postReaddLiveBeforeDrain or receivedPostReaddReplayAfterDrain must be true',
+        ),
+      );
+    });
   });
 }
 
@@ -16857,12 +17121,13 @@ List<Map<String, dynamic>> _validGe002Verdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'ge002-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       extra: <String, Object?>{
         'ge002RemovalContinuityProof': <String, Object?>{
           'selfRemoved': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'selfMemberPresentAfterRemoval': false,
           'postRemovalPlaintextCount': 0,
           'checkedPostRemovalMessageCount': 10,
           'postRemovalMessageKeys': keys,
@@ -16941,12 +17206,13 @@ List<Map<String, dynamic>> _validGe003Verdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'ge003-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       extra: <String, Object?>{
         'ge003RemainingPairProof': <String, Object?>{
           'selfRemoved': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'selfMemberPresentAfterRemoval': false,
           'postRemovalPlaintextCount': 0,
           'checkedPostRemovalMessageCount': 10,
           'postRemovalMessageKeys': keys,
@@ -17543,7 +17809,7 @@ List<Map<String, dynamic>> _validGe007Verdicts() {
       role: 'alice',
       peerId: 'alice-peer',
       groupId: 'ge007-group',
-      keyEpoch: 1,
+      keyEpoch: 2,
       memberPeerIds: members,
       sentMessages: const <Map<String, Object?>>[aliceRemoved, alicePost],
       receivedMessages: <Map<String, Object?>>[
@@ -17583,7 +17849,7 @@ List<Map<String, dynamic>> _validGe007Verdicts() {
       role: 'bob',
       peerId: 'bob-peer',
       groupId: 'ge007-group',
-      keyEpoch: 1,
+      keyEpoch: 2,
       memberPeerIds: members,
       sentMessages: const <Map<String, Object?>>[bobPost],
       receivedMessages: <Map<String, Object?>>[
@@ -18904,7 +19170,7 @@ List<Map<String, dynamic>> _validDe003Verdicts() {
           'text': text,
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
-          'keyEpoch': 1,
+          'keyEpoch': 2,
           'timestamp': '2026-05-12T03:00:00.000Z',
         },
       ],
@@ -18999,7 +19265,7 @@ List<Map<String, dynamic>> _validDe007Verdicts() {
           'text': text,
           'outcome': 'successNoPeers',
           'senderPeerId': 'alice-peer',
-          'keyEpoch': 1,
+          'keyEpoch': 2,
           'timestamp': '2026-05-12T04:00:00.000Z',
         },
       ],
@@ -22846,10 +23112,11 @@ List<Map<String, dynamic>> _validGm004Verdicts() {
         'gm004RemovalProof': <String, Object?>{
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'selfMemberPresentAfterRemoval': false,
           'hasRotatedEpoch': false,
           'rotatedEpoch': 0,
-          'postRemovalSendOutcome': 'groupNotFound',
+          'postRemovalSendOutcome': 'unauthorized',
           'postRemovalPublishAccepted': false,
           'receivedAliceAfterRemoval': false,
           'receivedBobAfterRemoval': false,
@@ -22947,14 +23214,15 @@ List<Map<String, dynamic>> _validPrivateRemovedNotificationPrivacyVerdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: groupId,
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       extra: const <String, Object?>{
         'up012NotificationPrivacyProof': <String, Object?>{
           'rowId': 'UP-012',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'selfMemberPresentAfterRemoval': false,
           'receivedAliceAfterRemoval': false,
           'receivedBobAfterRemoval': false,
           'postRemovalPlaintextCount': 0,
@@ -23141,14 +23409,15 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'private-online-remove-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       extra: const <String, Object?>{
         'ml005OnlineRemovalProof': <String, Object?>{
           'rowId': 'ML-005',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'selfMemberPresentAfterRemoval': false,
           'hasRotatedEpoch': false,
           'rotatedEpoch': 0,
           'postRemovalSendOutcome': 'groupNotFound',
@@ -23174,7 +23443,8 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'rowId': 'ST-006',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'selfMemberPresentAfterRemoval': false,
           'hasRotatedEpoch': false,
           'excludedRotatedEpoch': 2,
           'retainedEpochAfterRemoval': 0,
@@ -23187,7 +23457,8 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'rowId': 'PL-006',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
+          'selfMemberPresentAfterRemoval': false,
           'mediaBlobId': 'pl006-post-removal-media',
           'directDownloadAttempted': true,
           'directDownloadDenied': true,
@@ -23315,7 +23586,7 @@ List<Map<String, dynamic>> _validPrivateOfflineRemoveVerdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'private-offline-remove-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       extra: const <String, Object?>{
         'ml006OfflineRemovalProof': <String, Object?>{
@@ -23326,7 +23597,8 @@ List<Map<String, dynamic>> _validPrivateOfflineRemoveVerdicts() {
           'reconnectedWithStaleState': true,
           'retrievedInboxAfterReconnect': true,
           'convergedRemoved': true,
-          'groupPresentAfterCatchUp': false,
+          'groupPresentAfterCatchUp': true,
+          'selfMemberPresentAfterCatchUp': false,
           'hasRotatedEpoch': false,
           'rotatedEpoch': 0,
           'postRemovalPlaintextCount': 0,
@@ -23343,7 +23615,8 @@ List<Map<String, dynamic>> _validPrivateOfflineRemoveVerdicts() {
           'reconnectedWithStaleState': true,
           'retrievedInboxAfterReconnect': true,
           'convergedRemoved': true,
-          'groupPresentAfterCatchUp': false,
+          'groupPresentAfterCatchUp': true,
+          'selfMemberPresentAfterCatchUp': false,
           'retainedRotatedEpoch': false,
           'staleKeyEpochBeforeDrain': 1,
           'rotatedEpochAfterDrain': 0,
@@ -23456,7 +23729,7 @@ List<Map<String, dynamic>> _validGm005Verdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'gm005-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       extra: const <String, Object?>{
         'gm005OfflineRemovalProof': <String, Object?>{
@@ -23466,7 +23739,8 @@ List<Map<String, dynamic>> _validGm005Verdicts() {
           'reconnectedWithStaleState': true,
           'retrievedInboxAfterReconnect': true,
           'convergedRemoved': true,
-          'groupPresentAfterCatchUp': false,
+          'groupPresentAfterCatchUp': true,
+          'selfMemberPresentAfterCatchUp': false,
           'hasRotatedEpoch': false,
           'rotatedEpoch': 0,
           'postRemovalPlaintextCount': 0,
@@ -25184,7 +25458,7 @@ List<Map<String, dynamic>> _validPrivateConcurrentAdminMembershipVerdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: groupId,
-      memberPeerIds: const <String>[],
+      memberPeerIds: activeMembers,
       keyEpoch: 1,
       extra: const <String, Object?>{
         'activeMemberPeerIds': <String>[],
@@ -25194,7 +25468,11 @@ List<Map<String, dynamic>> _validPrivateConcurrentAdminMembershipVerdicts() {
           'concurrentAdminProofSource': 'app_peer_core_simulator',
           'deliveryOrdersTested': deliveryOrders,
           'charlieRemoved': true,
-          'postRemovalGroupAbsent': true,
+          'postRemovalGroupPresent': true,
+          'retainedLocalHistoryAfterRemoval': true,
+          'currentMemberAfterRemoval': false,
+          'postRemovalKeyAbsent': true,
+          'retainedMemberPeerIds': activeMembers,
           'removedCharlieExcluded': true,
           'sameTargetTieRemoveWins': true,
           'removedWindowPlaintextCount': 0,
@@ -25738,7 +26016,12 @@ List<Map<String, dynamic>> _validPrivateHistoryRetentionVerdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 2,
-          'recipientPeerIds': <String>['bob-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'inboxStored': false,
+          'topicPeers': 1,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -25780,6 +26063,11 @@ List<Map<String, dynamic>> _validPrivateHistoryRetentionVerdicts() {
           'senderPeerId': 'bob-peer',
           'keyEpoch': 2,
           'recipientPeerIds': <String>['alice-peer'],
+          'actualDurablePayloadProof': true,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_and_inbox',
+          'inboxStored': true,
+          'topicPeers': 1,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -26515,7 +26803,7 @@ List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
       peerId: 'alice-peer',
       groupId: groupId,
       memberPeerIds: members,
-      keyEpoch: 1,
+      keyEpoch: 2,
       sentMessages: const <Map<String, Object?>>[
         {
           'key': 'aliceAfterPartialKeyDistributionFailure',
@@ -26523,7 +26811,7 @@ List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
           'text': 'alice after partial distribution failure',
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
-          'keyEpoch': 1,
+          'keyEpoch': 2,
         },
       ],
       extra: const <String, Object?>{
@@ -26532,13 +26820,14 @@ List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
           'attemptedMixedDistribution': true,
           'bobKeyUpdateSucceeded': true,
           'charlieKeyUpdateFailed': true,
-          'rotationBlocked': true,
-          'keptSenderEpochAfterFailure': true,
-          'blockedKeyRotatedPublish': true,
-          'sentPostFailureAtPreviousEpoch': true,
+          'rotationPromotedAfterPartialDistribution': true,
+          'senderPromotedAfterPartialDistribution': true,
+          'failedRecipientDeferred': true,
+          'redistributedDeferredKeyToFailedRecipient': true,
+          'sentPostRepairAtPromotedEpoch': true,
           'attemptedEpoch': 2,
-          'postFailureMessageEpoch': 1,
-          'finalEpoch': 1,
+          'postRepairMessageEpoch': 2,
+          'finalEpoch': 2,
         },
       },
     ),
@@ -26555,7 +26844,7 @@ List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
           'ke015-a-after',
           'alice after partial distribution failure',
           'alice-peer',
-          keyEpoch: 1,
+          keyEpoch: 2,
         ),
       ],
       persistedMessageCounts: const <String, int>{
@@ -26565,8 +26854,8 @@ List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
         'ke015PartialKeyDistributionProof': <String, Object?>{
           'rowId': 'KE-015',
           'receivedSuccessfulKeyUpdate': true,
-          'successfulRecipientStillReceivesPostFailure': true,
-          'receivedPostFailureAtPreviousEpoch': true,
+          'successfulRecipientStillReceivesPostRepair': true,
+          'receivedPostRepairAtPromotedEpoch': true,
           'finalEpoch': 2,
         },
       },
@@ -26577,14 +26866,14 @@ List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
       peerId: 'charlie-peer',
       groupId: groupId,
       memberPeerIds: members,
-      keyEpoch: 1,
+      keyEpoch: 2,
       receivedMessages: <Map<String, Object?>>[
         _received(
           'aliceAfterPartialKeyDistributionFailure',
           'ke015-a-after',
           'alice after partial distribution failure',
           'alice-peer',
-          keyEpoch: 1,
+          keyEpoch: 2,
         ),
       ],
       persistedMessageCounts: const <String, int>{
@@ -26593,10 +26882,11 @@ List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
       extra: const <String, Object?>{
         'ke015PartialKeyDistributionProof': <String, Object?>{
           'rowId': 'KE-015',
-          'failedRecipientDidNotAdvance': true,
-          'receivedPostFailureAtPreviousEpoch': true,
-          'notDeafAfterFailedKeyUpdate': true,
-          'finalEpoch': 1,
+          'failedRecipientInitiallyDidNotAdvance': true,
+          'receivedDeferredKeyUpdate': true,
+          'receivedPostRepairAtPromotedEpoch': true,
+          'notDeafAfterDeferredKeyUpdate': true,
+          'finalEpoch': 2,
         },
       },
     ),
@@ -28397,7 +28687,8 @@ List<Map<String, dynamic>> _validGm007Verdicts() {
         'ke018HistoryReplayEpochWindowProof': <String, Object?>{
           'rowId': 'KE-018',
           'receivedPreRemovalReplayWindow': true,
-          'postReaddMissingBeforeDrain': true,
+          'postReaddMissingBeforeDrain': false,
+          'postReaddLiveBeforeDrain': true,
           'drainedPostReaddReplayAtCurrentEpoch': true,
           'noRemovedWindowReplayAfterDrain': true,
           'memberListIncludesAliceBobCharlie': true,
@@ -28409,7 +28700,8 @@ List<Map<String, dynamic>> _validGm007Verdicts() {
         'ir005ReaddReplayProof': <String, Object?>{
           'rowId': 'IR-005',
           'receivedAllowedPreRemovalHistory': true,
-          'postReaddMissingBeforeDrain': true,
+          'postReaddMissingBeforeDrain': false,
+          'postReaddLiveBeforeDrain': true,
           'receivedPostReaddReplayAfterDrain': true,
           'noRemovedWindowReplayAfterDrain': true,
           'memberListIncludesAliceBobCharlie': true,
@@ -29855,14 +30147,14 @@ List<Map<String, dynamic>> _validGm009Verdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'gm009-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       sentMessages: const <Map<String, Object?>>[
         {
           'key': 'charlieAfterDuplicateRemove',
           'messageId': 'gm009-c-after',
           'text': 'charlie after duplicate remove',
-          'outcome': 'groupNotFound',
+          'outcome': 'unauthorized',
           'senderPeerId': 'charlie-peer',
           'keyEpoch': 0,
         },
@@ -29872,9 +30164,10 @@ List<Map<String, dynamic>> _validGm009Verdicts() {
       extra: const <String, Object?>{
         'gm009DuplicateRemovalProof': <String, Object?>{
           'currentMemberBeforeRemoval': true,
-          'groupPresentAfterDuplicateRemoval': false,
+          'groupPresentAfterDuplicateRemoval': true,
+          'selfMemberPresentAfterDuplicateRemoval': false,
           'hasRotatedEpoch': false,
-          'postRemovalSendOutcome': 'groupNotFound',
+          'postRemovalSendOutcome': 'unauthorized',
           'postRemovalPublishAccepted': false,
           'receivedAlicePostDuplicateRemove': false,
           'receivedBobPostDuplicateRemove': false,
@@ -29904,7 +30197,12 @@ List<Map<String, dynamic>> _validGm010Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 2,
-          'recipientPeerIds': <String>['bob-peer', 'charlie-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'inboxStored': false,
+          'topicPeers': 2,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -29996,6 +30294,11 @@ List<Map<String, dynamic>> _validGm010Verdicts() {
           'senderPeerId': 'charlie-peer',
           'keyEpoch': 2,
           'recipientPeerIds': <String>['alice-peer', 'bob-peer'],
+          'actualDurablePayloadProof': true,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_and_inbox',
+          'inboxStored': true,
+          'topicPeers': 2,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30048,7 +30351,12 @@ List<Map<String, dynamic>> _validGm011Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 2,
-          'recipientPeerIds': <String>['bob-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'inboxStored': false,
+          'topicPeers': 1,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30092,6 +30400,11 @@ List<Map<String, dynamic>> _validGm011Verdicts() {
           'senderPeerId': 'bob-peer',
           'keyEpoch': 2,
           'recipientPeerIds': <String>['alice-peer'],
+          'actualDurablePayloadProof': true,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_and_inbox',
+          'inboxStored': true,
+          'topicPeers': 1,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30123,14 +30436,14 @@ List<Map<String, dynamic>> _validGm011Verdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'gm011-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       sentMessages: const <Map<String, Object?>>[
         {
           'key': 'charlieAfterStaleAdd',
           'messageId': 'gm011-c-after',
           'text': 'charlie after stale add',
-          'outcome': 'groupNotFound',
+          'outcome': 'unauthorized',
           'senderPeerId': 'charlie-peer',
           'keyEpoch': 0,
         },
@@ -30140,11 +30453,11 @@ List<Map<String, dynamic>> _validGm011Verdicts() {
       extra: const <String, Object?>{
         'gm011StaleAddRemovalProof': <String, Object?>{
           'deliveredStaleAddVersion2': true,
-          'groupPresentAfterStaleAdd': false,
+          'groupPresentAfterStaleAdd': true,
           'currentMemberAfterStaleAdd': false,
           'hasOldKeyAfterStaleAdd': false,
           'hasRotatedEpoch': false,
-          'postRemovalSendOutcome': 'groupNotFound',
+          'postRemovalSendOutcome': 'unauthorized',
           'postRemovalPublishAccepted': false,
           'receivedAlicePostStaleAdd': false,
           'receivedBobPostStaleAdd': false,
@@ -30174,7 +30487,12 @@ List<Map<String, dynamic>> _validGm012Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 2,
-          'recipientPeerIds': <String>['bob-peer', 'charlie-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'inboxStored': false,
+          'topicPeers': 2,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30231,6 +30549,11 @@ List<Map<String, dynamic>> _validGm012Verdicts() {
           'senderPeerId': 'bob-peer',
           'keyEpoch': 2,
           'recipientPeerIds': <String>['alice-peer', 'charlie-peer'],
+          'actualDurablePayloadProof': true,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_and_inbox',
+          'inboxStored': true,
+          'topicPeers': 2,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30284,6 +30607,11 @@ List<Map<String, dynamic>> _validGm012Verdicts() {
           'senderPeerId': 'charlie-peer',
           'keyEpoch': 2,
           'recipientPeerIds': <String>['alice-peer', 'bob-peer'],
+          'actualDurablePayloadProof': true,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_and_inbox',
+          'inboxStored': true,
+          'topicPeers': 2,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30367,7 +30695,12 @@ List<Map<String, dynamic>> _validGm013Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 2,
-          'recipientPeerIds': <String>['bob-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'inboxStored': false,
+          'topicPeers': 1,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30416,6 +30749,11 @@ List<Map<String, dynamic>> _validGm013Verdicts() {
           'senderPeerId': 'bob-peer',
           'keyEpoch': 2,
           'recipientPeerIds': <String>['alice-peer'],
+          'actualDurablePayloadProof': true,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_and_inbox',
+          'inboxStored': true,
+          'topicPeers': 1,
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -30462,6 +30800,11 @@ List<Map<String, dynamic>> _validGm013Verdicts() {
           'senderPeerId': 'charlie-peer',
           'keyEpoch': 1,
           'recipientPeerIds': <String>['alice-peer', 'bob-peer'],
+          'actualDurablePayloadProof': true,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_and_inbox',
+          'inboxStored': true,
+          'topicPeers': 2,
         },
         {
           'key': 'charlieAfterCharlieRemove',
@@ -30525,7 +30868,12 @@ List<Map<String, dynamic>> _validGm014Verdicts() {
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
           'keyEpoch': 2,
-          'recipientPeerIds': <String>['bob-peer', 'charlie-peer'],
+          'recipientPeerIds': <String>[],
+          'actualDurablePayloadProof': false,
+          'actualTopicPeerProof': true,
+          'deliveryMode': 'live_only',
+          'inboxStored': false,
+          'topicPeers': 1,
         },
       ],
       persistedMessageCounts: const <String, int>{},
@@ -30805,17 +31153,17 @@ List<Map<String, dynamic>> _validGm016Verdicts() {
       role: 'charlie',
       peerId: 'charlie-peer',
       groupId: 'gm016-group',
-      memberPeerIds: const <String>[],
+      memberPeerIds: remainingMembers,
       keyEpoch: 0,
       extra: const <String, Object?>{
         proofName: <String, Object?>{
           'activeMemberBeforeRemoval': true,
           'leaveRequested': true,
           'leaveResponseOk': true,
-          'groupPresentAfterRemoval': false,
+          'groupPresentAfterRemoval': true,
           'groupRecreatedAfterQuietWindow': false,
           'receivedAlicePostRemoval': false,
-          'memberRowsAfterRemoval': 0,
+          'memberRowsAfterRemoval': 2,
           'keyEpochAfterRemoval': 0,
           'postLeaveGroupJoinCount': 0,
           'postLeaveInboundEventCount': 0,

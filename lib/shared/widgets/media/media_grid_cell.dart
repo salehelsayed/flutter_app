@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
@@ -21,6 +24,14 @@ class MediaGridCell extends StatelessWidget {
   final bool requireVerifiedContentHash;
   final VideoThumbnailResolver? videoThumbnailResolver;
 
+  /// 128 (round 5): the conversation dir id (1:1 contact peerId, or groupId) the
+  /// durable owned media copy is keyed under (`media/<id>/<blob>.<ext>`). When
+  /// the displayed `localPath` is stale/transient (e.g. the deleted optimistic
+  /// `pending_uploads` path), the render gate falls back to this canonical
+  /// owned copy — so the cell renders from the durable file regardless of which
+  /// (possibly un-updated) in-memory path it was handed.
+  final String? ownedMediaPeerId;
+
   const MediaGridCell({
     super.key,
     required this.attachment,
@@ -31,6 +42,7 @@ class MediaGridCell extends StatelessWidget {
     this.onRetryUnavailableMedia,
     this.requireVerifiedContentHash = false,
     this.videoThumbnailResolver,
+    this.ownedMediaPeerId,
   });
 
   @override
@@ -55,10 +67,79 @@ class MediaGridCell extends StatelessWidget {
 
   bool get _showsGifBadge => attachment.isAnimated && _isDisplayableDoneMedia;
 
-  bool get _hasExistingLocalFile {
-    final localPath = attachment.localPath;
-    return localPath != null && File(localPath).existsSync();
+  /// 128: process-wide dedup so the build-time diagnostic fires at most once
+  /// per attachment id (build() can run many times).
+  static final Set<String> _diagnosedUnavailableIds = <String>{};
+
+  @visibleForTesting
+  static void debugResetUnavailableDiagnostics() =>
+      _diagnosedUnavailableIds.clear();
+
+  static String _localPathKind(String? path) {
+    if (path == null || path.isEmpty) return 'empty';
+    if (path.startsWith('media/') || path.startsWith('media\\')) {
+      return 'relative-media';
+    }
+    if (path.contains('pending_uploads/') ||
+        path.contains('pending_uploads\\')) {
+      return 'pending-uploads-abs';
+    }
+    if (path.contains('/media/')) return 'owned-media-abs';
+    return 'other';
   }
+
+  void _emitUnavailableDiagnostic() {
+    final id = attachment.id;
+    if (!_diagnosedUnavailableIds.add(id)) return;
+    final raw = attachment.localPath;
+    final resolved = raw == null
+        ? null
+        : MediaFileManager.resolveStoredPathSync(raw);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MEDIA_RENDER_GATE_UNAVAILABLE',
+      details: {
+        'attachmentId': id.length > 8 ? id.substring(0, 8) : id,
+        'rawLocalPathKind': _localPathKind(raw),
+        'resolvedPathKind': _localPathKind(resolved),
+        'existsAtResolved': resolved != null && File(resolved).existsSync(),
+        'cacheSeeded': MediaFileManager.cachedDocumentsDir != null,
+        'downloadStatus': attachment.downloadStatus,
+      },
+    );
+  }
+
+  /// The absolute path of an EXISTING file to render, or null if none exists.
+  ///
+  /// 127 (round 3): resolve the RELATIVE stored localPath to absolute (iOS
+  /// stores relative; `File(relative)` fails against the process CWD).
+  /// 128 (round 5): if that path doesn't exist (the in-memory display can hold
+  /// a stale/transient path — e.g. the deleted optimistic `pending_uploads`
+  /// path that is never swapped for the durable copy), fall back to the
+  /// canonical owned copy `media/<ownedMediaPeerId>/<blobId>.<ext>`. Single
+  /// render chokepoint, independent of any upstream path-update timing.
+  String? get _resolvedExistingLocalPath {
+    final localPath = attachment.localPath;
+    if (localPath != null && localPath.isNotEmpty) {
+      final resolved = MediaFileManager.resolveStoredPathSync(localPath);
+      if (File(resolved).existsSync()) return resolved;
+    }
+    final dirId = ownedMediaPeerId;
+    if (dirId != null && dirId.isNotEmpty && attachment.id.isNotEmpty) {
+      final ownedRelative = MediaFilePathConvention.relativePathForAttachment(
+        contactPeerId: dirId,
+        blobId: attachment.id,
+        mime: attachment.mime,
+      );
+      final ownedResolved = MediaFileManager.resolveStoredPathSync(
+        ownedRelative,
+      );
+      if (File(ownedResolved).existsSync()) return ownedResolved;
+    }
+    return null;
+  }
+
+  bool get _hasExistingLocalFile => _resolvedExistingLocalPath != null;
 
   bool get _isDisplayableDoneMedia {
     if (!_hasExistingLocalFile) {
@@ -80,10 +161,9 @@ class MediaGridCell extends StatelessWidget {
   bool get _hasAllowedSize =>
       // Render eligibility: permissive cross-type backstop so already-received
       // media is never newly hidden by the narrower per-type SEND caps.
-      GroupMediaSizePolicy.validateAttachments(
-        [attachment],
-        perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
-      ).isValid;
+      GroupMediaSizePolicy.validateAttachments([
+        attachment,
+      ], perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes).isValid;
 
   bool get _hasRequiredGroupMetadata =>
       !requireVerifiedContentHash ||
@@ -139,10 +219,16 @@ class MediaGridCell extends StatelessWidget {
 
     if ((isImage || isVideo) && isDone && hasPath) {
       if (!_isDisplayableDoneMedia) {
+        // 128: a done image/video that still can't display — emit ONE diagnostic
+        // per attachment so a device log reveals WHY (raw vs resolved path kind,
+        // file existence, whether the sync resolver cache was seeded).
+        _emitUnavailableDiagnostic();
         return _buildUnavailablePlaceholder(context);
       }
       return MediaThumbnailImage(
-        mediaPath: attachment.localPath!,
+        mediaPath:
+            _resolvedExistingLocalPath ??
+            MediaFileManager.resolveStoredPathSync(attachment.localPath!),
         mediaType: attachment.mediaType,
         fit: BoxFit.cover,
         cacheWidth: 400,

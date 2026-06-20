@@ -3,9 +3,12 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
+
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
@@ -394,6 +397,115 @@ void main() {
       );
 
       expect(result, isNull);
+    });
+
+    ConversationMessage mediaLatest({
+      String text = '',
+      String? deletedAt,
+    }) {
+      return ConversationMessage(
+        id: 'msg-a',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'peer-A',
+        text: text,
+        timestamp: '2026-03-01T00:00:00.000Z',
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: '2026-03-01T00:00:00.000Z',
+        deletedAt: deletedAt,
+      );
+    }
+
+    MediaAttachment attachment({
+      String id = 'blob',
+      String mime = 'image/jpeg',
+      String mediaType = 'image',
+    }) {
+      return MediaAttachment(
+        id: id,
+        messageId: 'msg-a',
+        mime: mime,
+        size: 1000,
+        mediaType: mediaType,
+        downloadStatus: 'done',
+        createdAt: '2026-03-01T00:00:00.000Z',
+      );
+    }
+
+    test('labels a media-only latest message via the descriptor', () async {
+      final repo = FakeMessageRepository(
+        latestMessages: {'peer-A': mediaLatest()},
+      );
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await mediaRepo.saveAttachment(
+        attachment(mime: 'audio/mp4', mediaType: 'audio'),
+      );
+
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: repo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result.single.latestMedia, isNotNull);
+      expect(result.single.latestMedia!.type, 'audio');
+      expect(result.single.latestMedia!.count, 1);
+      expect(result.single.isLatestDeleted, isFalse);
+    });
+
+    test('multi-image latest -> count > 1, type image', () async {
+      final repo = FakeMessageRepository(
+        latestMessages: {'peer-A': mediaLatest()},
+      );
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await mediaRepo.saveAttachment(attachment(id: 'b1'));
+      await mediaRepo.saveAttachment(attachment(id: 'b2'));
+
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: repo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result.single.latestMedia!.type, 'image');
+      expect(result.single.latestMedia!.count, 2);
+    });
+
+    test('caption wins: text + media keeps the caption as lastActivity', () async {
+      final repo = FakeMessageRepository(
+        latestMessages: {'peer-A': mediaLatest(text: 'Look at this')},
+      );
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await mediaRepo.saveAttachment(attachment());
+
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: repo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result.single.lastActivity, 'Look at this');
+      expect(result.single.latestMedia, isNotNull);
+    });
+
+    test('soft-deleted media latest suppresses the descriptor (INV-5)', () async {
+      final repo = FakeMessageRepository(
+        latestMessages: {
+          'peer-A': mediaLatest(deletedAt: '2026-03-02T00:00:00.000Z'),
+        },
+      );
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await mediaRepo.saveAttachment(attachment());
+
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: repo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result.single.latestMedia, isNull);
+      expect(result.single.isLatestDeleted, isTrue);
+      expect(result.single.lastActivity, isNull);
     });
   });
 }

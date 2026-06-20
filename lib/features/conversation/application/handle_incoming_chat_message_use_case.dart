@@ -7,7 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
-    show shouldMintDeliveryReceipt;
+    show deliveryReceiptMintDecision, kConfirmatoryDirectLanReceiptEnabled;
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -85,13 +85,31 @@ handleIncomingChatMessage({
   // staged replays are confirmed by their own acks.
   Future<void> Function(String messageId)? sendDeliveryReceipt,
   String? stagedEntryId,
+  // 132 Phase 1: when true (the live default), a confirmatory receipt is minted
+  // for direct/LAN/non-inbox durable arrivals too. Test seam — production passes
+  // the const default.
+  bool confirmatoryDirectLanEnabled = kConfirmatoryDirectLanReceiptEnabled,
 }) async {
   Future<void> maybeSendDeliveryReceipt(String messageId) async {
     if (sendDeliveryReceipt == null) return;
-    if (!shouldMintDeliveryReceipt(
+    final decision = deliveryReceiptMintDecision(
       stagedEntryId: stagedEntryId,
       transport: transport,
-    )) {
+      confirmatoryDirectLanEnabled: confirmatoryDirectLanEnabled,
+    );
+    if (!decision.shouldMint) {
+      // 132 Phase 0: name the dead-end behind a stuck pending clock — a
+      // genuinely-delivered direct/LAN (or non-inbox) message gets NO receipt,
+      // so the sender's row never converges to 'delivered'.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_MINT_SKIPPED',
+        details: {
+          'reason': decision.skipReason!.name,
+          'transport': transport,
+          'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+        },
+      );
       return;
     }
     try {

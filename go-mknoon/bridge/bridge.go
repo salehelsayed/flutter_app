@@ -545,7 +545,7 @@ func Initialize(cb EventCallback) {
 }
 
 // StartNode starts the libp2p node.
-// Input JSON: { "privateKeyHex": "...", "relayAddresses": [...], "namespace": "...", "autoRegister": true, "listenPort": 0 }
+// Input JSON: { "privateKeyHex": "...", "relayAddresses": [...], "namespace": "...", "autoRegister": true, "listenPort": 0, "keyRotationGracePeriodMs": 0 }
 // Returns JSON: { "ok": true, "peerId": "...", "isStarted": true, "addresses": [...], "connections": 0 }
 func StartNode(paramsJSON string) (result string) {
 	defer func() {
@@ -563,12 +563,13 @@ func StartNode(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		PrivateKeyHex  string             `json:"privateKeyHex"`
-		RelayAddresses []string           `json:"relayAddresses"`
-		Namespace      string             `json:"namespace"`
-		AutoRegister   bool               `json:"autoRegister"`
-		ListenPort     int                `json:"listenPort"`
-		FeatureFlags   *node.FeatureFlags `json:"featureFlags"`
+		PrivateKeyHex            string             `json:"privateKeyHex"`
+		RelayAddresses           []string           `json:"relayAddresses"`
+		Namespace                string             `json:"namespace"`
+		AutoRegister             bool               `json:"autoRegister"`
+		ListenPort               int                `json:"listenPort"`
+		KeyRotationGracePeriodMs int64              `json:"keyRotationGracePeriodMs"`
+		FeatureFlags             *node.FeatureFlags `json:"featureFlags"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -576,14 +577,18 @@ func StartNode(paramsJSON string) (result string) {
 	if params.PrivateKeyHex == "" {
 		return errJSON("INVALID_INPUT", "missing privateKeyHex")
 	}
+	if params.KeyRotationGracePeriodMs < 0 {
+		return errJSON("INVALID_INPUT", "keyRotationGracePeriodMs must be >= 0")
+	}
 
 	cfg := node.NodeConfig{
-		PrivateKeyHex:  params.PrivateKeyHex,
-		RelayAddresses: params.RelayAddresses,
-		Namespace:      params.Namespace,
-		AutoRegister:   params.AutoRegister,
-		ListenPort:     params.ListenPort,
-		FeatureFlags:   params.FeatureFlags,
+		PrivateKeyHex:          params.PrivateKeyHex,
+		RelayAddresses:         params.RelayAddresses,
+		Namespace:              params.Namespace,
+		AutoRegister:           params.AutoRegister,
+		ListenPort:             params.ListenPort,
+		KeyRotationGracePeriod: time.Duration(params.KeyRotationGracePeriodMs) * time.Millisecond,
+		FeatureFlags:           params.FeatureFlags,
 	}
 
 	_, err := n.Start(cfg)

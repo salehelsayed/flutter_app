@@ -8,11 +8,11 @@
 /// STRICT BEHAVIOR PRESERVATION — this opens REAL device databases. A wrong
 /// migration list or version silently breaks device tests. The migration
 /// sequence below is the COMPLETE, schema-correct order (001-026, 043, 044,
-/// 075, 077) and is identical to the inline opener in
-/// `transport_e2e_test.dart` (version 77). Lower-version call sites (the
+/// 075, 077, 079) and is identical to the inline opener in
+/// `transport_e2e_test.dart` (version 79). Lower-version call sites (the
 /// `routing_smoke_*` and `transport_census` harnesses at version 44) get the
 /// EXACT same schema they had inline, because the create/upgrade paths gate
-/// 075/077 behind the requested [version] using the standard
+/// 075/077/079 behind the requested [version] using the standard
 /// `if (oldVersion < N)` idiom that every inline opener already used.
 ///
 /// Public API (drop-in for the inline `_openDb` / `_deleteTestDatabase`):
@@ -64,12 +64,13 @@ import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 
 /// Default DB-schema version for the canonical bootstrap. This matches the
 /// current production migration head used by `transport_e2e_test.dart` and
 /// `wifi_relay_fallback_smoke_test.dart`. Lower-version harnesses MUST pass
 /// their own [version] (e.g. 44) so the schema is preserved exactly.
-const int kCanonicalE2EDbVersion = 77;
+const int kCanonicalE2EDbVersion = 79;
 
 /// The shared default DB-name dart-define key (`E2E_DB_NAME`). Provided for
 /// reference; call sites read the dart-define themselves and pass [dbName].
@@ -84,7 +85,7 @@ const String defaultE2EDbName = String.fromEnvironment(
 /// Runs the canonical onCreate migration sequence up to [version].
 ///
 /// Each migration past the v44 head is gated on [version] so a v44 caller
-/// gets the exact v44 schema (no 075/077) while a v77 caller gets the full
+/// gets the exact v44 schema (no 075/077/079) while a v79 caller gets the full
 /// schema. This is the same gating the inline `onUpgrade` callbacks used.
 Future<void> _runCreateMigrations(sqlcipher.Database db, int version) async {
   await runIdentityTableMigration(db);
@@ -117,6 +118,7 @@ Future<void> _runCreateMigrations(sqlcipher.Database db, int version) async {
   // Migrations introduced after v44 — gated so v44 callers keep their schema.
   if (version >= 75) await runContactsMlKemKeyUpdatedTsMigration(db);
   if (version >= 77) await runMessageRelayCustodyMigration(db);
+  if (version >= 79) await runMessageDedupKeyMigration(db);
 }
 
 /// Runs the canonical onUpgrade migration sequence (standard `oldVersion <`
@@ -158,6 +160,9 @@ Future<void> _runUpgradeMigrations(
   if (version >= 77 && oldVersion < 77) {
     await runMessageRelayCustodyMigration(db);
   }
+  if (version >= 79 && oldVersion < 79) {
+    await runMessageDedupKeyMigration(db);
+  }
 }
 
 /// Deletes the test database file plus its SQLCipher sidecars
@@ -198,8 +203,8 @@ Future<void> deleteTestDatabase(String dbName) async {
 /// * [dbName] — the per-role DB file name (callers derive this from the
 ///   `E2E_DB_NAME` dart-define and any per-test counter).
 /// * [version] — the schema version. Defaults to [kCanonicalE2EDbVersion]
-///   (77). Pass `44` to reproduce the routing_smoke / transport_census schema
-///   exactly (no 075/077).
+///   (79). Pass `44` to reproduce the routing_smoke / transport_census schema
+///   exactly (no 075/077/079).
 Future<sqlcipher.Database> openE2EDatabase({
   required SecureKeyStore secureKeyStore,
   required String dbName,

@@ -9,6 +9,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_local_transfer_runtime.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_breadcrumb.dart';
 import 'package:flutter_app/features/account_migration/application/migration_cutover_coordinator.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_active_importer.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
@@ -84,19 +85,25 @@ class AccountMigrationProductionBundleSource {
     AccountMigrationTransferRequest request,
   ) async {
     var phase = 'validateConfiguration';
+    void enterPhase(String next) {
+      phase = next;
+      migrationBreadcrumb('ASSEMBLY_PHASE', fields: {'phase': next});
+    }
+
     try {
       emitFlowEvent(
         layer: 'FL',
         event: 'ACCOUNT_MIGRATION_BUNDLE_SOURCE_START',
         details: {'sessionId': request.sessionId},
       );
+      migrationBreadcrumb('ASSEMBLY_PHASE', fields: {'phase': phase});
       if (segmentSize <= 0) {
         throw const AccountMigrationBundleAssemblyException(
           'segment size must be positive',
         );
       }
 
-      phase = 'prepareExportDirectory';
+      enterPhase('prepareExportDirectory');
       final exportDir = Directory(exportDirectoryPath);
       await exportDir.create(recursive: true);
 
@@ -117,7 +124,7 @@ class AccountMigrationProductionBundleSource {
           await staleFile.delete();
         }
       }
-      phase = 'readDatabaseKey';
+      enterPhase('readDatabaseKey');
       final dbKey = await primaryStore.read(
         MigrationSecureStorageRegistry.dbEncryptionKey,
       );
@@ -132,7 +139,7 @@ class AccountMigrationProductionBundleSource {
         details: {'sessionId': request.sessionId},
       );
 
-      phase = 'loadDatabaseRows';
+      enterPhase('loadDatabaseRows');
       final rows = await _loadBundleRows(sourceDb);
       emitFlowEvent(
         layer: 'FL',
@@ -156,7 +163,7 @@ class AccountMigrationProductionBundleSource {
             mediaAttachmentRows: rows.chatMediaRows,
           );
 
-      phase = 'collectSecureStorage';
+      enterPhase('collectSecureStorage');
       final secureEntries = await _collectSecureEntries(discoveredKeys);
       emitFlowEvent(
         layer: 'FL',
@@ -168,12 +175,12 @@ class AccountMigrationProductionBundleSource {
         },
       );
 
-      phase = 'buildFilePayload';
+      enterPhase('buildFilePayload');
       final filePayload = await _buildFilePayload(
         rows,
         sessionId: request.sessionId,
       );
-      phase = 'applyFilePathRepairs';
+      enterPhase('applyFilePathRepairs');
       await _applyFilePathRepairs(
         filePayload.pathRepairs,
         sessionId: request.sessionId,
@@ -195,7 +202,7 @@ class AccountMigrationProductionBundleSource {
         },
       );
 
-      phase = 'exportDatabaseSnapshot';
+      enterPhase('exportDatabaseSnapshot');
       final snapshot = await snapshotExporter.exportSnapshot(
         sourceDb: sourceDb,
         destinationPath: snapshotPath,
@@ -214,7 +221,7 @@ class AccountMigrationProductionBundleSource {
 
       // The snapshot stays on disk and is streamed chunk-by-chunk; only the
       // small metadata blob (secure values + manifests) is materialized.
-      phase = 'writeMetadataBlob';
+      enterPhase('writeMetadataBlob');
       final metadata = _AccountMigrationBundleMetadata(
         sessionId: request.sessionId,
         databaseManifest: snapshot.manifest,
@@ -230,7 +237,7 @@ class AccountMigrationProductionBundleSource {
         flush: true,
       );
 
-      phase = 'buildEntryStream';
+      enterPhase('buildEntryStream');
       final metadataSha256 = await fileReader.sha256Hex(metadataPath);
       final bundleId =
           'bundle-${migrationTransferStringSha256Hex('${request.sessionId}:'
@@ -285,6 +292,10 @@ class AccountMigrationProductionBundleSource {
           'totalBytes': bundle.manifest.totalBytes,
         },
       );
+      migrationBreadcrumb('ASSEMBLY_OK', fields: {
+        'segments': bundle.manifest.totalChunkCount,
+        'entries': bundle.manifest.entries.length,
+      });
       return bundle;
     } catch (error) {
       emitFlowEvent(
@@ -297,6 +308,16 @@ class AccountMigrationProductionBundleSource {
           'reason': accountMigrationBundleSourceFailureReason(error),
         },
       );
+      // Release-visible failure breadcrumb (see migration_breadcrumb.dart): the
+      // emitFlowEvent above is gated off in release builds, so this names the
+      // failing assembly phase + reason in the device console for field
+      // diagnostics. detail is value-redacted by the primitive.
+      migrationBreadcrumb('ASSEMBLY_FAIL', fields: {
+        'phase': phase,
+        'type': accountMigrationTransferErrorType(error),
+        'reason': accountMigrationBundleSourceFailureReason(error),
+        'detail': error,
+      });
       rethrow;
     }
   }

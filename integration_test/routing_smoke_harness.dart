@@ -23,7 +23,6 @@ import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -78,7 +77,7 @@ final SignalDir _signals = SignalDir(
 // ---------------------------------------------------------------------------
 
 Future<sqlcipher.Database> _openDb(SecureKeyStore keyStore) =>
-    openE2EDatabase(secureKeyStore: keyStore, dbName: _dbName, version: 77);
+    openE2EDatabase(secureKeyStore: keyStore, dbName: _dbName, version: 79);
 
 // ---------------------------------------------------------------------------
 // Flow event capture
@@ -222,7 +221,7 @@ void _runAlice() {
     final db = await openE2EDatabase(
       secureKeyStore: keyStore,
       dbName: _dbName,
-      version: 77,
+      version: 79,
     );
     final bridge = GoBridgeClient();
     await bridge.initialize();
@@ -250,6 +249,15 @@ void _runAlice() {
           dbLoadLatestMessageForContact(db, p),
       dbUpdateMessageStatus: (id, s) => dbUpdateMessageStatus(db, id, s),
       dbLoadMessage: (id) => dbLoadMessage(db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbCountMessagesForContact: (p) => dbCountMessagesForContact(db, p),
       dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(db, p),
       dbCountUnreadForContact: (p) => dbCountUnreadForContact(db, p),
@@ -405,6 +413,28 @@ void _runAlice() {
     final s1 = await send('S1: cold hello from Alice');
     _signals.writeJson('s1_alice_sent', _timingJson(s1));
     await _signals.waitForSignal('s1_verified');
+
+    // 132 convergence: once Bob has received S1, Alice's outgoing row must
+    // converge to 'delivered' — via the live ack OR Bob's confirmatory delivery
+    // receipt (Phase 1). Poll briefly for the receipt round-trip, then report
+    // the final status for the orchestrator to assert.
+    var s1Status = '';
+    for (var i = 0; i < 30; i++) {
+      final msgs = await messageRepo.getMessagesForContact(bobPeerId);
+      final outgoing = msgs
+          .where(
+            (m) => !m.isIncoming && m.text.contains('S1: cold hello from Alice'),
+          )
+          .toList();
+      s1Status = outgoing.isNotEmpty ? outgoing.last.status : '';
+      if (s1Status == 'delivered') break;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    print('--- S1 convergence: Alice status=$s1Status ---');
+    _signals.writeJson('s1_alice_converged', {
+      'status': s1Status,
+      'delivered': s1Status == 'delivered',
+    });
 
     // ════════════════════════════════════════════════════════════════
     //  S2: Warm send x5
@@ -950,35 +980,69 @@ void _runBob() {
     final messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
       dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(db, p),
-      dbLoadLatestMessageForContact: (p) => dbLoadLatestMessageForContact(db, p),
+      dbLoadLatestMessageForContact: (p) =>
+          dbLoadLatestMessageForContact(db, p),
       dbUpdateMessageStatus: (id, s) => dbUpdateMessageStatus(db, id, s),
       dbLoadMessage: (id) => dbLoadMessage(db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbCountMessagesForContact: (p) => dbCountMessagesForContact(db, p),
       dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(db, p),
       dbCountUnreadForContact: (p) => dbCountUnreadForContact(db, p),
       dbCountTotalUnread: () => dbCountTotalUnread(db),
-      dbCountTotalUnreadExcludingArchived: () => dbCountTotalUnreadExcludingArchived(db),
+      dbCountTotalUnreadExcludingArchived: () =>
+          dbCountTotalUnreadExcludingArchived(db),
       dbDeleteMessagesForContact: (p) => dbDeleteMessagesForContact(db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
       dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(db, p, limit: limit, beforeTimestamp: beforeTimestamp),
+          dbLoadMessagesPage(
+            db,
+            p,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
       dbLoadConversationThreadSummaries: (ids) =>
           dbLoadConversationThreadSummaries(db, ids),
-      dbRecoverStuckSendingMessages: ({required DateTime olderThan, int limit = 50}) =>
-          dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(db, id, we),
-      dbLoadStuckSendingOutgoingMessages: ({required DateTime olderThan, int limit = 50}) =>
-          dbLoadStuckSendingOutgoingMessages(db, olderThan: olderThan, limit: limit),
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
-      dbConditionalTransitionStatus: (id, {required fromStatus, required toStatus}) =>
-          dbConditionalTransitionStatus(db, id, fromStatus: fromStatus, toStatus: toStatus),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
     );
 
     // Generate identity
-    final genResp = await bridge.send(jsonEncode({'cmd': 'identity.generate', 'payload': {}}));
+    final genResp = await bridge.send(
+      jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
+    );
     final genResult = jsonDecode(genResp) as Map<String, dynamic>;
     if (genResult['ok'] != true) throw StateError('identity.generate failed');
     final identity = genResult['identity'] as Map<String, dynamic>;
@@ -986,10 +1050,16 @@ void _runBob() {
     final ownPrivateKey = identity['privateKey'] as String;
     final ownPublicKey = identity['publicKey'] as String;
 
-    final mlkemResp = await bridge.send(jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}));
+    final mlkemResp = await bridge.send(
+      jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+    );
     final mlkemResult = jsonDecode(mlkemResp) as Map<String, dynamic>;
-    final ownMlKemPk = mlkemResult['ok'] == true ? mlkemResult['publicKey'] as String? : null;
-    final ownMlKemSk = mlkemResult['ok'] == true ? mlkemResult['secretKey'] as String? : null;
+    final ownMlKemPk = mlkemResult['ok'] == true
+        ? mlkemResult['publicKey'] as String?
+        : null;
+    final ownMlKemSk = mlkemResult['ok'] == true
+        ? mlkemResult['secretKey'] as String?
+        : null;
 
     print('[BOB] peerId=${ownPeerId.substring(0, 20)}...');
 
@@ -1025,15 +1095,17 @@ void _runBob() {
     final alicePeerId = aliceFixture['peerId'] as String;
     final aliceMlKemPk = aliceFixture['mlKemPublicKey'] as String?;
 
-    await contactRepo.addContact(ContactModel(
-      peerId: alicePeerId,
-      publicKey: aliceFixture['publicKey'] as String,
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Alice',
-      signature: 'sig-alice',
-      scannedAt: DateTime.now().toUtc().toIso8601String(),
-      mlKemPublicKey: aliceMlKemPk,
-    ));
+    await contactRepo.addContact(
+      ContactModel(
+        peerId: alicePeerId,
+        publicKey: aliceFixture['publicKey'] as String,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Alice',
+        signature: 'sig-alice',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: aliceMlKemPk,
+      ),
+    );
     print('[BOB] Alice added as contact');
 
     // Signal ready
@@ -1079,18 +1151,29 @@ void _runBob() {
           recipientMlKemPublicKey: aliceMlKemPk,
         );
       });
-      final timings = events.where((e) => e['event'] == 'CHAT_MSG_SEND_TIMING').toList();
+      final timings = events
+          .where((e) => e['event'] == 'CHAT_MSG_SEND_TIMING')
+          .toList();
       if (timings.isEmpty) return null;
       final d = timings.first['details'] as Map<String, dynamic>;
-      return {'sendMs': d['elapsedMs'], 'sendPath': d['sendPath'], 'outcome': d['outcome']};
+      return {
+        'sendMs': d['elapsedMs'],
+        'sendPath': d['sendPath'],
+        'outcome': d['outcome'],
+      };
     }
 
     // ════════════════════════════════════════════════════════════════
     //  S1: Cold send — Bob receives
     // ════════════════════════════════════════════════════════════════
     print('\n--- S1: Waiting for cold send ---');
-    final s1 = await waitForMessage('S1:', timeout: const Duration(seconds: 60));
-    print('[BOB] S1: ${s1 != null ? 'received (e2e=${s1['e2eMs']}ms)' : 'TIMEOUT'}');
+    final s1 = await waitForMessage(
+      'S1:',
+      timeout: const Duration(seconds: 60),
+    );
+    print(
+      '[BOB] S1: ${s1 != null ? 'received (e2e=${s1['e2eMs']}ms)' : 'TIMEOUT'}',
+    );
     _signals.writeJson('s1_bob_received', s1 ?? {'e2eMs': -1});
 
     // ════════════════════════════════════════════════════════════════
@@ -1103,7 +1186,10 @@ void _runBob() {
       if (m != null) s2Timings.add(m);
     }
     print('[BOB] S2: received ${s2Timings.length}/5');
-    _signals.writeJson('s2_bob_received', {'timings': s2Timings, 'count': s2Timings.length});
+    _signals.writeJson('s2_bob_received', {
+      'timings': s2Timings,
+      'count': s2Timings.length,
+    });
 
     // ════════════════════════════════════════════════════════════════
     //  S3: Bob offline → restart → inbox drain → delivery
@@ -1144,20 +1230,32 @@ void _runBob() {
     for (final e in s3DeliveryTimings) {
       final d = e['details'] as Map<String, dynamic>;
       if (d.containsKey('deliveryMs')) {
-        print('[SMOKE] inbox_delivery_ms=${d['deliveryMs']} messageId=${d['messageId']}');
+        print(
+          '[SMOKE] inbox_delivery_ms=${d['deliveryMs']} messageId=${d['messageId']}',
+        );
       }
     }
 
-    final s3 = await waitForMessage('S3:', timeout: const Duration(seconds: 90));
-    print('[BOB] S3: ${s3 != null ? 'received via inbox (e2e=${s3['e2eMs']}ms)' : 'TIMEOUT'}');
+    final s3 = await waitForMessage(
+      'S3:',
+      timeout: const Duration(seconds: 90),
+    );
+    print(
+      '[BOB] S3: ${s3 != null ? 'received via inbox (e2e=${s3['e2eMs']}ms)' : 'TIMEOUT'}',
+    );
     _signals.writeJson('s3_bob_received', s3 ?? {'e2eMs': -1});
 
     // ════════════════════════════════════════════════════════════════
     //  S4: Reconnect — Bob receives
     // ════════════════════════════════════════════════════════════════
     print('\n--- S4: Waiting for reconnect message ---');
-    final s4 = await waitForMessage('S4:', timeout: const Duration(seconds: 60));
-    print('[BOB] S4: ${s4 != null ? 'received (e2e=${s4['e2eMs']}ms)' : 'TIMEOUT'}');
+    final s4 = await waitForMessage(
+      'S4:',
+      timeout: const Duration(seconds: 60),
+    );
+    print(
+      '[BOB] S4: ${s4 != null ? 'received (e2e=${s4['e2eMs']}ms)' : 'TIMEOUT'}',
+    );
     _signals.writeJson('s4_bob_received', s4 ?? {'e2eMs': -1});
 
     // ════════════════════════════════════════════════════════════════
@@ -1217,7 +1315,9 @@ void _runBob() {
     _signals.writeSignal('s6_bob_restarted');
 
     final s6 = await waitForMessage('S6:');
-    print('[BOB] S6: ${s6 != null ? 'received (e2e=${s6['e2eMs']}ms)' : 'TIMEOUT'}');
+    print(
+      '[BOB] S6: ${s6 != null ? 'received (e2e=${s6['e2eMs']}ms)' : 'TIMEOUT'}',
+    );
     _signals.writeJson('s6_bob_received', s6 ?? {'e2eMs': -1});
 
     // ════════════════════════════════════════════════════════════════
@@ -1233,7 +1333,10 @@ void _runBob() {
 
     // Phase 1–2: Receive msg1–msg4
     for (var i = 1; i <= 4; i++) {
-      final m = await waitForMessage('S8: msg$i', timeout: const Duration(seconds: 30));
+      final m = await waitForMessage(
+        'S8: msg$i',
+        timeout: const Duration(seconds: 30),
+      );
       s8Timeline.add({'n': i, 'role': 'recv', ...?m});
       print('[BOB] S8: received msg$i: ${m != null}');
     }
@@ -1264,7 +1367,10 @@ void _runBob() {
 
     // Inbox drain can lag or remain pending even when restart itself succeeded.
     // Don't block the rest of the lifecycle behind this best-effort receive.
-    final msg5 = await waitForMessage('S8: msg5', timeout: const Duration(seconds: 15));
+    final msg5 = await waitForMessage(
+      'S8: msg5',
+      timeout: const Duration(seconds: 15),
+    );
     s8Timeline.add({
       'n': 5,
       'role': 'recv_inbox',
@@ -1274,7 +1380,10 @@ void _runBob() {
     print('[BOB] S8: received msg5 via inbox: ${msg5 != null}');
 
     // Receive msg6 (reconnect)
-    final msg6 = await waitForMessage('S8: msg6', timeout: const Duration(seconds: 30));
+    final msg6 = await waitForMessage(
+      'S8: msg6',
+      timeout: const Duration(seconds: 30),
+    );
     s8Timeline.add({'n': 6, 'role': 'recv', ...?msg6});
 
     // Phase 5 [BIDIR]: Bob sends msg7
@@ -1284,7 +1393,10 @@ void _runBob() {
 
     // Phase 6: Receive msg8–msg10
     for (var i = 8; i <= 10; i++) {
-      final m = await waitForMessage('S8: msg$i', timeout: const Duration(seconds: 30));
+      final m = await waitForMessage(
+        'S8: msg$i',
+        timeout: const Duration(seconds: 30),
+      );
       s8Timeline.add({'n': i, 'role': 'recv', ...?m});
     }
 
@@ -1325,15 +1437,19 @@ void _runBob() {
     for (final e in s9DeliveryTimings) {
       final d = e['details'] as Map<String, dynamic>;
       if (d.containsKey('deliveryMs')) {
-        print('[SMOKE] inbox_delivery_ms=${d['deliveryMs']} messageId=${d['messageId']}');
+        print(
+          '[SMOKE] inbox_delivery_ms=${d['deliveryMs']} messageId=${d['messageId']}',
+        );
       }
     }
 
     // Try to receive messages from inbox drain (15s each — best effort)
     final s9Received = <Map<String, dynamic>>[];
     for (var i = 1; i <= 5; i++) {
-      final m = await waitForMessage('S9: batch inbox msg $i',
-          timeout: const Duration(seconds: 15));
+      final m = await waitForMessage(
+        'S9: batch inbox msg $i',
+        timeout: const Duration(seconds: 15),
+      );
       if (m != null) s9Received.add(m);
       print('[BOB] S9: received msg $i: ${m != null}');
       if (m == null) break; // stop early if drain isn't delivering
@@ -1347,7 +1463,10 @@ void _runBob() {
     //  S10: Delete-for-everyone — Bob receives deletion
     // ════════════════════════════════════════════════════════════════
     print('\n--- S10: Waiting for message + deletion ---');
-    final s10Msg = await waitForMessage('S10:', timeout: const Duration(seconds: 30));
+    final s10Msg = await waitForMessage(
+      'S10:',
+      timeout: const Duration(seconds: 30),
+    );
     print('[BOB] S10: received msg: ${s10Msg != null}');
     _signals.writeSignal('s10_bob_received_msg');
     // The delete tombstone will arrive as a new message — wait for message count to change
@@ -1359,8 +1478,10 @@ void _runBob() {
     print('\n--- S13: Receiving 10 rapid messages ---');
     final s13Received = <Map<String, dynamic>>[];
     for (var i = 1; i <= 10; i++) {
-      final m = await waitForMessage('S13: rapid msg $i',
-          timeout: const Duration(seconds: 15));
+      final m = await waitForMessage(
+        'S13: rapid msg $i',
+        timeout: const Duration(seconds: 15),
+      );
       if (m != null) s13Received.add(m);
     }
     print('[BOB] S13: received ${s13Received.length}/10');
@@ -1413,7 +1534,10 @@ void _runBob() {
     );
     chatListener.start();
     // Receive the relay probe message
-    final s15Msg = await waitForMessage('S15:', timeout: const Duration(seconds: 30));
+    final s15Msg = await waitForMessage(
+      'S15:',
+      timeout: const Duration(seconds: 30),
+    );
     print('[BOB] S15: received: ${s15Msg != null}');
     _signals.writeJson('s15_bob_received', s15Msg ?? {'e2eMs': -1});
 
@@ -1440,10 +1564,15 @@ void _runBob() {
     );
     chatListener.start();
     x1Sw.stop();
-    _signals.writeJson('x1_bob_restarted', {'restartMs': x1Sw.elapsedMilliseconds});
+    _signals.writeJson('x1_bob_restarted', {
+      'restartMs': x1Sw.elapsedMilliseconds,
+    });
 
     // Receive post-restart message
-    final x1Msg = await waitForMessage('X1:', timeout: const Duration(seconds: 60));
+    final x1Msg = await waitForMessage(
+      'X1:',
+      timeout: const Duration(seconds: 60),
+    );
     print('[BOB] X1: received post-restart: ${x1Msg != null}');
     _signals.writeJson('x1_bob_received', x1Msg ?? {'e2eMs': -1});
 
@@ -1457,14 +1586,16 @@ void _runBob() {
 
     await _signals.waitForSignal('x2_resume');
     final x2Sw = Stopwatch()..start();
-    await handleAppResumed(
-      bridge: bridge,
-      p2pService: p2pService,
-    );
+    await handleAppResumed(bridge: bridge, p2pService: p2pService);
     x2Sw.stop();
-    _signals.writeJson('x2_bob_resumed', {'resumeMs': x2Sw.elapsedMilliseconds});
+    _signals.writeJson('x2_bob_resumed', {
+      'resumeMs': x2Sw.elapsedMilliseconds,
+    });
 
-    final x2Msg = await waitForMessage('X2:', timeout: const Duration(seconds: 30));
+    final x2Msg = await waitForMessage(
+      'X2:',
+      timeout: const Duration(seconds: 30),
+    );
     print('[BOB] X2: received post-resume: ${x2Msg != null}');
     _signals.writeJson('x2_bob_received', x2Msg ?? {'e2eMs': -1});
 
@@ -1474,7 +1605,10 @@ void _runBob() {
     print('\n--- X3: Relay failover ---');
     await _signals.waitForSignal('x3_go');
     await p2pService.performImmediateHealthCheck();
-    final x3Msg = await waitForMessage('X3:', timeout: const Duration(seconds: 30));
+    final x3Msg = await waitForMessage(
+      'X3:',
+      timeout: const Duration(seconds: 30),
+    );
     print('[BOB] X3: received post-healthcheck: ${x3Msg != null}');
     _signals.writeJson('x3_bob_received', x3Msg ?? {'e2eMs': -1});
 

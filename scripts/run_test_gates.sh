@@ -25,6 +25,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/integration/stuck_sending_recovery_test.dart"
   "test/features/conversation/integration/quote_reply_thread_test.dart"
   "test/features/conversation/integration/edit_retry_round_trip_test.dart"
+  "test/features/conversation/presentation/navigation/conversation_route_transition_test.dart"
   "test/core/database/migrations/077_message_relay_custody_test.dart"
   "test/core/inbox/inbox_round_trip_test.dart"
   "test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart"

@@ -53,9 +53,16 @@ final class NotificationTapUITests: XCTestCase {
 
     app.terminate()
     app.launch()
-    allowNotificationPromptIfPresent(in: springboard)
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
-    RunLoop.current.run(until: Date().addingTimeInterval(preBackgroundWait))
+    // #21 fix: poll for the (late-appearing) notification-permission alert across
+    // the pre-background window and grant it the moment it shows, instead of a
+    // one-shot check that the prompt usually beats. Returns early once granted,
+    // otherwise the poll itself doubles as the app-settle wait.
+    allowNotificationPromptIfPresent(
+      in: springboard,
+      timeout: max(preBackgroundWait, 15)
+    )
+    RunLoop.current.run(until: Date().addingTimeInterval(2))
     XCUIDevice.shared.press(.home)
     XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
     unlockSpringboardIfNeeded(springboard)
@@ -87,6 +94,10 @@ final class NotificationTapUITests: XCTestCase {
     XCUIDevice.shared.press(.home)
     XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
     settleOnSpringboard()
+    // #21: a permission alert can still be up over Springboard (granted late, or
+    // raised after we backgrounded). Clear it before hunting the banner, else the
+    // notification stays undelivered/untappable.
+    allowNotificationPromptIfPresent(in: springboard, timeout: 3)
 
     if waitForHostPush {
       waitForHostPushInjection()
@@ -108,21 +119,34 @@ final class NotificationTapUITests: XCTestCase {
     RunLoop.current.run(until: Date().addingTimeInterval(postTapWait))
   }
 
-  private func allowNotificationPromptIfPresent(in springboard: XCUIApplication) {
-    let allowButton = springboard.buttons["Allow"]
-    if allowButton.waitForExistence(timeout: 3) {
-      allowButton.tap()
-      return
+  /// Grants the iOS "Would Like to Send You Notifications" permission alert.
+  ///
+  /// #21 fix: the alert appears several seconds AFTER `app.launch()` (the app
+  /// requests authorization only once startup settles), so a one-shot check
+  /// right after launch races — and loses to — the prompt, leaving it lingering
+  /// over Springboard and blocking notification delivery. Poll across [timeout]
+  /// and tap "Allow" the moment it appears. Returns true once granted.
+  @discardableResult
+  private func allowNotificationPromptIfPresent(
+    in springboard: XCUIApplication,
+    timeout: TimeInterval = 3
+  ) -> Bool {
+    let allowPredicate = NSPredicate(format: "label CONTAINS[c] %@", "Allow")
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      let allowButton = springboard.buttons["Allow"]
+      if allowButton.exists && allowButton.isHittable {
+        allowButton.tap()
+        return true
+      }
+      let matchingButton = springboard.buttons.matching(allowPredicate).firstMatch
+      if matchingButton.exists && matchingButton.isHittable {
+        matchingButton.tap()
+        return true
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.5))
     }
-
-    let allowPredicate = NSPredicate(
-      format: "label CONTAINS[c] %@",
-      "Allow"
-    )
-    let matchingButton = springboard.buttons.matching(allowPredicate).firstMatch
-    if matchingButton.waitForExistence(timeout: 1) {
-      matchingButton.tap()
-    }
+    return false
   }
 
   private func emitReadyMarker(mode: String, title: String) {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
@@ -12,6 +13,7 @@ OrbitGroup _group({
   required String latestMessageText,
   int unreadCount = 2,
   GroupType type = GroupType.chat,
+  MediaPreviewDescriptor? latestMedia,
 }) {
   return OrbitGroup(
     group: GroupModel(
@@ -27,6 +29,7 @@ OrbitGroup _group({
     latestMessageText: latestMessageText,
     unreadCount: unreadCount,
     lastActivityTimestamp: DateTime(2026, 3, 9, 9, 30),
+    latestMedia: latestMedia,
   );
 }
 
@@ -152,6 +155,32 @@ void main() {
       expect(find.text('Alice'), findsOneWidget);
       expect(find.text('مرحبا Hello 123'), findsOneWidget);
       expect(find.text('2'), findsOneWidget);
+    });
+
+    testWidgets('media-only group latest shows a label after the sender', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          GroupRow(
+            group: _group(
+              name: 'Alpha',
+              senderUsername: 'Alice',
+              latestMessageText: '',
+              latestMedia: const MediaPreviewDescriptor(
+                type: 'image',
+                count: 1,
+              ),
+            ),
+            onTap: () {},
+          ),
+        ),
+      );
+
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Photo'), findsOneWidget);
+      // No dangling "Sender: " then blank.
+      expect(find.text('No messages yet'), findsNothing);
     });
 
     testWidgets('renders announcement groups without throwing', (tester) async {

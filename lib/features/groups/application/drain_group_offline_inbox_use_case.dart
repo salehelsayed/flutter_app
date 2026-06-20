@@ -1965,11 +1965,17 @@ Future<void> _persistRetentionState({
 
   final group = await groupRepo.getGroup(groupId);
   if (group == null) return;
+  final mergedExpiredBacklogAt = latestExpiredBacklogAt == null
+      ? group.lastBacklogExpiredAt
+      : _latestTimestamp(group.lastBacklogExpiredAt, latestExpiredBacklogAt);
+  final mergedRetainedBacklogAt = latestRetainedBacklogAt == null
+      ? group.lastBacklogRetainedAt
+      : _latestTimestamp(group.lastBacklogRetainedAt, latestRetainedBacklogAt);
 
   await groupRepo.updateGroup(
     group.copyWith(
-      lastBacklogExpiredAt: latestExpiredBacklogAt,
-      lastBacklogRetainedAt: latestRetainedBacklogAt,
+      lastBacklogExpiredAt: mergedExpiredBacklogAt,
+      lastBacklogRetainedAt: mergedRetainedBacklogAt,
     ),
   );
 }

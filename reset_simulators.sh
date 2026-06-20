@@ -26,15 +26,13 @@ esac
 BUNDLE_ID="com.mknoon.app"
 DEVICE_COUNT="${#DEVICES[@]}"
 
-flutter_build_for_name() {
-  local name="$1"
+flutter_build() {
   local log_file
   local attempt
   log_file="$(mktemp "${TMPDIR:-/tmp}/intro-e2e-flutter-build.XXXXXX")"
 
   for attempt in 1 2; do
     if flutter build ios --simulator --no-pub \
-      --dart-define="AUTO_SETUP_USERNAME=$name" \
       --dart-define=E2E_TEST_MODE=true \
       --dart-define=DISABLE_LOCAL_DISCOVERY=true \
       >"$log_file" 2>&1; then
@@ -46,15 +44,29 @@ flutter_build_for_name() {
     if [ "$attempt" -lt 2 ] &&
        grep -q 'Xcode build is missing expected TARGET_BUILD_DIR build setting' "$log_file"; then
       tail -6 "$log_file" >&2
-      echo "  [$name] Retrying Flutter build after transient Xcode build-settings failure ..." >&2
+      echo "  Retrying Flutter build after transient Xcode build-settings failure ..." >&2
       sleep 5
       continue
     fi
 
     tail -40 "$log_file" >&2
-    echo "  [$name] Flutter build log: $log_file" >&2
+    echo "  Flutter build log: $log_file" >&2
     return 1
   done
+}
+
+write_auto_setup_config() {
+  local dev="$1"
+  local name="$2"
+  local container
+  container=$(xcrun simctl get_app_container "$dev" "$BUNDLE_ID" data 2>/dev/null || true)
+  if [ -z "$container" ]; then
+    xcrun simctl launch "$dev" "$BUNDLE_ID" >/dev/null
+    xcrun simctl terminate "$dev" "$BUNDLE_ID" 2>/dev/null || true
+    container=$(xcrun simctl get_app_container "$dev" "$BUNDLE_ID" data)
+  fi
+  mkdir -p "$container/Documents"
+  printf '{"username":"%s"}\n' "$name" > "$container/Documents/auto_setup.json"
 }
 
 # ── Step 1: Uninstall ──────────────────────────────────────
@@ -84,16 +96,19 @@ echo "  Done."
 
 # ── Step 3: Build + install + launch per device ───────────
 echo ""
-echo "=== Step 3/3: Building & launching (one build per device) ==="
+echo "=== Step 3/3: Building & launching ==="
+echo ""
+
+echo "  Building with E2E_TEST_MODE=true DISABLE_LOCAL_DISCOVERY=true ..."
+flutter_build
 echo ""
 
 for i in "${!DEVICES[@]}"; do
   dev="${DEVICES[$i]}"
   name="${NAMES[$i]}"
-  echo "  [$name] Building with AUTO_SETUP_USERNAME=$name E2E_TEST_MODE=true DISABLE_LOCAL_DISCOVERY=true ..."
-  flutter_build_for_name "$name"
-  echo "  [$name] Installing + launching ..."
+  echo "  [$name] Installing + staging auto_setup.json + launching ..."
   xcrun simctl install "$dev" build/ios/iphonesimulator/Runner.app
+  write_auto_setup_config "$dev" "$name"
   xcrun simctl privacy "$dev" grant notifications "$BUNDLE_ID" 2>/dev/null || true
   xcrun simctl launch "$dev" "$BUNDLE_ID"
   echo "  [$name] Running."

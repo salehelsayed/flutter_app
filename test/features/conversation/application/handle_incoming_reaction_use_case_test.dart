@@ -1,5 +1,8 @@
 import 'dart:convert';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -12,6 +15,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
+import '../../../shared/fakes/fake_notification_service.dart';
 
 const _senderPeerId = '12D3KooWSender';
 const _ownMlKemSecretKey = 'own-secret-key';
@@ -206,32 +210,201 @@ void main() {
       expect(result, HandleReactionResult.unknownSender);
     });
 
-    test('returns senderMismatch when envelope sender disagrees with payload sender', () async {
-      final v2 = ReactionPayload.buildEncryptedEnvelope(
+    test(
+      'returns senderMismatch when envelope sender disagrees with payload sender',
+      () async {
+        final v2 = ReactionPayload.buildEncryptedEnvelope(
+          senderPeerId: _senderPeerId,
+          kem: 'k',
+          ciphertext: 'c',
+          nonce: 'n',
+        );
+
+        final (result, change) = await handleIncomingReaction(
+          message: ChatMessage(
+            from: 'different-envelope-sender',
+            to: 'my-peer',
+            content: v2,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+        );
+
+        expect(result, HandleReactionResult.senderMismatch);
+        expect(change, isNull);
+        expect(reactionRepo.saveReactionCallCount, 0);
+      },
+    );
+
+    group('127-Bug-C reaction notifications', () {
+      String envelope() => ReactionPayload.buildEncryptedEnvelope(
         senderPeerId: _senderPeerId,
         kem: 'k',
         ciphertext: 'c',
         nonce: 'n',
       );
 
-      final (result, change) = await handleIncomingReaction(
-        message: ChatMessage(
-          from: 'different-envelope-sender',
-          to: 'my-peer',
-          content: v2,
-          timestamp: DateTime.now().toUtc().toIso8601String(),
-          isIncoming: true,
-        ),
-        messageRepo: messageRepo,
-        reactionRepo: reactionRepo,
-        contactRepo: contactRepo,
-        bridge: bridge,
-        ownMlKemSecretKey: _ownMlKemSecretKey,
+      test('incoming ADD reaction notifies the recipient', () async {
+        final notifications = FakeNotificationService();
+        final (result, change) = await handleIncomingReaction(
+          message: _makeReactionMessage(envelope()),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+          notificationService: notifications,
+          conversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(result, HandleReactionResult.success);
+        expect(change?.type, ReactionChangeType.upserted);
+        expect(notifications.shown, hasLength(1));
+        expect(notifications.shown.single.senderUsername, 'Sender');
+        expect(notifications.shown.single.messageText, contains('👍'));
+        expect(notifications.shown.single.contactPeerId, _senderPeerId);
+      });
+
+      test('incoming REMOVE reaction does NOT notify', () async {
+        bridge.responses['message.decrypt'] = {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r1',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'remove',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:05:00.000Z',
+          }),
+        };
+        final notifications = FakeNotificationService();
+        final (result, change) = await handleIncomingReaction(
+          message: _makeReactionMessage(envelope()),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+          notificationService: notifications,
+          conversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(result, HandleReactionResult.success);
+        expect(change?.type, ReactionChangeType.removed);
+        expect(notifications.shown, isEmpty);
+      });
+
+      test(
+        'ADD reaction is suppressed while viewing that conversation',
+        () async {
+          final notifications = FakeNotificationService();
+          final tracker = ActiveConversationTracker()..setActive(_senderPeerId);
+          await handleIncomingReaction(
+            message: _makeReactionMessage(envelope()),
+            messageRepo: messageRepo,
+            reactionRepo: reactionRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: _ownMlKemSecretKey,
+            notificationService: notifications,
+            conversationTracker: tracker,
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+          );
+          await Future<void>.delayed(Duration.zero);
+
+          expect(notifications.shown, isEmpty);
+        },
       );
 
-      expect(result, HandleReactionResult.senderMismatch);
-      expect(change, isNull);
-      expect(reactionRepo.saveReactionCallCount, 0);
+      test(
+        'explicit suppressReactionNotification suppresses the notification',
+        () async {
+          final notifications = FakeNotificationService();
+          await handleIncomingReaction(
+            message: _makeReactionMessage(envelope()),
+            messageRepo: messageRepo,
+            reactionRepo: reactionRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: _ownMlKemSecretKey,
+            notificationService: notifications,
+            conversationTracker: ActiveConversationTracker(),
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+            suppressReactionNotification: true,
+          );
+          await Future<void>.delayed(Duration.zero);
+
+          expect(notifications.shown, isEmpty);
+        },
+      );
+
+      test('no notification deps -> reaction still stored, no throw', () async {
+        final (result, change) = await handleIncomingReaction(
+          message: _makeReactionMessage(envelope()),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+        );
+
+        expect(result, HandleReactionResult.success);
+        expect(change?.type, ReactionChangeType.upserted);
+      });
+
+      test(
+        'rapid reactions debounce the tone — the second notification is silent',
+        () async {
+          final notifications = FakeNotificationService();
+          final tracker = ActiveConversationTracker();
+          final toneTracker = NotificationToneTracker();
+
+          Future<void> deliver(String id, String timestamp) async {
+            bridge.responses['message.decrypt'] = {
+              'ok': true,
+              'plaintext': jsonEncode({
+                'id': id,
+                'messageId': 'msg-1',
+                'emoji': '👍',
+                'action': 'add',
+                'senderPeerId': _senderPeerId,
+                'timestamp': timestamp,
+              }),
+            };
+            await handleIncomingReaction(
+              message: _makeReactionMessage(envelope()),
+              messageRepo: messageRepo,
+              reactionRepo: reactionRepo,
+              contactRepo: contactRepo,
+              bridge: bridge,
+              ownMlKemSecretKey: _ownMlKemSecretKey,
+              notificationService: notifications,
+              conversationTracker: tracker,
+              getAppLifecycleState: () => AppLifecycleState.resumed,
+              notificationToneTracker: toneTracker,
+            );
+            await Future<void>.delayed(Duration.zero);
+          }
+
+          await deliver('rxn-a', '2026-02-27T10:00:00.000Z');
+          await deliver('rxn-b', '2026-02-27T10:00:01.000Z');
+
+          // Both notify, but the per-conversation tone debounce silences the
+          // second so a burst of reactions never spams a sound.
+          expect(notifications.shown, hasLength(2));
+          expect(notifications.shown[0].silent, isFalse);
+          expect(notifications.shown[1].silent, isTrue);
+        },
+      );
     });
 
     test(

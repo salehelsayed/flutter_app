@@ -646,7 +646,7 @@ void main() {
     );
 
     test(
-      'passes staged entry id to receipt-origin handling for LAN replay',
+      'passes staged entry id to receipt-origin handling for LAN replay (Phase 1: now mints)',
       () async {
         const senderPeerId = 'sender-peer-lan-replay';
         contactRepo.seedContact(_makeContact(senderPeerId));
@@ -672,16 +672,21 @@ void main() {
         ]);
         receipts.clear();
 
+        // 132 Phase 1 (LIVE by default): a 'lan:' staged replay now ALSO mints a
+        // confirmatory receipt (lost-ack repair). The staged id is still
+        // correctly threaded — only the OFF-mode skip is gone.
         final lanOutcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
-            id: 'msg-lan-no-receipt',
+            id: 'msg-lan-receipt',
           ).copyWith(transport: 'inbox'),
           stagedEntryId: 'lan:n1',
         );
 
         expect(lanOutcome.state, ChatMessageProcessState.stored);
-        expect(receipts, isEmpty);
+        expect(receipts, [
+          ['msg-lan-receipt'],
+        ]);
       },
     );
 

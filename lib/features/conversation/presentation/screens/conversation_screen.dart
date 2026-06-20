@@ -104,6 +104,7 @@ class ConversationScreen extends StatefulWidget {
   final bool isBlocked;
   final VoidCallback? onUnblock;
   final VoidCallback? onOverflow;
+  final VoidCallback? onAvatarTap;
   final bool isLoadingMore;
   final bool hasMoreOlderMessages;
   final bool initialLoadDone;
@@ -167,6 +168,7 @@ class ConversationScreen extends StatefulWidget {
     this.isBlocked = false,
     this.onUnblock,
     this.onOverflow,
+    this.onAvatarTap,
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
     this.initialLoadDone = false,
@@ -263,6 +265,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
             connectionDate: widget.connectionDate,
             onBack: widget.onBack,
             onOverflow: widget.onOverflow,
+            onAvatarTap: widget.onAvatarTap,
           ),
           // Intro banner above messages (when messages exist)
           AnimatedSwitcher(
@@ -565,6 +568,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
                       )
                     : null,
                 onMediaTap: mediaTapHandler,
+                // 128 (round 5): the durable owned media copy is keyed under the
+                // conversation contact peerId — lets the render gate fall back to
+                // it when the in-memory display path is stale/transient.
+                ownedMediaPeerId: widget.contactPeerId,
               );
             }
 

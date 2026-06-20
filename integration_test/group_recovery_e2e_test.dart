@@ -618,6 +618,8 @@ void main() {
                     durationMs,
                     waveform,
                     allowedPeers,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
                   }) async {
                     return MediaAttachment(
                       id: blobId!,

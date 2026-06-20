@@ -27,6 +27,16 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 /// Returns the number of messages successfully sent after re-upload.
 /// Non-fatal per-message: errors are caught, logged, and iteration continues
 /// to the next message.
+///
+/// [isUploadInFlight] guards against the 127-Bug-B double-encrypt race: while a
+/// foreground send is actively uploading a blob (its row sits `upload_pending`
+/// for the whole upload+envelope window), this retrier must NOT re-encrypt and
+/// re-upload the SAME blob — a fresh AES-GCM nonce would mint divergent
+/// ciphertext that no longer matches the `contentHash` the foreground already
+/// advertised in the message envelope, so the recipient's pre-decrypt
+/// content-hash gate rejects it (`integrity_failed` / "Couldn't verify this
+/// media"). A blob reported in-flight defers the WHOLE message (rows left
+/// `upload_pending`, no terminalization) — the foreground send owns it.
 Future<int> retryIncompleteUploads({
   required MediaAttachmentRepository mediaAttachmentRepo,
   required MessageRepository messageRepo,
@@ -36,6 +46,7 @@ Future<int> retryIncompleteUploads({
   required ContactRepository contactRepo,
   UploadMediaFn uploadMediaFn = uploadMedia,
   MediaFileManager? mediaFileManager,
+  bool Function(String blobId) isUploadInFlight = _uploadNeverInFlight,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -117,6 +128,31 @@ Future<int> retryIncompleteUploads({
   for (final entry in byMessageId.entries) {
     final messageId = entry.key;
     final pendingAttsForMessage = entry.value;
+
+    // 127-Bug-B: never race a foreground send. If ANY pending blob for this
+    // message is currently being uploaded by the live send path, defer the
+    // whole message untouched — re-encrypting here would diverge the relay
+    // bytes from the already-advertised contentHash.
+    String? inFlightBlob;
+    for (final att in pendingAttsForMessage) {
+      if (isUploadInFlight(att.id)) {
+        inFlightBlob = att.id;
+        break;
+      }
+    }
+    if (inFlightBlob != null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_INCOMPLETE_UPLOAD_SKIP_IN_FLIGHT',
+        details: {
+          'messageId':
+              messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+          'attachmentId':
+              inFlightBlob.length > 8 ? inFlightBlob.substring(0, 8) : inFlightBlob,
+        },
+      );
+      continue;
+    }
 
     try {
       // 1. Load and validate the parent message.
@@ -439,6 +475,10 @@ Future<int> retryIncompleteUploads({
 
   return successCount;
 }
+
+/// Default [retryIncompleteUploads] in-flight predicate: nothing is in-flight
+/// (used in tests and any caller without a foreground upload tracker).
+bool _uploadNeverInFlight(String _) => false;
 
 Future<MediaAttachment?> _latestAttachmentForMessage({
   required MediaAttachmentRepository mediaAttachmentRepo,

@@ -135,6 +135,38 @@ class _MatrixInviteDeliveryAttemptRepository
   }
 
   @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    await updateStatus(
+      groupId: groupId,
+      peerId: peerId,
+      status: GroupInviteDeliveryStatus.revoked,
+      updatedAt: revokedAt,
+    );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final existing = _attempts[_key(groupId, peerId)];
+    if (existing?.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    await updateStatus(
+      groupId: groupId,
+      peerId: peerId,
+      status: GroupInviteDeliveryStatus.declined,
+      updatedAt: declinedAt,
+    );
+  }
+
+  @override
   Future<int> deleteAttempt({
     required String groupId,
     required String peerId,

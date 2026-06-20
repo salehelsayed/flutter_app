@@ -533,8 +533,7 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'private_reaction_roundtrip': _privateReactionRoundtripRequirement,
   'private_reaction_toggle_convergence':
       _privateReactionToggleConvergenceRequirement,
-  'private_media_reaction_roundtrip':
-      _privateMediaReactionRoundtripRequirement,
+  'private_media_reaction_roundtrip': _privateMediaReactionRoundtripRequirement,
   'private_removed_reaction_rejected':
       _privateRemovedReactionRejectedRequirement,
   'private_never_member_publish_rejected':
@@ -633,8 +632,25 @@ final allGroupMultiPartyDeviceScenarioIds = List<String>.unmodifiable(
   _scenarioRequirements.keys.where((scenario) => scenario != 'all'),
 );
 
+const smokeGroupMultiPartyDeviceScenarioIds = <String>[
+  'private_abc_create',
+  'private_online_add',
+  'private_online_remove',
+  'private_offline_add',
+  'private_reaction_roundtrip',
+  'ge012',
+  'private_relay_only_delivery',
+  'private_admin_role_transfer_delivery',
+  'private_process_death_matrix',
+];
+
+const sliceBLiveGateGroupMultiPartyDeviceScenarioIds = <String>[
+  'private_abc_create',
+  'private_reaction_roundtrip',
+];
+
 final _supportedScenarioText =
-    '${allGroupMultiPartyDeviceScenarioIds.join(', ')}, or all';
+    '${allGroupMultiPartyDeviceScenarioIds.join(', ')}, smoke, slice_b_live, or all';
 
 GroupMultiPartyScenarioRequirement scenarioRequirement(String scenario) {
   final requirement = _tryScenarioRequirement(scenario);
@@ -2024,6 +2040,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           key: 'bobRelayOnlyPublishBack',
           senderRole: 'bob',
           receiverRoles: <String>['alice', 'charlie'],
+        ),
+      ];
+    case 'private_stale_roster_recipient_omission':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'charlieStaleRoster',
+          senderRole: 'charlie',
+          receiverRoles: <String>['bob'],
         ),
       ];
     case 'private_partition_readd_heal':
@@ -5603,7 +5627,9 @@ void _validateReactionToggleConvergenceProof({
       continue;
     }
     if (_stringValue(proof['rowId']) != 'RT-001') {
-      failures.add('$role: reactionToggleConvergenceProof.rowId must be RT-001');
+      failures.add(
+        '$role: reactionToggleConvergenceProof.rowId must be RT-001',
+      );
     }
     final activeRoles = _stringList(proof['activeRoles']).toSet();
     for (final expectedRole in const <String>['alice', 'bob', 'charlie']) {
@@ -5621,7 +5647,9 @@ void _validateReactionToggleConvergenceProof({
       );
     }
     if (_stringValue(proof['reactorRole']) != 'bob') {
-      failures.add('$role: reactionToggleConvergenceProof.reactorRole must be bob');
+      failures.add(
+        '$role: reactionToggleConvergenceProof.reactorRole must be bob',
+      );
     }
     // The toggle ends on the re-added ✅; converging to the initial 🔥 or to an
     // empty state would mean the remove or re-add was lost.
@@ -5629,7 +5657,9 @@ void _validateReactionToggleConvergenceProof({
       failures.add('$role: RT-001 finalEmoji must be the re-added ✅');
     }
     if (_stringValue(proof['observedByRole']) != role) {
-      failures.add('$role: reactionToggleConvergenceProof observedByRole mismatch');
+      failures.add(
+        '$role: reactionToggleConvergenceProof observedByRole mismatch',
+      );
     }
     if (proof['convergedToFinalEmoji'] != true ||
         _intValue(proof['finalReactionCount']) != 1) {
@@ -7472,7 +7502,9 @@ void _validateMl012ConcurrentAdminMembershipEditsProof({
     requireLiveProofMetadata('charlie', charlieProof);
     for (final field in const <String>[
       'charlieRemoved',
-      'postRemovalGroupAbsent',
+      'postRemovalGroupPresent',
+      'retainedLocalHistoryAfterRemoval',
+      'postRemovalKeyAbsent',
       'removedCharlieExcluded',
       'sameTargetTieRemoveWins',
     ]) {
@@ -7483,6 +7515,20 @@ void _validateMl012ConcurrentAdminMembershipEditsProof({
         field: field,
         failures: failures,
       );
+    }
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'currentMemberAfterRemoval',
+      failures: failures,
+    );
+    final charliePeerId = peerIdByRole['charlie'];
+    final charlieMembers = _stringList(
+      byRole['charlie']?['memberPeerIds'],
+    ).toSet();
+    if (charliePeerId != null && charlieMembers.contains(charliePeerId)) {
+      failures.add('charlie: active members must exclude removed Charlie');
     }
     final plaintextCount = _intValue(
       charlieProof['removedWindowPlaintextCount'],
@@ -11033,9 +11079,9 @@ void _validateKe015PartialKeyDistributionProof({
     }
   }
 
-  void requireFinalEpochOne(String role, Map<String, dynamic> proof) {
-    if (_intValue(proof['finalEpoch']) != 1) {
-      failures.add('$role: $proofName.finalEpoch must remain 1');
+  void requireFinalEpochTwo(String role, Map<String, dynamic> proof) {
+    if (_intValue(proof['finalEpoch']) != 2) {
+      failures.add('$role: $proofName.finalEpoch must be 2');
     }
   }
 
@@ -11047,10 +11093,11 @@ void _validateKe015PartialKeyDistributionProof({
       'attemptedMixedDistribution',
       'bobKeyUpdateSucceeded',
       'charlieKeyUpdateFailed',
-      'rotationBlocked',
-      'keptSenderEpochAfterFailure',
-      'blockedKeyRotatedPublish',
-      'sentPostFailureAtPreviousEpoch',
+      'rotationPromotedAfterPartialDistribution',
+      'senderPromotedAfterPartialDistribution',
+      'failedRecipientDeferred',
+      'redistributedDeferredKeyToFailedRecipient',
+      'sentPostRepairAtPromotedEpoch',
     ]) {
       _requireTrueProof(
         role: 'alice',
@@ -11060,12 +11107,12 @@ void _validateKe015PartialKeyDistributionProof({
         failures: failures,
       );
     }
-    requireFinalEpochOne('alice', aliceProof);
+    requireFinalEpochTwo('alice', aliceProof);
     if (_intValue(aliceProof['attemptedEpoch']) != 2) {
       failures.add('alice: $proofName.attemptedEpoch must be 2');
     }
-    if (_intValue(aliceProof['postFailureMessageEpoch']) != 1) {
-      failures.add('alice: $proofName.postFailureMessageEpoch must be 1');
+    if (_intValue(aliceProof['postRepairMessageEpoch']) != 2) {
+      failures.add('alice: $proofName.postRepairMessageEpoch must be 2');
     }
   }
 
@@ -11075,8 +11122,8 @@ void _validateKe015PartialKeyDistributionProof({
     requireRowId('bob', bobProof);
     for (final field in const <String>[
       'receivedSuccessfulKeyUpdate',
-      'successfulRecipientStillReceivesPostFailure',
-      'receivedPostFailureAtPreviousEpoch',
+      'successfulRecipientStillReceivesPostRepair',
+      'receivedPostRepairAtPromotedEpoch',
     ]) {
       _requireTrueProof(
         role: 'bob',
@@ -11086,10 +11133,7 @@ void _validateKe015PartialKeyDistributionProof({
         failures: failures,
       );
     }
-    final finalEpoch = _intValue(bobProof['finalEpoch']);
-    if (finalEpoch == null || finalEpoch < 1) {
-      failures.add('bob: $proofName.finalEpoch must be >= 1');
-    }
+    requireFinalEpochTwo('bob', bobProof);
   }
 
   if (charlieProof == null) {
@@ -11099,9 +11143,10 @@ void _validateKe015PartialKeyDistributionProof({
   } else {
     requireRowId('charlie', charlieProof);
     for (final field in const <String>[
-      'failedRecipientDidNotAdvance',
-      'receivedPostFailureAtPreviousEpoch',
-      'notDeafAfterFailedKeyUpdate',
+      'failedRecipientInitiallyDidNotAdvance',
+      'receivedDeferredKeyUpdate',
+      'receivedPostRepairAtPromotedEpoch',
+      'notDeafAfterDeferredKeyUpdate',
     ]) {
       _requireTrueProof(
         role: 'charlie',
@@ -11111,7 +11156,7 @@ void _validateKe015PartialKeyDistributionProof({
         failures: failures,
       );
     }
-    requireFinalEpochOne('charlie', charlieProof);
+    requireFinalEpochTwo('charlie', charlieProof);
   }
 }
 
@@ -13629,11 +13674,18 @@ void _validateGe002RemovalContinuityProof({
       field: 'selfRemoved',
       failures: failures,
     );
-    _requireFalseProof(
+    _requireTrueProof(
       role: 'charlie',
       proofName: 'ge002RemovalContinuityProof',
       proof: charlieProof,
       field: 'groupPresentAfterRemoval',
+      failures: failures,
+    );
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: 'ge002RemovalContinuityProof',
+      proof: charlieProof,
+      field: 'selfMemberPresentAfterRemoval',
       failures: failures,
     );
     final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
@@ -13762,11 +13814,18 @@ void _validateGe003RemainingPairProof({
       field: 'selfRemoved',
       failures: failures,
     );
-    _requireFalseProof(
+    _requireTrueProof(
       role: 'charlie',
       proofName: 'ge003RemainingPairProof',
       proof: charlieProof,
       field: 'groupPresentAfterRemoval',
+      failures: failures,
+    );
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: 'ge003RemainingPairProof',
+      proof: charlieProof,
+      field: 'selfMemberPresentAfterRemoval',
       failures: failures,
     );
     final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
@@ -14225,11 +14284,18 @@ void _validateGm004RemovalProof({
       field: 'currentMemberBeforeRemoval',
       failures: failures,
     );
-    _requireFalseProof(
+    _requireTrueProof(
       role: 'charlie',
       proofName: 'gm004RemovalProof',
       proof: charlieProof,
       field: 'groupPresentAfterRemoval',
+      failures: failures,
+    );
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: 'gm004RemovalProof',
+      proof: charlieProof,
+      field: 'selfMemberPresentAfterRemoval',
       failures: failures,
     );
     _requireFalseProof(
@@ -14362,6 +14428,7 @@ void _validateMl005OnlineRemovalProof({
     for (final field in const <String>[
       'onlineBeforeRemoval',
       'currentMemberBeforeRemoval',
+      'groupPresentAfterRemoval',
     ]) {
       _requireTrueProof(
         role: 'charlie',
@@ -14372,7 +14439,7 @@ void _validateMl005OnlineRemovalProof({
       );
     }
     for (final field in const <String>[
-      'groupPresentAfterRemoval',
+      'selfMemberPresentAfterRemoval',
       'hasRotatedEpoch',
       'postRemovalPublishAccepted',
       'receivedAliceAfterRemoval',
@@ -14755,6 +14822,7 @@ void _validateSt006RotationBoundaryPublishProof({
     for (final field in const <String>[
       'onlineBeforeRemoval',
       'currentMemberBeforeRemoval',
+      'groupPresentAfterRemoval',
     ]) {
       _requireTrueProof(
         role: 'charlie',
@@ -14765,7 +14833,7 @@ void _validateSt006RotationBoundaryPublishProof({
       );
     }
     for (final field in const <String>[
-      'groupPresentAfterRemoval',
+      'selfMemberPresentAfterRemoval',
       'hasRotatedEpoch',
       'postRemovalPublishAccepted',
       'receivedBobDuringRotation',
@@ -14924,6 +14992,7 @@ void _validatePl006RemovedMediaProof({
       'noDirectDownloadPlaintext',
       'noPostRemovalMessage',
       'replayMediaRowsAbsent',
+      'groupPresentAfterRemoval',
     ]) {
       _requireTrueProof(
         role: 'charlie',
@@ -14934,7 +15003,7 @@ void _validatePl006RemovedMediaProof({
       );
     }
     for (final field in const <String>[
-      'groupPresentAfterRemoval',
+      'selfMemberPresentAfterRemoval',
       'directDownloadOk',
     ]) {
       _requireFalseProof(
@@ -15125,6 +15194,7 @@ void _validateMl006OfflineRemovalProof({
       'reconnectedWithStaleState',
       'retrievedInboxAfterReconnect',
       'convergedRemoved',
+      'groupPresentAfterCatchUp',
     ]) {
       _requireTrueProof(
         role: 'charlie',
@@ -15135,7 +15205,7 @@ void _validateMl006OfflineRemovalProof({
       );
     }
     for (final field in const <String>[
-      'groupPresentAfterCatchUp',
+      'selfMemberPresentAfterCatchUp',
       'hasRotatedEpoch',
       'postRemovalPublishAccepted',
       'receivedAliceAfterRemoval',
@@ -15263,6 +15333,7 @@ void _validateIr004PostRemovalReplayProof({
       'reconnectedWithStaleState',
       'retrievedInboxAfterReconnect',
       'convergedRemoved',
+      'groupPresentAfterCatchUp',
     ]) {
       _requireTrueProof(
         role: 'charlie',
@@ -15273,7 +15344,7 @@ void _validateIr004PostRemovalReplayProof({
       );
     }
     for (final field in const <String>[
-      'groupPresentAfterCatchUp',
+      'selfMemberPresentAfterCatchUp',
       'retainedRotatedEpoch',
       'postRemovalPublishAccepted',
       'receivedAlicePostRemoval',
@@ -16973,6 +17044,7 @@ void _validateUp012NotificationPrivacyProof({
     for (final field in const <String>[
       'onlineBeforeRemoval',
       'currentMemberBeforeRemoval',
+      'groupPresentAfterRemoval',
       'noLocalNotificationsAfterRemoval',
       'noPostRemovalNotificationPreviews',
     ]) {
@@ -16985,7 +17057,7 @@ void _validateUp012NotificationPrivacyProof({
       );
     }
     for (final field in const <String>[
-      'groupPresentAfterRemoval',
+      'selfMemberPresentAfterRemoval',
       'receivedAliceAfterRemoval',
       'receivedBobAfterRemoval',
     ]) {
@@ -17136,11 +17208,18 @@ void _validateGm005OfflineRemovalProof({
       field: 'convergedRemoved',
       failures: failures,
     );
-    _requireFalseProof(
+    _requireTrueProof(
       role: 'charlie',
       proofName: 'gm005OfflineRemovalProof',
       proof: charlieProof,
       field: 'groupPresentAfterCatchUp',
+      failures: failures,
+    );
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: 'gm005OfflineRemovalProof',
+      proof: charlieProof,
+      field: 'selfMemberPresentAfterCatchUp',
       failures: failures,
     );
     _requireFalseProof(
@@ -21810,8 +21889,6 @@ void _validateKe018HistoryReplayEpochWindowProof({
     requireRowId('charlie', charlieProof);
     for (final field in <String>[
       'receivedPreRemovalReplayWindow',
-      'postReaddMissingBeforeDrain',
-      'drainedPostReaddReplayAtCurrentEpoch',
       'noRemovedWindowReplayAfterDrain',
       'memberListIncludesAliceBobCharlie',
     ]) {
@@ -21821,6 +21898,12 @@ void _validateKe018HistoryReplayEpochWindowProof({
         proof: charlieProof,
         field: field,
         failures: failures,
+      );
+    }
+    if (charlieProof['postReaddLiveBeforeDrain'] != true &&
+        charlieProof['drainedPostReaddReplayAtCurrentEpoch'] != true) {
+      failures.add(
+        'charlie: $proofName.postReaddLiveBeforeDrain or drainedPostReaddReplayAtCurrentEpoch must be true',
       );
     }
     if (_intValue(charlieProof['removedWindowPlaintextCount']) != 0) {
@@ -21917,8 +22000,6 @@ void _validateIr005ReaddReplayProof({
     requireRowId('charlie', charlieProof);
     for (final field in <String>[
       'receivedAllowedPreRemovalHistory',
-      'postReaddMissingBeforeDrain',
-      'receivedPostReaddReplayAfterDrain',
       'noRemovedWindowReplayAfterDrain',
       'memberListIncludesAliceBobCharlie',
     ]) {
@@ -21928,6 +22009,12 @@ void _validateIr005ReaddReplayProof({
         proof: charlieProof,
         field: field,
         failures: failures,
+      );
+    }
+    if (charlieProof['postReaddLiveBeforeDrain'] != true &&
+        charlieProof['receivedPostReaddReplayAfterDrain'] != true) {
+      failures.add(
+        'charlie: $proofName.postReaddLiveBeforeDrain or receivedPostReaddReplayAfterDrain must be true',
       );
     }
     if (_intValue(charlieProof['removedWindowPlaintextCount']) != 0) {
@@ -22073,11 +22160,18 @@ void _validateGm009DuplicateRemovalProof({
       field: 'currentMemberBeforeRemoval',
       failures: failures,
     );
-    _requireFalseProof(
+    _requireTrueProof(
       role: 'charlie',
       proofName: 'gm009DuplicateRemovalProof',
       proof: charlieProof,
       field: 'groupPresentAfterDuplicateRemoval',
+      failures: failures,
+    );
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: 'gm009DuplicateRemovalProof',
+      proof: charlieProof,
+      field: 'selfMemberPresentAfterDuplicateRemoval',
       failures: failures,
     );
     _requireFalseProof(
@@ -22316,14 +22410,14 @@ void _validateGm010DuplicateReaddProof({
   final alicePeerId = peerIdByRole['alice'];
   final bobPeerId = peerIdByRole['bob'];
   if (alicePeerId != null && bobPeerId != null && charliePeerId != null) {
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'alice',
       key: 'aliceAfterDuplicateReadd',
       expectedPeerIds: <String>{bobPeerId, charliePeerId},
       byRole: byRole,
       failures: failures,
     );
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'charlie',
       key: 'charlieAfterDuplicateReadd',
       expectedPeerIds: <String>{alicePeerId, bobPeerId},
@@ -22475,7 +22569,7 @@ void _validateGm011StaleAddRemovalProof({
       field: 'deliveredStaleAddVersion2',
       failures: failures,
     );
-    _requireFalseProof(
+    _requireTrueProof(
       role: 'charlie',
       proofName: proofName,
       proof: charlieProof,
@@ -22539,14 +22633,14 @@ void _validateGm011StaleAddRemovalProof({
   }
 
   if (alicePeerId != null && bobPeerId != null) {
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'alice',
       key: 'aliceAfterStaleAdd',
       expectedPeerIds: <String>{bobPeerId},
       byRole: byRole,
       failures: failures,
     );
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'bob',
       key: 'bobAfterStaleAdd',
       expectedPeerIds: <String>{alicePeerId},
@@ -22778,21 +22872,21 @@ void _validateGm012StaleRemoveReaddProof({
   }
 
   if (alicePeerId != null && bobPeerId != null && charliePeerId != null) {
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'alice',
       key: 'aliceAfterStaleRemove',
       expectedPeerIds: <String>{bobPeerId, charliePeerId},
       byRole: byRole,
       failures: failures,
     );
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'charlie',
       key: 'charlieAfterStaleRemove',
       expectedPeerIds: <String>{alicePeerId, bobPeerId},
       byRole: byRole,
       failures: failures,
     );
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'bob',
       key: 'bobAfterStaleRemove',
       expectedPeerIds: <String>{alicePeerId, charliePeerId},
@@ -23102,14 +23196,14 @@ void _validateGm013SimultaneousRemoveSendProof({
       byRole: byRole,
       failures: failures,
     );
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'alice',
       key: 'aliceAfterCharlieRemove',
       expectedPeerIds: <String>{bobPeerId},
       byRole: byRole,
       failures: failures,
     );
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'bob',
       key: 'bobAfterCharlieRemove',
       expectedPeerIds: <String>{alicePeerId},
@@ -23348,7 +23442,7 @@ void _validateGm014SimultaneousReaddSendProof({
   }
 
   if (alicePeerId != null && bobPeerId != null && charliePeerId != null) {
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'alice',
       key: 'aliceAfterReadd',
       expectedPeerIds: <String>{bobPeerId, charliePeerId},
@@ -23632,7 +23726,7 @@ void _validateGm016RemovedUnsubscribeProof({
       field: 'leaveResponseOk',
       failures: failures,
     );
-    _requireFalseProof(
+    _requireTrueProof(
       role: 'charlie',
       proofName: proofName,
       proof: charlieProof,
@@ -23653,8 +23747,15 @@ void _validateGm016RemovedUnsubscribeProof({
       field: 'receivedAlicePostRemoval',
       failures: failures,
     );
+    _requireIntProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'memberRowsAfterRemoval',
+      expected: 2,
+      failures: failures,
+    );
     for (final field in const <String>[
-      'memberRowsAfterRemoval',
       'keyEpochAfterRemoval',
       'postLeaveGroupJoinCount',
       'postLeaveInboundEventCount',
@@ -23685,7 +23786,7 @@ void _validateGm016RemovedUnsubscribeProof({
   }
 
   if (bobPeerId != null) {
-    _requireSentRecipientPeerIds(
+    _requireSentDurableOrLiveRecipientProof(
       role: 'alice',
       key: 'aliceAfterCharlieUnsubscribe',
       expectedPeerIds: <String>{bobPeerId},
@@ -23695,10 +23796,12 @@ void _validateGm016RemovedUnsubscribeProof({
   }
   if (alicePeerId != null && bobPeerId != null && charliePeerId != null) {
     final charlieMembers = _stringList(byRole['charlie']?['memberPeerIds']);
-    if (charlieMembers.contains(alicePeerId) ||
-        charlieMembers.contains(bobPeerId) ||
-        charlieMembers.contains(charliePeerId)) {
-      failures.add('charlie: GM-016 removed member retained group members');
+    if (charlieMembers.contains(charliePeerId)) {
+      failures.add('charlie: GM-016 removed member retained self member');
+    }
+    if (!charlieMembers.contains(alicePeerId) ||
+        !charlieMembers.contains(bobPeerId)) {
+      failures.add('charlie: GM-016 retained read-only roster missing members');
     }
   }
 }
@@ -26608,14 +26711,20 @@ void _requireSentDurableOrLiveRecipientProof({
     final topicPeers = _requireSentLiveTopicPeerEvidence(
       role: role,
       key: key,
-      minTopicPeers: expectedPeerIds.length,
+      minTopicPeers: expectedPeerIds.isEmpty ? 0 : 1,
       byRole: byRole,
       failures: failures,
     );
-    if (topicPeers != null && topicPeers < expectedPeerIds.length) {
+    if (topicPeers != null &&
+        topicPeers < expectedPeerIds.length &&
+        !_allExpectedRecipientsReceivedKey(
+          key: key,
+          expectedPeerIds: expectedPeerIds,
+          byRole: byRole,
+        )) {
       failures.add(
         '$role: sent $key topicPeers must cover '
-        '${expectedPeerIds.length} recipients',
+        '${expectedPeerIds.length} recipients or every expected recipient must receive the message',
       );
     }
     return;
@@ -26624,6 +26733,32 @@ void _requireSentDurableOrLiveRecipientProof({
   failures.add(
     '$role: sent $key must report actual durable payload proof or live topic peer proof',
   );
+}
+
+bool _allExpectedRecipientsReceivedKey({
+  required String key,
+  required Set<String> expectedPeerIds,
+  required Map<String, Map<String, dynamic>> byRole,
+}) {
+  for (final expectedPeerId in expectedPeerIds) {
+    Map<String, dynamic>? recipientVerdict;
+    for (final verdict in byRole.values) {
+      if (_stringValue(verdict['peerId']) == expectedPeerId) {
+        recipientVerdict = verdict;
+        break;
+      }
+    }
+    if (recipientVerdict == null) {
+      return false;
+    }
+    final receivedCount = _mapList(
+      recipientVerdict['receivedMessages'],
+    ).where((entry) => _stringValue(entry['key']) == key).length;
+    if (receivedCount != 1) {
+      return false;
+    }
+  }
+  return true;
 }
 
 int? _requireSentLiveTopicPeerEvidence({

@@ -3047,6 +3047,7 @@ void main() {
           ],
           'cursor': '',
         };
+        await receiverGroupRepo.forceGroupRejoinEligible(_groupId);
 
         final rejoinResult = await rejoinGroupTopics(
           bridge: receiverBridge,

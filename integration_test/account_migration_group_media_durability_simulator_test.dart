@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_bundle_transfer.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_breadcrumb.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_snapshot_exporter.dart';
 import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
@@ -43,6 +44,7 @@ void main() {
 
     tearDown(() async {
       debugSetFlowEventSink(null);
+      debugSetMigrationBreadcrumbSink(null);
       if (await tempDir.exists()) {
         await tempDir.delete(recursive: true);
       }
@@ -53,6 +55,8 @@ void main() {
       (_) async {
         final events = <Map<String, dynamic>>[];
         debugSetFlowEventSink((payload) => events.add(payload));
+        final breadcrumbs = <String>[];
+        debugSetMigrationBreadcrumbSink(breadcrumbs.add);
 
         final plaintextBytes = utf8.encode('downloaded group plaintext bytes');
         final relayContentHash = sha256
@@ -171,6 +175,26 @@ void main() {
               .map((entry) => entry.relativePath),
           contains(relativePath),
         );
+
+        // A-SIM-2: the release breadcrumb sequence is emitted over the REAL
+        // assemble path (locks Part A telemetry end-to-end, not just the unit).
+        final phases = breadcrumbs
+            .where((line) => line.startsWith('MKNOON_MIG ASSEMBLY_PHASE '))
+            .map((line) => line.split('phase=').last)
+            .toList();
+        expect(
+          phases,
+          containsAllInOrder(<String>[
+            'collectSecureStorage',
+            'buildFilePayload',
+            'exportDatabaseSnapshot',
+            'buildEntryStream',
+          ]),
+        );
+        expect(
+          breadcrumbs.any((line) => line.startsWith('MKNOON_MIG ASSEMBLY_OK')),
+          isTrue,
+        );
       },
     );
 
@@ -179,6 +203,8 @@ void main() {
       (_) async {
         final events = <Map<String, dynamic>>[];
         debugSetFlowEventSink((payload) => events.add(payload));
+        final breadcrumbs = <String>[];
+        debugSetMigrationBreadcrumbSink(breadcrumbs.add);
 
         final dbs = await _openBundleDatabases(tempDir);
         addTearDown(dbs.close);
@@ -210,6 +236,22 @@ void main() {
               (error) => accountMigrationBundleSourceFailureReason(error),
               'reason',
               'fileManifestBlockingIssues',
+            ),
+          ),
+        );
+
+        // A-SIM-1: the release breadcrumb names the failing phase + reason on
+        // the REAL assemble path — the field diagnostic this plan exists for.
+        expect(
+          breadcrumbs,
+          contains(
+            predicate<String>(
+              (line) =>
+                  line.contains('ASSEMBLY_FAIL') &&
+                  line.contains('phase=buildFilePayload') &&
+                  line.contains('reason=fileManifestBlockingIssues'),
+              'ASSEMBLY_FAIL naming phase=buildFilePayload '
+                  'reason=fileManifestBlockingIssues',
             ),
           ),
         );

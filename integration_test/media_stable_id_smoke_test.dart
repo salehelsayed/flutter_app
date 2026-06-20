@@ -76,6 +76,8 @@ class _StableLocalVoiceP2PService extends core_fake_p2p.FakeP2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
+    bool enc = false,
+    String? encScheme,
   }) async {
     observedMediaId = mediaId;
     final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
@@ -511,6 +513,8 @@ void main() {
                     waveform,
                     allowedPeers,
                     blobId,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
                   }) async {
                     uploadedBlobId = blobId;
                     final pending = await mediaAttachmentRepo
@@ -525,6 +529,19 @@ void main() {
                       localPath: localFilePath,
                       downloadStatus: 'done',
                       createdAt: DateTime.now().toUtc().toIso8601String(),
+                      contentHash:
+                          preparedArtifact?.contentHash ??
+                          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                            localFilePath,
+                          ),
+                      encryptionKeyBase64:
+                          preparedArtifact?.keyBase64 ??
+                          _fixtureEncryptionKeyBase64,
+                      encryptionNonce:
+                          preparedArtifact?.nonce ?? _fixtureEncryptionNonce,
+                      encryptionScheme:
+                          preparedArtifact?.scheme ??
+                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     );
                   },
               initialAttachments: [imageFile],
@@ -667,6 +684,8 @@ void main() {
                     waveform,
                     allowedPeers,
                     blobId,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
                   }) async {
                     observedUploadPath = localFilePath;
                     durableCopyExistedDuringUpload = File(
@@ -686,6 +705,19 @@ void main() {
                       localPath: localFilePath,
                       downloadStatus: 'done',
                       createdAt: DateTime.now().toUtc().toIso8601String(),
+                      contentHash:
+                          preparedArtifact?.contentHash ??
+                          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                            localFilePath,
+                          ),
+                      encryptionKeyBase64:
+                          preparedArtifact?.keyBase64 ??
+                          _fixtureEncryptionKeyBase64,
+                      encryptionNonce:
+                          preparedArtifact?.nonce ?? _fixtureEncryptionNonce,
+                      encryptionScheme:
+                          preparedArtifact?.scheme ??
+                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     );
                   },
               initialAttachments: [imageFile],
@@ -766,6 +798,8 @@ void main() {
                     waveform,
                     allowedPeers,
                     blobId,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
                   }) async => null,
             ),
           ),
@@ -1137,6 +1171,8 @@ void main() {
                     waveform,
                     allowedPeers,
                     blobId,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
                   }) async {
                     uploadedBlobId = blobId;
                     return MediaAttachment(

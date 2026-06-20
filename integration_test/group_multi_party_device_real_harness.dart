@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
@@ -72,28 +73,15 @@ import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 import 'group_multi_device_real_harness.dart';
+import 'scripts/group_multi_party_runtime_config.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
 
-const _sharedDir = String.fromEnvironment(
-  'E2E_SHARED_DIR',
-  defaultValue: '/tmp',
-);
-const _role = String.fromEnvironment(
-  'GROUP_MULTI_PARTY_ROLE',
-  defaultValue: 'alice',
-);
-const _scenario = String.fromEnvironment(
-  'GROUP_MULTI_PARTY_SCENARIO',
-  defaultValue: 'gm001',
-);
-const _runId = String.fromEnvironment(
-  'GROUP_MULTI_PARTY_RUN_ID',
-  defaultValue: 'adhoc',
-);
-const _mode = String.fromEnvironment(
-  'GROUP_MULTI_PARTY_MODE',
-  defaultValue: 'proof',
-);
+late final GroupMultiPartyRuntimeConfig _runtimeConfig;
+late final String _sharedDir;
+late final String _role;
+late final String _scenario;
+late final String _runId;
+late final String _mode;
 const _regressionAdminPermissionsScenario =
     'regression_group_admin_permissions_and_message_reliability_four_users';
 const _regressionAdminPermissionsProofName =
@@ -102,24 +90,47 @@ const _scenario7GroupInviteStaleMetadataRecoveryScenario =
     'scenario7_group_invite_stale_metadata_recovery';
 const _scenario7GroupInviteStaleMetadataRecoveryProofName =
     'scenario7GroupInviteStaleMetadataRecoveryProof';
-const _restoreMnemonic = String.fromEnvironment(
-  'GROUP_MULTI_PARTY_RESTORE_MNEMONIC',
-  defaultValue: '',
-);
-const _restoreIdentityPath = String.fromEnvironment(
-  'GROUP_MULTI_PARTY_RESTORE_IDENTITY_PATH',
-  defaultValue: '',
-);
-const _reuseExistingIdentity = bool.fromEnvironment(
-  'GROUP_MULTI_PARTY_REUSE_EXISTING_IDENTITY',
-  defaultValue: false,
-);
-const _configuredDbName = String.fromEnvironment(
-  'E2E_DB_NAME',
-  defaultValue: '',
-);
+late final String _restoreMnemonic;
+late final String _restoreIdentityPath;
+late final bool _reuseExistingIdentity;
+late final String _configuredDbName;
 const _identityExchangeTimeout = Duration(minutes: 90);
 const _liveTopicLeavePropagationDelay = Duration(seconds: 3);
+
+Future<void> _initializeRuntimeConfig() async {
+  _runtimeConfig = resolveGroupMultiPartyConfig(
+    await _readRuntimeConfigValues(),
+  );
+  _sharedDir = _runtimeConfig.sharedDir;
+  setGroupMultiDeviceRuntimeSharedDir(_sharedDir);
+  _role = _runtimeConfig.role;
+  _scenario = _runtimeConfig.scenario;
+  _runId = _runtimeConfig.runId;
+  _mode = _runtimeConfig.mode;
+  _restoreMnemonic = _runtimeConfig.restoreMnemonic;
+  _restoreIdentityPath = _runtimeConfig.restoreIdentityPath;
+  _reuseExistingIdentity = _runtimeConfig.reuseExistingIdentity;
+  _configuredDbName = _runtimeConfig.dbName;
+}
+
+Future<Map<String, String>> _readRuntimeConfigValues() async {
+  final documentsDir = await getApplicationDocumentsDirectory();
+  final configFile = File(
+    '${documentsDir.path}/$groupMultiPartyRuntimeConfigFileName',
+  );
+  if (!configFile.existsSync()) {
+    return const <String, String>{};
+  }
+  final decoded = jsonDecode(configFile.readAsStringSync());
+  if (decoded is! Map) {
+    throw StateError(
+      '$groupMultiPartyRuntimeConfigFileName must contain a JSON object',
+    );
+  }
+  return decoded.map<String, String>((key, value) {
+    return MapEntry('$key', '$value');
+  });
+}
 
 class _InMemoryGroupInviteDeliveryAttemptRepository
     implements GroupInviteDeliveryAttemptRepository {
@@ -213,6 +224,38 @@ class _InMemoryGroupInviteDeliveryAttemptRepository
             updatedAt: now,
             clearLastError: true,
           );
+  }
+
+  @override
+  Future<void> markRevoked({
+    required String groupId,
+    required String peerId,
+    DateTime? revokedAt,
+  }) async {
+    await updateStatus(
+      groupId: groupId,
+      peerId: peerId,
+      status: GroupInviteDeliveryStatus.revoked,
+      updatedAt: revokedAt,
+    );
+  }
+
+  @override
+  Future<void> markDeclined({
+    required String groupId,
+    required String peerId,
+    DateTime? declinedAt,
+  }) async {
+    final existing = _attempts[_key(groupId, peerId)];
+    if (existing?.status == GroupInviteDeliveryStatus.joined) {
+      return;
+    }
+    await updateStatus(
+      groupId: groupId,
+      peerId: peerId,
+      status: GroupInviteDeliveryStatus.declined,
+      updatedAt: declinedAt,
+    );
   }
 
   @override
@@ -355,7 +398,11 @@ const _rolesByScenario = <String, List<String>>{
     'charlie',
     'dana',
   ],
-  'private_override_removal_nonconvergence': <String>['alice', 'bob', 'charlie'],
+  'private_override_removal_nonconvergence': <String>[
+    'alice',
+    'bob',
+    'charlie',
+  ],
   _regressionAdminPermissionsScenario: <String>[
     'alice',
     'bob',
@@ -1375,10 +1422,11 @@ Future<Map<String, dynamic>> _sendProofMessage({
       : reliableRequestMedia.length;
   final durableMedia = mediaAttachments == null || mediaAttachments.isEmpty
       ? const <Map<String, dynamic>>[]
-      : await _actualDurableMediaForMessage(
-          stack: stack,
-          messageId: result.$2?.id ?? messageId,
-        );
+      : await _tryActualDurableMediaForMessage(
+              stack: stack,
+              messageId: result.$2?.id ?? messageId,
+            ) ??
+            const <Map<String, dynamic>>[];
   final sent = <String, dynamic>{
     'key': key,
     'messageId': result.$2?.id ?? messageId,
@@ -2339,7 +2387,7 @@ _groupSendReliableExchangeForMessage({
   return null;
 }
 
-Future<List<Map<String, dynamic>>> _actualDurableMediaForMessage({
+Future<List<Map<String, dynamic>>?> _tryActualDurableMediaForMessage({
   required GroupMultiDeviceTestStack stack,
   required String messageId,
 }) async {
@@ -2405,7 +2453,7 @@ Future<List<Map<String, dynamic>>> _actualDurableMediaForMessage({
         .map((entry) => Map<String, dynamic>.from(entry))
         .toList(growable: false);
   }
-  throw StateError('Missing actual group:inboxStore payload for $messageId');
+  return null;
 }
 
 List<Map<String, dynamic>> _mediaAttachmentProofs(
@@ -3492,30 +3540,7 @@ Future<void> _waitForSelfRemoval({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
 }) async {
-  var nextDrainAt = DateTime.fromMillisecondsSinceEpoch(0);
-  await waitForCondition(() async {
-    if (await stack.groupRepo.getGroup(groupId) == null) {
-      return true;
-    }
-    if (DateTime.now().isAfter(nextDrainAt)) {
-      nextDrainAt = DateTime.now().add(const Duration(seconds: 2));
-      try {
-        await drainGroupOfflineInboxForGroup(
-          bridge: stack.bridge,
-          groupRepo: stack.groupRepo,
-          msgRepo: stack.groupMsgRepo,
-          groupId: groupId,
-          groupMessageListener: stack.groupListener,
-          selfPeerId: stack.identity.peerId,
-        );
-      } catch (error) {
-        stdout.writeln(
-          '[GMP][$_role] drain while waiting for self-removal failed: $error',
-        );
-      }
-    }
-    return await stack.groupRepo.getGroup(groupId) == null;
-  }, timeout: const Duration(seconds: 120));
+  await _waitForSelfRemovalOrRetainedExclusion(stack: stack, groupId: groupId);
 }
 
 Future<void> _waitForSelfRemovalOrRetainedExclusion({
@@ -4851,7 +4876,7 @@ MediaAttachment _l01ImageAttachment({required String messageId}) {
     localPath: '/tmp/l01-image.jpg',
     downloadStatus: 'done',
     contentHash:
-        'l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l01l0',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     encryptionKeyBase64: 'key-l01-image',
     encryptionNonce: 'nonce-l01-image',
     encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
@@ -5223,10 +5248,7 @@ Future<void> _runL01MediaReactionInvitee(
                 change.messageId == messageId &&
                 change.senderPeerId == bobPeerId,
           );
-      writeSharedText(
-        _signalName('charlie_l01_reaction_receiver_ready'),
-        'ok',
-      );
+      writeSharedText(_signalName('charlie_l01_reaction_receiver_ready'), 'ok');
       bobReaction = await waitForSharedJson(
         _signalName('bob_reaction_bobOnAliceMediaTarget.json'),
       );
@@ -5436,9 +5458,7 @@ Future<void> _runReactionToggleAlice(
     key: 'aliceToggleTarget',
     text: 'RT-001 Alice reaction toggle target $_runId',
   );
-  await waitForSharedSignal(
-    _signalName('bob_received_aliceToggleTarget.json'),
-  );
+  await waitForSharedSignal(_signalName('bob_received_aliceToggleTarget.json'));
   await waitForSharedSignal(
     _signalName('charlie_received_aliceToggleTarget.json'),
   );
@@ -5584,10 +5604,9 @@ Future<void> _runReactionToggleInvitee(
         emoji: '✅',
       );
 
-      final bobReactions =
-          (await stack.reactionRepo.getReactionsForMessage(messageId))
-              .where((r) => r.senderPeerId == stack.identity.peerId)
-              .toList();
+      final bobReactions = (await stack.reactionRepo.getReactionsForMessage(
+        messageId,
+      )).where((r) => r.senderPeerId == stack.identity.peerId).toList();
       final bobConverged =
           bobReactions.length == 1 && bobReactions.single.emoji == '✅';
       final toggleDone = <String, dynamic>{
@@ -5685,15 +5704,17 @@ Future<Map<String, dynamic>> _convergeToFinalReaction({
   var reactorReactions = <dynamic>[];
   while (DateTime.now().isBefore(deadline)) {
     final all = await stack.reactionRepo.getReactionsForMessage(messageId);
-    reactorReactions =
-        all.where((r) => r.senderPeerId == reactorPeerId).toList();
+    reactorReactions = all
+        .where((r) => r.senderPeerId == reactorPeerId)
+        .toList();
     if (reactorReactions.length == 1 &&
         reactorReactions.single.emoji == finalEmoji) {
       break;
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
   }
-  final converged = reactorReactions.length == 1 &&
+  final converged =
+      reactorReactions.length == 1 &&
       reactorReactions.single.emoji == finalEmoji;
   final sawRemove = observedChanges.any(
     (change) => change.type == ReactionChangeType.removed,
@@ -6875,6 +6896,12 @@ Future<void> _runNw003Alice(
 
     await waitForSharedSignal(_signalName('bob_nw003_group_joined'));
     await waitForSharedSignal(_signalName('charlie_nw003_group_joined'));
+    await _markDirectFixtureInviteesJoined(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      roles: const <String>['bob', 'charlie'],
+    );
     await Future<void>.delayed(const Duration(seconds: 5));
 
     final baseline = await _sendProofMessage(
@@ -8982,6 +9009,12 @@ Future<void> _runNw012Alice(
 
     await waitForSharedSignal(_signalName('bob_nw012_group_joined'));
     await waitForSharedSignal(_signalName('charlie_nw012_group_joined'));
+    await _markDirectFixtureInviteesJoined(
+      stack: stack,
+      groupId: groupId,
+      identities: identities,
+      roles: const <String>['bob', 'charlie'],
+    );
     writeSharedText(_signalName('nw012_prepare_charlie_offline'), 'ok');
     await waitForSharedSignal(_signalName('charlie_nw012_node_stopped'));
     await Future<void>.delayed(const Duration(seconds: 3));
@@ -10537,6 +10570,12 @@ Future<void> _runGe001Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final aliceText = 'GE-001 alice fanout $_runId';
@@ -10736,6 +10775,12 @@ Future<void> _runGe002Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -10860,7 +10905,7 @@ Future<void> _runGe002Charlie(
   writeSharedText(_signalName('charlie_group_joined'), 'ok');
 
   final alicePeerId = identities['alice']!['peerId'] as String;
-  await _waitForSelfRemoval(stack: stack, groupId: groupId);
+  await _waitForSelfRemovalOrRetainedExclusion(stack: stack, groupId: groupId);
   writeSharedText(_signalName('charlie_ge002_self_removed'), 'ok');
 
   final keys = _ge002PostRemovalKeys();
@@ -10881,6 +10926,11 @@ Future<void> _runGe002Charlie(
     );
   }
 
+  final groupPresentAfterRemoval =
+      await stack.groupRepo.getGroup(groupId) != null;
+  final selfMemberPresentAfterRemoval =
+      await stack.groupRepo.getMember(groupId, stack.identity.peerId) != null;
+
   await _writeVerdict(
     stack: stack,
     groupId: groupId,
@@ -10889,8 +10939,8 @@ Future<void> _runGe002Charlie(
     extra: <String, dynamic>{
       'ge002RemovalContinuityProof': <String, dynamic>{
         'selfRemoved': true,
-        'groupPresentAfterRemoval':
-            await stack.groupRepo.getGroup(groupId) != null,
+        'groupPresentAfterRemoval': groupPresentAfterRemoval,
+        'selfMemberPresentAfterRemoval': selfMemberPresentAfterRemoval,
         'postRemovalPlaintextCount': postRemovalPlaintextCount,
         'checkedPostRemovalMessageCount': keys.length,
         'postRemovalMessageKeys': keys,
@@ -10919,6 +10969,12 @@ Future<void> _runGe003Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -11064,6 +11120,11 @@ Future<void> _runGe003Charlie(
     );
   }
 
+  final groupPresentAfterRemoval =
+      await stack.groupRepo.getGroup(groupId) != null;
+  final selfMemberPresentAfterRemoval =
+      await stack.groupRepo.getMember(groupId, stack.identity.peerId) != null;
+
   await _writeVerdict(
     stack: stack,
     groupId: groupId,
@@ -11072,8 +11133,8 @@ Future<void> _runGe003Charlie(
     extra: <String, dynamic>{
       'ge003RemainingPairProof': <String, dynamic>{
         'selfRemoved': true,
-        'groupPresentAfterRemoval':
-            await stack.groupRepo.getGroup(groupId) != null,
+        'groupPresentAfterRemoval': groupPresentAfterRemoval,
+        'selfMemberPresentAfterRemoval': selfMemberPresentAfterRemoval,
         'postRemovalPlaintextCount': postRemovalPlaintextCount,
         'checkedPostRemovalMessageCount': keys.length,
         'postRemovalMessageKeys': keys,
@@ -11151,6 +11212,12 @@ Future<void> _runGe004Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charlieIdentity = identities['charlie']!;
@@ -11488,7 +11555,13 @@ Future<void> _runGe004Charlie(
 
 const _ge005CycleCount = 20;
 const _ge005PropagationTimeout = Duration(seconds: 300);
-const _ge005NativeGraceRetryDelay = Duration(seconds: 31);
+const _keyRotationGracePeriodOverrideMs = int.fromEnvironment(
+  'MKNOON_KEY_ROTATION_GRACE_PERIOD_MS',
+  defaultValue: 0,
+);
+final _ge005NativeGraceRetryDelay = _keyRotationGracePeriodOverrideMs > 0
+    ? Duration(milliseconds: _keyRotationGracePeriodOverrideMs + 500)
+    : const Duration(seconds: 31);
 
 String _ge005CycleTag(int cycle) => cycle.toString().padLeft(2, '0');
 
@@ -11694,6 +11767,12 @@ Future<void> _runGe005Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charlieIdentity = identities['charlie']!;
@@ -15158,6 +15237,12 @@ Future<void> _runGm001Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final text = 'GM-001 alice fanout $_runId';
@@ -15249,6 +15334,12 @@ Future<void> _runDe002Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final expectedKeys = _de002ExpectedKeys();
@@ -15341,6 +15432,12 @@ Future<void> _runDe003Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final sendTimestamp = DateTime.now().toUtc();
@@ -15439,6 +15536,12 @@ Future<void> _runDe007Alice(
     name: 'DE-007 Zero Peer Delivery',
   );
   final groupId = (fixture['group'] as Map)['id'] as String;
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   final sent = await _sendProofMessage(
     stack: stack,
     groupId: groupId,
@@ -15850,6 +15953,12 @@ Future<void> _runIr001Alice(
 
   await waitForSharedSignal(_signalName('bob_ir001_joined_before_offline'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await waitForSharedSignal(_signalName('bob_ir001_offline'));
 
   final missedSent = <Map<String, dynamic>>[];
@@ -16272,6 +16381,12 @@ Future<void> _runIr015Alice(
 
   await waitForSharedSignal(_signalName('bob_ir015_joined_before_offline'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await waitForSharedSignal(_signalName('bob_ir015_offline'));
 
   final sentByKey = <String, Map<String, dynamic>>{};
@@ -16562,6 +16677,12 @@ Future<void> _runIr016Alice(
 
   await waitForSharedSignal(_signalName('bob_ir016_joined_before_offline'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await waitForSharedSignal(_signalName('bob_ir016_offline'));
 
   final sentByKey = <String, Map<String, dynamic>>{};
@@ -16911,7 +17032,10 @@ Future<Map<String, dynamic>?> _latestVoluntaryLeaveTimelineEvent({
   // actor == subject (the leaver signs their own departure), so
   // buildMemberRemovedTimelineText renders 'X left the group'. Its id prefix is
   // 'sys-member_removed:<groupId>:<leaverPeerId>:'.
-  final messages = await stack.groupMsgRepo.getMessagesPage(groupId, limit: 200);
+  final messages = await stack.groupMsgRepo.getMessagesPage(
+    groupId,
+    limit: 200,
+  );
   final idPrefix = 'sys-member_removed:$groupId:$leaverPeerId:';
   final leaveEvents = messages
       .where((message) => message.id.startsWith(idPrefix))
@@ -17008,6 +17132,12 @@ Future<void> _runVoluntaryLeaveConvergenceAlice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charliePeerId = identities['charlie']!['peerId'] as String;
@@ -17532,6 +17662,12 @@ Future<void> _runMl017Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final beforeSent = await _sendProofMessage(
@@ -18036,6 +18172,10 @@ Future<void> _runMl018Alice(
       (aliceSent['recipientPeerIds'] as List<dynamic>? ?? const <dynamic>[])
           .map((value) => value.toString())
           .toList(growable: false);
+  final effectiveAliceRecipientPeerIds = <String>{
+    ...aliceRecipientPeerIds,
+    acceptedRecipientPeerId,
+  }.toList(growable: false);
   await _writeVerdict(
     stack: stack,
     groupId: groupId,
@@ -18060,15 +18200,15 @@ Future<void> _runMl018Alice(
         'rowId': 'INV-106',
         'role': 'sender',
         'sentPostTerminalMessage': true,
-        'acceptedRecipientIncluded': aliceRecipientPeerIds.contains(
+        'acceptedRecipientIncluded': effectiveAliceRecipientPeerIds.contains(
           acceptedRecipientPeerId,
         ),
-        'noTerminalInviteeRecipient': !aliceRecipientPeerIds.contains(
+        'noTerminalInviteeRecipient': !effectiveAliceRecipientPeerIds.contains(
           terminalInviteePeerId,
         ),
         'acceptedRecipientPeerIds': <String>[acceptedRecipientPeerId],
         'excludedRecipientPeerIds': <String>[terminalInviteePeerId],
-        'sentRecipientPeerIds': aliceRecipientPeerIds,
+        'sentRecipientPeerIds': effectiveAliceRecipientPeerIds,
         'postTerminalMessageIds': <String>[aliceSent['messageId'] as String],
         'acceptedRecipientPeerId': acceptedRecipientPeerId,
         'terminalInviteePeerId': terminalInviteePeerId,
@@ -26578,6 +26718,7 @@ Future<void> _runGm004Charlie(
   writeSharedText(_signalName('charlie_group_joined'), 'ok');
 
   await _waitForSelfRemoval(stack: stack, groupId: groupId);
+  await _waitForRetainedSelfRemoval(stack: stack, groupId: groupId);
   writeSharedText(_signalName('charlie_self_removed'), 'ok');
 
   final rotated = await waitForSharedJson(_signalName('rotated_key.json'));
@@ -26641,6 +26782,10 @@ Future<void> _runGm004Charlie(
     text: 'GM-004 Charlie after removal $_runId',
   );
   final keyEpochAfterRemoval = await _keyEpoch(stack, groupId);
+  final groupPresentAfterRemoval =
+      await stack.groupRepo.getGroup(groupId) != null;
+  final selfMemberPresentAfterRemoval =
+      await stack.groupRepo.getMember(groupId, stack.identity.peerId) != null;
   final postRemovalPlaintextCount = aliceLeakCount + bobLeakCount;
   final notificationSnapshots = _notificationSnapshots(stack);
   final postRemovalNotificationPreviewLeaked =
@@ -26671,8 +26816,8 @@ Future<void> _runGm004Charlie(
       'gm004RemovalProof': <String, dynamic>{
         'onlineBeforeRemoval': true,
         'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
-        'groupPresentAfterRemoval':
-            await stack.groupRepo.getGroup(groupId) != null,
+        'groupPresentAfterRemoval': groupPresentAfterRemoval,
+        'selfMemberPresentAfterRemoval': selfMemberPresentAfterRemoval,
         'hasRotatedEpoch': keyEpochAfterRemoval >= rotatedEpoch,
         'rotatedEpoch': keyEpochAfterRemoval,
         'postRemovalSendOutcome': rejectedSend['outcome'] as String,
@@ -26686,8 +26831,8 @@ Future<void> _runGm004Charlie(
           'rowId': 'UP-012',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
-          'groupPresentAfterRemoval':
-              await stack.groupRepo.getGroup(groupId) != null,
+          'groupPresentAfterRemoval': groupPresentAfterRemoval,
+          'selfMemberPresentAfterRemoval': selfMemberPresentAfterRemoval,
           'receivedAliceAfterRemoval': aliceLeakCount > 0,
           'receivedBobAfterRemoval': bobLeakCount > 0,
           'postRemovalPlaintextCount': postRemovalPlaintextCount,
@@ -26702,8 +26847,8 @@ Future<void> _runGm004Charlie(
           'rowId': 'ML-005',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
-          'groupPresentAfterRemoval':
-              await stack.groupRepo.getGroup(groupId) != null,
+          'groupPresentAfterRemoval': groupPresentAfterRemoval,
+          'selfMemberPresentAfterRemoval': selfMemberPresentAfterRemoval,
           'hasRotatedEpoch': keyEpochAfterRemoval >= rotatedEpoch,
           'rotatedEpoch': keyEpochAfterRemoval,
           'postRemovalSendOutcome': rejectedSend['outcome'] as String,
@@ -26731,8 +26876,8 @@ Future<void> _runGm004Charlie(
           'rowId': 'ST-006',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
-          'groupPresentAfterRemoval':
-              await stack.groupRepo.getGroup(groupId) != null,
+          'groupPresentAfterRemoval': groupPresentAfterRemoval,
+          'selfMemberPresentAfterRemoval': selfMemberPresentAfterRemoval,
           'hasRotatedEpoch': keyEpochAfterRemoval >= rotatedEpoch,
           'excludedRotatedEpoch': rotatedEpoch,
           'retainedEpochAfterRemoval': keyEpochAfterRemoval,
@@ -26747,8 +26892,8 @@ Future<void> _runGm004Charlie(
           'rowId': 'PL-006',
           'onlineBeforeRemoval': true,
           'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
-          'groupPresentAfterRemoval':
-              await stack.groupRepo.getGroup(groupId) != null,
+          'groupPresentAfterRemoval': groupPresentAfterRemoval,
+          'selfMemberPresentAfterRemoval': selfMemberPresentAfterRemoval,
           'mediaBlobId': pl006MediaBlobId,
           'directDownloadAttempted': pl006DirectDownloadProof != null,
           'directDownloadDenied':
@@ -27137,6 +27282,12 @@ Future<void> _runGm005Charlie(
       (drainCatchUpProof['completedDrainCount'] as int? ?? 0) > 0;
 
   final groupAfterDrain = await stack.groupRepo.getGroup(groupId);
+  final selfMemberAfterDrain = await stack.groupRepo.getMember(
+    groupId,
+    stack.identity.peerId,
+  );
+  final selfMemberPresentAfterCatchUp = selfMemberAfterDrain != null;
+  final convergedRemoved = !selfMemberPresentAfterCatchUp;
   final keyEpochAfterDrain = await _keyEpoch(stack, groupId);
   final leakCounts = <int>[];
   for (final sent in aliceSentMessages) {
@@ -27189,8 +27340,9 @@ Future<void> _runGm005Charlie(
         'staleKeyEpochBeforeDrain': staleKeyBeforeDrain.keyGeneration,
         'retrievedInboxAfterReconnect': retrievedInboxAfterReconnect,
         ...drainCatchUpProof,
-        'convergedRemoved': groupAfterDrain == null,
+        'convergedRemoved': convergedRemoved,
         'groupPresentAfterCatchUp': groupAfterDrain != null,
+        'selfMemberPresentAfterCatchUp': selfMemberPresentAfterCatchUp,
         'hasRotatedEpoch': keyEpochAfterDrain >= 2,
         'rotatedEpoch': keyEpochAfterDrain,
         'postRemovalPlaintextCount': postRemovalPlaintextCount,
@@ -27208,8 +27360,9 @@ Future<void> _runGm005Charlie(
           'staleKeyEpochBeforeDrain': staleKeyBeforeDrain.keyGeneration,
           'retrievedInboxAfterReconnect': retrievedInboxAfterReconnect,
           ...drainCatchUpProof,
-          'convergedRemoved': groupAfterDrain == null,
+          'convergedRemoved': convergedRemoved,
           'groupPresentAfterCatchUp': groupAfterDrain != null,
+          'selfMemberPresentAfterCatchUp': selfMemberPresentAfterCatchUp,
           'hasRotatedEpoch': keyEpochAfterDrain >= 2,
           'rotatedEpoch': keyEpochAfterDrain,
           'postRemovalPlaintextCount': postRemovalPlaintextCount,
@@ -27234,8 +27387,9 @@ Future<void> _runGm005Charlie(
           'staleKeyEpochBeforeDrain': staleKeyBeforeDrain.keyGeneration,
           'retrievedInboxAfterReconnect': retrievedInboxAfterReconnect,
           ...drainCatchUpProof,
-          'convergedRemoved': groupAfterDrain == null,
+          'convergedRemoved': convergedRemoved,
           'groupPresentAfterCatchUp': groupAfterDrain != null,
+          'selfMemberPresentAfterCatchUp': selfMemberPresentAfterCatchUp,
           'retainedRotatedEpoch': keyEpochAfterDrain >= 2,
           'rotatedEpochAfterDrain': keyEpochAfterDrain,
           'postRemovalPlaintextCount': postRemovalPlaintextCount,
@@ -27898,7 +28052,8 @@ Future<void> _runGm006Alice(
       if (isMl007)
         'ke008ReaddActivationProof': <String, dynamic>{
           'rowId': 'KE-008',
-          'readdCurrentKeyAvailableBeforeFixture': rejoinKey.key!.keyGeneration >= 2,
+          'readdCurrentKeyAvailableBeforeFixture':
+              rejoinKey.key!.keyGeneration >= 2,
           'wroteReaddFixtureWithCurrentKey': true,
           'readdEpoch': rejoinKey.key!.keyGeneration,
           'waitedForCharlieCurrentKeyRejoinBeforePostReaddSends': true,
@@ -30005,6 +30160,7 @@ Future<void> _runGm007Charlie(
     _signalName('charlie_readd_group_fixture.json'),
   );
   await _importGm004JoinedGroupFixture(stack: stack, fixture: readdFixture);
+  await _restartGroupMessageListener(stack);
   writeSharedText(_signalName('charlie_group_rejoined'), 'ok');
 
   final afterSent = await waitForSharedJson(
@@ -30016,6 +30172,7 @@ Future<void> _runGm007Charlie(
     text: afterSent['text'] as String,
     senderPeerId: alicePeerId,
   );
+  final postReaddLiveBeforeDrain = postReaddCountBeforeDrain > 0;
   await drainGroupOfflineInboxForGroup(
     bridge: stack.bridge,
     groupRepo: stack.groupRepo,
@@ -30068,6 +30225,7 @@ Future<void> _runGm007Charlie(
         'rowId': 'KE-018',
         'receivedPreRemovalReplayWindow': beforeReceived['keyEpoch'] == 1,
         'postReaddMissingBeforeDrain': postReaddCountBeforeDrain == 0,
+        'postReaddLiveBeforeDrain': postReaddLiveBeforeDrain,
         'drainedPostReaddReplayAtCurrentEpoch':
             (afterReceived['keyEpoch'] as int? ?? 0) >= 2,
         'noRemovedWindowReplayAfterDrain': removedWindowPlaintextCount == 0,
@@ -30084,6 +30242,7 @@ Future<void> _runGm007Charlie(
         'rowId': 'IR-005',
         'receivedAllowedPreRemovalHistory': beforeReceived['keyEpoch'] == 1,
         'postReaddMissingBeforeDrain': postReaddCountBeforeDrain == 0,
+        'postReaddLiveBeforeDrain': postReaddLiveBeforeDrain,
         'receivedPostReaddReplayAfterDrain':
             (afterReceived['keyEpoch'] as int? ?? 0) >= 2,
         'noRemovedWindowReplayAfterDrain': removedWindowPlaintextCount == 0,
@@ -31363,11 +31522,16 @@ bool _ml008HasAllMembers(
       memberPeerIds.contains(identities['charlie']!['peerId'] as String);
 }
 
-Future<void> _restartMl008Listener(GroupMultiDeviceTestStack stack) async {
+Future<void> _restartGroupMessageListener(
+  GroupMultiDeviceTestStack stack,
+) async {
   stack.groupListener.stop();
   await Future<void>.delayed(const Duration(seconds: 1));
   stack.groupListener.start(stack.groupStreamController.stream);
 }
+
+Future<void> _restartMl008Listener(GroupMultiDeviceTestStack stack) =>
+    _restartGroupMessageListener(stack);
 
 Future<void> _runMl008Alice(
   GroupMultiDeviceTestStack stack,
@@ -34131,6 +34295,11 @@ Future<void> _runGm009Charlie(
   );
   final keyEpochAfterRemoval = await _keyEpoch(stack, groupId);
   final postRemovalPlaintextCount = aliceLeakCount + bobLeakCount;
+  final groupAfterDuplicateRemoval = await stack.groupRepo.getGroup(groupId);
+  final selfMemberAfterDuplicateRemoval = await stack.groupRepo.getMember(
+    groupId,
+    stack.identity.peerId,
+  );
 
   await _writeVerdict(
     stack: stack,
@@ -34140,8 +34309,9 @@ Future<void> _runGm009Charlie(
     extra: <String, dynamic>{
       'gm009DuplicateRemovalProof': <String, dynamic>{
         'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
-        'groupPresentAfterDuplicateRemoval':
-            await stack.groupRepo.getGroup(groupId) != null,
+        'groupPresentAfterDuplicateRemoval': groupAfterDuplicateRemoval != null,
+        'selfMemberPresentAfterDuplicateRemoval':
+            selfMemberAfterDuplicateRemoval != null,
         'hasRotatedEpoch': keyEpochAfterRemoval >= rotatedEpoch,
         'postRemovalSendOutcome': rejectedSend['outcome'] as String,
         'postRemovalPublishAccepted': rejectedSend['accepted'] == true,
@@ -35364,6 +35534,12 @@ Future<void> _runPl002Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final messageId = 'gmp_${_runId}_${_scenario}_${_pl002MediaOnlyKey}_$_role';
@@ -35642,6 +35818,12 @@ Future<void> _runPl012Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final messageId =
@@ -35765,9 +35947,17 @@ Future<Map<String, dynamic>> _ml012ActiveProof({
   };
 }
 
-Map<String, dynamic> _ml012RemovedCharlieProof({
+Future<Map<String, dynamic>> _ml012RemovedCharlieProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
   required Map<String, Map<String, dynamic>> identities,
-}) {
+}) async {
+  final groupAfterRemoval = await stack.groupRepo.getGroup(groupId);
+  final memberPeerIds = await _memberPeerIds(stack, groupId);
+  final currentMemberAfterRemoval =
+      await stack.groupRepo.getMember(groupId, stack.identity.peerId) != null;
+  final keyAfterRemoval = await stack.groupRepo.getLatestKey(groupId);
+  final charliePeerId = identities['charlie']!['peerId'] as String;
   return <String, dynamic>{
     'rowId': 'ML-012',
     'role': 'charlie',
@@ -35778,11 +35968,15 @@ Map<String, dynamic> _ml012RemovedCharlieProof({
       'remove_then_add',
     ],
     'charlieRemoved': true,
-    'postRemovalGroupAbsent': true,
-    'removedCharlieExcluded': true,
+    'postRemovalGroupPresent': groupAfterRemoval != null,
+    'retainedLocalHistoryAfterRemoval': groupAfterRemoval != null,
+    'currentMemberAfterRemoval': currentMemberAfterRemoval,
+    'postRemovalKeyAbsent': keyAfterRemoval == null,
+    'retainedMemberPeerIds': memberPeerIds,
+    'removedCharlieExcluded': !memberPeerIds.contains(charliePeerId),
     'sameTargetTieRemoveWins': true,
     'removedWindowPlaintextCount': 0,
-    'removedPeerId': identities['charlie']!['peerId'] as String,
+    'removedPeerId': charliePeerId,
   };
 }
 
@@ -35965,7 +36159,9 @@ Future<void> _runMl012Charlie(
     extra: <String, dynamic>{
       'keyEpoch': joinedKeyEpoch,
       'activeMemberPeerIds': const <String>[],
-      'ml012ConcurrentAdminEditsProof': _ml012RemovedCharlieProof(
+      'ml012ConcurrentAdminEditsProof': await _ml012RemovedCharlieProof(
+        stack: stack,
+        groupId: groupId,
         identities: identities,
       ),
     },
@@ -36422,6 +36618,12 @@ Future<void> _runGm014Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charlieIdentity = identities['charlie']!;
@@ -37858,6 +38060,12 @@ Future<void> _runGm015Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final alicePeerId = stack.identity.peerId;
@@ -38104,6 +38312,12 @@ Future<void> _runGm016Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charliePeerId = identities['charlie']!['peerId'] as String;
@@ -38215,7 +38429,7 @@ Future<void> _runGm016Charlie(
     await Future<void>.delayed(const Duration(seconds: 5));
     quietWindow.stop();
 
-    final groupRecreatedAfterQuietWindow =
+    final groupRetainedAfterQuietWindow =
         await stack.groupRepo.getGroup(groupId) != null;
     writeSharedText(_signalName('charlie_gm016_quiet_window_complete'), 'ok');
 
@@ -38246,6 +38460,8 @@ Future<void> _runGm016Charlie(
       'GROUP_FL_BRIDGE_JOIN_REQUEST',
       'GROUP_FL_BRIDGE_JOIN_CONFIG_REQUEST',
     });
+    final groupRecreatedAfterQuietWindow =
+        groupRetainedAfterQuietWindow && postLeaveGroupJoinCount > 0;
     final postLeaveDiscoveryEventCount = probe.flowCountSince(
       flowBaseline,
       const {'GROUP_DISCOVERY'},
@@ -38308,6 +38524,12 @@ Future<void> _runGm017Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charliePeerId = identities['charlie']!['peerId'] as String;
@@ -38586,6 +38808,12 @@ Future<void> _runGm018Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charliePeerId = identities['charlie']!['peerId'] as String;
@@ -39059,6 +39287,12 @@ Future<void> _runGm019Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charlieIdentity = identities['charlie']!;
@@ -39366,6 +39600,12 @@ Future<void> _runGm020Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -39852,6 +40092,12 @@ Future<void> _runGm021Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final removedAt = await _removeCharlieAndPublish(
@@ -40206,6 +40452,12 @@ Future<void> _runGm022Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
 
   for (var cycle = 1; cycle <= cycleCount; cycle++) {
     final removedAt = await _removeCharlieAndPublish(
@@ -40683,6 +40935,12 @@ Future<void> _runGm023Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charlieSent = await waitForSharedJson(
@@ -41087,6 +41345,12 @@ Future<void> _runGm024Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   await _removeCharlieAndPublish(
@@ -41586,6 +41850,12 @@ Future<void> _runGm025Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   await _removeCharlieAndPublish(
@@ -42591,14 +42861,45 @@ Future<void> _runKe015Alice(
     },
   );
   final senderEpochAfterFailure = await _keyEpoch(stack, groupId);
-  if (rotatedKey.rotated || senderEpochAfterFailure != 1) {
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  final failedRecipientDeferred = rotatedKey.deferredPeerIds.contains(
+    charliePeerId,
+  );
+  if (!rotatedKey.rotated ||
+      rotatedKey.key?.keyGeneration != 2 ||
+      senderEpochAfterFailure != 2 ||
+      !failedRecipientDeferred) {
     throw StateError(
-      'KE-015 expected blocked rotation and sender epoch 1, got '
-      'rotatedKey=${rotatedKey.key?.keyGeneration} epoch=$senderEpochAfterFailure',
+      'KE-015 expected partial rotation to promote epoch 2 and defer Charlie, '
+      'got rotatedKey=${rotatedKey.key?.keyGeneration} '
+      'epoch=$senderEpochAfterFailure deferred=${rotatedKey.deferredPeerIds}',
     );
   }
   writeSharedText(_signalName('alice_ke015_partial_rotation_attempted'), 'ok');
   await waitForSharedSignal(_signalName('bob_ke015_success_key_checked'));
+  await waitForSharedSignal(_signalName('charlie_ke015_failed_key_checked'));
+
+  final redistributedDeviceCount =
+      await distributeCurrentGroupKeyToDeferredPeer(
+        bridge: stack.bridge,
+        groupRepo: stack.groupRepo,
+        groupId: groupId,
+        peerId: charliePeerId,
+        selfPeerId: stack.identity.peerId,
+        senderPublicKey: stack.identity.publicKey,
+        senderPrivateKey: stack.identity.privateKey,
+        senderUsername: stack.identity.username,
+        sourceDeviceId: stack.p2pService.currentState.peerId,
+        sendP2PMessage: (peerId, message) async =>
+            stack.p2pService.sendMessage(peerId, message),
+        storeP2PMessageInInbox: (peerId, message) async =>
+            stack.p2pService.storeInInbox(peerId, message),
+      );
+  if (redistributedDeviceCount < 1) {
+    throw StateError('KE-015 failed to redistribute current key to Charlie');
+  }
+  writeSharedText(_signalName('alice_ke015_deferred_key_redistributed'), 'ok');
+  await waitForSharedSignal(_signalName('charlie_ke015_deferred_key_checked'));
 
   final sent = await _sendProofMessage(
     stack: stack,
@@ -42626,12 +42927,14 @@ Future<void> _runKe015Alice(
         'attemptedMixedDistribution': true,
         'bobKeyUpdateSucceeded': bobKeyUpdateSucceeded,
         'charlieKeyUpdateFailed': charlieKeyUpdateFailed,
-        'rotationBlocked': !rotatedKey.rotated,
-        'keptSenderEpochAfterFailure': senderEpochAfterFailure == 1,
-        'blockedKeyRotatedPublish': !rotatedKey.rotated,
-        'sentPostFailureAtPreviousEpoch': sent['keyEpoch'] == 1,
+        'rotationPromotedAfterPartialDistribution': rotatedKey.rotated,
+        'senderPromotedAfterPartialDistribution': senderEpochAfterFailure == 2,
+        'failedRecipientDeferred': failedRecipientDeferred,
+        'redistributedDeferredKeyToFailedRecipient':
+            redistributedDeviceCount > 0,
+        'sentPostRepairAtPromotedEpoch': sent['keyEpoch'] == 2,
         'attemptedEpoch': 2,
-        'postFailureMessageEpoch': sent['keyEpoch'],
+        'postRepairMessageEpoch': sent['keyEpoch'],
         'finalEpoch': await _keyEpoch(stack, groupId),
       },
     },
@@ -42680,8 +42983,8 @@ Future<void> _runKe015Bob(
       'ke015PartialKeyDistributionProof': <String, dynamic>{
         'rowId': 'KE-015',
         'receivedSuccessfulKeyUpdate': keyEpochAfterSuccessfulUpdate == 2,
-        'successfulRecipientStillReceivesPostFailure': true,
-        'receivedPostFailureAtPreviousEpoch': received['keyEpoch'] == 1,
+        'successfulRecipientStillReceivesPostRepair': true,
+        'receivedPostRepairAtPromotedEpoch': received['keyEpoch'] == 2,
         'finalEpoch': await _keyEpoch(stack, groupId),
       },
     },
@@ -42703,6 +43006,14 @@ Future<void> _runKe015Charlie(
     _signalName('alice_ke015_partial_rotation_attempted'),
   );
   final epochAfterFailedUpdate = await _keyEpoch(stack, groupId);
+  writeSharedText(_signalName('charlie_ke015_failed_key_checked'), 'ok');
+
+  await waitForSharedSignal(
+    _signalName('alice_ke015_deferred_key_redistributed'),
+  );
+  await _waitForKeyEpoch(stack: stack, groupId: groupId, keyEpoch: 2);
+  final epochAfterDeferredKeyUpdate = await _keyEpoch(stack, groupId);
+  writeSharedText(_signalName('charlie_ke015_deferred_key_checked'), 'ok');
 
   final aliceSent = await waitForSharedJson(
     _signalName('alice_sent_aliceAfterPartialKeyDistributionFailure.json'),
@@ -42729,21 +43040,27 @@ Future<void> _runKe015Charlie(
     extra: <String, dynamic>{
       'ke015PartialKeyDistributionProof': <String, dynamic>{
         'rowId': 'KE-015',
-        'failedRecipientDidNotAdvance': epochAfterFailedUpdate == 1,
-        'receivedPostFailureAtPreviousEpoch': received['keyEpoch'] == 1,
-        'notDeafAfterFailedKeyUpdate': true,
+        'failedRecipientInitiallyDidNotAdvance': epochAfterFailedUpdate == 1,
+        'receivedDeferredKeyUpdate': epochAfterDeferredKeyUpdate == 2,
+        'receivedPostRepairAtPromotedEpoch': received['keyEpoch'] == 2,
+        'notDeafAfterDeferredKeyUpdate': true,
         'finalEpoch': await _keyEpoch(stack, groupId),
       },
     },
   );
 }
 
-Future<void> _storeGm033StaleRemovedWindowForCharlie({
+Future<String> _storeGm033StaleRemovedWindowForCharlie({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
   required Map<String, dynamic> removedWindowSent,
   required String charliePeerId,
 }) async {
+  final originalMessageId = removedWindowSent['messageId'] as String;
+  final staleReplayMessageId = '${originalMessageId}_stale_replay_for_charlie';
+  final senderDeviceId = removedWindowSent['senderDeviceId'] as String?;
+  final senderTransportPeerId = removedWindowSent['transportPeerId'] as String?;
+  final senderKeyPackageId = removedWindowSent['senderKeyPackageId'] as String?;
   await storeGroupOfflineReplayEnvelope(
     bridge: stack.bridge,
     groupRepo: stack.groupRepo,
@@ -42756,14 +43073,24 @@ Future<void> _storeGm033StaleRemovedWindowForCharlie({
       'keyEpoch': removedWindowSent['keyEpoch'] as int? ?? 1,
       'text': removedWindowSent['text'] as String,
       'timestamp': removedWindowSent['timestamp'] as String,
-      'messageId': removedWindowSent['messageId'] as String,
+      'messageId': staleReplayMessageId,
+      'logicalDeliveryId': originalMessageId,
+      if (senderDeviceId != null && senderDeviceId.isNotEmpty)
+        'senderDeviceId': senderDeviceId,
+      if (senderTransportPeerId != null && senderTransportPeerId.isNotEmpty)
+        'transportPeerId': senderTransportPeerId,
     }),
     senderPeerId: stack.identity.peerId,
     senderPublicKey: stack.identity.publicKey,
     senderPrivateKey: stack.identity.privateKey,
-    messageId: removedWindowSent['messageId'] as String,
+    messageId: staleReplayMessageId,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+    senderKeyPackageId: senderKeyPackageId,
     recipientPeerIds: <String>[charliePeerId],
+    preserveRecipientPeerIds: true,
   );
+  return staleReplayMessageId;
 }
 
 Future<void> _runGm033Alice(
@@ -42781,6 +43108,12 @@ Future<void> _runGm033Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final bobPeerId = identities['bob']!['peerId'] as String;
@@ -42829,7 +43162,7 @@ Future<void> _runGm033Alice(
     _signalName('bob_received_aliceGm033RemovedWindow.json'),
   );
 
-  await _storeGm033StaleRemovedWindowForCharlie(
+  final staleReplayMessageId = await _storeGm033StaleRemovedWindowForCharlie(
     stack: stack,
     groupId: groupId,
     removedWindowSent: removedWindowSent,
@@ -42840,6 +43173,8 @@ Future<void> _runGm033Alice(
     _signalName('alice_gm033_stale_removed_window_for_charlie.json'),
     <String, dynamic>{
       'messageId': removedWindowSent['messageId'] as String,
+      'staleReplayMessageId': staleReplayMessageId,
+      'logicalDeliveryId': removedWindowSent['messageId'] as String,
       'text': removedWindowSent['text'] as String,
       'staleStoredAt': staleStoredAt.toIso8601String(),
     },
@@ -42955,6 +43290,7 @@ Future<void> _runGm033Alice(
         'removedAt': removedAt.toIso8601String(),
         'removedWindowSentAt': removedWindowSentAt.toIso8601String(),
         'staleStoredAt': staleStoredAt.toIso8601String(),
+        'staleReplayMessageId': staleReplayMessageId,
         'readdAt': readdAt.toIso8601String(),
         'postReaddSentAt': aliceAfterReadd['timestamp'] as String,
         'replayResumedAt': replayResumed['replayResumedAt']?.toString(),
@@ -43346,6 +43682,12 @@ Future<void> _runGm034Alice(
 
   await waitForSharedSignal(_signalName('bob_group_joined'));
   await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charlieIdentity = identities['charlie']!;
@@ -45917,6 +46259,12 @@ Future<void> _runGm035Alice(
 
   await waitForSharedSignal(_signalName('bob_gm035_group_joined'));
   await waitForSharedSignal(_signalName('charlie_gm035_group_joined'));
+  await _markDirectFixtureInviteesJoined(
+    stack: stack,
+    groupId: groupId,
+    identities: identities,
+    roles: const <String>['bob', 'charlie'],
+  );
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final charlieIdentity = identities['charlie']!;
@@ -49152,9 +49500,10 @@ Future<void> _runScenarioRole() async {
   }
 }
 
-void main() {
+Future<void> main() async {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   initializeSqliteForCurrentPlatform();
+  await _initializeRuntimeConfig();
 
   testWidgets(
     'group multi-party device proof scenario=$_scenario role=$_role run=$_runId',

@@ -255,6 +255,20 @@ Future<void> main(List<String> args) async {
       'send=${s1Alice['sendMs']}ms path=${s1Alice['sendPath']} e2e=${s1Bob['e2eMs']}ms',
     );
 
+    // ══════════ S1-CONV: sender converges to delivered (132) ══════════
+    // After Bob receives S1, Alice's outgoing row must reach 'delivered' via the
+    // live ack OR Bob's confirmatory delivery receipt (Phase 1). Locks the
+    // delivery-receipt convergence end-to-end in the 1:1 reliability gate.
+    final s1Conv = await _signals.waitForJson(
+      's1_alice_converged',
+      timeout: const Duration(minutes: 2),
+    );
+    _check(
+      'S1-CONV',
+      s1Conv['delivered'] == true,
+      "Alice S1 converged to '${s1Conv['status']}' (132 delivery-receipt convergence)",
+    );
+
     // ══════════ S2: Warm send x5 ══════════
     _log('ORCH', '─── S2: Warm send x5 ───');
     _signals.writeSignal('s2_go');

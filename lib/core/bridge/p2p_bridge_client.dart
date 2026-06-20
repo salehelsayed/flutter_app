@@ -65,6 +65,7 @@ Map<String, bool> defaultResilienceFeatureFlags() {
 ///   - [relayAddresses]: Optional list of relay server multiaddrs
 ///   - [autoRegister]: Whether to auto-register on rendezvous (default true)
 ///   - [namespace]: Optional namespace for rendezvous registration
+///   - [keyRotationGracePeriod]: Optional native key-rotation grace override
 ///
 /// Returns a map with node state on success:
 /// `{ "ok": true, "peerId": "...", "isStarted": true, ... }`
@@ -75,6 +76,7 @@ Future<Map<String, dynamic>> callP2PNodeStart(
   bool autoRegister = true,
   String? namespace,
   Map<String, bool>? featureFlags,
+  Duration? keyRotationGracePeriod,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -89,7 +91,8 @@ Future<Map<String, dynamic>> callP2PNodeStart(
       'relayAddresses': relayAddresses ?? defaultRelayAddresses(),
       'autoRegister': autoRegister,
       'featureFlags': featureFlags ?? defaultResilienceFeatureFlags(),
-      if (namespace != null) 'namespace': namespace,
+      'namespace': ?namespace,
+      'keyRotationGracePeriodMs': ?keyRotationGracePeriod?.inMilliseconds,
     },
   };
 

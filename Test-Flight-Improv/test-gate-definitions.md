@@ -664,6 +664,10 @@ CI placement:
 
 These stay outside the named gates because they are heavier, device-bound, env-bound, or real-stack confidence tests.
 
+For the group multi-party orchestrator, `RELIABILITY_GROUP_TIER=smoke` is a
+routine confidence subset only. Unset or `RELIABILITY_GROUP_TIER=full` remains
+the full multi-party nightly/release requirement.
+
 - `integration_test/smoke_test.dart`
 - `integration_test/conversation_bridge_test.dart`
 - `integration_test/wifi_transport_test.dart`

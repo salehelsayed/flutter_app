@@ -313,6 +313,100 @@ void main() {
       });
     });
 
+    group('resolveStoredPathSync (127 round-3 render-boundary resolver)', () {
+      test('returns the path unchanged when the cache is unseeded', () {
+        // Declared first so the process-wide cache is still null here.
+        expect(
+          MediaFileManager.resolveStoredPathSync('media/contact-A/blob.jpg'),
+          equals('media/contact-A/blob.jpg'),
+        );
+      });
+
+      test('resolves a relative path against the cached documents dir', () {
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        expect(
+          MediaFileManager.resolveStoredPathSync('media/contact-A/blob.jpg'),
+          equals('${tempDir.path}/media/contact-A/blob.jpg'),
+        );
+      });
+
+      test(
+        'rebases a stale legacy absolute /media/ path onto the cached dir',
+        () {
+          MediaFileManager.cacheDocumentsDir(tempDir.path);
+          expect(
+            MediaFileManager.resolveStoredPathSync(
+              '/old-container/Documents/media/contact-A/blob.jpg',
+            ),
+            equals('${tempDir.path}/media/contact-A/blob.jpg'),
+          );
+        },
+      );
+
+      test('is idempotent on an already-correct absolute path', () {
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        final abs = '${tempDir.path}/media/contact-A/blob.jpg';
+        expect(MediaFileManager.resolveStoredPathSync(abs), equals(abs));
+      });
+
+      test('returns an unknown absolute path as-is', () {
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        expect(
+          MediaFileManager.resolveStoredPathSync('/some/random/path.jpg'),
+          equals('/some/random/path.jpg'),
+        );
+      });
+
+      test(
+        'matches the async resolveStoredPath for relative media paths',
+        () async {
+          MediaFileManager.cacheDocumentsDir(tempDir.path);
+          const stored = 'media/contact-B/blob-2.jpg';
+          expect(
+            MediaFileManager.resolveStoredPathSync(stored),
+            equals(await fileManager.resolveStoredPath(stored)),
+          );
+        },
+      );
+
+      test(
+        '128: emits MEDIA_RESOLVE_SYNC_NO_CACHE once when cache is unseeded',
+        () {
+          MediaFileManager.debugResetDocumentsDirCache();
+          final events = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(events.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          MediaFileManager.resolveStoredPathSync('media/a/b.jpg');
+          MediaFileManager.resolveStoredPathSync('media/c/d.jpg');
+
+          final noCache = events
+              .where((e) => e['event'] == 'MEDIA_RESOLVE_SYNC_NO_CACHE')
+              .toList();
+          expect(
+            noCache,
+            hasLength(1),
+            reason: 'once per process, not per call',
+          );
+        },
+      );
+
+      test('128: no MEDIA_RESOLVE_SYNC_NO_CACHE when the cache is seeded', () {
+        MediaFileManager.debugResetDocumentsDirCache();
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        MediaFileManager.resolveStoredPathSync('media/a/b.jpg');
+
+        expect(
+          events.where((e) => e['event'] == 'MEDIA_RESOLVE_SYNC_NO_CACHE'),
+          isEmpty,
+        );
+      });
+    });
+
     group('deleteFile', () {
       test('deletes an existing file', () async {
         final path = await fileManager.localPathForAttachment(

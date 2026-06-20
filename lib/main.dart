@@ -246,6 +246,7 @@ import 'package:flutter_app/features/posts/application/pending_post_follow_on_re
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
+import 'package:flutter_app/core/debug/auto_setup_config.dart';
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -265,6 +266,7 @@ import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
@@ -384,6 +386,19 @@ void main() async {
   // Initialize UserAvatar documents directory for file-based avatar loading
   final appDocDir = await getApplicationDocumentsDirectory();
   UserAvatar.setDocumentsDir(appDocDir.path);
+  // 127 (round 3): seed the sync render-boundary resolver so MediaGridCell /
+  // MediaThumbnailImage can turn a RELATIVE stored localPath into an absolute
+  // one during build() — the durable fix for own-sent media "Media unavailable"
+  // (the render gate, not just the send path, must resolve).
+  MediaFileManager.cacheDocumentsDir(appDocDir.path);
+  // 128 (round 4): build-identifying marker. Its PRESENCE in a device log proves
+  // the installed binary contains the render-boundary fix + the cache is seeded;
+  // its ABSENCE means a stale build (deploy gap), settling the 4-round ambiguity.
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'MEDIA_RENDER_RESOLVER_SEEDED',
+    details: {'seeded': true},
+  );
   StartupTiming.instance.mark('documents_dir_ready');
 
   // ⚠️ TEMP DEV-ONLY — one-shot Keychain wipe for a truly fresh install.
@@ -1745,9 +1760,9 @@ void main() async {
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
 
-  // ── Auto-setup for simulator scripts (dart-define only, dead-code in release) ──
-  const autoSetupUsername = String.fromEnvironment('AUTO_SETUP_USERNAME');
-  if (autoSetupUsername.isNotEmpty) {
+  // ── Auto-setup for simulator scripts (debug/test harness only) ──
+  final autoSetupUsername = await resolveAutoSetupUsername(appDocDir.path);
+  if (autoSetupUsername != null) {
     final existing = await repository.loadIdentity();
     if (existing == null) {
       final result = await generateNewIdentity(
@@ -1797,7 +1812,21 @@ void main() async {
         }
       }
     } else {
-      if (kDebugMode) print('[AUTO-SETUP] Identity already exists, skipping');
+      if (kDebugMode) {
+        print('[AUTO-SETUP] Identity already exists, ensuring export');
+      }
+      final (qrResult, qrJson) = await buildQRPayload(
+        repo: repository,
+        callSign: (data, key) =>
+            callSignPayload(bridge: bridge, dataToSign: data, privateKey: key),
+        cachedIdentity: existing,
+      );
+      if (qrResult == BuildQRPayloadResult.success && qrJson != null) {
+        await exportIdentityForIntroE2E(
+          signedQrPayloadJson: qrJson,
+          mlKemPublicKey: existing.mlKemPublicKey,
+        );
+      }
     }
   }
 
@@ -1961,6 +1990,18 @@ void main() async {
     return mapChatReplayOutcomeToDisposition(outcome);
   }
 
+  // 127-Bug-C: reaction-receive notification deps. The notification stack is
+  // constructed further below (after p2pService), but this closure is defined
+  // here — so the deps are stored in this mutable holder and read at
+  // reaction-arrival time (long after bootstrap completes).
+  ({
+    NotificationService service,
+    ActiveConversationTracker tracker,
+    AppLifecycleState Function() lifecycle,
+    NotificationToneTracker toneTracker,
+  })?
+  reactionNotifyDeps;
+
   // F7: reactions/deletions get the same stage-before-ack/commit durability as
   // chat. These replay closures call the use cases DIRECTLY (the listeners are
   // constructed later and aren't needed here) and resolve the SAME deps + the
@@ -1970,6 +2011,7 @@ void main() async {
     String? stagedEntryId,
   }) async {
     final identity = await repository.loadIdentity();
+    final notify = reactionNotifyDeps;
     final (result, _) = await handleIncomingReaction(
       message: message,
       messageRepo: messageRepository,
@@ -1977,6 +2019,13 @@ void main() async {
       contactRepo: contactRepository,
       bridge: bridge,
       ownMlKemSecretKey: identity?.mlKemSecretKey,
+      // 127-Bug-C: notify the recipient that a contact reacted to their 1:1
+      // message (no-op until the holder below is populated). The use case fires
+      // only on a fresh ADD upsert and respects the standard suppression gates.
+      notificationService: notify?.service,
+      conversationTracker: notify?.tracker,
+      getAppLifecycleState: notify?.lifecycle,
+      notificationToneTracker: notify?.toneTracker,
     );
     // OQ-7: targetUnavailable is a TERMINAL drop (commit, not retryable) — the
     // target message is gone/deleted and will never reappear, so retrying would
@@ -2225,6 +2274,18 @@ void main() async {
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
     sendDeliveryReceipt: sendDeliveryReceiptForPeer,
+  );
+
+  // 127-Bug-C: the notification stack now exists — enable reaction-receive
+  // notifications for the already-defined replayInboxReaction closure (all 3
+  // reaction receive paths funnel through it). Reuses the chat path's tracker,
+  // lifecycle getter and tone tracker so suppression/debounce stay consistent.
+  reactionNotifyDeps = (
+    service: notificationService,
+    tracker: conversationTracker,
+    lifecycle: () =>
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+    toneTracker: notificationToneTracker,
   );
 
   // 115 P2: consume incoming receipts — the only place 'inboxed' rows flip
@@ -2871,6 +2932,7 @@ void main() async {
         identityRepo: repository,
         contactRepo: contactRepository,
         mediaFileManager: mediaFileManager,
+        isUploadInFlight: mediaUploadInFlightTracker.isInFlight,
       ),
     ),
   );
@@ -3103,9 +3165,10 @@ void main() async {
     }),
   );
   unawaited(
-    sweepExpiredGroupInvites(
-      repo: pendingGroupInviteRepository,
-    ).catchError((Object error, StackTrace stackTrace) {
+    sweepExpiredGroupInvites(repo: pendingGroupInviteRepository).catchError((
+      Object error,
+      StackTrace stackTrace,
+    ) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INVITE_SWEEP_STARTUP_ERROR',
@@ -3133,7 +3196,7 @@ void main() async {
           navigator.popUntil((route) => route.isFirst);
           unawaited(
             navigator.push(
-              buildConversationSlideUpRoute(
+              buildConversationRoute(
                 builder: (_) => ConversationWired(
                   contact: contact,
                   identityRepo: repository,
@@ -3360,6 +3423,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   bool _isResuming = false;
   DateTime? _notificationTappedAt;
   NotificationRouteTarget? _deferredNotificationRouteTarget;
+  // 133: a notification route must be pushed ON TOP of the startup home, not
+  // before it — otherwise the StartupRouter's `pushReplacement(home)` clobbers
+  // the just-pushed conversation and the user lands on Feed (Android cold-tap).
+  // `_startupHomeReady` flips true when StartupRouter establishes the home; the
+  // fallback timer guarantees a notification is never permanently stranded if
+  // that signal never arrives (degrades to the legacy push-anyway behavior).
+  bool _startupHomeReady = false;
+  Timer? _homeReadyFallbackTimer;
+  static const Duration _homeReadyFallbackDelay = Duration(seconds: 8);
   late final PostNotificationOpenCoordinator _postNotificationOpenCoordinator;
   late final ContactRequestNotificationMaterializer
   _contactRequestNotificationMaterializer;
@@ -3533,6 +3605,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   void _setupIosApnsNotificationOpenBridge() {
     _iosApnsNotificationOpenBridge = IosApnsNotificationOpenBridge();
+    // 133: the `mknoon/ios_notification_open` MethodChannel only exists on iOS;
+    // invoking it on Android throws MissingPluginException (log noise on every
+    // cold start). Keep the field assigned (dispose references it) but only wire
+    // the channel + readiness probe on iOS.
+    if (!Platform.isIOS) return;
     _iosApnsNotificationOpenBridge.register(_routeRemoteNotificationOpen);
     unawaited(_prepareIosApnsNotificationOpenBridgeWhenReady());
   }
@@ -3695,11 +3772,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     NotificationRouteTarget routeTarget,
   ) async {
     final navigator = MyApp.navigatorKey.currentState;
-    if (navigator == null) {
+    // 133: defer until BOTH the navigator exists AND the startup home has been
+    // established. Routing before the home is replaced lets StartupRouter's
+    // `pushReplacement(home)` clobber the conversation we push (Android cold-tap
+    // → Feed). The navigator-null case re-tries on the next frame; the
+    // home-not-ready case waits for `_onStartupHomeReady` (or the fallback
+    // timer), so we don't busy-loop for the ~1-2s until the home lands.
+    if (navigator == null || !_startupHomeReady) {
       _deferredNotificationRouteTarget = routeTarget;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_flushDeferredNotificationRouteTarget());
-      });
+      if (navigator == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_flushDeferredNotificationRouteTarget());
+        });
+      }
+      _armHomeReadyFallback();
       return;
     }
 
@@ -3897,7 +3983,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     DateTime? notificationTappedAt,
   }) async {
     navigator.push(
-      buildConversationSlideUpRoute(
+      buildConversationRoute(
         builder: (_) => ConversationWired(
           contact: contact,
           identityRepo: widget.repository,
@@ -3941,8 +4027,44 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       });
       return;
     }
+    // 133: hold the route until the startup home is up; `_onStartupHomeReady`
+    // (or the fallback timer) re-invokes this flush once it is, so the
+    // conversation lands ON TOP of the home rather than being replaced by it.
+    if (!_startupHomeReady) {
+      _armHomeReadyFallback();
+      return;
+    }
     _deferredNotificationRouteTarget = null;
     await _handleNotificationRouteTarget(routeTarget);
+  }
+
+  /// 133: StartupRouter has established the home surface — release any deferred
+  /// notification route so it is pushed on top of it.
+  void _onStartupHomeReady() {
+    _homeReadyFallbackTimer?.cancel();
+    _homeReadyFallbackTimer = null;
+    if (_startupHomeReady) return;
+    _startupHomeReady = true;
+    unawaited(_flushDeferredNotificationRouteTarget());
+  }
+
+  /// 133 safety net: if the home-ready signal never arrives (an abnormal startup
+  /// path that bypasses StartupRouter), flush anyway after a bounded delay so a
+  /// tapped notification is never permanently stranded — degrading to the legacy
+  /// push-immediately behavior rather than a worse regression.
+  void _armHomeReadyFallback() {
+    if (_startupHomeReady) return;
+    _homeReadyFallbackTimer ??= Timer(_homeReadyFallbackDelay, () {
+      _homeReadyFallbackTimer = null;
+      if (_startupHomeReady) return;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_ROUTE_HOME_READY_FALLBACK',
+        details: {},
+      );
+      _startupHomeReady = true;
+      unawaited(_flushDeferredNotificationRouteTarget());
+    });
   }
 
   Future<void> _prepareNotificationRouteTarget(
@@ -4006,6 +4128,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.p2pService.dispose();
     widget.bridge.dispose();
     widget.audioRecorderService.dispose();
+    _homeReadyFallbackTimer?.cancel();
     _iosApnsNotificationOpenBridge.dispose();
     widget.notificationService.dispose();
 
@@ -4180,6 +4303,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           identityRepo: widget.repository,
           contactRepo: widget.contactRepository,
           mediaFileManager: widget.mediaFileManager,
+          isUploadInFlight: mediaUploadInFlightTracker.isInFlight,
         ),
         retryFailedMessagesFn: () => retryFailedMessages(
           messageRepo: widget.messageRepository,
@@ -4421,6 +4545,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         clearDeliveredNotifications:
             widget.notificationService.clearDeliveredNotifications,
         onNotificationRouteTarget: _handleNotificationRouteTarget,
+        onStartupHomeReady: _onStartupHomeReady,
       ),
       debugShowCheckedModeBanner: false,
     );

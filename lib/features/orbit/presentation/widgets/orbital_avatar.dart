@@ -12,6 +12,7 @@ class OrbitalAvatar extends StatefulWidget {
   final Color borderColor;
   final VoidCallback? onTap;
   final String? semanticLabel;
+  final bool motionEnabled;
 
   const OrbitalAvatar({
     super.key,
@@ -22,6 +23,7 @@ class OrbitalAvatar extends StatefulWidget {
     this.borderColor = const Color(0x1FFFFFFF),
     this.onTap,
     this.semanticLabel,
+    this.motionEnabled = true,
   });
 
   @override
@@ -42,9 +44,14 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
     );
     _scaleAnimation = CurvedAnimation(parent: _controller, curve: Curves.ease);
 
-    Future.delayed(Duration(milliseconds: widget.globalIndex * 40), () {
-      if (mounted) _controller.forward();
-    });
+    if (widget.motionEnabled) {
+      Future.delayed(Duration(milliseconds: widget.globalIndex * 40), () {
+        if (mounted) _controller.forward();
+      });
+    } else {
+      // Respect Reduce Motion: appear fully, no entrance animation.
+      _controller.value = 1.0;
+    }
   }
 
   @override

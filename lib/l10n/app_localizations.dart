@@ -520,6 +520,42 @@ abstract class AppLocalizations {
   /// **'{count, plural, =0{No attachments} =1{1 attachment} other{{count} attachments}}'**
   String compose_attachments(int count);
 
+  /// No description provided for @orbit_preview_voice_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice message'**
+  String get orbit_preview_voice_message;
+
+  /// No description provided for @orbit_preview_gif.
+  ///
+  /// In en, this message translates to:
+  /// **'GIF'**
+  String get orbit_preview_gif;
+
+  /// No description provided for @orbit_preview_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Photo} other{{count} photos}}'**
+  String orbit_preview_photo(int count);
+
+  /// No description provided for @orbit_preview_video.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Video} other{{count} videos}}'**
+  String orbit_preview_video(int count);
+
+  /// No description provided for @orbit_preview_file.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{File} other{{count} files}}'**
+  String orbit_preview_file(int count);
+
+  /// No description provided for @orbit_preview_attachment.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Attachment} other{{count} attachments}}'**
+  String orbit_preview_attachment(int count);
+
   /// No description provided for @compose_pick_people.
   ///
   /// In en, this message translates to:
@@ -3985,6 +4021,258 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This phone is blocked from opening the account after migration. Erase the local copy only when you are sure the new phone works.'**
   String get account_migration_blocked_message;
+
+  /// No description provided for @contact_profile_verified_peer.
+  ///
+  /// In en, this message translates to:
+  /// **'Verified peer'**
+  String get contact_profile_verified_peer;
+
+  /// No description provided for @contact_profile_blocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked'**
+  String get contact_profile_blocked;
+
+  /// No description provided for @contact_profile_archived.
+  ///
+  /// In en, this message translates to:
+  /// **'Archived'**
+  String get contact_profile_archived;
+
+  /// No description provided for @contact_profile_peer_id_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Peer ID'**
+  String get contact_profile_peer_id_label;
+
+  /// No description provided for @contact_profile_peer_id_copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Peer ID copied'**
+  String get contact_profile_peer_id_copied;
+
+  /// No description provided for @contact_profile_tap_to_copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to copy'**
+  String get contact_profile_tap_to_copy;
+
+  /// No description provided for @contact_profile_safety_number_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Safety number'**
+  String get contact_profile_safety_number_label;
+
+  /// No description provided for @contact_profile_safety_number_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare this number in person to confirm your connection is secure.'**
+  String get contact_profile_safety_number_hint;
+
+  /// No description provided for @contact_profile_copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied to clipboard'**
+  String get contact_profile_copied;
+
+  /// No description provided for @contact_profile_connected_since_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected since'**
+  String get contact_profile_connected_since_label;
+
+  /// No description provided for @contact_profile_introduced_by_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Introduced by'**
+  String get contact_profile_introduced_by_label;
+
+  /// No description provided for @contact_profile_message_button.
+  ///
+  /// In en, this message translates to:
+  /// **'Message'**
+  String get contact_profile_message_button;
+
+  /// No description provided for @nav_orbit2.
+  ///
+  /// In en, this message translates to:
+  /// **'Orbit2'**
+  String get nav_orbit2;
+
+  /// No description provided for @orbit2_prototype_chip.
+  ///
+  /// In en, this message translates to:
+  /// **'Prototype · sample data'**
+  String get orbit2_prototype_chip;
+
+  /// No description provided for @orbit2_size_legend.
+  ///
+  /// In en, this message translates to:
+  /// **'Bigger = closer · tap to chat · drag to rearrange'**
+  String get orbit2_size_legend;
+
+  /// No description provided for @orbit2_simulate.
+  ///
+  /// In en, this message translates to:
+  /// **'Simulate'**
+  String get orbit2_simulate;
+
+  /// No description provided for @orbit2_reset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset'**
+  String get orbit2_reset;
+
+  /// No description provided for @orbit2_search_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Find a friend'**
+  String get orbit2_search_hint;
+
+  /// No description provided for @orbit2_template_gravity.
+  ///
+  /// In en, this message translates to:
+  /// **'Gravity'**
+  String get orbit2_template_gravity;
+
+  /// No description provided for @orbit2_template_nebula.
+  ///
+  /// In en, this message translates to:
+  /// **'Nebula'**
+  String get orbit2_template_nebula;
+
+  /// No description provided for @orbit2_template_honeycomb.
+  ///
+  /// In en, this message translates to:
+  /// **'Honeycomb'**
+  String get orbit2_template_honeycomb;
+
+  /// No description provided for @orbit2_template_tiered.
+  ///
+  /// In en, this message translates to:
+  /// **'Tiered'**
+  String get orbit2_template_tiered;
+
+  /// No description provided for @orbit2_mock_chat_demo_chip.
+  ///
+  /// In en, this message translates to:
+  /// **'Demo · messages aren\'t sent'**
+  String get orbit2_mock_chat_demo_chip;
+
+  /// No description provided for @orbit2_mock_chat_send_disabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending is disabled in this preview'**
+  String get orbit2_mock_chat_send_disabled;
+
+  /// No description provided for @orbit2_mock_chat_composer_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Message'**
+  String get orbit2_mock_chat_composer_hint;
+
+  /// No description provided for @orbit2_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Drag the orbit anywhere · long-press a friend to bring them in'**
+  String get orbit2_hint;
+
+  /// No description provided for @orbit2_drop_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Drop here to add to your circle'**
+  String get orbit2_drop_hint;
+
+  /// No description provided for @orbit2_release_to_add.
+  ///
+  /// In en, this message translates to:
+  /// **'Release to add {name}'**
+  String orbit2_release_to_add(String name);
+
+  /// No description provided for @orbit2_promoted.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} added to your inner circle'**
+  String orbit2_promoted(String name);
+
+  /// No description provided for @orbit2_new_group.
+  ///
+  /// In en, this message translates to:
+  /// **'New group'**
+  String get orbit2_new_group;
+
+  /// No description provided for @orbit2_group_created.
+  ///
+  /// In en, this message translates to:
+  /// **'New group created — drop in more friends to grow it'**
+  String get orbit2_group_created;
+
+  /// No description provided for @orbit2_group_members.
+  ///
+  /// In en, this message translates to:
+  /// **'Group · {count} members'**
+  String orbit2_group_members(int count);
+
+  /// No description provided for @orbit2_show_less.
+  ///
+  /// In en, this message translates to:
+  /// **'Show less'**
+  String get orbit2_show_less;
+
+  /// No description provided for @orbit2_removed.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} removed from your inner circle'**
+  String orbit2_removed(String name);
+
+  /// No description provided for @orbit2_you.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get orbit2_you;
+
+  /// No description provided for @orbit2_manage.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage'**
+  String get orbit2_manage;
+
+  /// No description provided for @orbit2_manage_done.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get orbit2_manage_done;
+
+  /// No description provided for @orbit2_names_show.
+  ///
+  /// In en, this message translates to:
+  /// **'Show names'**
+  String get orbit2_names_show;
+
+  /// No description provided for @orbit2_names_hide.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide names'**
+  String get orbit2_names_hide;
+
+  /// No description provided for @orbit2_promoted_group.
+  ///
+  /// In en, this message translates to:
+  /// **'Group {name} added to your inner circle'**
+  String orbit2_promoted_group(String name);
+
+  /// No description provided for @orbit2_view_messages.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get orbit2_view_messages;
+
+  /// No description provided for @orbit2_inbox_empty.
+  ///
+  /// In en, this message translates to:
+  /// **'No conversations yet'**
+  String get orbit2_inbox_empty;
 }
 
 class _AppLocalizationsDelegate

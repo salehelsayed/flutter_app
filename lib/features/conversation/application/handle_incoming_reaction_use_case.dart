@@ -1,4 +1,10 @@
+import 'dart:async';
+
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -6,6 +12,7 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_payload
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
 /// Result of handling an incoming reaction.
 enum HandleReactionResult {
@@ -39,6 +46,18 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   required ContactRepository contactRepo,
   required Bridge bridge,
   required String? ownMlKemSecretKey,
+  // 127-Bug-C: notify the recipient when a contact reacts to their 1:1 message.
+  // All optional — when absent (e.g. unit tests / callers without the push
+  // stack) no notification is attempted. Fired only on a genuine ADD upsert.
+  NotificationService? notificationService,
+  ActiveConversationTracker? conversationTracker,
+  AppLifecycleState Function()? getAppLifecycleState,
+  NotificationToneTracker? notificationToneTracker,
+  ConsumeRecentRemoteNotificationAnnouncement?
+  consumeRecentRemoteNotificationAnnouncement,
+  MarkRecentRemoteNotificationAnnouncement?
+  markRecentRemoteNotificationAnnouncement,
+  bool suppressReactionNotification = false,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -240,6 +259,36 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
       'emoji': reaction.emoji,
     },
   );
+
+  // 127-Bug-C: a contact reacting to your 1:1 message now notifies, mirroring
+  // the chat path (doc 118). Reuses maybeShowNotification so the same gates
+  // apply: viewing-conversation suppression, recent-remote-push dedup, and the
+  // 30s-per-conversation tone debounce (so rapid react/unreact never spams a
+  // sound). Reached ONLY on a fresh ADD upsert — the remove and stale-ignored
+  // branches return earlier, so un-reacts/duplicates stay silent. Fire-and-
+  // forget: the OS call must never delay or fail the reaction commit/ack.
+  if (notificationService != null &&
+      conversationTracker != null &&
+      getAppLifecycleState != null) {
+    unawaited(
+      maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: conversationTracker,
+        getAppLifecycleState: getAppLifecycleState,
+        contactPeerId: payload.senderPeerId,
+        senderUsername: contact.username,
+        messageText: 'Reacted ${payload.emoji} to your message',
+        messageId: reaction.id,
+        suppressNotification: suppressReactionNotification,
+        suppressionReason: 'reaction_recovery_replay',
+        toneTracker: notificationToneTracker,
+        consumeRecentRemoteNotificationAnnouncement:
+            consumeRecentRemoteNotificationAnnouncement,
+        markRecentRemoteNotificationAnnouncement:
+            markRecentRemoteNotificationAnnouncement,
+      ),
+    );
+  }
 
   return (HandleReactionResult.success, ReactionChange.upsert(reaction));
 }

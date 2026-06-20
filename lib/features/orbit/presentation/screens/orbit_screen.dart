@@ -183,6 +183,10 @@ class OrbitScreen extends StatelessWidget {
   final Animation<double> searchTriggerAnimation;
   final VoidCallback onClose;
   final void Function(OrbitFriend) onFriendTap;
+
+  /// Tapping a friend's avatar specifically (opens their contact profile).
+  /// Optional so lightweight callers/tests can omit it.
+  final void Function(OrbitFriend)? onFriendAvatarTap;
   final VoidCallback onMyQR;
   final VoidCallback onScanQR;
   final VoidCallback onSearchOpen;
@@ -227,6 +231,7 @@ class OrbitScreen extends StatelessWidget {
     required this.searchTriggerAnimation,
     required this.onClose,
     required this.onFriendTap,
+    this.onFriendAvatarTap,
     required this.onMyQR,
     required this.onScanQR,
     required this.onSearchOpen,
@@ -990,6 +995,9 @@ class OrbitScreen extends StatelessWidget {
             showInnerCircleBadge: projection.searchActive && isInnerCircle,
             hideUnreadBadge: isArchived,
             onTap: () => onFriendTap(friend),
+            onAvatarTap: onFriendAvatarTap == null
+                ? null
+                : () => onFriendAvatarTap!(friend),
           ),
         ),
       ),

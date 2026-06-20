@@ -4526,6 +4526,14 @@ class GroupMessageListener {
 
       if (result == HandleGroupReactionResult.success && change != null) {
         _emitReactionChange(change);
+        // 127-Bug-D: notify on a fresh group-reaction ADD (this LIVE path only;
+        // recovery/drain/buffer-flush call the use case directly, so a resume
+        // drain never spams).
+        await _maybeNotifyGroupReaction(
+          groupId: groupId,
+          reactorPeerId: senderId,
+          change: change,
+        );
       }
     } catch (e) {
       emitFlowEvent(
@@ -4534,6 +4542,76 @@ class GroupMessageListener {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  /// 127-Bug-D: shows a local notification when a contact reacts to a message
+  /// in this group. Mirrors the group MESSAGE notification gates — skip own
+  /// reaction, group mute, viewing-suppression + tone debounce (via
+  /// [maybeShowNotification]) — and fires ONLY on a fresh ADD upsert (the
+  /// remove and stale-ignored branches return a non-upserted/empty change and
+  /// stay silent). The OS call is fire-and-forget so reaction throughput is
+  /// never blocked.
+  Future<void> _maybeNotifyGroupReaction({
+    required String groupId,
+    required String reactorPeerId,
+    required ReactionChange change,
+  }) async {
+    if (change.type != ReactionChangeType.upserted) return;
+    final reaction = change.reaction;
+    if (reaction == null) return;
+
+    final notificationService = _notificationService;
+    final tracker = _groupConversationTracker;
+    final lifecycle = _getAppLifecycleState;
+    if (notificationService == null || tracker == null || lifecycle == null) {
+      return;
+    }
+
+    // Skip our own reaction (a group reaction can echo back through the mesh).
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId != null && reactorPeerId == selfPeerId) return;
+
+    final group = await _groupRepo.getGroup(groupId);
+    // Device-local mute suppresses local notifications (mirrors the message
+    // path); a missing group means we can't route, so skip.
+    if (group == null || group.isMuted) return;
+
+    // Best-effort reactor display name from the group roster.
+    var reactorName = '';
+    try {
+      final members = await _groupRepo.getMembers(groupId);
+      for (final member in members) {
+        if (member.peerId == reactorPeerId) {
+          reactorName = (member.username ?? '').trim();
+          break;
+        }
+      }
+    } catch (_) {}
+
+    final body = reactorName.isNotEmpty
+        ? '$reactorName reacted ${reaction.emoji}'
+        : 'Reacted ${reaction.emoji}';
+
+    maybeShowNotification(
+      notificationService: notificationService,
+      conversationTracker: tracker,
+      getAppLifecycleState: lifecycle,
+      contactPeerId: 'group:$groupId',
+      routePayload: NotificationRouteTarget.group(
+        groupId,
+        messageId: reaction.messageId,
+      ).toPayload(),
+      senderUsername: group.name,
+      messageText: body,
+      messageId: reaction.id,
+      toneTracker: _notificationToneTracker,
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              _remoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+    );
   }
 
   Future<void> _enqueueGroupConfigWork(

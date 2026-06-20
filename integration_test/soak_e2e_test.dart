@@ -21,6 +21,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -80,6 +81,9 @@ import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart
 import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
+import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
+import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
@@ -168,7 +172,7 @@ void main() {
     // 1. Read CLI peer fixture
     final fixtureFile = File(_signals.path('cli_peer_fixture.json'));
     if (!fixtureFile.existsSync()) {
-      print(
+      debugPrint(
         '[SOAK] SKIP: CLI peer fixture not found at ${fixtureFile.path}. '
         'Run with the orchestrator to exercise this test.',
       );
@@ -213,7 +217,7 @@ void main() {
     databaseFactory = databaseFactoryFfi;
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 53,
+      version: 79,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
@@ -267,6 +271,13 @@ void main() {
         await runPendingGroupInvitesMigration(db);
         await runGroupsDissolveColumnsMigration(db);
         await runGroupsBacklogRetentionColumnsMigration(db);
+        await runContactsMlKemKeyUpdatedTsMigration(db);
+        await runMessageRelayCustodyMigration(db);
+        await runMessageDedupKeyMigration(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 77) await runMessageRelayCustodyMigration(db);
+        if (oldVersion < 79) await runMessageDedupKeyMigration(db);
       },
     );
 
@@ -293,6 +304,15 @@ void main() {
           dbLoadMessagesForContact(db, contactPeerId),
       dbLoadLatestMessageForContact: (contactPeerId) =>
           dbLoadLatestMessageForContact(db, contactPeerId),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbUpdateMessageStatus: (id, status) =>
           dbUpdateMessageStatus(db, id, status),
       dbLoadMessage: (id) => dbLoadMessage(db, id),

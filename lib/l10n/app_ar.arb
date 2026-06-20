@@ -84,6 +84,40 @@
       }
     }
   },
+  "orbit_preview_voice_message": "رسالة صوتية",
+  "orbit_preview_gif": "صورة متحركة",
+  "orbit_preview_photo": "{count, plural, =1{صورة} =2{صورتان} few{{count} صور} many{{count} صورة} other{{count} صورة}}",
+  "@orbit_preview_photo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_preview_video": "{count, plural, =1{فيديو} =2{فيديوهان} few{{count} فيديوهات} many{{count} فيديو} other{{count} فيديو}}",
+  "@orbit_preview_video": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_preview_file": "{count, plural, =1{ملف} =2{ملفان} few{{count} ملفات} many{{count} ملفًا} other{{count} ملف}}",
+  "@orbit_preview_file": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_preview_attachment": "{count, plural, =1{مرفق} =2{مرفقان} few{{count} مرفقات} many{{count} مرفقًا} other{{count} مرفق}}",
+  "@orbit_preview_attachment": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "compose_pick_people": "اختر أشخاصًا",
   "compose_posting": "جارٍ النشر...",
   "compose_post": "نشر",
@@ -1277,5 +1311,47 @@
   "account_migration_erased_snackbar": "تم محو بيانات الحساب المحلية",
   "account_migration_erase_failed": "تعذّر محو بيانات الحساب المحلية: {error}",
   "account_migration_blocked_title": "تم نقل الحساب إلى هاتف آخر",
-  "account_migration_blocked_message": "هذا الهاتف محظور من فتح الحساب بعد النقل. لا تمحُ النسخة المحلية إلا عندما تتأكد من أن الهاتف الجديد يعمل."
+  "account_migration_blocked_message": "هذا الهاتف محظور من فتح الحساب بعد النقل. لا تمحُ النسخة المحلية إلا عندما تتأكد من أن الهاتف الجديد يعمل.",
+  "contact_profile_verified_peer": "جهة موثوقة",
+  "contact_profile_blocked": "محظور",
+  "contact_profile_archived": "مؤرشف",
+  "contact_profile_peer_id_label": "معرّف الند",
+  "contact_profile_peer_id_copied": "تم نسخ معرّف الند",
+  "contact_profile_tap_to_copy": "اضغط للنسخ",
+  "contact_profile_safety_number_label": "رقم الأمان",
+  "contact_profile_safety_number_hint": "قارن هذا الرقم شخصيًا للتأكد من أن اتصالك آمن.",
+  "contact_profile_copied": "تم النسخ إلى الحافظة",
+  "contact_profile_connected_since_label": "متصل منذ",
+  "contact_profile_introduced_by_label": "عرّفك به",
+  "contact_profile_message_button": "مراسلة",
+  "nav_orbit2": "أوربت٢",
+  "orbit2_prototype_chip": "نموذج · بيانات تجريبية",
+  "orbit2_size_legend": "الأكبر = الأقرب · انقر للمحادثة · اسحب لإعادة الترتيب",
+  "orbit2_simulate": "محاكاة",
+  "orbit2_reset": "إعادة",
+  "orbit2_search_hint": "ابحث عن صديق",
+  "orbit2_template_gravity": "جاذبية",
+  "orbit2_template_nebula": "سديم",
+  "orbit2_template_honeycomb": "خلية",
+  "orbit2_template_tiered": "طبقات",
+  "orbit2_mock_chat_demo_chip": "تجريبي · الرسائل لا تُرسل",
+  "orbit2_mock_chat_send_disabled": "الإرسال معطّل في هذه المعاينة",
+  "orbit2_mock_chat_composer_hint": "رسالة",
+  "orbit2_hint": "اسحب المدار إلى أي مكان · اضغط مطوّلاً على صديق لإدخاله",
+  "orbit2_drop_hint": "أفلِت هنا لإضافته إلى دائرتك",
+  "orbit2_release_to_add": "أفلِت لإضافة {name}",
+  "orbit2_promoted": "تمت إضافة {name} إلى دائرتك الداخلية",
+  "orbit2_new_group": "مجموعة جديدة",
+  "orbit2_group_created": "تم إنشاء مجموعة جديدة — أفلِت المزيد من الأصدقاء لتكبيرها",
+  "orbit2_group_members": "مجموعة · {count} أعضاء",
+  "orbit2_show_less": "عرض أقل",
+  "orbit2_removed": "تمت إزالة {name} من دائرتك الداخلية",
+  "orbit2_you": "أنت",
+  "orbit2_manage": "إدارة",
+  "orbit2_manage_done": "تم",
+  "orbit2_names_show": "إظهار الأسماء",
+  "orbit2_names_hide": "إخفاء الأسماء",
+  "orbit2_promoted_group": "تمت إضافة مجموعة {name} إلى دائرتك الداخلية",
+  "orbit2_view_messages": "الرسائل",
+  "orbit2_inbox_empty": "لا محادثات بعد"
 }

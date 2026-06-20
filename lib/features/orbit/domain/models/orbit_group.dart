@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 /// Composite model combining a group with its conversation activity data.
@@ -11,6 +12,12 @@ class OrbitGroup {
   final String? latestMessage;
   final int unreadCount;
   final DateTime? lastActivityTimestamp;
+
+  /// Key-free media summary of the latest group message, when it carries
+  /// attachments. Drives the "Photo"/"Voice message" preview label (after the
+  /// "Sender: " prefix) when the latest message has no text. Null otherwise.
+  /// Groups carry no soft-delete state, so there is no deleted-latest case.
+  final MediaPreviewDescriptor? latestMedia;
 
   /// Non-null when the group materialized but its topic-join has not yet
   /// succeeded (derived from the 088 group_rejoin_state table); carries the
@@ -26,6 +33,7 @@ class OrbitGroup {
     this.unreadCount = 0,
     this.lastActivityTimestamp,
     this.rejoinAttemptCount,
+    this.latestMedia,
   });
 
   String get groupId => group.id;
@@ -41,6 +49,7 @@ class OrbitGroup {
       unreadCount: unreadCount,
       lastActivityTimestamp: lastActivityTimestamp,
       rejoinAttemptCount: rejoinAttemptCount ?? this.rejoinAttemptCount,
+      latestMedia: latestMedia,
     );
   }
 }

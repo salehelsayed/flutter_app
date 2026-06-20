@@ -14,10 +14,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
@@ -52,6 +52,7 @@ import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
+import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
@@ -206,7 +207,7 @@ Future<_TestStack> _setupStack() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 77,
+    version: 79,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -237,6 +238,7 @@ Future<_TestStack> _setupStack() async {
       await runMessagesDeletedStateMigration(db);
       await runContactsMlKemKeyUpdatedTsMigration(db);
       await runMessageRelayCustodyMigration(db);
+      await runMessageDedupKeyMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -267,9 +269,10 @@ Future<_TestStack> _setupStack() async {
       if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
       if (oldVersion < 75) await runContactsMlKemKeyUpdatedTsMigration(db);
       if (oldVersion < 77) await runMessageRelayCustodyMigration(db);
+      if (oldVersion < 79) await runMessageDedupKeyMigration(db);
     },
   );
-  print('[TEST] Database initialized (version 77)');
+  print('[TEST] Database initialized (version 79)');
 
   final contactRepo = ContactRepositoryImpl(
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -298,6 +301,14 @@ Future<_TestStack> _setupStack() async {
     dbUpdateMessageStatus: (id, status) =>
         dbUpdateMessageStatus(db, id, status),
     dbLoadMessage: (id) => dbLoadMessage(db, id),
+    dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
+        dbExistsMessageByContent(
+          db,
+          contactPeerId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
     dbCountMessagesForContact: (contactPeerId) =>
         dbCountMessagesForContact(db, contactPeerId),
     dbMarkConversationAsRead: (contactPeerId) =>
@@ -1789,6 +1800,10 @@ void main() {
                 localPath: e8TempFile.path,
                 downloadStatus: 'done',
                 createdAt: DateTime.now().toUtc().toIso8601String(),
+                contentHash: sha256.convert(e8Bytes).toString(),
+                encryptionKeyBase64: 'key-e8-image',
+                encryptionNonce: 'nonce-e8-image',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
               );
 
               // Send chat message with media reference.

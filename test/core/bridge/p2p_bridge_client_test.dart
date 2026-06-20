@@ -247,6 +247,20 @@ void main() {
       expect(payload['featureFlags']['enableDeferredDirectAck'], isTrue);
     });
 
+    test('includes key rotation grace override when provided', () async {
+      bridge.nextResponse = {'ok': true};
+
+      await callP2PNodeStart(
+        bridge,
+        privateKeyHex: 'deadbeef',
+        keyRotationGracePeriod: const Duration(milliseconds: 1500),
+      );
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['keyRotationGracePeriodMs'], equals(1500));
+    });
+
     test('returns parsed response map', () async {
       bridge.nextResponse = {
         'ok': true,
@@ -945,28 +959,25 @@ void main() {
       expect(payload['timeoutMs'], equals(30000));
     });
 
-    test(
-      'returns BRIDGE_TIMEOUT instead of hanging when the bridge never '
-      'responds and a timeoutMs is set (F5)',
-      () async {
-        // _HangingBridge.send returns Completer<String>().future — it never
-        // completes. On HEAD callP2PMessageSend awaits it with no .timeout, so
-        // the call hangs forever (the RED registers as a runner timeout). After
-        // GREEN the helper self-caps at timeoutMs + slack and RETURNS a
-        // BRIDGE_TIMEOUT map. There is intentionally NO test-side .timeout
-        // wrapper — that would throw on HEAD and invert the RED→GREEN signal.
-        final result = await callP2PMessageSend(
-          _HangingBridge(),
-          peerId: 'peer1',
-          message: 'msg',
-          timeoutMs: 2000,
-        );
+    test('returns BRIDGE_TIMEOUT instead of hanging when the bridge never '
+        'responds and a timeoutMs is set (F5)', () async {
+      // _HangingBridge.send returns Completer<String>().future — it never
+      // completes. On HEAD callP2PMessageSend awaits it with no .timeout, so
+      // the call hangs forever (the RED registers as a runner timeout). After
+      // GREEN the helper self-caps at timeoutMs + slack and RETURNS a
+      // BRIDGE_TIMEOUT map. There is intentionally NO test-side .timeout
+      // wrapper — that would throw on HEAD and invert the RED→GREEN signal.
+      final result = await callP2PMessageSend(
+        _HangingBridge(),
+        peerId: 'peer1',
+        message: 'msg',
+        timeoutMs: 2000,
+      );
 
-        expect(result['ok'], isFalse);
-        expect(result['sent'], isFalse);
-        expect(result['errorCode'], equals('BRIDGE_TIMEOUT'));
-      },
-    );
+      expect(result['ok'], isFalse);
+      expect(result['sent'], isFalse);
+      expect(result['errorCode'], equals('BRIDGE_TIMEOUT'));
+    });
 
     test(
       'stays unbounded (no BRIDGE_TIMEOUT) when no timeoutMs is given',

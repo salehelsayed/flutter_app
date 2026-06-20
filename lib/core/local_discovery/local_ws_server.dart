@@ -508,8 +508,8 @@ class LocalWsServer {
         fromPeerId,
         toPeerId,
         timeoutMs: timeoutMs,
-      ) ==
-      LanSendAck.committed;
+      ) !=
+      LanSendAck.failed;
 
   /// Send a message and classify the peer's LAN ack frame.
   Future<LanSendAck> sendMessageWithAck(

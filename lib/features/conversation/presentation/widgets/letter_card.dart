@@ -42,6 +42,10 @@ class LetterCard extends StatelessWidget {
   final String? failedMediaActionKeySuffix;
   final bool requireVerifiedContentHash;
 
+  /// 128 (round 5): owned-media dir id (the conversation contact peerId, or
+  /// groupId) for the render-boundary fallback to the durable owned copy.
+  final String? ownedMediaPeerId;
+
   const LetterCard({
     super.key,
     required this.senderPeerId,
@@ -69,6 +73,7 @@ class LetterCard extends StatelessWidget {
     this.failedMessageActionKeySuffix,
     this.failedMediaActionKeySuffix,
     this.requireVerifiedContentHash = false,
+    this.ownedMediaPeerId,
   });
 
   List<MediaAttachment> get _imageVideoMedia => media
@@ -238,6 +243,7 @@ class LetterCard extends StatelessWidget {
                               : null,
                           requireVerifiedContentHash:
                               requireVerifiedContentHash,
+                          ownedMediaPeerId: ownedMediaPeerId,
                         ),
                       ),
                     // Audio players

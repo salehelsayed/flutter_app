@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
@@ -57,6 +59,19 @@ const _tinyGifBytes = <int>[
 ];
 
 const _tinyJpgBytes = <int>[0xFF, 0xD8, 0xFF, 0xE0];
+// A real, decodable 1x1 PNG so the render-boundary test doesn't trip the
+// thumbnail decode-error fallback (which itself shows "Media unavailable").
+const _validPngBytes = <int>[
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, //
+  0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, //
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, //
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, //
+  0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, //
+  0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, //
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, //
+  0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, //
+  0x42, 0x60, 0x82, //
+];
 const _tinyMp4Bytes = <int>[0, 0, 0, 18, 102, 116, 121, 112];
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -111,6 +126,232 @@ void main() {
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: child),
+  );
+
+  testWidgets(
+    '127 round-3: own-sent media with a RELATIVE localPath renders (resolved at '
+    'the render gate, not via the producer)',
+    (tester) async {
+      // The DB persists a relative path; the render gate must resolve it
+      // against the seeded documents dir. This is the durable fix — independent
+      // of whichever upstream path fed the message.
+      const peer = '12D3KooWPeerX';
+      const blob = '70579635-999f-468a-b3e9-b07d4c698341';
+      final relativePath = 'media/$peer/$blob.jpg';
+      File('${tempDir.path}/$relativePath')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(_validPngBytes);
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: blob,
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'done',
+                localPath: relativePath, // RELATIVE, as persisted in the DB
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Gate resolved the relative path -> file found -> displayable thumbnail,
+      // NOT the "Media unavailable" placeholder.
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.text('Media unavailable'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    '128 round-5: stale display path falls back to the durable owned copy '
+    '(replicates the device repro: pending path deleted, owned copy present)',
+    (tester) async {
+      MediaGridCell.debugResetUnavailableDiagnostics();
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+      const peer = '12D3KooWBob';
+      const blob = '19a57608-0afc-4c5a-a88f-f9d425016a2e';
+      // The durable owned copy EXISTS (what the upload actually committed).
+      File('${tempDir.path}/media/$peer/$blob.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(_validPngBytes);
+      // The displayed attachment still holds the DELETED optimistic
+      // pending_uploads ABSOLUTE path (never swapped for the durable copy) —
+      // exactly what the device diagnostic showed.
+      final stalePending = '${tempDir.path}/pending_uploads/msg-1/$blob.jpg';
+      expect(File(stalePending).existsSync(), isFalse);
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: blob,
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'done',
+                localPath: stalePending,
+              ),
+              ownedMediaPeerId: peer,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Render gate falls back to media/<peer>/<blob>.jpg -> displayable.
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.text('Media unavailable'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    '128: a done image whose path does not exist emits the gate diagnostic',
+    (tester) async {
+      MediaGridCell.debugResetUnavailableDiagnostics();
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      // A deleted optimistic pending_uploads ABSOLUTE path — the stale-path
+      // hazard the diagnostic must surface (resolver passes it through; gone).
+      final stalePath = '${tempDir.path}/pending_uploads/msg-1/att.jpg';
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: 'diag-1',
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'done',
+                localPath: stalePath,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Media unavailable'), findsOneWidget);
+      final diag = events
+          .where((e) => e['event'] == 'MEDIA_RENDER_GATE_UNAVAILABLE')
+          .toList();
+      expect(diag, hasLength(1));
+      final details = diag.single['details'] as Map<String, dynamic>;
+      expect(details['existsAtResolved'], isFalse);
+      expect(details['rawLocalPathKind'], 'pending-uploads-abs');
+      expect(details['cacheSeeded'], isTrue);
+      expect(details['downloadStatus'], 'done');
+    },
+  );
+
+  testWidgets(
+    '128 round-5 (group): verified group media with a stale display path falls '
+    'back to the durable owned copy keyed under media/<groupId>',
+    (tester) async {
+      // Group parity for the sender "Media unavailable" fix. Group durable media
+      // is keyed under media/<groupId>/<blob> (group_conversation_wired uses
+      // relativePathForAttachment(contactPeerId: widget.group.id)). The displayed
+      // attachment holds the deleted optimistic pending path; the verified-hash
+      // gate is ON. The render gate must fall back to the owned copy AND still
+      // honor verification (valid hash + encryption metadata supplied here).
+      MediaGridCell.debugResetUnavailableDiagnostics();
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+      const groupId = 'group-abc123';
+      const blob = '5984e08d-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
+      // The durable owned copy EXISTS under the group dir (what upload committed).
+      File('${tempDir.path}/media/$groupId/$blob.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(_validPngBytes);
+      // Displayed attachment still carries the DELETED optimistic pending path.
+      final stalePending = '${tempDir.path}/pending_uploads/msg-1/$blob.jpg';
+      expect(File(stalePending).existsSync(), isFalse);
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: MediaGridCell(
+              requireVerifiedContentHash: true,
+              attachment: _attachment(
+                id: blob,
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'done',
+                localPath: stalePending,
+                contentHash: _validContentHash,
+                withEncryption: true,
+              ),
+              ownedMediaPeerId: groupId,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Fallback to media/<groupId>/<blob>.jpg -> displayable verified thumbnail.
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.text('Media unavailable'), findsNothing);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+    },
+  );
+
+  testWidgets(
+    '128 round-5 (group): WITHOUT ownedMediaPeerId the stale path stays '
+    'unavailable (fallback is required; verification is never bypassed)',
+    (tester) async {
+      // Mutation-style guard: the SAME verified attachment + present owned copy,
+      // but no ownedMediaPeerId wired -> the gate cannot find the file and must
+      // render unavailable. Locks in that the owned-copy fallback is what fixes
+      // this, and proves the fallback never short-circuits the missing-file gate.
+      MediaGridCell.debugResetUnavailableDiagnostics();
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+      const groupId = 'group-abc123';
+      const blob = '6a1c0bb2-7d8e-4f90-a1b2-c3d4e5f60718';
+      File('${tempDir.path}/media/$groupId/$blob.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(_validPngBytes);
+      final stalePending = '${tempDir.path}/pending_uploads/msg-1/$blob.jpg';
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: MediaGridCell(
+              requireVerifiedContentHash: true,
+              attachment: _attachment(
+                id: blob,
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'done',
+                localPath: stalePending,
+                contentHash: _validContentHash,
+                withEncryption: true,
+              ),
+              // ownedMediaPeerId intentionally omitted.
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(MediaThumbnailImage), findsNothing);
+      expect(find.text('Media unavailable'), findsOneWidget);
+    },
   );
 
   testWidgets(
@@ -551,7 +792,9 @@ void main() {
         Exception('decode failed'),
         StackTrace.empty,
       );
-      await tester.pumpWidget(wrap(SizedBox(width: 120, height: 120, child: errorWidget)));
+      await tester.pumpWidget(
+        wrap(SizedBox(width: 120, height: 120, child: errorWidget)),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('Media unavailable'), findsNothing);

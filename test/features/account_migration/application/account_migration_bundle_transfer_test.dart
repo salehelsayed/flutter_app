@@ -6,6 +6,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_bundle_transfer.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_local_transfer_runtime.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/account_migration/application/migration_breadcrumb.dart';
 import 'package:flutter_app/features/account_migration/application/migration_cutover_coordinator.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_active_importer.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
@@ -134,6 +135,107 @@ void main() {
         expect(
           bundle.manifest.entries.map((entry) => entry.sha256),
           everyElement(isNotEmpty),
+        );
+      },
+    );
+
+    test(
+      'emits ordered ASSEMBLY_PHASE breadcrumbs and ASSEMBLY_OK on success',
+      () async {
+        final lines = <String>[];
+        debugSetMigrationBreadcrumbSink(lines.add);
+        addTearDown(() => debugSetMigrationBreadcrumbSink(null));
+
+        final source = AccountMigrationProductionBundleSource(
+          sourceDb: sourceDb,
+          primaryStore: sourceStore,
+          documentsRootPath: tempDir.path,
+          exportDirectoryPath: p.join(tempDir.path, 'exports'),
+          snapshotExporter: MigrationDatabaseSnapshotExporter(
+            closeExportedDatabaseAfterValidation: false,
+            adapter: _RecordingSnapshotExportAdapter(
+              verificationDb: verificationDb,
+              snapshotBytes: utf8.encode('snapshot-db-bytes'),
+            ),
+          ),
+          segmentSize: 32,
+        );
+
+        await source(_request());
+
+        final phases = lines
+            .where((line) => line.startsWith('MKNOON_MIG ASSEMBLY_PHASE '))
+            .map((line) => line.split('phase=').last)
+            .toList();
+        expect(
+          phases,
+          containsAllInOrder(<String>[
+            'validateConfiguration',
+            'prepareExportDirectory',
+            'readDatabaseKey',
+            'loadDatabaseRows',
+            'collectSecureStorage',
+            'buildFilePayload',
+            'applyFilePathRepairs',
+            'exportDatabaseSnapshot',
+            'writeMetadataBlob',
+            'buildEntryStream',
+          ]),
+        );
+        expect(
+          lines.any((line) => line.startsWith('MKNOON_MIG ASSEMBLY_OK')),
+          isTrue,
+        );
+        expect(lines.any((line) => line.contains('ASSEMBLY_FAIL')), isFalse);
+      },
+    );
+
+    test(
+      'emits ASSEMBLY_FAIL with the failing phase + reason when a critical '
+      'secure value is missing',
+      () async {
+        final lines = <String>[];
+        debugSetMigrationBreadcrumbSink(lines.add);
+        addTearDown(() => debugSetMigrationBreadcrumbSink(null));
+
+        final source = AccountMigrationProductionBundleSource(
+          sourceDb: sourceDb,
+          // Empty store -> db_encryption_key missing -> throws at readDatabaseKey.
+          primaryStore: FakeSecureKeyStore(),
+          documentsRootPath: tempDir.path,
+          exportDirectoryPath: p.join(tempDir.path, 'exports'),
+          snapshotExporter: MigrationDatabaseSnapshotExporter(
+            closeExportedDatabaseAfterValidation: false,
+            adapter: _RecordingSnapshotExportAdapter(
+              verificationDb: verificationDb,
+              snapshotBytes: utf8.encode('snapshot-db-bytes'),
+            ),
+          ),
+          segmentSize: 32,
+        );
+
+        await expectLater(
+          source(_request()),
+          throwsA(isA<AccountMigrationBundleAssemblyException>()),
+        );
+
+        expect(
+          lines,
+          contains(
+            predicate<String>(
+              (line) =>
+                  line.contains('ASSEMBLY_FAIL') &&
+                  line.contains('phase=readDatabaseKey') &&
+                  line.contains('reason=missingCriticalSecureValue'),
+              'ASSEMBLY_FAIL naming phase=readDatabaseKey '
+                  'reason=missingCriticalSecureValue',
+            ),
+          ),
+        );
+        // Never advanced past the failing phase.
+        expect(
+          lines.any((line) => line.contains('phase=loadDatabaseRows')),
+          isFalse,
         );
       },
     );
