@@ -534,6 +534,11 @@ class _ConversationWiredState extends State<ConversationWired>
 
   bool _notificationTimingEmitted = false;
 
+  // 145: separate one-shot latch for the post-drain ("live") render timing,
+  // emitted once when a notif-tap drain actually surfaces a new incoming
+  // message — distinct from the stale-render latch above.
+  bool _notificationLiveTimingEmitted = false;
+
   void _emitNotificationTapTimingIfNeeded() {
     final tappedAt = widget.notificationTappedAt;
     if (tappedAt == null || _notificationTimingEmitted) return;
@@ -1164,6 +1169,9 @@ class _ConversationWiredState extends State<ConversationWired>
 
   bool _drainReloadInFlight = false;
   bool _drainReloadPending = false;
+  // 145: view-facing mirror of an in-flight drain — drives the "catching up…"
+  // affordance. Mutated via setState (unlike the coalescing flags above).
+  bool _isSyncingNewMessages = false;
 
   /// 131: drains the relay offline inbox then re-reads the latest page so a
   /// message that landed after the one-shot initial load (notification-tap
@@ -1186,14 +1194,23 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     _drainReloadInFlight = true;
     try {
+      // 145: surface the "catching up…" affordance while the relay round-trip
+      // is in flight. Yield to a microtask first so a notif_tap drain launched
+      // from initState does not call setState during the initial build.
+      await Future<void>.value();
+      if (mounted) {
+        setState(() => _isSyncingNewMessages = true);
+      }
       var first = true;
       do {
         _drainReloadPending = false;
         final before = _messages.length;
+        final drainSw = Stopwatch()..start();
+        var addedIncoming = false;
         try {
           await widget.p2pService.drainOfflineInbox();
           if (mounted) {
-            await _reloadLatestPageForRecovery(
+            addedIncoming = await _reloadLatestPageForRecovery(
               scrollToLiveEdge: first && scrollToLiveEdge,
             );
           }
@@ -1204,6 +1221,23 @@ class _ConversationWiredState extends State<ConversationWired>
             details: {'trigger': trigger, 'error': e.toString()},
           );
         }
+        drainSw.stop();
+        // 145: emit the post-drain ("live") render milestone exactly once per
+        // notif-tap, when the drain actually surfaced a new incoming message.
+        // The one-shot latch guards against coalesced re-runs double-emitting.
+        if (trigger == 'notif_tap' &&
+            addedIncoming &&
+            !_notificationLiveTimingEmitted) {
+          final tappedAt = widget.notificationTappedAt;
+          if (tappedAt != null) {
+            _notificationLiveTimingEmitted = true;
+            emitNotificationTapLiveRenderTiming(
+              tappedAt: tappedAt,
+              routeKind: 'conversation',
+              addedIncoming: true,
+            );
+          }
+        }
         if (mounted) {
           emitFlowEvent(
             layer: 'FL',
@@ -1212,6 +1246,7 @@ class _ConversationWiredState extends State<ConversationWired>
               'trigger': trigger,
               'before': before,
               'after': _messages.length,
+              'drainMs': drainSw.elapsedMilliseconds,
             },
           );
         }
@@ -1220,6 +1255,9 @@ class _ConversationWiredState extends State<ConversationWired>
     } finally {
       _drainReloadInFlight = false;
       _drainReloadPending = false;
+      if (mounted) {
+        setState(() => _isSyncingNewMessages = false);
+      }
     }
   }
 
@@ -1227,7 +1265,9 @@ class _ConversationWiredState extends State<ConversationWired>
   /// disturbing already-loaded older (paginated) messages. Only scrolls to the
   /// live edge when [scrollToLiveEdge] is set AND a genuinely new row appeared,
   /// so an app-resume recovery never yanks a user who scrolled up.
-  Future<void> _reloadLatestPageForRecovery({
+  /// Returns whether a genuinely new incoming row was surfaced (145: the caller
+  /// uses this to emit the post-drain live-render timing milestone).
+  Future<bool> _reloadLatestPageForRecovery({
     required bool scrollToLiveEdge,
   }) async {
     final messages = await loadConversationPage(
@@ -1237,7 +1277,7 @@ class _ConversationWiredState extends State<ConversationWired>
       mediaAttachmentRepo: widget.mediaAttachmentRepo,
       mediaFileManager: widget.mediaFileManager,
     );
-    if (!mounted) return;
+    if (!mounted) return false;
     var addedIncoming = false;
     setState(() {
       for (final message in messages) {
@@ -1252,6 +1292,7 @@ class _ConversationWiredState extends State<ConversationWired>
       _markAsRead();
       if (scrollToLiveEdge) _scrollToBottom();
     }
+    return addedIncoming;
   }
 
   void _onScroll() {
@@ -4057,6 +4098,7 @@ class _ConversationWiredState extends State<ConversationWired>
           isLoadingMore: _isLoadingMore,
           hasMoreOlderMessages: _hasMoreOlderMessages,
           initialLoadDone: _initialLoadDone,
+          isSyncingNewMessages: _isSyncingNewMessages,
           isSending: _isSending,
           recordingState: _composerViewState.recordingState,
           onAttach: _onAttach,

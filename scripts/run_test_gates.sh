@@ -60,6 +60,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/domain/utils/message_run_grouping_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_test.dart"
   "test/features/push/application/prepare_notification_open_use_case_test.dart"
 )
 
@@ -127,6 +128,7 @@ readonly GROUP_TESTS=(
   "test/features/conversation/domain/utils/message_run_grouping_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/groups/presentation/group_conversation_screen_test.dart"
+  "test/features/groups/presentation/group_conversation_wired_test.dart"
 )
 
 readonly POSTS_TESTS=(

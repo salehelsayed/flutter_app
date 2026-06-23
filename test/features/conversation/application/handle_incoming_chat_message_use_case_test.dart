@@ -7,6 +7,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+
+import '../../../shared/fakes/in_memory_contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -349,6 +351,28 @@ class ThrowingDecryptBridge extends FakeDecryptBridge {
     if (req['cmd'] == 'message.decrypt') {
       decryptCallCount++;
       throw Exception('decrypt exploded');
+    }
+    return jsonEncode({'ok': true});
+  }
+}
+
+/// 147: decrypt fails CRYPTOGRAPHICALLY for the primary secret and succeeds only
+/// for [ringKey] — exercises the pre-restore ML-KEM ring (P0-B) recovery path.
+class _RingFallbackDecryptBridge extends FakeDecryptBridge {
+  final String ringKey;
+  final String plaintext;
+  _RingFallbackDecryptBridge({required this.ringKey, required this.plaintext});
+
+  @override
+  Future<String> send(String message) async {
+    final req = jsonDecode(message) as Map<String, dynamic>;
+    if (req['cmd'] == 'message.decrypt') {
+      decryptCallCount++;
+      final secretKey = (req['payload'] as Map<String, dynamic>)['secretKey'];
+      if (secretKey == ringKey) {
+        return jsonEncode({'ok': true, 'plaintext': plaintext});
+      }
+      return jsonEncode({'ok': false, 'errorCode': 'DECRYPT_FAILED'});
     }
     return jsonEncode({'ok': true});
   }
@@ -2193,5 +2217,485 @@ void main() {
         },
       );
     });
+
+    // ─── 146 — defer the per-message delivery-receipt SEND off the replay
+    // critical path. The mint DECISION stays synchronous + per-message; only
+    // the network send is detached (fire-and-forget) so the serial inbox-drain
+    // loop (p2p_service_impl `_replayStagedInboxEntries`) — and the screen
+    // reload it gates — no longer blocks on receipt round-trips. The receipt is
+    // still SENT (never dropped — preserves the 132 confirmatory-receipt fix).
+    group('146 — delivery-receipt send is fire-and-forget', () {
+      // TC-01: the use case returns even when the receipt send never completes.
+      // RED on HEAD: HEAD awaits the send (`:116`) so the call never returns →
+      // the .timeout fires. GREEN after the fix detaches the send.
+      test(
+        'receipt send is fire-and-forget — handleIncomingChatMessage returns '
+        'before the receipt send completes',
+        () async {
+          final neverCompletes = Completer<void>();
+          var hookInvocations = 0;
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-fnf-01')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            stagedEntryId: 'relay-fnf-1',
+            sendDeliveryReceipt: (_) {
+              hookInvocations++;
+              return neverCompletes.future; // NEVER completes
+            },
+          ).timeout(const Duration(seconds: 2));
+
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(msg, isNotNull);
+          expect(
+            hookInvocations,
+            1,
+            reason: 'the receipt send was started exactly once',
+          );
+          expect(
+            neverCompletes.isCompleted,
+            isFalse,
+            reason:
+                'the handler returned while the receipt send is still pending',
+          );
+        },
+      );
+
+      // TC-02: eventual-send preservation lock. Passes on HEAD (sync fake adds
+      // before return); the mutation that drops the send call re-reds. Tracks
+      // `hookInvocations` explicitly so the lock proves the hook was actually
+      // INVOKED exactly once (not merely that `receiptIds` happened to end up
+      // populated by some other path).
+      test(
+        'deferred delivery receipt is still sent exactly once after persist',
+        () async {
+          final receiptIds = <String>[];
+          var hookInvocations = 0;
+
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-eventual-01')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            stagedEntryId: 'relay-eventual-1',
+            sendDeliveryReceipt: (id) async {
+              hookInvocations++;
+              receiptIds.add(id);
+            },
+          );
+          await pumpEventQueue();
+
+          expect(
+            hookInvocations,
+            1,
+            reason: 'the receipt send hook was invoked exactly once',
+          );
+          expect(receiptIds, ['msg-eventual-01']);
+        },
+      );
+
+      // TC-03: fix-risk lock — the now-unawaited future must keep its error
+      // handler. Passes on HEAD (awaited try/catch). Mutation that drops
+      // `.catchError` lets the throw escape as an unhandled async error (fails
+      // the test zone) AND drops the breadcrumb.
+      test(
+        'a deferred receipt send that throws is caught and logged, not unhandled',
+        () async {
+          final flow = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flow.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-throw-01')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            stagedEntryId: 'relay-throw-1',
+            sendDeliveryReceipt: (_) async {
+              throw StateError('boom');
+            },
+          );
+          // The send is detached; its error surfaces on a later microtask.
+          // Draining the queue lets the `.catchError` handler run. If the fix
+          // dropped the error handler the throw would escape as an unhandled
+          // async error and fail this test's zone.
+          await pumpEventQueue();
+
+          final events = flow.map((e) => e['event']).toList();
+          expect(events, contains('DELIVERY_RECEIPT_HOOK_ERROR'));
+        },
+      );
+
+      // TC-04: over-detach lock. The load-bearing assertion is that a SKIP path
+      // schedules NO send (`receiptIds` stays empty) while still emitting
+      // MINT_SKIPPED — the send deferral must never turn a skip into a send, nor
+      // drop the skip telemetry. The genuine catchable mutation is "schedule a
+      // send despite the skip" → receiptIds non-empty. (This deliberately does
+      // NOT try to observe a microtask-deferred decision: a microtask drains
+      // before the awaiting test continuation resumes, so MINT_SKIPPED is
+      // present at assert-time regardless of where it was emitted.)
+      test(
+        'mint decision stays synchronous and on-path — a skip emits '
+        'MINT_SKIPPED and schedules no send',
+        () async {
+          final flow = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flow.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+          final receiptIds = <String>[];
+
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildValidChatJson(id: 'msg-skip-onpath-01'),
+            ),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: null, // non-inbox, no staged id
+            sendDeliveryReceipt: (id) async => receiptIds.add(id),
+            confirmatoryDirectLanEnabled: false,
+          );
+
+          final events = flow.map((e) => e['event']).toList();
+          expect(events, contains('DELIVERY_RECEIPT_MINT_SKIPPED'));
+          final skip = flow.firstWhere(
+            (e) => e['event'] == 'DELIVERY_RECEIPT_MINT_SKIPPED',
+          );
+          expect((skip['details'] as Map)['reason'], 'nonInbox');
+          expect(receiptIds, isEmpty);
+        },
+      );
+
+      // TC-05: the duplicate-receive re-mint site (`:342`) is also detached.
+      // RED on HEAD: the dup path awaits the send → blocks → .timeout fires.
+      test('duplicate-receive re-mint is also fire-and-forget', () async {
+        const existing = ConversationMessage(
+          id: 'msg-dup-fnf-01',
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'Hello from sender!',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-dup-fnf-01': existing},
+        );
+        final neverCompletes = Completer<void>();
+        var hookInvocations = 0;
+
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildValidChatJson(id: 'msg-dup-fnf-01')),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'inbox',
+          stagedEntryId: 'relay-dup-1',
+          sendDeliveryReceipt: (_) {
+            hookInvocations++;
+            return neverCompletes.future;
+          },
+        ).timeout(const Duration(seconds: 2));
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(hookInvocations, 1);
+        expect(neverCompletes.isCompleted, isFalse);
+      });
+
+      // TC-06: 132 anti-suppression lock — the confirmatory direct/LAN receipt
+      // must be DEFERRED, not dropped. Passes on HEAD (flag default true);
+      // mutation that adds a direct:/lan: skip of the send re-reds.
+      test(
+        'confirmatory direct/LAN receipt is deferred but still sent (not '
+        'suppressed)',
+        () async {
+          final flow = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flow.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+          final receiptIds = <String>[];
+
+          await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildValidChatJson(id: 'msg-direct-defer-01'),
+            ),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'direct',
+            stagedEntryId: 'direct:abc',
+            sendDeliveryReceipt: (id) async => receiptIds.add(id),
+            // default confirmatory flag (true)
+          );
+          await pumpEventQueue();
+
+          expect(receiptIds, ['msg-direct-defer-01']);
+          final events = flow.map((e) => e['event']).toList();
+          expect(events, isNot(contains('DELIVERY_RECEIPT_MINT_SKIPPED')));
+        },
+      );
+
+      // TC-08: a SYNCHRONOUSLY-throwing hook (throws before returning a Future)
+      // must still be caught — the old `try { await ... } catch` caught sync
+      // throws too. A bare `sendDeliveryReceipt(id).catchError(...)` would let a
+      // sync throw escape (the `.catchError` is never attached), throwing out of
+      // the handler AFTER persist; `Future.sync(() => ...).catchError(...)`
+      // restores full coverage.
+      test(
+        'a receipt hook that throws synchronously is caught and logged, not '
+        'unhandled',
+        () async {
+          final flow = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flow.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson(id: 'msg-syncthrow-01')),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: 'inbox',
+            stagedEntryId: 'relay-syncthrow-1',
+            sendDeliveryReceipt: (_) {
+              throw StateError('boom-sync'); // throws BEFORE returning a Future
+            },
+          );
+          await pumpEventQueue();
+
+          // The handler returned cleanly (the sync throw did not escape past the
+          // persist) and the breadcrumb was still emitted.
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(msg, isNotNull);
+          final events = flow.map((e) => e['event']).toList();
+          expect(events, contains('DELIVERY_RECEIPT_HOOK_ERROR'));
+        },
+      );
+    });
+  });
+
+  // 147: decrypt-prefetch skip seam. The inbox-drain pre-decrypt pass
+  // (p2p_service_impl `_predecryptInboxChatEntries`) decrypts a page's chat
+  // entries concurrently AHEAD of the serial commit loop and threads the
+  // resulting plaintext into the handler as `predecryptedText`. When supplied,
+  // the handler must use it verbatim and SKIP its own bridge decrypt; when
+  // absent (every live path + the gate-off default) behaviour is byte-identical.
+  group('147 predecryptedText skip seam', () {
+    String innerPayloadJson({
+      required String id,
+      required String text,
+      String? action,
+      String? editedAt,
+      String timestamp = '2026-02-09T15:30:00.000Z',
+    }) {
+      return jsonEncode({
+        'id': id,
+        'text': text,
+        'senderPeerId': senderPeerId,
+        'senderUsername': 'Alice',
+        'timestamp': timestamp,
+        if (action != null) 'action': action,
+        if (editedAt != null) 'editedAt': editedAt,
+      });
+    }
+
+    test(
+      '147 TC-A6: uses predecryptedText when provided and does not call the '
+      'bridge decrypt',
+      () async {
+        // A bridge whose decrypt THROWS if invoked — the only way this test
+        // persists a message is by skipping the decrypt entirely.
+        final bridge = ThrowingDecryptBridge();
+        final (result, stored, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: 'secret-key',
+          predecryptedText: innerPayloadJson(
+            id: 'msg-predecrypt-1',
+            text: 'hello',
+          ),
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(stored?.text, 'hello');
+        expect(
+          bridge.decryptCallCount,
+          0,
+          reason: 'a supplied predecryptedText must skip the bridge decrypt',
+        );
+        final persisted = await messageRepo.getMessage('msg-predecrypt-1');
+        expect(persisted?.text, 'hello');
+      },
+    );
+
+    test(
+      '147 TC-A3: an edit supplied via predecryptedText materializes over its '
+      'already-committed base (causal order base->edit, no missing-original)',
+      () async {
+        // Bridge decrypt THROWS — both base and edit must land via the supplied
+        // plaintext, proving predecryptedText carries edit semantics
+        // (action/editedAt) AND that committing the base first lets the edit
+        // find its target (no CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL).
+        final bridge = ThrowingDecryptBridge();
+
+        final (baseResult, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: 'secret-key',
+          predecryptedText: innerPayloadJson(
+            id: 'msg-edit-base-1',
+            text: 'original',
+          ),
+        );
+        expect(baseResult, HandleChatMessageResult.chatMessage);
+
+        final lines = await captureDebugPrintedLines(() async {
+          final (editResult, _, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'secret-key',
+            predecryptedText: innerPayloadJson(
+              id: 'msg-edit-base-1',
+              text: 'edited',
+              action: 'edit',
+              editedAt: '2026-02-09T15:31:00.000Z',
+            ),
+          );
+          expect(editResult, HandleChatMessageResult.chatMessage);
+        });
+
+        final stored = await messageRepo.getMessage('msg-edit-base-1');
+        expect(
+          stored?.text,
+          'edited',
+          reason: 'the edit applied over its committed base',
+        );
+        expect(
+          lines.any((l) => l.contains('CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL')),
+          isFalse,
+          reason: 'base committed first → the edit must not be orphaned',
+        );
+        expect(bridge.decryptCallCount, 0);
+      },
+    );
+
+    test(
+      '147: a prefetch that recovers via the ML-KEM ring still emits '
+      'MLKEM_RING_FALLBACK_USED (parity with the in-handler decrypt path)',
+      () async {
+        // Primary secret fails cryptographically; the ring secret succeeds — the
+        // same P0-B recovery the in-handler `ok` case breadcrumbs. On a prefetch
+        // HIT the handler skips its own decrypt, so the breadcrumb must fire from
+        // the prefetch or a future ring-fallback investigation would go blind.
+        final bridge = _RingFallbackDecryptBridge(
+          ringKey: 'ring-secret',
+          plaintext: jsonEncode({
+            'id': 'msg-ring-1',
+            'text': 'recovered',
+            'senderPeerId': senderPeerId,
+            'senderUsername': 'Alice',
+            'timestamp': '2026-02-09T15:30:00.000Z',
+          }),
+        );
+
+        String? plaintext;
+        final lines = await captureDebugPrintedLines(() async {
+          plaintext = await predecryptIncomingChatEnvelope(
+            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            bridge: bridge,
+            ownMlKemSecretKey: 'primary-secret',
+            fallbackMlKemSecretKeys: ['ring-secret'],
+          );
+        });
+
+        expect(plaintext, contains('recovered'));
+        expect(
+          lines.any((l) => l.contains('MLKEM_RING_FALLBACK_USED')),
+          isTrue,
+          reason: 'ring recovery during prefetch must still breadcrumb',
+        );
+      },
+    );
+  });
+
+  // 147: the production inbox-drain predecrypt wiring must honor the listener's
+  // blocked-sender policy — a blocked contact's ciphertext is rejected by the
+  // listener BEFORE its own decrypt, so the prefetch must not decrypt it into
+  // memory either. predecryptStagedInboxChatEntry checks isBlocked FIRST.
+  group('147 predecryptStagedInboxChatEntry blocked-sender policy', () {
+    ContactModel contact(String peerId, {required bool isBlocked}) =>
+        ContactModel(
+          peerId: peerId,
+          publicKey: 'pk-$peerId',
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Alice',
+          signature: 'sig-$peerId',
+          scannedAt: '2026-01-01T00:00:00.000Z',
+          isBlocked: isBlocked,
+        );
+
+    test(
+      'returns null WITHOUT decrypting for a blocked sender',
+      () async {
+        final bridge = ThrowingDecryptBridge(); // decrypt throws if reached
+        final contactRepo = InMemoryContactRepository()
+          ..addTestContact(contact(senderPeerId, isBlocked: true));
+
+        final result = await predecryptStagedInboxChatEntry(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          contactRepo: contactRepo,
+          bridge: bridge,
+          loadOwnMlKemSecretKey: () async => 'secret',
+          loadOwnMlKemSecretKeyRing: () async => const [],
+        );
+
+        expect(result, isNull, reason: 'a blocked sender yields no plaintext');
+        expect(
+          bridge.decryptCallCount,
+          0,
+          reason: 'blocked ciphertext must never be decrypted into memory',
+        );
+      },
+    );
+
+    test('decrypts a non-blocked known sender', () async {
+      final bridge = FakeDecryptBridge()
+        ..decryptResponse = {'ok': true, 'plaintext': 'PLAINTEXT-JSON'};
+      final contactRepo = InMemoryContactRepository()
+        ..addTestContact(contact(senderPeerId, isBlocked: false));
+
+      final result = await predecryptStagedInboxChatEntry(
+        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        contactRepo: contactRepo,
+        bridge: bridge,
+        loadOwnMlKemSecretKey: () async => 'secret',
+        loadOwnMlKemSecretKeyRing: () async => const [],
+      );
+
+      expect(result, 'PLAINTEXT-JSON');
+      expect(bridge.decryptCallCount, greaterThan(0));
+    });
+
+    test(
+      'returns null without decrypting when the local secret is unavailable',
+      () async {
+        final bridge = ThrowingDecryptBridge();
+        final contactRepo = InMemoryContactRepository()
+          ..addTestContact(contact(senderPeerId, isBlocked: false));
+
+        final result = await predecryptStagedInboxChatEntry(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          contactRepo: contactRepo,
+          bridge: bridge,
+          loadOwnMlKemSecretKey: () async => null,
+          loadOwnMlKemSecretKeyRing: () async => const [],
+        );
+
+        expect(result, isNull);
+        expect(bridge.decryptCallCount, 0);
+      },
+    );
   });
 }

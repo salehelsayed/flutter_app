@@ -11,13 +11,17 @@ import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../local_discovery/fake_local_p2p_service.dart';
+import '../../shared/fakes/in_memory_contact_repository.dart';
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
+import '../../shared/fakes/in_memory_message_repository.dart';
 
 /// Captures [FLOW] log lines emitted during [action] and returns parsed events.
 Future<List<Map<String, dynamic>>> _captureFlowEvents(
@@ -1052,6 +1056,145 @@ void main() {
       },
     );
 
+    // 146 TC-07 (PROD-CRITICAL end-to-end leg): the serial staged-inbox drain
+    // (`_replayStagedInboxEntries`) replays ALL entries even when each replayed
+    // message's delivery-receipt SEND never acks. This drives the REAL handler
+    // (`handleIncomingChatMessage`) through the real loop, with the receipt send
+    // gated on a Completer that NEVER completes — modelling the notif-tap
+    // scenario (sender offline; the live receipt never round-trips). On HEAD the
+    // handler awaits that send, so the loop hangs on entry #1 and the drain
+    // times out; the 146 fix detaches the send so the loop drains every entry.
+    //
+    // NOTE: this leg lives here, NOT in inbox_round_trip_test.dart — that file's
+    // FakeP2PService.drainOfflineInboxCount injects to a stream and yields one
+    // turn per entry WITHOUT awaiting the handler, so the receipt-await never
+    // gates its drain (the test would prove nothing on HEAD). The real
+    // P2PServiceImpl loop here awaits chatReplay per entry, which is the leg the
+    // fix actually unblocks.
+    test(
+      '146 TC-07: the staged-inbox drain replays ALL entries without blocking '
+      'on per-message delivery-receipt sends',
+      () async {
+        service.dispose();
+
+        const senderPeerId = 'remote-peer';
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(
+          const ContactModel(
+            peerId: senderPeerId,
+            publicKey: 'pk',
+            rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-04-01T00:00:00.000Z',
+          ),
+        );
+        final msgRepo = InMemoryMessageRepository();
+        final hungReceipt = Completer<void>(); // intentionally never completes
+        var replayInvocations = 0;
+        var receiptHookInvocations = 0;
+
+        final repo = InMemoryInboxStagingRepository();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                replayInvocations++;
+                final (result, _, _) = await handleIncomingChatMessage(
+                  message: message,
+                  messageRepo: msgRepo,
+                  contactRepo: contactRepo,
+                  transport: message.transport,
+                  stagedEntryId: stagedEntryId,
+                  sendDeliveryReceipt: (_) {
+                    receiptHookInvocations++;
+                    return hungReceipt.future; // NEVER completes
+                  },
+                );
+                expect(result, HandleChatMessageResult.chatMessage);
+                // Durable persist happened → commit (delete + ack the row).
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'stored',
+                  reasonDetail: null,
+                );
+              },
+        );
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+        const n = 3;
+        // Register the pending page AFTER startup so startup does not drain it.
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              for (var i = 1; i <= n; i++)
+                _pendingInboxRow(
+                  entryId: 'entry-fnf-$i',
+                  from: senderPeerId,
+                  // ids must be >8 chars: the handler's CHAT_MSG_RECEIVE_STORED
+                  // does an unguarded payload.id.substring(0, 8).
+                  message: _chatEnvelope(
+                    id: 'msg-fnf-00$i',
+                    text: 'message $i',
+                    senderPeerId: senderPeerId,
+                  ),
+                ),
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        // On HEAD this hangs on entry #1's awaited receipt → TimeoutException.
+        final events = await _captureFlowEvents(() async {
+          await service.drainOfflineInbox().timeout(const Duration(seconds: 5));
+        });
+
+        expect(replayInvocations, n, reason: 'all $n entries were replayed');
+        expect(
+          receiptHookInvocations,
+          n,
+          reason: 'a receipt send was started for every entry',
+        );
+        expect(
+          hungReceipt.isCompleted,
+          isFalse,
+          reason: 'the receipt sends remain detached (still pending)',
+        );
+        final persisted = await msgRepo.getMessagesForContact(senderPeerId);
+        expect(persisted, hasLength(n));
+        // The handler must return CLEANLY (committed replay), not throw post-
+        // persist: assert every entry committed and NO replay exception.
+        final committed = events
+            .where((e) => e['event'] == 'P2P_SERVICE_INBOX_STAGED_CHAT_COMMITTED')
+            .length;
+        expect(
+          committed,
+          n,
+          reason: 'every entry committed via a clean replay (not the catch path)',
+        );
+        expect(
+          events.where(
+            (e) => e['event'] == 'P2P_SERVICE_INBOX_STAGED_REPLAY_EXCEPTION',
+          ),
+          isEmpty,
+          reason: 'the real handler must not throw during replay',
+        );
+      },
+    );
+
     test(
       'marks LAN staged row retryable on decryptionDeferred replay outcome',
       () async {
@@ -1731,6 +1874,92 @@ void main() {
       expect(repo.entry('entry-existing'), isNull);
       expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
     });
+
+    // TC-14 (145): the durable drain success telemetry carries per-segment
+    // durations (retrieveMs/ackMs/replayMs) in addition to the staged/replayed
+    // counts, so the relay round-trip can be profiled.
+    test(
+      'P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS carries numeric '
+      'retrieveMs/ackMs/replayMs',
+      () async {
+        final repo = InMemoryInboxStagingRepository();
+        repo.seed(
+          InboxStagingEntry(
+            entryId: 'entry-timed',
+            ownerPeerId: 'self-peer',
+            senderPeerId: 'remote-peer',
+            messageType: 'chat_message',
+            relayTimestamp: '2026-04-01T00:00:00.000Z',
+            envelope: jsonEncode({
+              'type': 'chat_message',
+              'version': '1',
+              'payload': {
+                'id': 'msg-timed',
+                'text': 'hello',
+                'senderPeerId': 'remote-peer',
+                'senderUsername': 'Alice',
+                'timestamp': '2026-04-01T00:00:00.000Z',
+              },
+            }),
+            stagedAt: '2026-04-01T00:00:01.000Z',
+          ),
+        );
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async => (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'stored',
+                reasonDetail: null,
+              ),
+        );
+
+        final events = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          await service.drainOfflineInbox();
+        });
+
+        final drainSuccess = events.firstWhere(
+          (e) => e['event'] == 'P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS',
+          orElse: () => <String, dynamic>{},
+        );
+        expect(
+          drainSuccess,
+          isNotEmpty,
+          reason: 'a staged+replayed drain should emit STAGED_DRAIN_SUCCESS',
+        );
+        final details = drainSuccess['details'] as Map<String, dynamic>;
+        // Existing fields preserved (additive change).
+        expect(details['staged'], isA<int>());
+        expect(details['replayed'], isA<int>());
+        expect(details['note'], isNotNull);
+        // New per-segment durations.
+        expect(details['retrieveMs'], isA<int>());
+        expect(details['retrieveMs'], greaterThanOrEqualTo(0));
+        expect(details['ackMs'], isA<int>());
+        expect(details['ackMs'], greaterThanOrEqualTo(0));
+        expect(details['replayMs'], isA<int>());
+        expect(details['replayMs'], greaterThanOrEqualTo(0));
+      },
+    );
 
     test(
       'quarantined disposition keeps entry, marks quarantined, does not delete',
@@ -4774,6 +5003,268 @@ void main() {
           reason: 'the started-path drain must not arm the deferral latch — a '
               'later stop->start cycle must not fire a phantom deferred drain',
         );
+      },
+    );
+  });
+
+  // 147: bounded-concurrent decrypt fan-out ahead of the serial commit loop.
+  // The relay-inbox drain replays staged entries serially; the expensive,
+  // independent part of each iteration is the per-message decrypt. The fix adds
+  // an injected `predecryptInboxChatEntry` fn and a bounded pre-decrypt pass in
+  // `_replayStagedInboxEntries` that overlaps N decrypts (≤ the cap) before the
+  // unchanged serial commit loop. Commit/persist stays serial-in-order; only
+  // the decrypt fans out. These tests inject a fake decrypt fn (latches, never
+  // wall-clock) and a fake replay callback that records commit order.
+  group('147 inbox replay decrypt fan-out', () {
+    String envIdOf(ChatMessage message) {
+      final json = jsonDecode(message.content) as Map<String, dynamic>;
+      return (json['payload'] as Map<String, dynamic>)['id'] as String;
+    }
+
+    Future<void> startNode(P2PServiceImpl s) async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+        }),
+      );
+      await s.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+    }
+
+    void stagePending(List<String> ids) {
+      bridge.whenCommand(
+        'inbox:retrieve_pending',
+        (_) => jsonEncode({
+          'ok': true,
+          'messages': [
+            for (final id in ids)
+              _pendingInboxRow(
+                entryId: 'entry-$id',
+                from: 'remote-peer',
+                message: _chatEnvelope(
+                  id: id,
+                  text: 'text-$id',
+                  senderPeerId: 'remote-peer',
+                ),
+              ),
+          ],
+          'hasMore': false,
+        }),
+      );
+    }
+
+    RecoveredInboxReplayOutcome committed() => (
+      disposition: RecoveredInboxChatDisposition.committed,
+      reasonCode: 'stored',
+      reasonDetail: null,
+    );
+
+    test(
+      '147 TC-A1: prefetch decrypts chat entries concurrently up to the bound',
+      () async {
+        service.dispose();
+        final n = P2PServiceImpl.maxConcurrentInboxDecrypts;
+        var inFlight = 0;
+        var maxConcurrent = 0;
+        final release = Completer<void>();
+        final repo = InMemoryInboxStagingRepository();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          predecryptInboxChatEntry: (message) async {
+            inFlight++;
+            if (inFlight > maxConcurrent) maxConcurrent = inFlight;
+            // Release only once ALL n are simultaneously at the latch — proving
+            // genuine overlap, not interleaving. With the bound ≥ n this is
+            // reached; force the bound to 1 and it never is (drain deadlocks).
+            if (inFlight >= n && !release.isCompleted) release.complete();
+            await release.future;
+            inFlight--;
+            return 'pt-${envIdOf(message)}';
+          },
+          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async =>
+              committed(),
+        );
+        await startNode(service);
+        stagePending([for (var i = 1; i <= n; i++) 'm$i']);
+
+        await service.drainOfflineInbox().timeout(const Duration(seconds: 5));
+
+        expect(maxConcurrent, n, reason: 'all $n decrypts overlapped at once');
+        expect(maxConcurrent, greaterThan(1));
+      },
+    );
+
+    test(
+      '147 TC-A5: decrypt fan-out is bounded — in-flight never exceeds the cap '
+      'for a large batch',
+      () async {
+        service.dispose();
+        final cap = P2PServiceImpl.maxConcurrentInboxDecrypts;
+        const n = 20;
+        var inFlight = 0;
+        var peak = 0;
+        var calls = 0;
+        final release = Completer<void>();
+        final repo = InMemoryInboxStagingRepository();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          predecryptInboxChatEntry: (message) async {
+            calls++;
+            inFlight++;
+            if (inFlight > peak) peak = inFlight;
+            if (inFlight >= cap && !release.isCompleted) release.complete();
+            await release.future;
+            inFlight--;
+            return 'pt-${envIdOf(message)}';
+          },
+          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async =>
+              committed(),
+        );
+        await startNode(service);
+        stagePending([for (var i = 1; i <= n; i++) 'm$i']);
+
+        await service.drainOfflineInbox().timeout(const Duration(seconds: 5));
+
+        expect(peak, lessThanOrEqualTo(cap), reason: 'never exceed the cap');
+        expect(peak, greaterThan(1), reason: 'still genuinely concurrent');
+        expect(calls, n, reason: 'every chat entry was prefetched');
+      },
+    );
+
+    test(
+      '147 TC-A2: commit/persist stays in arrival order when decrypts finish '
+      'out of order',
+      () async {
+        service.dispose();
+        final commitLog = <String>[];
+        final completionLog = <String>[];
+        final inFlightIds = <String>[];
+        final gates = <String, Completer<void>>{
+          'm1': Completer<void>(),
+          'm2': Completer<void>(),
+          'm3': Completer<void>(),
+        };
+        final repo = InMemoryInboxStagingRepository();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          predecryptInboxChatEntry: (message) async {
+            final id = envIdOf(message);
+            inFlightIds.add(id);
+            if (inFlightIds.length == 3) {
+              // All three are at the latch → release them in REVERSE arrival
+              // order so decrypt COMPLETES m3, m2, m1.
+              for (final rid in ['m3', 'm2', 'm1']) {
+                gates[rid]!.complete();
+              }
+            }
+            await gates[id]!.future;
+            completionLog.add(id);
+            return 'pt-$id';
+          },
+          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
+            commitLog.add(envIdOf(message));
+            return committed();
+          },
+        );
+        await startNode(service);
+        stagePending(['m1', 'm2', 'm3']);
+
+        await service.drainOfflineInbox().timeout(const Duration(seconds: 5));
+
+        expect(
+          completionLog,
+          ['m3', 'm2', 'm1'],
+          reason: 'decrypts finished out of (reverse) order',
+        );
+        expect(
+          commitLog,
+          ['m1', 'm2', 'm3'],
+          reason: 'commit/persist stayed in arrival order despite that',
+        );
+      },
+    );
+
+    test(
+      '147 TC-A4: a prefetch decrypt failure falls back to in-handler decrypt; '
+      'the entry is never dropped',
+      () async {
+        service.dispose();
+        final received = <String, String?>{};
+        final repo = InMemoryInboxStagingRepository();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          predecryptInboxChatEntry: (message) async {
+            final id = envIdOf(message);
+            if (id == 'mX') {
+              throw Exception('prefetch boom'); // omit from the map
+            }
+            return 'pt-$id';
+          },
+          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
+            // The handler receives predecryptedText via the message; a failed
+            // prefetch leaves it null → the handler would decrypt itself.
+            received[envIdOf(message)] = message.predecryptedText;
+            return committed();
+          },
+        );
+        await startNode(service);
+        stagePending(['mX', 'mY']);
+
+        await service.drainOfflineInbox().timeout(const Duration(seconds: 5));
+
+        expect(
+          received.keys,
+          containsAll(<String>['mX', 'mY']),
+          reason: 'a prefetch failure must NOT drop the entry',
+        );
+        expect(
+          received['mX'],
+          isNull,
+          reason: 'omitted entry falls back to in-handler decrypt',
+        );
+        expect(received['mY'], 'pt-mY', reason: 'the prefetched plaintext flows');
+      },
+    );
+
+    test(
+      '147 TC-A7 (PROD-CRITICAL): a same-peer drain completes only because the '
+      'decrypts overlap (serial would deadlock on the barrier)',
+      () async {
+        service.dispose();
+        const n = 3;
+        var waiting = 0;
+        final commitLog = <String>[];
+        final barrier = Completer<void>(); // releases once ≥2 wait together
+        final repo = InMemoryInboxStagingRepository();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          predecryptInboxChatEntry: (message) async {
+            waiting++;
+            if (waiting >= 2 && !barrier.isCompleted) barrier.complete();
+            await barrier.future; // a lone serial waiter blocks forever
+            return 'pt-${envIdOf(message)}';
+          },
+          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
+            commitLog.add(envIdOf(message));
+            return committed();
+          },
+        );
+        await startNode(service);
+        stagePending([for (var i = 1; i <= n; i++) 'm$i']);
+
+        // On serial HEAD only one decrypt is ever in flight → the barrier
+        // (target 2) is never reached → this would time out.
+        await service.drainOfflineInbox().timeout(const Duration(seconds: 5));
+
+        expect(commitLog, ['m1', 'm2', 'm3'], reason: 'all committed in order');
       },
     );
   });

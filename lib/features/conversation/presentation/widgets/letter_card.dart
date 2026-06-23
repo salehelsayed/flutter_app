@@ -58,6 +58,17 @@ class LetterCard extends StatelessWidget {
   final VoidCallback? onRetryFailedMessage;
   final VoidCallback? onRetryFailedMedia;
   final VoidCallback? onDeleteFailedMedia;
+
+  /// 144: a terminal "Couldn't send — …" reason for a non-retryable
+  /// `send_failed` bubble. When set, the card renders the reason line and
+  /// suppresses the Retry control (retry can never succeed for a terminal
+  /// group state).
+  final String? failedReasonText;
+
+  /// 144: Delete affordance for a terminal `send_failed` bubble. Distinct from
+  /// [onDeleteFailedMedia] (which is gated by write permission); this one stays
+  /// reachable while the composer is read-only.
+  final VoidCallback? onDeleteFailedMessage;
   final void Function(String attachmentId)? onRetryUnavailableMedia;
   final bool isRetryFailedMessageEnabled;
   final String? failedMessageActionKeySuffix;
@@ -116,6 +127,8 @@ class LetterCard extends StatelessWidget {
     this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
+    this.failedReasonText,
+    this.onDeleteFailedMessage,
     this.onRetryUnavailableMedia,
     this.isRetryFailedMessageEnabled = true,
     this.failedMessageActionKeySuffix,
@@ -430,16 +443,38 @@ class LetterCard extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
           child: _buildOutgoingMediaPendingNote(context, readableColors),
         ),
+      // 144: terminal "Couldn't send — …" reason for a non-retryable
+      // send_failed bubble. Rendered as its own Text (not part of the inline
+      // WidgetSpan body), so find.text matches it directly.
+      if (failedReasonText != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+          child: Text(
+            failedReasonText!,
+            key: ValueKey(
+              'failed-message-reason-${failedMessageActionKeySuffix ?? 'message'}',
+            ),
+            textDirection: detectTextDirection(failedReasonText!),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFFFF8A80),
+            ),
+          ),
+        ),
       if (onRetryFailedMessage != null ||
           onRetryFailedMedia != null ||
-          onDeleteFailedMedia != null)
+          onDeleteFailedMedia != null ||
+          onDeleteFailedMessage != null)
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
           child: Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (onRetryFailedMessage != null)
+              // A terminal reason makes the row non-retryable: suppress Retry
+              // even if a callback is supplied.
+              if (onRetryFailedMessage != null && failedReasonText == null)
                 _buildFailedMessageAction(
                   key: ValueKey(
                     'failed-message-retry-${failedMessageActionKeySuffix ?? 'message'}',
@@ -472,6 +507,17 @@ class LetterCard extends StatelessWidget {
                   semanticLabel: l10n.failed_media_delete_semantics,
                   color: const Color(0xFFFF8A80),
                   onTap: onDeleteFailedMedia!,
+                ),
+              if (onDeleteFailedMessage != null)
+                _buildFailedMessageAction(
+                  key: ValueKey(
+                    'failed-message-delete-${failedMessageActionKeySuffix ?? 'message'}',
+                  ),
+                  icon: Icons.delete_outline_rounded,
+                  label: l10n.conversation_context_delete,
+                  semanticLabel: l10n.failed_media_delete_semantics,
+                  color: const Color(0xFFFF8A80),
+                  onTap: onDeleteFailedMessage!,
                 ),
             ],
           ),

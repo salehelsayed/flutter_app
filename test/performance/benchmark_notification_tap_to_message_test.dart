@@ -166,5 +166,40 @@ void main() {
                 'No timing event should be emitted for non-message notifications');
       },
     );
+
+    // TC-11 (145): the post-drain "live render" milestone helper. Distinct from
+    // the stale-render NT1-NT4 event, it carries `addedIncoming` and a
+    // `milestone: 'live_render'` tag.
+    test(
+      'NT5: emitNotificationTapLiveRenderTiming emits '
+      'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING with liveRenderMs/addedIncoming/routeKind',
+      () async {
+        final tappedAt = DateTime.now().subtract(
+          const Duration(milliseconds: 80),
+        );
+
+        final events = await harness.captureFlowEvents(() async {
+          emitNotificationTapLiveRenderTiming(
+            tappedAt: tappedAt,
+            routeKind: 'conversation',
+            addedIncoming: true,
+          );
+        });
+
+        final timing = harness.filterEvents(
+          events,
+          'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING',
+        );
+        expect(timing, isNotEmpty,
+            reason: 'Should emit NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING');
+
+        final details = timing.first['details'] as Map<String, dynamic>;
+        expect(details['elapsedMs'], isA<int>());
+        expect(details['elapsedMs'], greaterThanOrEqualTo(0));
+        expect(details['addedIncoming'], isTrue);
+        expect(details['routeKind'], 'conversation');
+        expect(details['milestone'], 'live_render');
+      },
+    );
   });
 }

@@ -536,6 +536,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_continue => 'Weiter...';
 
   @override
+  String get conversation_catching_up => 'Wird synchronisiert...';
+
+  @override
   String get comment_hint => 'Schreib einen Kommentar...';
 
   @override
@@ -1048,6 +1051,22 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get group_read_only_admin_only =>
       'Nur Admins können in dieser Gruppe Nachrichten senden';
+
+  @override
+  String get group_read_only_unavailable =>
+      'Diese Gruppe ist nicht mehr verfügbar.';
+
+  @override
+  String get group_send_failed_dissolved =>
+      'Senden fehlgeschlagen — diese Gruppe wurde aufgelöst';
+
+  @override
+  String get group_send_failed_removed =>
+      'Senden fehlgeschlagen — du bist nicht mehr in dieser Gruppe';
+
+  @override
+  String get group_send_failed_unavailable =>
+      'Senden fehlgeschlagen — diese Gruppe ist nicht verfügbar';
 
   @override
   String get group_removed_snackbar => 'Du wurdest aus dieser Gruppe entfernt.';

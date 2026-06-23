@@ -88,6 +88,13 @@ class P2PServiceImpl
   // legacy fire-and-forget emit (pre-F7 behavior).
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxReaction;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxMessageDeletion;
+  // 147: optional decrypt-prefetch fn (wired in main.dart to the same bridge
+  // decrypt + ML-KEM ring the chat handler uses). When present, the inbox-drain
+  // replay decrypts a page's chat entries concurrently (bounded by
+  // [maxConcurrentInboxDecrypts]) BEFORE the serial commit loop and threads each
+  // plaintext into the replay. When null (the default), no prefetch runs and the
+  // drain is byte-identical to HEAD — a safe default-off rollback + test seam.
+  final Future<String?> Function(ChatMessage message)? _predecryptInboxChatEntry;
   final TransportMetrics? _transportMetrics;
   final Duration? _keyRotationGracePeriodOverride;
   StreamSubscription<LocalChatMessage>? _localMessageSub;
@@ -265,6 +272,7 @@ class P2PServiceImpl
     replayRecoveredInboxIntroductionMessage,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxReaction,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxMessageDeletion,
+    Future<String?> Function(ChatMessage message)? predecryptInboxChatEntry,
     TransportMetrics? transportMetrics,
     Duration? keyRotationGracePeriodOverride,
   }) : _bridge = bridge,
@@ -280,6 +288,7 @@ class P2PServiceImpl
        _replayRecoveredInboxReaction = replayRecoveredInboxReaction,
        _replayRecoveredInboxMessageDeletion =
            replayRecoveredInboxMessageDeletion,
+       _predecryptInboxChatEntry = predecryptInboxChatEntry,
        _transportMetrics = transportMetrics,
        _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride {
     // Register event handlers on the bridge
@@ -713,6 +722,15 @@ class P2PServiceImpl
 
   static const int maxRecoverableInboxReplayEntries = 500;
 
+  /// 147: upper bound on how many staged `chat_message` entries are decrypted
+  /// CONCURRENTLY by the inbox-drain pre-decrypt pass before the serial commit
+  /// loop. Decrypt is stateless ML-KEM-768 + AES-GCM on lock-free, genuinely
+  /// concurrent native threads, so overlapping N round-trips is safe and faster
+  /// than serializing them — but the native pools are UNBOUNDED, so the fan-out
+  /// must be capped here (never one thread per inbox entry). Commit/persist
+  /// still runs serially and in arrival order.
+  static const int maxConcurrentInboxDecrypts = 6;
+
   String _normalizeInboxTimestamp(dynamic ts) {
     if (ts is int) {
       return DateTime.fromMillisecondsSinceEpoch(
@@ -1057,6 +1075,65 @@ class P2PServiceImpl
     }
   }
 
+  /// 147: bounded-concurrent decrypt fan-out for one page of staged inbox
+  /// entries. Decrypts each `chat_message` entry's v2 envelope via the injected
+  /// [_predecryptInboxChatEntry] fn, returning a `{entryId -> inner plaintext}`
+  /// map the serial commit loop threads into each replay. Concurrency is capped
+  /// at [maxConcurrentInboxDecrypts] using the index-counter + `Future.wait`
+  /// worker pattern (mirrors `drainGroupOfflineInbox`) so the unbounded native
+  /// pools never get one thread per entry. Per-entry failures are swallowed (the
+  /// entry is omitted → it decrypts in-handler, never dropped). Returns an empty
+  /// map when the fn is unwired (default-off, byte-identical to HEAD).
+  Future<Map<String, String>> _predecryptInboxChatEntries(
+    List<InboxStagingEntry> entries,
+  ) async {
+    final predecrypt = _predecryptInboxChatEntry;
+    if (predecrypt == null) return const {};
+    final chatEntries = entries
+        .where((e) => e.messageType == 'chat_message')
+        .toList(growable: false);
+    if (chatEntries.isEmpty) return const {};
+
+    final plaintextByEntryId = <String, String>{};
+    var nextIndex = 0;
+
+    Future<void> decryptNext() async {
+      while (true) {
+        final index = nextIndex;
+        nextIndex++;
+        if (index >= chatEntries.length) return;
+        final entry = chatEntries[index];
+        try {
+          final plaintext = await predecrypt(entry.toChatMessage());
+          if (plaintext != null) {
+            plaintextByEntryId[entry.entryId] = plaintext;
+          }
+        } catch (e) {
+          // A prefetch decrypt failure is non-fatal: omit the entry so the
+          // serial loop's handler decrypts it itself (with full disposition).
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_INBOX_PREDECRYPT_ERROR',
+            details: {
+              'entryId': entry.entryId.length > 8
+                  ? entry.entryId.substring(0, 8)
+                  : entry.entryId,
+              'error': e.toString(),
+            },
+          );
+        }
+      }
+    }
+
+    final workerCount = chatEntries.length < maxConcurrentInboxDecrypts
+        ? chatEntries.length
+        : maxConcurrentInboxDecrypts;
+    await Future.wait(
+      List<Future<void>>.generate(workerCount, (_) => decryptNext()),
+    );
+    return plaintextByEntryId;
+  }
+
   Future<int> _replayStagedInboxEntries({List<String>? entryIds}) async {
     final repo = _inboxStagingRepository;
 
@@ -1065,6 +1142,13 @@ class P2PServiceImpl
             limit: maxRecoverableInboxReplayEntries,
           )
         : await repo.getRecoverableEntriesByIds(entryIds);
+
+    // 147: bounded-concurrent pre-decrypt pass. Overlaps the per-message
+    // decrypt (the expensive, stateless, order-independent part) for this page's
+    // chat entries BEFORE the serial commit loop below. The map carries each
+    // entry's plaintext into its (unchanged, in-arrival-order) chatReplay; a
+    // prefetch miss/failure simply leaves the entry out → it decrypts in-handler.
+    final predecryptedByEntryId = await _predecryptInboxChatEntries(entries);
     var replayed = 0;
 
     for (final entry in entries) {
@@ -1089,8 +1173,11 @@ class P2PServiceImpl
           chatReplay = _replayRecoveredInboxChatMessage;
         }
         if (entry.messageType == 'chat_message' && chatReplay != null) {
+          final predecryptedText = predecryptedByEntryId[entry.entryId];
           final outcome = await chatReplay(
-            message,
+            predecryptedText != null
+                ? message.copyWith(predecryptedText: predecryptedText)
+                : message,
             stagedEntryId: entry.entryId,
           );
           if (await _applyRecoveredInboxOutcome(
@@ -1389,11 +1476,17 @@ class P2PServiceImpl
       bool hasMore,
       bool retrieveSucceeded,
       String? failureReason,
+      // 145: per-segment durations of the relay round-trip (additive). Early
+      // returns measure only the segments they reached; later ones are 0.
+      int retrieveMs,
+      int ackMs,
+      int replayMs,
     })
   >
   _retrievePendingInboxPage({required String toPeerId, int? timeoutMs}) async {
     final repo = _inboxStagingRepository;
 
+    final retrieveSw = Stopwatch()..start();
     Map<String, dynamic> response;
     try {
       response = await callP2PInboxRetrievePending(
@@ -1401,6 +1494,7 @@ class P2PServiceImpl
         timeoutMs: timeoutMs,
       );
     } catch (e) {
+      retrieveSw.stop();
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_RETRIEVE_PENDING_ERROR',
@@ -1415,8 +1509,12 @@ class P2PServiceImpl
         hasMore: false,
         retrieveSucceeded: false,
         failureReason: e.toString(),
+        retrieveMs: retrieveSw.elapsedMilliseconds,
+        ackMs: 0,
+        replayMs: 0,
       );
     }
+    retrieveSw.stop();
 
     if (response['ok'] != true) {
       final failureReason =
@@ -1437,6 +1535,9 @@ class P2PServiceImpl
         hasMore: false,
         retrieveSucceeded: false,
         failureReason: failureReason,
+        retrieveMs: retrieveSw.elapsedMilliseconds,
+        ackMs: 0,
+        replayMs: 0,
       );
     }
 
@@ -1451,6 +1552,9 @@ class P2PServiceImpl
         hasMore: false,
         retrieveSucceeded: true,
         failureReason: null,
+        retrieveMs: retrieveSw.elapsedMilliseconds,
+        ackMs: 0,
+        replayMs: 0,
       );
     }
 
@@ -1482,6 +1586,9 @@ class P2PServiceImpl
         hasMore: response['hasMore'] == true,
         retrieveSucceeded: true,
         failureReason: null,
+        retrieveMs: retrieveSw.elapsedMilliseconds,
+        ackMs: 0,
+        replayMs: 0,
       );
     }
 
@@ -1504,9 +1611,14 @@ class P2PServiceImpl
         hasMore: false,
         retrieveSucceeded: true,
         failureReason: null,
+        retrieveMs: retrieveSw.elapsedMilliseconds,
+        ackMs: 0,
+        replayMs: 0,
       );
     }
+    final ackSw = Stopwatch();
     if (ackableEntryIds.isNotEmpty) {
+      ackSw.start();
       try {
         final ackResponse = await callP2PInboxAck(
           _bridge,
@@ -1531,11 +1643,14 @@ class P2PServiceImpl
           details: {'requested': ackableEntryIds.length, 'error': e.toString()},
         );
       }
+      ackSw.stop();
     }
 
+    final replaySw = Stopwatch()..start();
     final replayed = ackableEntryIds.isEmpty
         ? 0
         : await _replayStagedInboxEntries(entryIds: ackableEntryIds);
+    replaySw.stop();
 
     return (
       replayed: replayed,
@@ -1543,6 +1658,9 @@ class P2PServiceImpl
       hasMore: response['hasMore'] == true,
       retrieveSucceeded: true,
       failureReason: null,
+      retrieveMs: retrieveSw.elapsedMilliseconds,
+      ackMs: ackSw.elapsedMilliseconds,
+      replayMs: replaySw.elapsedMilliseconds,
     );
   }
 
@@ -1645,7 +1763,9 @@ class P2PServiceImpl
   Future<void> _drainOfflineInboxDurably({bool waitForAllPages = false}) async {
     try {
       final toPeerId = _currentState.peerId ?? '';
+      final replayExistingSw = Stopwatch()..start();
       final replayedExisting = await _replayStagedInboxEntries();
+      replayExistingSw.stop();
       final firstPage = await _retrievePendingInboxPage(
         toPeerId: toPeerId,
         timeoutMs: foregroundInboxTimeout.inMilliseconds,
@@ -1683,6 +1803,11 @@ class P2PServiceImpl
             'staged': totalStaged,
             'replayed': totalReplayed,
             'note': 'relay entries were staged locally before ack',
+            // 145: per-segment durations. replayMs sums the existing-row replay
+            // (this method) and the first page's own replay.
+            'retrieveMs': firstPage.retrieveMs,
+            'ackMs': firstPage.ackMs,
+            'replayMs': replayExistingSw.elapsedMilliseconds + firstPage.replayMs,
           },
         );
       }

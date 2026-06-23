@@ -193,6 +193,8 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
     show sendDeliveryReceipt;
+import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart'
+    show predecryptStagedInboxChatEntry;
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
@@ -2191,6 +2193,22 @@ void main() async {
         replayInboxReaction(message, stagedEntryId: stagedEntryId),
     replayRecoveredInboxMessageDeletion: (message, {String? stagedEntryId}) =>
         replayInboxMessageDeletion(message, stagedEntryId: stagedEntryId),
+    // 147: decrypt-prefetch fn — the inbox-drain replay overlaps a page's chat
+    // decrypts (bounded by maxConcurrentInboxDecrypts) AHEAD of the serial
+    // commit loop, then threads each plaintext into the unchanged replay.
+    // predecryptStagedInboxChatEntry honors the listener's blocked-sender policy
+    // (a blocked contact's ciphertext is NOT decrypted), sources the SAME key
+    // material as the chat path (loadIdentity + the ML-KEM ring), and runs the
+    // SAME bridge decrypt + fallback ring. A null result (blocked / not v2 / key
+    // unavailable / decrypt failed) is harmless — that entry decrypts in-handler.
+    predecryptInboxChatEntry: (message) => predecryptStagedInboxChatEntry(
+      message: message,
+      contactRepo: contactRepository,
+      bridge: bridge,
+      loadOwnMlKemSecretKey: () async =>
+          (await repository.loadIdentity())?.mlKemSecretKey,
+      loadOwnMlKemSecretKeyRing: () => loadMlKemSecretKeyRing(secureKeyStore),
+    ),
   );
   nearbyLocationService = NearbyLocationServiceImpl(
     settingsRepository: postsPrivacySettingsRepository,

@@ -84,6 +84,15 @@ class GroupConversationScreen extends StatelessWidget {
   final ValueChanged<String>? onRetryFailedMessage;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
+
+  /// 144: when non-null, a terminal send failure (group dissolved / removed /
+  /// unavailable) is latched. Drives the per-message "Couldn't send — …" reason
+  /// on terminal `send_failed` rows and makes them non-retryable.
+  final String? failedTerminalReasonText;
+
+  /// 144: deletes a terminal `send_failed` bubble. Wired even while the composer
+  /// is read-only so a stuck bubble can always be cleared.
+  final ValueChanged<String>? onDeleteFailedTerminalMessage;
   final void Function(String messageId, String attachmentId)?
   onRetryUnavailableMedia;
   final Set<String> retryingFailedMessageIds;
@@ -143,6 +152,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
+    this.failedTerminalReasonText,
+    this.onDeleteFailedTerminalMessage,
     this.onRetryUnavailableMedia,
     this.retryingFailedMessageIds = const {},
     this.activeQuoteText,
@@ -565,6 +576,18 @@ class GroupConversationScreen extends StatelessWidget {
         final isFailedSend =
             message.status == 'failed' ||
             message.status == GroupMessage.statusSendFailed;
+        // 144 finding: a terminal send_failed row persisted by the keep-bubble
+        // path before any retry payload existed can NEVER be retried (the retry
+        // use case skips it with missing_retry_payload). Only offer Retry for a
+        // send_failed row that actually carries a payload — a retry-exhausted
+        // row (Finding 05 Phase 4) does; a terminal-failure row does not. Plain
+        // 'failed' rows keep their existing behavior (they always have a
+        // payload). This matters after the F1 self-heal re-opens the composer.
+        final isRetryExhaustedSend =
+            message.status == GroupMessage.statusSendFailed;
+        final hasRetryPayload =
+            (message.wireEnvelope?.isNotEmpty ?? false) ||
+            (message.inboxRetryPayload?.isNotEmpty ?? false);
         final showFailedMediaActions =
             canWrite && isSent && isFailedSend && messageMedia.isNotEmpty;
         final showFailedTextRetry =
@@ -573,7 +596,25 @@ class GroupConversationScreen extends StatelessWidget {
             isFailedSend &&
             messageMedia.isEmpty &&
             message.text.trim().isNotEmpty &&
-            onRetryFailedMessage != null;
+            onRetryFailedMessage != null &&
+            (!isRetryExhaustedSend || hasRetryPayload);
+        // 144: a TERMINAL send_failed bubble (group dissolved / removed from the
+        // group / group gone). It carries the "Couldn't send — …" reason and a
+        // Delete-only affordance (no Retry — retry can never succeed). The
+        // reason is latched at the screen level, so a retry-exhausted
+        // send_failed row in a still-writable group (failedTerminalReasonText
+        // == null) keeps its existing treatment and shows no terminal reason.
+        final isTerminalSendFailed =
+            isSent && message.status == GroupMessage.statusSendFailed;
+        final showTerminalSendFailed =
+            isTerminalSendFailed && failedTerminalReasonText != null;
+        // 144 finding: a text send_failed row that cannot be retried (no payload)
+        // must always keep Delete reachable so a stuck bubble can be cleared —
+        // even after the read-only latch self-heals (failedTerminalReasonText
+        // goes null) and even while no terminal reason is latched.
+        final showTerminalDelete =
+            showTerminalSendFailed ||
+            (isTerminalSendFailed && messageMedia.isEmpty && !hasRetryPayload);
         final isRetryingFailedText = retryingFailedMessageIds.contains(
           message.id,
         );
@@ -659,6 +700,13 @@ class GroupConversationScreen extends StatelessWidget {
           onDeleteFailedMedia:
               showFailedMediaActions && onDeleteFailedMedia != null
               ? () => onDeleteFailedMedia!(message.id)
+              : null,
+          failedReasonText: showTerminalSendFailed
+              ? failedTerminalReasonText
+              : null,
+          onDeleteFailedMessage:
+              showTerminalDelete && onDeleteFailedTerminalMessage != null
+              ? () => onDeleteFailedTerminalMessage!(message.id)
               : null,
           onRetryUnavailableMedia: onRetryUnavailableMedia != null
               ? (attachmentId) =>

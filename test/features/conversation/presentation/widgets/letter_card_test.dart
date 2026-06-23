@@ -33,6 +33,8 @@ void main() {
     VoidCallback? onRetryFailedMessage,
     VoidCallback? onRetryFailedMedia,
     VoidCallback? onDeleteFailedMedia,
+    String? failedReasonText,
+    VoidCallback? onDeleteFailedMessage,
     void Function(String attachmentId)? onRetryUnavailableMedia,
     bool isRetryFailedMessageEnabled = true,
     String? failedMessageActionKeySuffix,
@@ -66,6 +68,8 @@ void main() {
             onRetryFailedMessage: onRetryFailedMessage,
             onRetryFailedMedia: onRetryFailedMedia,
             onDeleteFailedMedia: onDeleteFailedMedia,
+            failedReasonText: failedReasonText,
+            onDeleteFailedMessage: onDeleteFailedMessage,
             onRetryUnavailableMedia: onRetryUnavailableMedia,
             isRetryFailedMessageEnabled: isRetryFailedMessageEnabled,
             failedMessageActionKeySuffix: failedMessageActionKeySuffix,
@@ -2040,5 +2044,63 @@ void main() {
       await tester.tap(retryButton);
       expect(retried, isTrue);
     });
+
+    testWidgets(
+      'send_failed with failedReasonText renders reason + Delete and no Retry',
+      (tester) async {
+        var deleted = false;
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: false,
+            status: 'send_failed',
+            text: 'give up',
+            failedReasonText: "Couldn't send — this group was dissolved",
+            onDeleteFailedMessage: () => deleted = true,
+            failedMessageActionKeySuffix: 'sf2',
+          ),
+        );
+
+        // Reason line is its own Text widget (matches find.text directly).
+        expect(
+          find.text("Couldn't send — this group was dissolved"),
+          findsOneWidget,
+        );
+        // No Retry for a terminal row.
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-sf2')),
+          findsNothing,
+        );
+        // Delete affordance present and wired.
+        final deleteButton = find.byKey(
+          const ValueKey('failed-message-delete-sf2'),
+        );
+        expect(deleteButton, findsOneWidget);
+        await tester.tap(deleteButton);
+        expect(deleted, isTrue);
+      },
+    );
+
+    testWidgets(
+      'failedReasonText suppresses Retry even when a retry callback is supplied',
+      (tester) async {
+        var retried = false;
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: false,
+            status: 'send_failed',
+            text: 'give up',
+            failedReasonText: "Couldn't send — you're no longer in this group",
+            onRetryFailedMessage: () => retried = true,
+            onDeleteFailedMessage: () {},
+            failedMessageActionKeySuffix: 'sf3',
+          ),
+        );
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-sf3')),
+          findsNothing,
+        );
+        expect(retried, isFalse);
+      },
+    );
   });
 }

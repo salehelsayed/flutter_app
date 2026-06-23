@@ -36,6 +36,8 @@ void main() {
     bool isLoadingMore = false,
     bool hasMoreOlderMessages = true,
     bool initialLoadDone = false,
+    bool isSyncingNewMessages = false,
+    ScrollController? scrollController,
     VoidCallback? onAttach,
     List<File> pendingAttachments = const [],
     bool isUploading = false,
@@ -78,9 +80,11 @@ void main() {
           messages: messages,
           onSend: onSend ?? (_) {},
           onBack: onBack ?? () {},
+          scrollController: scrollController,
           isLoadingMore: isLoadingMore,
           hasMoreOlderMessages: hasMoreOlderMessages,
           initialLoadDone: initialLoadDone,
+          isSyncingNewMessages: isSyncingNewMessages,
           onAttach: onAttach,
           pendingAttachments: pendingAttachments,
           isUploading: isUploading,
@@ -148,6 +152,135 @@ void main() {
       editedAt: editedAt,
     );
   }
+
+  // 145: the "catching up" affordance shown while the screen's relay drain is
+  // in flight. Keyed (not text-matched) so it is robust to copy changes.
+  const syncingBannerKey = ValueKey('conversation-syncing-banner');
+
+  group('145 syncing affordance', () {
+    // AmbientBackground has a repeating 8s animation that never settles, and
+    // each rendered letter card schedules a zero-delay entry-animation timer —
+    // so pump with a fixed duration (never pumpAndSettle) to drain those timers.
+    Future<void> pumpFrames(WidgetTester tester) =>
+        tester.pump(const Duration(milliseconds: 500));
+
+    testWidgets(
+      'renders syncing affordance when isSyncingNewMessages is true',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [makeMessage(id: 'm1', text: 'stale row')],
+            initialLoadDone: true,
+            isSyncingNewMessages: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.byKey(syncingBannerKey), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(syncingBannerKey),
+            matching: find.byType(CircularProgressIndicator),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'syncing affordance hidden when isSyncingNewMessages is false',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [makeMessage(id: 'm1', text: 'stale row')],
+            initialLoadDone: true,
+            isSyncingNewMessages: false,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.byKey(syncingBannerKey), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'syncing affordance is outside the message ListView and does not shift scroll',
+      (tester) async {
+        final controller = ScrollController();
+        addTearDown(controller.dispose);
+        final messages = List.generate(
+          12,
+          (i) => makeMessage(
+            id: 'm$i',
+            text: 'row $i',
+            timestamp: '2026-02-09T15:${(10 + i).toString().padLeft(2, '0')}:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: messages,
+            initialLoadDone: true,
+            isSyncingNewMessages: false,
+            scrollController: controller,
+          ),
+        );
+        await pumpFrames(tester);
+        final offsetBefore = controller.offset;
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: messages,
+            initialLoadDone: true,
+            isSyncingNewMessages: true,
+            scrollController: controller,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.byKey(syncingBannerKey), findsOneWidget);
+        expect(controller.offset, offsetBefore,
+            reason: 'toggling the affordance must not move the scroll position');
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('messages')),
+            matching: find.byKey(syncingBannerKey),
+          ),
+          findsNothing,
+          reason: 'the affordance must live outside the message ListView',
+        );
+      },
+    );
+
+    testWidgets(
+      'syncing affordance is distinct from the older-pagination spinner',
+      (tester) async {
+        // Pagination spinner present, syncing banner absent.
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [makeMessage(id: 'm1', text: 'stale row')],
+            initialLoadDone: true,
+            isLoadingMore: true,
+            isSyncingNewMessages: false,
+          ),
+        );
+        await pumpFrames(tester);
+        expect(find.byKey(syncingBannerKey), findsNothing);
+
+        // Inverse: syncing banner present, isLoadingMore false.
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [makeMessage(id: 'm1', text: 'stale row')],
+            initialLoadDone: true,
+            isLoadingMore: false,
+            isSyncingNewMessages: true,
+          ),
+        );
+        await pumpFrames(tester);
+        expect(find.byKey(syncingBannerKey), findsOneWidget);
+      },
+    );
+  });
 
   MediaAttachment makeImageAttachment({
     String id = 'att-1',

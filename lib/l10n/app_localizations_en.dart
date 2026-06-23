@@ -525,6 +525,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_continue => 'Continue...';
 
   @override
+  String get conversation_catching_up => 'Catching up...';
+
+  @override
   String get comment_hint => 'Write a comment...';
 
   @override
@@ -1021,6 +1024,22 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get group_read_only_admin_only =>
       'Only admins can send messages in this group';
+
+  @override
+  String get group_read_only_unavailable =>
+      'This group is no longer available.';
+
+  @override
+  String get group_send_failed_dissolved =>
+      'Couldn\'t send — this group was dissolved';
+
+  @override
+  String get group_send_failed_removed =>
+      'Couldn\'t send — you\'re no longer in this group';
+
+  @override
+  String get group_send_failed_unavailable =>
+      'Couldn\'t send — this group is unavailable';
 
   @override
   String get group_removed_snackbar => 'You were removed from this group.';

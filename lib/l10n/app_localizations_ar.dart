@@ -534,6 +534,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_continue => 'متابعة...';
 
   @override
+  String get conversation_catching_up => 'جارٍ المزامنة...';
+
+  @override
   String get comment_hint => 'اكتب تعليقًا...';
 
   @override
@@ -1036,6 +1039,21 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get group_read_only_admin_only =>
       'يمكن للمشرفين فقط إرسال الرسائل في هذه المجموعة';
+
+  @override
+  String get group_read_only_unavailable => 'لم تعد هذه المجموعة متاحة.';
+
+  @override
+  String get group_send_failed_dissolved =>
+      'تعذّر الإرسال — تم حل هذه المجموعة';
+
+  @override
+  String get group_send_failed_removed =>
+      'تعذّر الإرسال — لم تعد عضوًا في هذه المجموعة';
+
+  @override
+  String get group_send_failed_unavailable =>
+      'تعذّر الإرسال — هذه المجموعة غير متاحة';
 
   @override
   String get group_removed_snackbar => 'تمت إزالتك من هذه المجموعة.';

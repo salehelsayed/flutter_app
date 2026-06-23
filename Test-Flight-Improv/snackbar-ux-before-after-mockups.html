@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Group Messaging — Snackbar → Inline UX · Before / After mockups (plans 144, 149–154)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#8b949e; --line:#30363d;
+    --blue:#0a84ff; --blue2:#3996ff; --green:#2ea043; --green-soft:#1b3a26;
+    --red:#f85149; --red-soft:#3a1d1d; --amber:#d29922; --amber-soft:#3a2f12;
+    --bubble-in:#262b33; --bubble-out:#0a84ff; --bubble-fail:#3a1d1d;
+    --phone:#000; --screen:#0b0c10; --appbar:#1c1f26;
+    --chip:#21262d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0d1117,#0a0d12);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5;-webkit-font-smoothing:antialiased}
+  a{color:var(--blue2);text-decoration:none}
+  header.top{position:sticky;top:0;z-index:50;background:rgba(13,17,23,.85);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);padding:14px 22px}
+  header.top h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.2px}
+  header.top .sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+  nav.jump{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  nav.jump a{font-size:12px;background:var(--panel);border:1px solid var(--line);
+    padding:4px 9px;border-radius:999px;color:var(--ink)}
+  nav.jump a:hover{border-color:var(--blue);color:var(--blue2)}
+  nav.jump a b{color:var(--muted);font-weight:600;margin-right:5px}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 22px 80px}
+  .intro{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:30px}
+  .intro p{margin:6px 0;color:#c9d1d9;font-size:14px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .dot.b{background:var(--amber)} .dot.a{background:var(--green)}
+
+  section.plan{border:1px solid var(--line);border-radius:16px;background:var(--panel);
+    margin-bottom:26px;overflow:hidden}
+  .plan .head{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:flex-start}
+  .plan .num{flex:0 0 auto;width:46px;height:46px;border-radius:12px;background:#1f6feb22;border:1px solid #1f6feb55;
+    color:var(--blue2);font-weight:700;font-size:17px;display:flex;align-items:center;justify-content:center}
+  .plan .num.done{background:#2ea04322;border-color:#2ea04355;color:#3fb950}
+  .plan h2{margin:0;font-size:15.5px;font-weight:650}
+  .plan .why{color:var(--muted);font-size:13px;margin-top:3px}
+  .plan .file{color:#6e7681;font-size:11px;margin-top:5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  .compare{display:flex;gap:22px;flex-wrap:wrap;padding:22px 20px}
+  .col{flex:1 1 300px;min-width:280px;display:flex;flex-direction:column;align-items:center}
+  .tag{font-size:11.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;margin-bottom:10px;
+    padding:3px 11px;border-radius:999px}
+  .tag.before{background:var(--amber-soft);color:#e3b341;border:1px solid #d2992255}
+  .tag.after{background:var(--green-soft);color:#56d364;border:1px solid #2ea04355}
+  .cap{font-size:12px;color:var(--muted);margin-top:12px;text-align:center;max-width:300px}
+  .cap b{color:#c9d1d9;font-weight:600}
+
+  /* phone */
+  .phone{width:288px;height:520px;background:var(--phone);border-radius:34px;padding:9px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5),0 0 0 1px #ffffff10 inset;position:relative}
+  .screen{width:100%;height:100%;background:var(--screen);border-radius:26px;overflow:hidden;
+    display:flex;flex-direction:column;position:relative}
+  .notch{position:absolute;top:9px;left:50%;transform:translateX(-50%);width:96px;height:20px;
+    background:#000;border-radius:0 0 14px 14px;z-index:6}
+  .appbar{background:var(--appbar);padding:30px 12px 9px;display:flex;align-items:center;gap:9px;
+    border-bottom:1px solid #ffffff0d;z-index:3}
+  .appbar .bk{color:var(--blue2);font-size:19px;line-height:1}
+  .av{width:30px;height:30px;border-radius:50%;flex:0 0 auto;
+    background:conic-gradient(from 210deg,#ff7a59,#a86bff,#0a84ff,#2ea043,#ff7a59)}
+  .av.sm{width:26px;height:26px}
+  .appbar .nm{font-size:13.5px;font-weight:650}
+  .appbar .nm small{display:block;color:var(--muted);font-weight:400;font-size:10.5px}
+  .body{flex:1;overflow:hidden;padding:12px 11px;display:flex;flex-direction:column;gap:8px;position:relative}
+  .day{align-self:center;font-size:10px;color:#6e7681;background:#ffffff08;padding:2px 9px;border-radius:8px;margin-bottom:2px}
+
+  .bubble{max-width:78%;padding:8px 11px;border-radius:16px;font-size:12.5px;position:relative}
+  .bubble.in{align-self:flex-start;background:var(--bubble-in);border-bottom-left-radius:5px}
+  .bubble.out{align-self:flex-end;background:var(--bubble-out);color:#fff;border-bottom-right-radius:5px}
+  .bubble .tick{font-size:9.5px;opacity:.8;margin-left:6px}
+  .bubble.fail{background:var(--bubble-fail);border:1px solid #f8514955;color:#ffd7d3}
+  .failrow{align-self:flex-end;display:flex;align-items:center;gap:6px;font-size:10.5px;color:#ff9c96;margin-top:-3px}
+  .failrow .x{color:#ff9c96;font-weight:700}
+  .failrow .del{color:var(--blue2);font-weight:600;margin-left:4px}
+  .ghost{align-self:flex-end;max-width:78%;padding:8px 11px;border-radius:16px;font-size:12.5px;
+    background:repeating-linear-gradient(45deg,#1a1d24,#1a1d24 6px,#15181e 6px,#15181e 12px);
+    color:#3d434d;border:1px dashed #30363d}
+
+  /* composer */
+  .composer{display:flex;align-items:center;gap:8px;padding:9px 11px;border-top:1px solid #ffffff0d;background:#0f1116}
+  .composer .ic{color:var(--muted);font-size:16px}
+  .composer .field{flex:1;background:#1c2128;border:1px solid #30363d;border-radius:16px;
+    padding:6px 11px;color:#6e7681;font-size:12px}
+  .composer .send{width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:14px}
+  .composer .mic{color:var(--blue2);font-size:17px}
+
+  /* read-only banner (replaces composer) */
+  .robanner{padding:11px 13px;border-top:1px solid #ffffff12;background:#1a1410;
+    display:flex;align-items:flex-start;gap:9px}
+  .robanner.gray{background:#15181e}
+  .robanner .i{font-size:14px}
+  .robanner .t{font-size:11.5px;color:#d8c3a8;line-height:1.35}
+  .robanner.gray .t{color:#aeb6bf}
+  .robanner .t b{color:#fff;display:block;margin-bottom:1px;font-size:12px}
+
+  /* snackbar */
+  .snackbar{position:absolute;left:12px;right:12px;bottom:14px;background:#e6edf3;color:#1c1f26;
+    border-radius:9px;padding:10px 13px;font-size:11.8px;display:flex;align-items:center;gap:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:8}
+  .snackbar.err{background:#b3261e;color:#fff}
+  .snackbar .act{margin-left:auto;font-weight:700;color:var(--blue);white-space:nowrap}
+  .snackbar.err .act{color:#ffd7d3}
+  .snackbar .timer{position:absolute;left:0;bottom:0;height:3px;background:#0a84ff66;border-radius:0 0 9px 9px;width:55%}
+  .fade{opacity:.55}
+  .fadelabel{position:absolute;bottom:48px;left:0;right:0;text-align:center;font-size:10px;color:#6e7681;z-index:8}
+
+  /* attachment chips (composer) */
+  .strip{display:flex;gap:8px;padding:8px 11px 2px}
+  .achip{width:46px;height:46px;border-radius:9px;background:#2b313a;position:relative;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;font-size:17px;color:#8b949e;border:1px solid transparent}
+  .achip.bad{border:2px solid var(--red);box-shadow:0 0 0 3px #f8514922}
+  .achip .x{position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#1c1f26;
+    color:#e6edf3;font-size:11px;display:flex;align-items:center;justify-content:center;border:1px solid #30363d}
+  .achip .warn{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);color:var(--red);font-size:12px}
+  .chiperr{font-size:10.5px;color:#ff9c96;padding:4px 11px 0;display:flex;align-items:center;gap:5px}
+
+  /* invite rows */
+  .rowcard{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:10px;display:flex;
+    align-items:center;gap:10px;font-size:12px}
+  .rowcard .meta{flex:1;min-width:0}
+  .rowcard .meta b{font-size:12.5px}
+  .rowcard .meta small{display:block;color:var(--muted);font-size:10.5px}
+  .btn{font-size:11px;font-weight:650;padding:5px 11px;border-radius:9px;border:1px solid transparent;white-space:nowrap}
+  .btn.accept{background:var(--blue);color:#fff}
+  .btn.decline{background:transparent;color:var(--muted);border-color:#30363d}
+  .btn.retry{background:#21262d;color:var(--blue2);border-color:#30363d}
+  .state{font-size:10.5px;font-weight:600;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:8px}
+  .state.expired{background:#3a1d1d;color:#ff9c96}
+  .state.waiting{background:#3a2f12;color:#e3b341}
+  .spin{width:12px;height:12px;border:2px solid #ffffff33;border-top-color:#e3b341;border-radius:50%;
+    display:inline-block;animation:sp 0.9s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .rowcard.removing{opacity:.45}
+
+  /* dialog */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.55);z-index:9;display:flex;align-items:center;justify-content:center;padding:22px}
+  .dialog{background:#1c2128;border:1px solid #30363d;border-radius:16px;padding:17px;width:100%;max-width:230px;text-align:center}
+  .dialog .ico{font-size:24px;margin-bottom:6px}
+  .dialog h4{margin:0 0 6px;font-size:13.5px}
+  .dialog p{margin:0 0 14px;font-size:11.5px;color:var(--muted);line-height:1.4}
+  .dialog .row{display:flex;gap:8px}
+  .dialog .row .btn{flex:1;justify-content:center;text-align:center}
+  .btn.ghost2{background:transparent;color:var(--muted);border-color:#30363d}
+  .btn.primary{background:var(--blue);color:#fff}
+  .btn.danger{background:#b3261e;color:#fff}
+
+  /* toggle / pill */
+  .settingrow{display:flex;align-items:center;gap:11px;padding:11px 13px;border-bottom:1px solid #ffffff0a;font-size:12.5px}
+  .settingrow .lab{flex:1}
+  .settingrow .lab small{display:block;color:var(--muted);font-size:10.5px}
+  .tog{width:38px;height:23px;border-radius:999px;position:relative;flex:0 0 auto}
+  .tog.off{background:#30363d} .tog.on{background:var(--green)}
+  .tog .kn{position:absolute;top:2px;width:19px;height:19px;border-radius:50%;background:#fff;transition:.2s}
+  .tog.off .kn{left:2px} .tog.on .kn{left:17px}
+  .pill{position:absolute;left:50%;bottom:60px;transform:translateX(-50%);background:#1f2430ee;color:#e6edf3;
+    font-size:11px;padding:6px 14px;border-radius:999px;display:flex;align-items:center;gap:7px;
+    box-shadow:0 6px 18px rgba(0,0,0,.4);z-index:8}
+  .haptic{position:absolute;right:14px;top:64px;font-size:10px;color:#6e7681;z-index:8;
+    border:1px dashed #30363d;border-radius:8px;padding:3px 7px}
+
+  .note{font-size:11.5px;color:var(--muted);background:#10141a;border:1px solid #232a33;border-radius:10px;
+    padding:9px 12px;margin:0 20px 20px}
+  .note b{color:#c9d1d9}
+  .footer{color:#6e7681;font-size:12px;text-align:center;margin-top:30px}
+  .keycap{font-family:ui-monospace,Menlo,monospace;background:#21262d;border:1px solid #30363d;border-radius:5px;padding:1px 5px;font-size:11px}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Group Messaging — replacing bottom snackbars with fit-for-purpose UI</h1>
+  <div class="sub">Before / after visual mockups for TDD plans 144 &amp; 149–154. Each "after" matches the locked plan scope. Mockups are illustrative, not pixel-spec.</div>
+  <nav class="jump">
+    <a href="#p144"><b>144</b>Send-failed bubble</a>
+    <a href="#p149"><b>149</b>Media reject-chip</a>
+    <a href="#p150"><b>150</b>Invite row state</a>
+    <a href="#p151"><b>151</b>Removed banner</a>
+    <a href="#p152"><b>152</b>Mic permission</a>
+    <a href="#p153"><b>153</b>Admin Undo/confirm</a>
+    <a href="#p154"><b>154</b>Quiet success</a>
+  </nav>
+</header>
+
+<div class="wrap">
+  <div class="intro">
+    <p><b style="color:#fff">The thread:</b> one ephemeral, screen-global, ~4-second snackbar is doing eight different jobs — message failures, media errors, permission gates, lifecycle changes, destructive admin actions, invite outcomes, quiet successes. Each plan moves the feedback onto the surface that fits its <i>lifetime</i> and binds it to the <i>object</i> it's about.</p>
+    <div class="legend">
+      <span><i class="dot b"></i> BEFORE — today's transient snackbar</span>
+      <span><i class="dot a"></i> AFTER — proposed inline / persistent UI</span>
+      <span>📱 phone frames are CSS mockups; copy mirrors the real l10n keys</span>
+    </div>
+  </div>
+
+  <!-- 144 -->
+  <section class="plan" id="p144">
+    <div class="head">
+      <div class="num done">144</div>
+      <div>
+        <h2>Terminal send failure → non-retryable inline bubble + read-only banner</h2>
+        <div class="why">A send that hits <i>dissolved / removed / not-found</i> deletes the message (and your typed text) and flashes a toast. Keep it as a "Couldn't send" bubble; flip the composer to read-only.</div>
+        <div class="file">group_conversation_wired.dart:2114–2148 (text) · :3882–3914 (voice)</div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="col">
+        <div class="tag before">Before</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Weekend Trip<small>4 members</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Are we still on for 6?</div>
+            <div class="ghost">Yes! see you there 🎉</div>
+            <div class="fadelabel">↑ your message vanished</div>
+            <div class="snackbar err"><span>This group has been dissolved</span><span class="timer" style="background:#ffffff55"></span></div>
+          </div>
+          <div class="composer"><span class="ic">＋</span><div class="field">Message…</div><span class="mic">🎙️</span></div>
+        </div></div>
+        <div class="cap"><b>Message deleted</b>, typed text lost, 4s toast you can miss — composer still looks usable.</div>
+      </div>
+      <div class="col">
+        <div class="tag after">After</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Weekend Trip<small>dissolved</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Are we still on for 6?</div>
+            <div class="bubble out fail">Yes! see you there 🎉</div>
+            <div class="failrow"><span class="x">⊘</span> Couldn't send — group dissolved <span class="del">Delete</span></div>
+          </div>
+          <div class="robanner"><span class="i">⊘</span><div class="t"><b>This group has been dissolved</b>This conversation is read-only.</div></div>
+        </div></div>
+        <div class="cap"><b>Bubble stays</b> (text preserved), honest non-retryable reason + Delete, composer becomes a persistent read-only banner.</div>
+      </div>
+    </div>
+    <div class="note"><b>Already shipping in the codebase:</b> the <span class="keycap">send_failed</span> status &amp; read-only banner exist — 144 routes the terminal branches into them instead of deleting the row.</div>
+  </section>
+
+  <!-- 149 -->
+  <section class="plan" id="p149">
+    <div class="head">
+      <div class="num">149</div>
+      <div>
+        <h2>Media errors → composer reject-chip (drop tile-duplicate toasts)</h2>
+        <div class="why">"Too large even after compressing" toasts far from the tile and never says <i>which</i> attachment. Mark the offending chip red, keep its ✕, block Send.</div>
+        <div class="file">attachment_preview_strip.dart · _validatePendingGroupMediaDescriptors:4554</div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="col">
+        <div class="tag before">Before</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Design Team<small>9 members</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Send over the hi-res render?</div>
+            <div class="snackbar err"><span>Media is too large even after compressing</span></div>
+          </div>
+          <div class="strip"><div class="achip">🖼️<span class="x">✕</span></div><div class="achip">🎞️<span class="x">✕</span></div></div>
+          <div class="composer"><span class="ic">＋</span><div class="field">Add a caption…</div><span class="send">➤</span></div>
+        </div></div>
+        <div class="cap">Which of the two attachments failed? The toast doesn't say, and Send still looks enabled.</div>
+      </div>
+      <div class="col">
+        <div class="tag after">After</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Design Team<small>9 members</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Send over the hi-res render?</div>
+          </div>
+          <div class="strip"><div class="achip">🖼️<span class="x">✕</span></div><div class="achip bad">🎞️<span class="warn">⚠</span><span class="x">✕</span></div></div>
+          <div class="chiperr">⚠ Too large even after compressing — remove it to send</div>
+          <div class="composer"><span class="ic">＋</span><div class="field">Add a caption…</div><span class="send" style="background:#30363d">➤</span></div>
+        </div></div>
+        <div class="cap"><b>The offending tile</b> gets a red border + ⚠ + keeps its ✕; Send is disabled until it's removed.</div>
+      </div>
+    </div>
+    <div class="note"><b>Already done (out of scope):</b> tile upload-progress ring, "Uploading media", and unavailable+retry placeholders already render inline on <span class="keycap">MediaGridCell</span>. 149 only adds the <b>composer reject-chip</b> + drops the now-redundant group error toasts.</div>
+  </section>
+
+  <!-- 150 -->
+  <section class="plan" id="p150">
+    <div class="head">
+      <div class="num">150</div>
+      <div>
+        <h2>Invite-accept outcomes → per-row inline state (not an 11-way toast)</h2>
+        <div class="why">One Accept tap branches 11 ways into the same toast — even retryable &amp; "waiting for key" states get an actionless flash. Reflect the outcome on the row.</div>
+        <div class="file">group_list_wired.dart:333–372 · PendingGroupInviteCard</div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="col">
+        <div class="tag before">Before</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="nm" style="margin-left:2px">Groups</div></div>
+          <div class="body" style="gap:10px">
+            <div class="rowcard"><div class="av sm"></div><div class="meta"><b>Cursor Room</b><small>invited by Sara</small></div><span class="btn decline">Decline</span><span class="btn accept">Accept</span></div>
+            <div class="rowcard"><div class="av sm"></div><div class="meta"><b>Design Crit</b><small>invited by Ali</small></div><span class="btn decline">Decline</span><span class="btn accept">Accept</span></div>
+            <div class="snackbar"><span>This invite has expired</span></div>
+          </div>
+        </div></div>
+        <div class="cap">Tapped Accept on "Cursor Room" → toast says expired, but <b>which row?</b> Retryable bridge-errors get the same dead toast.</div>
+      </div>
+      <div class="col">
+        <div class="tag after">After</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="nm" style="margin-left:2px">Groups</div></div>
+          <div class="body" style="gap:10px">
+            <div class="rowcard removing"><div class="av sm"></div><div class="meta"><b>Cursor Room</b><small>Invite expired</small></div><span class="state expired">⊘ Expired</span></div>
+            <div class="rowcard"><div class="av sm"></div><div class="meta"><b>Design Crit</b><small>invited by Ali</small></div><span class="state waiting"><span class="spin"></span> Waiting for key</span></div>
+            <div class="rowcard"><div class="av sm"></div><div class="meta"><b>Book Club</b><small>couldn't reach the group</small></div><span class="btn retry">↻ Retry</span></div>
+          </div>
+        </div></div>
+        <div class="cap"><b>Each row owns its outcome:</b> terminal → restyle/fade, repairPending → "Waiting for key" spinner, bridgeError → inline <b>Retry</b>.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 151 -->
+  <section class="plan" id="p151">
+    <div class="head">
+      <div class="num">151</div>
+      <div>
+        <h2>Removed while viewing → rely on the read-only banner (toast only on hard-delete)</h2>
+        <div class="why">Being removed mid-view flashes a toast, then the composer silently disappears. The persistent read-only banner already explains it — scope the toast to the pop case.</div>
+        <div class="file">group_conversation_wired.dart:1492–1519 (_handleCurrentGroupRemoved)</div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="col">
+        <div class="tag before">Before</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Project Phoenix<small>read-only</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Thanks everyone 👋</div>
+            <div class="bubble in">Wrapping this group up.</div>
+            <div class="fadelabel fade">composer just disappeared — why?</div>
+            <div class="snackbar"><span>You were removed from this group</span><span class="timer" style="background:#8b949e55"></span></div>
+          </div>
+          <div class="robanner gray" style="opacity:.4"><span class="i">＋</span><div class="t">…</div></div>
+        </div></div>
+        <div class="cap">4s toast + a now-inert screen. Blink and the only explanation for the missing composer is gone.</div>
+      </div>
+      <div class="col">
+        <div class="tag after">After</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Project Phoenix<small>read-only</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Thanks everyone 👋</div>
+            <div class="bubble in">Wrapping this group up.</div>
+          </div>
+          <div class="robanner gray"><span class="i">🚫</span><div class="t"><b>You're no longer in this group</b>This conversation is read-only.</div></div>
+        </div></div>
+        <div class="cap"><b>Persistent banner</b> where the composer was — it stays as long as the consequence does. (Hard-delete that pops the screen still toasts.)</div>
+      </div>
+    </div>
+    <div class="note"><b>Smallest plan:</b> the read-only banner already appears after the refresh — 151 just hoists <span class="keycap">getGroup</span> ahead of the toast so the toast fires only on the hard-delete/pop branch.</div>
+  </section>
+
+  <!-- 152 -->
+  <section class="plan" id="p152">
+    <div class="head">
+      <div class="num">152</div>
+      <div>
+        <h2>Mic permission denied → rationale dialog with "Open Settings"</h2>
+        <div class="why">A red toast can't take you to Settings — it's a dead end. Show a rationale dialog that deep-links into the OS settings.</div>
+        <div class="file">group_conversation_wired.dart:3508–3524 · conversation_wired.dart:2823–2839</div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="col">
+        <div class="tag before">Before</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Roommates<small>3 members</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Send a voice note?</div>
+            <div class="snackbar err"><span>Microphone permission is required to record</span></div>
+          </div>
+          <div class="composer"><span class="ic">＋</span><div class="field">Message…</div><span class="mic">🎙️</span></div>
+        </div></div>
+        <div class="cap">The real fix is in iOS/Android Settings — but the toast gives no way to get there.</div>
+      </div>
+      <div class="col">
+        <div class="tag after">After</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Roommates<small>3 members</small></div></div>
+          <div class="body">
+            <div class="day">Today</div>
+            <div class="bubble in">Send a voice note?</div>
+          </div>
+          <div class="composer"><span class="ic">＋</span><div class="field">Message…</div><span class="mic">🎙️</span></div>
+          <div class="scrim"><div class="dialog">
+            <div class="ico">🎙️</div>
+            <h4>Microphone needed</h4>
+            <p>Allow microphone access to record voice messages.</p>
+            <div class="row"><span class="btn ghost2">Not now</span><span class="btn primary">Open Settings</span></div>
+          </div></div>
+        </div></div>
+        <div class="cap"><b>Rationale dialog</b> with an actionable <b>Open Settings</b> deep-link (<span class="keycap">openAppSettings()</span>), shared by 1:1 and group.</div>
+      </div>
+    </div>
+    <div class="note"><b>Open decision in the plan:</b> the <span class="keycap">record</span> package only returns a bool, so reliable "permanently denied" detection + the deep-link needs adding <span class="keycap">permission_handler</span> (recommended) — a real new dependency.</div>
+  </section>
+
+  <!-- 153 -->
+  <section class="plan" id="p153">
+    <div class="head">
+      <div class="num">153</div>
+      <div>
+        <h2>Destructive admin actions → Undo where reversible, confirm where not</h2>
+        <div class="why">Decline/revoke/remove narrate <i>after</i> an irreversible act. Give decline an Undo window; gate revoke behind a confirm; keep remove's existing confirm.</div>
+        <div class="file">group_list_wired.dart:498 (decline) · group_info_wired.dart:2151 (revoke) / :1302 (remove)</div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="col">
+        <div class="tag before">Before</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="nm" style="margin-left:2px">Groups</div></div>
+          <div class="body" style="gap:10px">
+            <div class="rowcard removing"><div class="av sm"></div><div class="meta"><b>Cursor Room</b><small>invited by Sara</small></div><span class="btn decline">Decline</span><span class="btn accept">Accept</span></div>
+            <div class="fadelabel" style="bottom:90px">declined — and instantly gone</div>
+            <div class="snackbar"><span>Invite declined</span></div>
+          </div>
+        </div></div>
+        <div class="cap">A fat-finger Decline is permanent — the toast just narrates the loss with no way back.</div>
+      </div>
+      <div class="col">
+        <div class="tag after">After</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="nm" style="margin-left:2px">Groups</div></div>
+          <div class="body" style="gap:10px">
+            <div class="rowcard removing"><div class="av sm"></div><div class="meta"><b>Cursor Room</b><small>Declined</small></div></div>
+            <div class="snackbar"><span>Invite declined</span><span class="act">UNDO</span><span class="timer"></span></div>
+          </div>
+        </div></div>
+        <div class="cap"><b>Decline</b> optimistically hides the row + a real <b>UNDO</b> (commits on timeout). <b>Revoke</b> → confirm dialog; <b>Remove</b> keeps its confirm. No Undo where a signed envelope already shipped.</div>
+      </div>
+    </div>
+    <div class="note"><b>Highest-risk plan:</b> the decline-ack isn't network-idempotent, so the plan pins a single "committed" latch + Timer-cancel-on-dispose so the deferred decline fires <b>exactly once</b>.</div>
+  </section>
+
+  <!-- 154 -->
+  <section class="plan" id="p154">
+    <div class="head">
+      <div class="num">154</div>
+      <div>
+        <h2>Quiet success → haptic + the control's own state (reserve toasts for errors)</h2>
+        <div class="why">Mute / Saved / Copied each fire a full snackbar even though the control already shows the change. Over-narration trains users to ignore the channel.</div>
+        <div class="file">group_info_wired.dart:499 (mute) / :1941 (details) · group_conversation_screen.dart:1031 (copy)</div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="col">
+        <div class="tag before">Before</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Family<small>group info</small></div></div>
+          <div class="body" style="padding:0;gap:0">
+            <div class="settingrow"><span style="font-size:15px">🔔</span><div class="lab">Mute notifications<small>Muted</small></div><div class="tog on"><div class="kn"></div></div></div>
+            <div class="settingrow"><span style="font-size:15px">✏️</span><div class="lab">Group name<small>Family ✓ saved</small></div></div>
+            <div class="snackbar"><span>Group muted</span></div>
+          </div>
+        </div></div>
+        <div class="cap">The switch already flipped to Muted — the snackbar is redundant ceremony that looks as heavy as an error.</div>
+      </div>
+      <div class="col">
+        <div class="tag after">After</div>
+        <div class="phone"><div class="notch"></div><div class="screen">
+          <div class="appbar"><span class="bk">‹</span><div class="av"></div><div class="nm">Family<small>group info</small></div></div>
+          <div class="body" style="padding:0;gap:0">
+            <div class="settingrow"><span style="font-size:15px">🔕</span><div class="lab">Mute notifications<small>Muted</small></div><div class="tog on"><div class="kn"></div></div></div>
+            <div class="settingrow"><span style="font-size:15px">✏️</span><div class="lab">Group name<small>Family</small></div></div>
+            <div class="haptic">⃛ haptic</div>
+            <div class="pill">✓ Copied</div>
+          </div>
+        </div></div>
+        <div class="cap"><b>Mute/Saved:</b> switch + field state + a light haptic, no toast. <b>Copy</b> (which has no control) gets a tiny <b>Copied</b> pill, visually distinct from red errors.</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer">7 plans · each "after" matches the locked TDD scope in <span class="keycap">Test-Flight-Improv/{144,149–154}-*-tdd-plan.md</span>. Errors stay on snackbars; everything else moves to the surface that fits.</div>
+</div>
+</body>
+</html>

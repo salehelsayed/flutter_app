@@ -2503,7 +2503,63 @@ void main() {
     );
 
     testWidgets(
-      'unauthorized text send shows a concrete error instead of disappearing silently',
+      'dissolved text send keeps a non-retryable failed bubble and flips read-only banner',
+      (tester) async {
+        // Empty-membership chat group: the row is NOT marked dissolved (so the
+        // composer is locally writable) but the use case returns groupDissolved
+        // (send_group_message_use_case empty-membership branch).
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Dissolved send');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final retained = screen.messages
+            .where((message) => message.text == 'Dissolved send')
+            .toList();
+        expect(retained, hasLength(1));
+        expect(retained.single.status, GroupMessage.statusSendFailed);
+        expect(screen.canWrite, isFalse);
+        expect(
+          find.text("Couldn't send — this group was dissolved"),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('group-read-only-banner')),
+            matching: find.text(
+              'This group has been dissolved. History stays available, but '
+              'new messages are disabled.',
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${retained.single.id}')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(SnackBar, 'This group has been dissolved'),
+          findsNothing,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'unauthorized text send keeps failed bubble (removed) and flips read-only banner',
       (tester) async {
         final widgetGroup = makeAnnouncementGroup(role: GroupRole.admin);
         await groupRepo.saveGroup(
@@ -2524,30 +2580,48 @@ void main() {
         final screen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
+        final retained = screen.messages
+            .where((message) => message.text == 'Unauthorized stale send')
+            .toList();
+        expect(retained, hasLength(1));
+        expect(retained.single.status, GroupMessage.statusSendFailed);
+        // Banner-gap RED on HEAD: composer stays writable for unauthorized.
+        expect(screen.canWrite, isFalse);
         expect(
-          screen.messages.where(
-            (message) => message.text == 'Unauthorized stale send',
-          ),
-          isEmpty,
+          find.text("Couldn't send — you're no longer in this group"),
+          findsOneWidget,
         );
         expect(
-          (await msgRepo.getMessagesPage(
-            widgetGroup.id,
-          )).where((message) => message.text == 'Unauthorized stale send'),
-          isEmpty,
-        );
-        expect(bridge.commandLog, isNot(contains('group:publish')));
-        expect(
-          find.text(
-            'You no longer have permission to send messages in this group.',
+          find.descendant(
+            of: find.byKey(const ValueKey('group-read-only-banner')),
+            matching: find.text(
+              "You can read this group's history, but you are not an active "
+              'member.',
+            ),
           ),
           findsOneWidget,
         );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${retained.single.id}')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(
+            SnackBar,
+            'You no longer have permission to send messages in this group.',
+          ),
+          findsNothing,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
 
     testWidgets(
-      'missing-group text send shows a concrete error instead of disappearing silently',
+      'missing-group text send keeps failed bubble (unavailable) and flips read-only banner',
       (tester) async {
         final missingGroup = makeChatGroup();
 
@@ -2565,25 +2639,463 @@ void main() {
         final screen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
+        final retained = screen.messages
+            .where((message) => message.text == 'Missing group stale send')
+            .toList();
+        expect(retained, hasLength(1));
+        expect(retained.single.status, GroupMessage.statusSendFailed);
+        expect(screen.canWrite, isFalse);
         expect(
-          screen.messages.where(
-            (message) => message.text == 'Missing group stale send',
-          ),
-          isEmpty,
+          find.text("Couldn't send — this group is unavailable"),
+          findsOneWidget,
         );
         expect(
-          (await msgRepo.getMessagesPage(
-            missingGroup.id,
-          )).where((message) => message.text == 'Missing group stale send'),
-          isEmpty,
+          find.descendant(
+            of: find.byKey(const ValueKey('group-read-only-banner')),
+            matching: find.text('This group is no longer available.'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${retained.single.id}')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(SnackBar, 'This group is no longer available.'),
+          findsNothing,
         );
         expect(bridge.commandLog, isNot(contains('group:publish')));
-        expect(find.text('This group is no longer available.'), findsOneWidget);
       },
     );
 
     testWidgets(
-      'ordinary media group-not-found rejection removes the row and cleans durable media state',
+      'voice terminal send keeps failed bubble instead of deleting',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-voice-terminal-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final recorder = FakeAudioRecorderService()..fakeDurationMs = 1500;
+        final voiceFile = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        recorder.fakeOutputPath = voiceFile.path;
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+
+        // Empty-membership chat group → use case returns groupDissolved on send.
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: recorder,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final startRecording = screen.onRecordStart! as Future<void> Function();
+        await startRecording();
+        await pumpUntil(
+          tester,
+          () =>
+              tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .recordingState ==
+              VoiceRecordingState.recording,
+        );
+
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final stopRecording =
+            recordingScreen.onRecordStop! as Future<void> Function();
+        await tester.runAsync(() async {
+          await stopRecording();
+        });
+        await pumpFrames(tester, count: 20);
+
+        final after = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final voiceRows = after.messages
+            .where(
+              (message) =>
+                  !message.isIncoming &&
+                  message.status == GroupMessage.statusSendFailed,
+            )
+            .toList();
+        expect(voiceRows, hasLength(1));
+        // The recorded audio attachment is retained (not deleted).
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          voiceRows.single.id,
+        );
+        expect(attachments, isNotEmpty);
+        expect(after.canWrite, isFalse);
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${voiceRows.single.id}')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${voiceRows.single.id}')),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(SnackBar, 'This group has been dissolved'),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'retry-exhausted send_failed in a writable group shows no terminal reason',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-exhausted',
+            text: 'Retry exhausted row',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: GroupMessage.statusSendFailed,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        // Writable group: the retry-exhausted row keeps the existing send_failed
+        // treatment with NO terminal "Couldn't send — group ..." reason.
+        expect(screen.canWrite, isTrue);
+        expect(find.textContaining("Couldn't send"), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsNothing,
+        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'retry-exhausted send_failed WITH a retry payload still shows Retry in a '
+      'writable group (payload-gate non-regression)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-payload',
+            text: 'Retry exhausted but retryable',
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: GroupMessage.statusSendFailed,
+            wireEnvelope: '{"cmd":"group:publish"}',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+        // A payload-bearing retry-exhausted row keeps Retry — the 144 finding-2
+        // payload gate only hides Retry for no-payload terminal rows.
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-msg-payload')),
+          findsOneWidget,
+        );
+        expect(find.textContaining("Couldn't send"), findsNothing);
+      },
+    );
+
+    // 144 follow-up (finding: reopen durability). A terminal send_failed bubble's
+    // per-message reason + Delete (and read-only protection) must survive a fresh
+    // mount/reopen, reconstructed from the persisted group + own send_failed row —
+    // not just the in-memory latch set during the original send.
+    testWidgets(
+      '144 reopen reconstructs the terminal reason + Delete + read-only banner '
+      'for a dissolved group with a persisted send_failed row',
+      (tester) async {
+        final group = makeChatGroup().copyWith(isDissolved: true);
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-dead',
+            text: 'Stranded in a dissolved group',
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: GroupMessage.statusSendFailed,
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        // RED on HEAD: the latch resets to none on a fresh mount, so the
+        // per-message reason is null and Delete is not wired.
+        expect(
+          screen.failedTerminalReasonText,
+          "Couldn't send — this group was dissolved",
+        );
+        expect(
+          find.byKey(const ValueKey('failed-message-delete-msg-dead')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-msg-dead')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      '144 reopen with a confirmed-removed membership keeps read-only and '
+      'reconstructs the removed reason + Delete',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        // Membership loaded and excludes self (definitively removed).
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 5, 1, 10),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-removed',
+            text: 'Sent before removal',
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: GroupMessage.statusSendFailed,
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        expect(
+          screen.failedTerminalReasonText,
+          "Couldn't send — you're no longer in this group",
+        );
+        expect(
+          find.byKey(const ValueKey('failed-message-delete-msg-removed')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      '144 reopen with an empty local membership after removal does NOT '
+      're-enable the composer (closes the fails-open writable hole)',
+      (tester) async {
+        // The realistic post-removal local state: the group row is not marked
+        // dissolved and the local member list is empty. Today this fails open to
+        // writable. With a persisted own send_failed row it must stay read-only.
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-empty',
+            text: 'Sent before the group emptied',
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: GroupMessage.statusSendFailed,
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        // RED on HEAD: empty members fail open => canWrite stays true and the
+        // composer TextField is shown even though the user can never send.
+        expect(screen.canWrite, isFalse);
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.byKey(const ValueKey('failed-message-delete-msg-empty')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      '144 terminal Delete removes the durable owned media file from disk',
+      (tester) async {
+        // NOT saved to the repo => getGroup null => groupNotFound terminal.
+        final missingGroup = makeChatGroup();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-terminal-media-leak-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final source = File('${tempDir.path}/photo.jpg')
+          ..writeAsStringSync('photo');
+        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: missingGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            initialAttachments: [source],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  // Physically relocate the upload to the durable owned location
+                  // (media/<groupId>/<blob>), as the real upload path does.
+                  final absolute = await mediaFileManager!
+                      .localPathForAttachment(
+                        contactPeerId: missingGroup.id,
+                        blobId: blobId!,
+                        mime: mime,
+                      );
+                  await File(absolute).writeAsString('durable');
+                  return MediaAttachment(
+                    id: blobId,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager.relativePathForAttachment(
+                      contactPeerId: missingGroup.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final sendMessage = screen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await sendMessage('Durable photo');
+        });
+        await pumpFrames(tester, count: 20);
+
+        final after = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final retained = after.messages
+            .where((message) => message.text == 'Durable photo')
+            .toList();
+        expect(retained, hasLength(1));
+        expect(retained.single.status, GroupMessage.statusSendFailed);
+
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          retained.single.id,
+        );
+        expect(attachments, isNotEmpty);
+        final localPath = attachments.first.localPath;
+        expect(localPath, isNotNull);
+        final durableAbsolute = await mediaFileManager.resolveStoredPath(
+          localPath!,
+        );
+        expect(
+          File(durableAbsolute).existsSync(),
+          isTrue,
+          reason: 'durable owned file should exist before Delete',
+        );
+
+        // Tap the terminal Delete affordance (reachable while read-only).
+        await tester.runAsync(() async {
+          await tester.tap(
+            find.byKey(
+              ValueKey('failed-message-delete-${retained.single.id}'),
+            ),
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await pumpFrames(tester, count: 10);
+
+        // RED on HEAD: terminal Delete only drops the rows + pending-upload dir,
+        // orphaning the durable media/<groupId>/ file on disk.
+        expect(File(durableAbsolute).existsSync(), isFalse);
+      },
+    );
+
+    testWidgets(
+      'ordinary media group-not-found rejection retains the failed media bubble',
       (tester) async {
         final missingGroup = makeChatGroup();
         final tempDir = Directory.systemTemp.createTempSync(
@@ -2652,19 +3164,28 @@ void main() {
         });
         await pumpFrames(tester, count: 20);
 
-        expect(await msgRepo.getMessagesPage(missingGroup.id), isEmpty);
-        expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(),
-          isEmpty,
+        final after = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
         );
-        expect(mediaAttachmentRepo.count, 0);
-        expect(deletedDirs, hasLength(1));
+        final retained = after.messages
+            .where((message) => message.text == 'Missing group media')
+            .toList();
+        expect(retained, hasLength(1));
+        expect(retained.single.status, GroupMessage.statusSendFailed);
+        // The durable media dir is NOT auto-deleted and the bubble media stays.
+        expect(deletedDirs, isEmpty);
+        expect(after.mediaMap[retained.single.id], isNotEmpty);
+        expect(after.canWrite, isFalse);
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
+          findsOneWidget,
+        );
         expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
 
     testWidgets(
-      'ordinary media unauthorized rejection removes the row and cleans durable media state',
+      'ordinary media unauthorized rejection retains the failed media bubble',
       (tester) async {
         final widgetGroup = makeAnnouncementGroup(role: GroupRole.admin);
         await groupRepo.saveGroup(
@@ -2737,13 +3258,21 @@ void main() {
         });
         await pumpFrames(tester, count: 20);
 
-        expect(await msgRepo.getMessagesPage(widgetGroup.id), isEmpty);
-        expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(),
-          isEmpty,
+        final after = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
         );
-        expect(mediaAttachmentRepo.count, 0);
-        expect(deletedDirs, hasLength(1));
+        final retained = after.messages
+            .where((message) => message.text == 'Unauthorized media')
+            .toList();
+        expect(retained, hasLength(1));
+        expect(retained.single.status, GroupMessage.statusSendFailed);
+        expect(deletedDirs, isEmpty);
+        expect(after.mediaMap[retained.single.id], isNotEmpty);
+        expect(after.canWrite, isFalse);
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
+          findsOneWidget,
+        );
         expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
@@ -5590,6 +6119,104 @@ void main() {
     );
 
     testWidgets(
+      '144 terminal unauthorized send self-heals read-only on a live re-add (resume)',
+      (tester) async {
+        // A non-admin chat device with a STALE empty local membership: the send
+        // diverges to unauthorized (uc sender_not_member) and latches the
+        // composer read-only. Without a reset path this would stay read-only
+        // until the user leaves and re-enters the screen.
+        final group = makeChatGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Stale unauthorized');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        expect(screen.failedTerminalReasonText, isNotNull);
+
+        // A real re-add lands (membership restored incl self); a resume
+        // recomputes capability and releases the latch IN PLACE.
+        await saveActiveGroupMembers(groupRepo, group);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 20);
+
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+        expect(screen.failedTerminalReasonText, isNull);
+        expect(find.byType(TextField), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      '144 terminal text send_failed row stays Delete-only (no dead-end Retry) '
+      'after a live re-add self-heals the composer',
+      (tester) async {
+        // A terminal text send persists a send_failed row with NO retry payload
+        // (the use case returned terminal before any payload was created). After
+        // the F1 self-heal re-enables the composer, that stuck row must NOT offer
+        // a Retry that can only fail with missing_retry_payload — and Delete must
+        // stay reachable so the user can clear it.
+        final group = makeChatGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(find.byType(TextField), 'Stale unauthorized');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        final stuckRow = screen.messages
+            .firstWhere((message) => message.text == 'Stale unauthorized');
+        expect(stuckRow.status, GroupMessage.statusSendFailed);
+
+        // A real re-add + resume releases the read-only latch in place.
+        await saveActiveGroupMembers(groupRepo, group);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 20);
+
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isTrue);
+
+        // RED on HEAD: the writable send_failed text row exposes a Retry that
+        // cannot work, and loses Delete (failedTerminalReasonText went null).
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${stuckRow.id}')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${stuckRow.id}')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'B5 self member_removed while viewing keeps the conversation open '
       'read-only in place (no pop) when the group row is retained',
       (tester) async {
@@ -5787,15 +6414,216 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
-        expect(find.text('This group has been dissolved'), findsOneWidget);
+        // 144 INV-5: terminal feedback is the durable read-only banner, not a
+        // transient snackbar.
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('group-read-only-banner')),
+            matching: find.text(
+              'This group has been dissolved. History stays available, but '
+              'new messages are disabled.',
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(SnackBar, 'This group has been dissolved'),
+          findsNothing,
+        );
 
         final screen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
         expect(screen.canWrite, isFalse);
+        // Lock the dissolved OVERRIDE specifically (not just the refreshed
+        // dissolved-group state, which would force canWrite false on its own):
+        // the per-message reason is driven ONLY by _terminalSendReadOnly, so
+        // deleting the reaction-dissolve override re-reds this.
+        expect(
+          screen.failedTerminalReasonText,
+          "Couldn't send — this group was dissolved",
+        );
         expect(screen.onReactionSelected, isNull);
         expect(find.byType(TextField), findsNothing);
         expect(find.text('\u{1F44D}'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'reaction terminal result reverts reaction and flips read-only banner '
+      'without a bubble',
+      (tester) async {
+        // notMember (no members saved) is the reaction analog of the text-send
+        // "unauthorized" terminal result. On HEAD this silently reverts and
+        // leaves the composer writable (no banner) — the RED.
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        final thumbsUp = find.descendant(
+          of: find.byKey(MessageContextOverlay.reactionBarKey),
+          matching: find.text('\u{1F44D}'),
+        );
+        expect(thumbsUp, findsOneWidget);
+
+        await tester.tap(thumbsUp);
+        await pumpFrames(tester, count: 20);
+
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        // No fabricated failed-reaction message bubble.
+        expect(screen.messages.where((m) => m.id != 'msg-1'), isEmpty);
+        // Optimistic emoji reverted.
+        expect(find.text('\u{1F44D}'), findsNothing);
+        // Banner flips with the removed reason; no dissolved snackbar.
+        expect(screen.canWrite, isFalse);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('group-read-only-banner')),
+            matching: find.text(
+              "You can read this group's history, but you are not an active "
+              'member.',
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(SnackBar, 'This group has been dissolved'),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'reaction REMOVE terminal result flips read-only banner (parity with add)',
+      (tester) async {
+        // Toggling OFF an existing own reaction in a group we are no longer a
+        // member of must flip read-only too (remove-direction parity, INV-3).
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+        // Pre-existing OWN reaction so the next toggle is a REMOVE.
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'r1',
+            messageId: 'msg-1',
+            emoji: '\u{1F44D}',
+            senderPeerId: testIdentity.peerId,
+            timestamp: '2026-01-15T12:00:00.000Z',
+            createdAt: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final s = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return s.onReactionSelected != null &&
+              (s.reactions['msg-1'] ?? const []).isNotEmpty;
+        });
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        // Toggle the own reaction OFF → removeGroupReaction → notMember.
+        screen.onReactionSelected!('msg-1', '\u{1F44D}');
+        await pumpFrames(tester, count: 20);
+
+        final after = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(after.canWrite, isFalse);
+        expect(
+          after.failedTerminalReasonText,
+          "Couldn't send — you're no longer in this group",
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('group-read-only-banner')),
+            matching: find.text(
+              "You can read this group's history, but you are not an active "
+              'member.',
+            ),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      '144 a terminal reaction result disables further reaction entry '
+      '(read-only banner and reactions stay consistent)',
+      (tester) async {
+        // First reaction latches the composer read-only (notMember terminal).
+        // The long-press reaction picker must then be disabled too, so the user
+        // cannot keep firing reactions that only revert.
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final s = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return s.onReactionSelected != null;
+        });
+
+        final before = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        // The first reaction is allowed (latch starts at none).
+        before.onReactionSelected!('msg-1', '\u{1F44D}');
+        await pumpFrames(tester, count: 20);
+
+        final after = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(after.canWrite, isFalse);
+        expect(
+          after.failedTerminalReasonText,
+          "Couldn't send — you're no longer in this group",
+        );
+        // RED on HEAD: _canMutateReactions ignores the terminal latch, so the
+        // reaction entry stays wired even though the banner is read-only.
+        expect(after.onReactionSelected, isNull);
       },
     );
 
@@ -10205,7 +11033,7 @@ void main() {
     );
 
     testWidgets(
-      'voice group-not-found rejection does not leave a persisted outgoing row',
+      'voice group-not-found rejection retains a durable failed voice row',
       (tester) async {
         final missingGroup = makeChatGroup();
         final tempDir = Directory.systemTemp.createTempSync(
@@ -10291,13 +11119,26 @@ void main() {
         });
         await pumpFrames(tester, count: 10);
 
-        expect(await msgRepo.getMessagesPage(missingGroup.id), isEmpty);
+        // 144: a terminal voice send keeps the recorded row + audio as a
+        // durable non-retryable send_failed bubble instead of deleting it.
+        final persisted = await msgRepo.getMessagesPage(missingGroup.id);
+        final voiceRows = persisted
+            .where((message) => !message.isIncoming && message.text.isEmpty)
+            .toList();
+        expect(voiceRows, hasLength(1));
+        expect(voiceRows.single.status, GroupMessage.statusSendFailed);
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            voiceRows.single.id,
+          ),
+          isNotEmpty,
+        );
         expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
 
     testWidgets(
-      'voice stop cleanup still runs after unmount when group lookup resolves to not found',
+      'voice stop after unmount retains a durable failed row when group lookup resolves to not found',
       (tester) async {
         final group = makeChatGroup();
         final delayedGroupRepo = _DelayedNotFoundGroupRepository(
@@ -10428,12 +11269,20 @@ void main() {
         });
         await pumpFrames(tester, count: 10);
 
-        expect(mediaFileManager.deletedPendingUploadDirs, contains(messageId));
+        // 144: even when the screen is gone, a terminal result keeps the row as
+        // a durable send_failed bubble (it surfaces on reopen) rather than
+        // silently deleting the recording.
+        expect(
+          mediaFileManager.deletedPendingUploadDirs,
+          isNot(contains(messageId)),
+        );
         expect(
           await mediaAttachmentRepo.getAttachmentsForMessage(messageId),
-          isEmpty,
+          isNotEmpty,
         );
-        expect(await msgRepo.getMessage(messageId), isNull);
+        final persisted = await msgRepo.getMessage(messageId);
+        expect(persisted, isNotNull);
+        expect(persisted!.status, GroupMessage.statusSendFailed);
       },
     );
 

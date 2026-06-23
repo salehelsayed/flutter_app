@@ -71,7 +71,7 @@ In scope:
 - `LetterCard` (`letter_card.dart:433-478`): add `failedReasonText` (String?) + `onDeleteFailedMessage` (VoidCallback?); render reason line + Delete in the failed-action row.
 - Drop the 7 terminal snackbars (`:2136/:2141/:2145`, `:3900/:3906/:3911`, `:4685`).
 - l10n: 4 new keys × 3 locales (below). Reuse `conversation_context_delete` for the Delete label.
-- Harness: **add `group_conversation_wired_test.dart` to `GROUP_TESTS`** in `scripts/run_test_gates.sh`.
+- Harness: **none** — `group_conversation_wired_test.dart` is already in `GROUP_TESTS` (`scripts/run_test_gates.sh:131`); new cases there are auto-gated. (An earlier grounding pass reported it absent; the gate file has since been updated — verified present.)
 
 Out of scope (owning work named):
 - **Persisted failed-reaction bubble** — needs a `MessageReaction` status field + migration + `UNIQUE(message_id, sender_peer_id)` redesign. Owner: a future "reaction reliability" session. Reaction here keeps silent-revert + banner parity only.
@@ -102,7 +102,7 @@ Dependency-only context:
 
 Missing coverage gaps: terminal-failed **bubble retained** (text/voice/media); **reason text**; **Retry absent / Delete present** for terminal; **banner flip from send** (unauthorized/groupNotFound/empty-membership-dissolved); retry-exhausted-vs-terminal **separation**; reaction banner parity.
 
-Already in curated family arrays?: `letter_card_test.dart` ✅ in `GROUP_TESTS` (`run_test_gates.sh:128`) + baseline (`:61`). **`group_conversation_wired_test.dart` ❌ NOT in `GROUP_TESTS`** (`:115-130` lists `group_conversation_screen_test.dart`); it runs only via auto-glob/whole-dir. → registration step required.
+Already in curated family arrays?: `letter_card_test.dart` ✅ in `GROUP_TESTS` (`run_test_gates.sh:128`) + baseline (`:61`). **`group_conversation_wired_test.dart` ✅ now in `GROUP_TESTS`** (`run_test_gates.sh:131`, alongside `group_conversation_screen_test.dart` at `:130`) — no registration step needed. (The original grounding reported it absent; the gate file was updated since.)
 
 ## RED Test Catalog  (add/rewrite BEFORE any production code — INV-RED-FIRST)
 
@@ -165,13 +165,13 @@ Already in curated family arrays?: `letter_card_test.dart` ✅ in `GROUP_TESTS` 
 ## Test Coverage Matrix  (zero empty cells)
 | Spec case | Behavior props | Tier | Test file::name | RED reason on HEAD | Mutation revert | Acceptance gate cmd | Harness registration |
 |---|---|---|---|---|---|---|---|
-| TC-01 dissolved text bubble+banner | screen state + reason + banner | integration/widget | wired::"dissolved text send keeps …" | HEAD `_removeLocalMessage` deletes row | restore `_removeLocalMessage` dissolved | `./scripts/run_test_gates.sh groups` | **add wired_test to `GROUP_TESTS`** |
-| TC-02 unauthorized=removed bubble+banner | screen + banner-gap | integration/widget | wired::"unauthorized text send keeps …" | HEAD removes row + snackbar + writable | revert unauthorized keep-bubble+override | `./scripts/run_test_gates.sh groups` | add wired_test to `GROUP_TESTS` |
-| TC-03 groupNotFound=unavailable bubble+banner | screen + banner-gap | integration/widget | wired::"missing-group text send keeps …" | HEAD removes row + snackbar, no banner | revert groupNotFound keep-bubble+override | `./scripts/run_test_gates.sh groups` | add wired_test to `GROUP_TESTS` |
-| TC-04 voice terminal bubble | screen (voice path) | integration/widget | wired::"voice terminal send keeps …" | HEAD `_removeLocalMessage`+uncond `deleteMessage` | revert voice keep-bubble | `./scripts/run_test_gates.sh groups` | add wired_test to `GROUP_TESTS` |
-| TC-05 media terminal retained | screen (media path) | integration/widget | wired::"ordinary media terminal …" | HEAD messages empty + deletedDirs len1 | revert media keep-bubble | `./scripts/run_test_gates.sh groups` | add wired_test to `GROUP_TESTS` |
-| TC-06 retry-exhausted separation | guard logic | integration/widget | wired::"retry-exhausted send_failed …" | post-fix guard; mutate to leak reason | drop `_terminalSendReadOnly!=none` guard | `./scripts/run_test_gates.sh groups` | add wired_test to `GROUP_TESTS` |
-| TC-07 reaction banner parity | screen (reaction path) | integration/widget | wired::"reaction terminal result …" | HEAD only dissolved handled; others writable | revert reaction override extension | `./scripts/run_test_gates.sh groups` | add wired_test to `GROUP_TESTS` |
+| TC-01 dissolved text bubble+banner | screen state + reason + banner | integration/widget | wired::"dissolved text send keeps …" | HEAD `_removeLocalMessage` deletes row | restore `_removeLocalMessage` dissolved | `./scripts/run_test_gates.sh groups` | AUTO (already in `GROUP_TESTS` :131) |
+| TC-02 unauthorized=removed bubble+banner | screen + banner-gap | integration/widget | wired::"unauthorized text send keeps …" | HEAD removes row + snackbar + writable | revert unauthorized keep-bubble+override | `./scripts/run_test_gates.sh groups` | AUTO (already in `GROUP_TESTS` :131) |
+| TC-03 groupNotFound=unavailable bubble+banner | screen + banner-gap | integration/widget | wired::"missing-group text send keeps …" | HEAD removes row + snackbar, no banner | revert groupNotFound keep-bubble+override | `./scripts/run_test_gates.sh groups` | AUTO (already in `GROUP_TESTS` :131) |
+| TC-04 voice terminal bubble | screen (voice path) | integration/widget | wired::"voice terminal send keeps …" | HEAD `_removeLocalMessage`+uncond `deleteMessage` | revert voice keep-bubble | `./scripts/run_test_gates.sh groups` | AUTO (already in `GROUP_TESTS` :131) |
+| TC-05 media terminal retained | screen (media path) | integration/widget | wired::"ordinary media terminal …" | HEAD messages empty + deletedDirs len1 | revert media keep-bubble | `./scripts/run_test_gates.sh groups` | AUTO (already in `GROUP_TESTS` :131) |
+| TC-06 retry-exhausted separation | guard logic | integration/widget | wired::"retry-exhausted send_failed …" | post-fix guard; mutate to leak reason | drop `_terminalSendReadOnly!=none` guard | `./scripts/run_test_gates.sh groups` | AUTO (already in `GROUP_TESTS` :131) |
+| TC-07 reaction banner parity | screen (reaction path) | integration/widget | wired::"reaction terminal result …" | HEAD only dissolved handled; others writable | revert reaction override extension | `./scripts/run_test_gates.sh groups` | AUTO (already in `GROUP_TESTS` :131) |
 | TC-08 LetterCard terminal render | widget render | widget | letter_card_test::"send_failed with failedReasonText …" | new params absent → compile red | remove reason/Delete branch | `./scripts/run_test_gates.sh groups` | AUTO (glob) + already in `GROUP_TESTS` |
 | TC-09 retryable Retry preserved | preservation | widget | letter_card_test::"retryable failed still shows Retry" | n/a (sentinel) | split retry to require `'failed'` only — if it also drops retryable, reds | `./scripts/run_test_gates.sh groups` | AUTO (glob) |
 
@@ -193,7 +193,7 @@ Already in curated family arrays?: `letter_card_test.dart` ✅ in `GROUP_TESTS` 
 6. `group_conversation_screen.dart` `buildLetterCard`: split Retry from terminal — `showFailedTextRetry`/`showFailedMediaActions` require `status=='failed'` (exclude `statusSendFailed`); allow **Delete** for `statusSendFailed` even when `!canWrite`; when `statusSendFailed` AND a terminal read-only reason is active, pass `failedReasonText` (resolved from the override) + `onDeleteFailedMessage`.
 7. `letter_card.dart` `:433-478`: add `failedReasonText` (String?) + `onDeleteFailedMessage` (VoidCallback?); render the reason line + a Delete button (reuse `conversation_context_delete`) in the failed-action row; when `failedReasonText != null` show the non-retryable layout (no Retry).
 8. l10n: add `group_send_failed_dissolved`, `group_send_failed_removed`, `group_send_failed_unavailable`, `group_read_only_unavailable` to en/ar/de (append-by-key). Proposed en copy: "Couldn't send — this group was dissolved" / "Couldn't send — you're no longer in this group" / "Couldn't send — this group is unavailable" / "This group is no longer available." Regenerate l10n.
-9. `scripts/run_test_gates.sh`: add `test/features/groups/presentation/group_conversation_wired_test.dart` to the `GROUP_TESTS` array.
+9. `scripts/run_test_gates.sh`: verify `test/features/groups/presentation/group_conversation_wired_test.dart` is in `GROUP_TESTS` (already present at `:131` — no edit expected; add only if a future rebase drops it).
 10. Rerun direct → preservation → named gates; `flutter analyze`; `git diff --check`.
 
 ## Risks And Edge Cases
@@ -204,7 +204,9 @@ Already in curated family arrays?: `letter_card_test.dart` ✅ in `GROUP_TESTS` 
 - **WidgetSpan U+FFFC** breaking `find.text` on bubble bodies → use `find.byKey`/`textContaining` (137 closure note).
 
 ## Device/Relay Proof Profile
-host-only for closure. No OS-boundary / ML-KEM / relay / multi-device leg — all behavior is local screen-state + render. No `integration_test/` scenario, no device-proof, no migration. Deferred device work: none.
+host-only for closure. No OS-boundary / ML-KEM / relay / multi-device leg — all behavior is local screen-state + render, no migration.
+
+**Simulator render-proof ADDED (on request, 2026-06-23):** `integration_test/group_terminal_send_failed_proof_test.dart` (`@Tags(['device'])`, classified in `check_reliability_simulation_discovery.sh`). The terminal keep-bubble / latch LOGIC is plain Dart (host-proven); the one genuine host↔device gap is RENDERING the new surface, so the proof renders the real `GroupConversationScreen` and asserts on a booted iOS sim: (1) dissolved → body kept + reason line + Delete + NO Retry + read-only banner replaces the composer + Delete fires; (2) removed → "not active" reason/banner copy; (3) ar → reason resolves RTL under real iOS bidi; (4) retry-exhausted-in-writable-group → no reason/Delete, composer kept. **4/4 GREEN on iPhone 17 Pro AND iPhone Air** (real Xcode builds). Same precedent/scope as `group_conversation_polish_proof_test.dart`.
 
 ## Acceptance Gates  (literal — copy/paste, with expected counts)
 ```bash
@@ -218,7 +220,7 @@ flutter test test/features/conversation/presentation/widgets/letter_card_test.da
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart
 flutter test test/features/conversation/presentation/widgets/letter_card_test.dart   # expect 81 + new
 
-# Preservation + named gate (after adding wired_test to GROUP_TESTS)
+# Preservation + named gate (wired_test already in GROUP_TESTS :131)
 ./scripts/run_test_gates.sh groups        # expect prior green count + the 7 new wired cases; the 2 PRE-EXISTING wired fails (GMAR-004 reopen-hydration, incoming-group-image-refresh) are NOT mine
 ./scripts/run_test_gates.sh feed          # LetterCard feed variants stay green
 
@@ -238,7 +240,7 @@ git diff --check
 - [ ] Each fix mutation-verified (re-red revert named in the matrix).
 - [ ] Direct GREEN + groups/feed preservation gates pass; the 2 pre-existing wired fails unchanged.
 - [ ] No migration introduced (message terminal state rides `statusSendFailed`).
-- [ ] `group_conversation_wired_test.dart` added to `GROUP_TESTS` and confirmed running in `./scripts/run_test_gates.sh groups`.
+- [ ] `group_conversation_wired_test.dart` confirmed present in `GROUP_TESTS` (`:131`) and running in `./scripts/run_test_gates.sh groups`.
 - [ ] 4 new l10n keys present in en/ar/de; l10n regenerated; `flutter analyze` 0-new; `git diff --check` clean.
 
 ## Scope Guard (hard "Do not")
@@ -252,13 +254,30 @@ git diff --check
 - Per-message reason is derived from the **current group terminal state** (one reason at a time), not stored per message — accepted (avoids a reason column/migration); a message that transitions reasons reflects the latest group state.
 
 ## Dependency Impact
-- None outbound. The harness-registration fix (adding `group_conversation_wired_test.dart` to `GROUP_TESTS`) also retroactively gates ALL pre-existing terminal-result + banner behavior under the curated Group gate — a standalone hardening win.
+- None outbound. `group_conversation_wired_test.dart` being in `GROUP_TESTS` (`:131`) already gates ALL terminal-result + banner behavior under the curated Group gate, so these new cases are covered without extra wiring.
 
 ## Reviewer Findings
-(pending sufficiency review)
+Post-implementation adversarial review (4-lens workflow + per-finding refute pass) confirmed 4 findings, ALL fixed:
+- **F1 (high)** `_terminalSendReadOnly` was a write-once latch with no reset → composer stayed read-only after legitimate in-place recovery for `removed`/`unavailable`. FIX: `_maybeReleaseRecoveredTerminalReadOnly` released the latch on a POSITIVE re-add (members non-empty AND includes self + `_canWriteForGroup` — never the fails-open empty read that produced the divergence) and on group-reappear (`_refreshVisibleGroup` getGroup!=null); `dissolved` stays latched. Wired into `_loadSecurityStatus`/`_refreshSendCapabilityAndCanWrite`/`_refreshVisibleGroup`. New test: terminal-unauthorized → re-add → resume → composer reappears (mutation-verified).
+- **F2 (med)** `_resetForGroupChange` didn't scrub the latch (cross-group leak on State reuse). FIX: reset `_terminalSendReadOnly` there.
+- **F3 (med, test)** the rewritten dissolved-reaction test passed from the refreshed dissolved-row state alone (override not load-bearing). FIX: added `screen.failedTerminalReasonText` assertion (driven ONLY by the override; mutation-verified).
+- **F4 (low)** reaction REMOVE terminal path didn't flip the banner for notMember/groupNotFound (asymmetric with ADD). FIX: mirror the ADD terminal handling; new remove-path test (mutation-verified).
 
 ## Arbiter Decision
-(pending)
+SHIP. Host-only closure; no migration, no device-proof needed (all behavior is local screen-state + render). Two intentional plan deviations documented: (a) rewrote 2 pre-existing voice-terminal tests + the reaction-dissolve snackbar test that the plan's "no voice test / reaction" notes missed — they locked the old delete/snackbar behavior; (b) kept `send_failed` in the screen retry gate (canWrite-gated) instead of literally excluding it per step 6 — this preserves the retry-exhausted treatment the plan's own "what must stay unchanged" note requires while still satisfying every INV (terminal bubbles get no Retry because canWrite is false + failedReasonText suppresses).
 
 ## Final Execution Verdict
-(pending execution)
+COMPLETE (host-green, uncommitted on `new-feed`).
+- RED-first: TC-01..05/07 + the reaction-dissolve rewrite RED on HEAD for documented reasons; every fix mutation-verified.
+- Direct GREEN: letter_card 83/83; wired 144 passed (only 2 fails = pre-existing GMAR-004 + incoming-group-image, confirmed on clean HEAD via stash).
+- Gates: feed 214 green; groups 653 passed / 2 = the 2 pre-existing wired fails. `flutter analyze` 0-new; `git diff --check` clean.
+- No migration; `group_conversation_wired_test.dart` already in `GROUP_TESTS` (`:131`); 4 l10n keys × en/ar/de regenerated; 3 terminal snackbars dropped (no remaining consumers); retrier confirmed to exclude `send_failed` from auto-retry.
+
+## Round-2 Follow-Up Findings (post-merge, 2026-06-23)
+A second adversarial pass surfaced 4 findings; all verified against live source (1 partial) and IMPLEMENTED host-green (RED-first, +7 wired tests, no migration):
+- **R2-F1 (was "high" → medium) reopen durability + empty-membership writable hole.** The `_terminalSendReadOnly` latch is in-memory only, so on a fresh mount/reopen a persisted terminal `send_failed` bubble lost its reason + Delete; worse, the **empty-membership** case fails open and re-enabled the composer. (REFUTED sub-claim: the banner IS durable for a genuinely-dissolved group via the `isDissolved` short-circuit.) FIX: `_hydrateTerminalReadOnlyFromState()` (gated on an own persisted `send_failed` row; `dissolved` if `isDissolved`, else `removed` if self not in loaded members — self-healing, never `dissolved`), `_securityStatusLoaded` flag to skip the startup window, scrub added to `_resetForGroupChange`. No reason column / migration. Preserves INV-4 (writable group with self present reconstructs nothing).
+- **R2-F2 (confirmed, medium) self-heal exposed a dead-end Retry.** A terminal text `send_failed` row carries no retry payload; after the F1 self-heal re-opened the composer it showed a Retry that fails with `missing_retry_payload` and lost Delete. FIX (screen-only): gate `showFailedTextRetry` on `(!isRetryExhaustedSend || hasRetryPayload)` — byte-identical to the retry use case's capability check — and keep Delete reachable for a no-payload terminal text row (`showTerminalDelete`). Legitimate retry-exhausted rows always carry `wireEnvelope` (verified) so they keep Retry; plain `'failed'` rows untouched.
+- **R2-F3 (confirmed, medium) terminal Delete leaked durable media.** `_onDeleteFailedTerminalMessage` dropped attachment rows + the pending-upload dir but never unlinked the durable `media/<groupId>/` file a terminal media/voice send had already relocated. FIX: load attachments and `_deleteUnsafeLocalMediaFile` each before dropping rows (+ `_clearRestoredVoiceContinuationTracking` parity).
+- **R2-F4 (confirmed, medium) terminal read-only did not disable reactions.** `_canMutateReactions` ignored the latch, so the long-press reaction picker stayed tappable while the banner read read-only (each tap re-hit the terminal result and reverted). FIX: fold `_terminalSendReadOnly == none` into `_canMutateReactions` (mirrors `_canWrite`, rides the F1 self-heal release).
+
+Verification: 7 RED tests (3 reopen + media-leak + self-heal Delete-only + reaction-disabled + payload-gate non-regression) RED→GREEN; wired 151 passed / 2 pre-existing (GMAR-004 `just_audio` MissingPluginException + incoming-group-image); screen+letter_card 145; `./scripts/run_test_gates.sh groups` 659/2; `flutter analyze` 0-new. 2-agent adversarial review = safe / safe-with-notes (the one minor — `_securityStatusLoaded` scrub — was applied). Uncommitted on `new-feed`.

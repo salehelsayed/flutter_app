@@ -322,6 +322,7 @@ classify_path() {
     integration_test/feed_performance_test.dart|\
     integration_test/feed_wired_init_performance_harness.dart|\
     integration_test/group_conversation_polish_proof_test.dart|\
+    integration_test/group_terminal_send_failed_proof_test.dart|\
     integration_test/identity_progress_performance_test.dart|\
     integration_test/loading_states_smoke_test.dart|\
     integration_test/orbit_performance_harness.dart|\

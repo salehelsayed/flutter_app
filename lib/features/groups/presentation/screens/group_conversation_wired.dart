@@ -185,6 +185,15 @@ class GroupConversationWired extends StatefulWidget {
   State<GroupConversationWired> createState() => _GroupConversationWiredState();
 }
 
+/// 144: a terminal send/reaction result (group dissolved / removed from group /
+/// group gone) latches the composer read-only and drives both the banner copy
+/// and the per-message "Couldn't send — …" reason. Derived from the use case's
+/// LOCAL group reads, so it can flip even when the cached group row still looks
+/// writable (e.g. empty-membership dissolved, or a lost-membership the row has
+/// not caught up to yet). Reset is intentionally absent: a terminal group state
+/// does not self-heal within an open screen.
+enum _TerminalReadOnly { none, dissolved, removed, unavailable }
+
 class _GroupConversationWiredState extends State<GroupConversationWired>
     with WidgetsBindingObserver {
   static const _maxAttachments = 10;
@@ -221,6 +230,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _isCurrentUserActiveMember = true;
   bool _hasCurrentSendKey = true;
   bool _isLifecycleResumed = true;
+  _TerminalReadOnly _terminalSendReadOnly = _TerminalReadOnly.none;
+  // 144 finding: distinguishes "membership never loaded yet" (startup window —
+  // do NOT infer removal) from "loaded and genuinely empty/excluding self".
+  // Gates the reopen reconstruction of the terminal read-only latch.
+  bool _securityStatusLoaded = false;
 
   // Media state
   List<PendingComposerMedia> _pendingAttachments = [];
@@ -675,6 +689,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _historyGapRepair = null;
     _securityStatus = null;
     _messageLoadErrorText = null;
+    // 144: a terminal send-failure latch is per-group; scrub it so a different
+    // group does not inherit a stale read-only composer/banner/reason. Also
+    // re-enter the startup window (clear _securityStatusLoaded) so the reopen
+    // hydration short-circuits until the NEW group's membership has loaded —
+    // otherwise a _loadMessages/_loadSecurityStatus race on a same-State
+    // group-id change could transiently latch a false `removed`.
+    _terminalSendReadOnly = _TerminalReadOnly.none;
+    _securityStatusLoaded = false;
     _initialLoadDone = false;
     _activeQuoteMessageId = null;
     _draftText = widget.initialText ?? '';
@@ -1229,10 +1251,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _securityStatus = securityStatus;
         _isCurrentUserActiveMember = isCurrentUserActiveMember;
         _hasCurrentSendKey = latestKey != null;
+        _securityStatusLoaded = true;
       });
       if (hadWriteAccess && !_canWrite) {
         _forceCancelActiveRecording();
       }
+      _maybeReleaseRecoveredTerminalReadOnly(members: members);
+      _hydrateTerminalReadOnlyFromState();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1265,6 +1290,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _historyGapRepair = historyGapRepair;
       });
       appliedMessages = true;
+      // 144 finding: a persisted terminal send_failed bubble must reconstruct
+      // its read-only latch on reopen. Re-run after the rows load (the security
+      // status may have completed first, before _messages was populated).
+      _hydrateTerminalReadOnlyFromState();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _emitNotificationTapTimingIfNeeded();
@@ -1915,7 +1944,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     // 4. sendGroupMessage() still owns the final message row save.
     final bgTaskId = await _beginBackgroundTaskGuarded();
-    var prePersistedOrdinaryMediaRow = false;
     try {
       // 5. Upload attachments (if any)
       List<MediaAttachment>? uploadedAttachments;
@@ -1937,7 +1965,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               mediaToUpload: mediaToUpload,
             );
             await widget.msgRepo.saveMessage(optimisticMessage);
-            prePersistedOrdinaryMediaRow = true;
             optimisticMedia = preparedUploads
                 .map(
                   (plan) => plan.pendingAttachment.copyWith(
@@ -2114,38 +2141,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       } else if (result == SendGroupMessageResult.groupNotFound ||
           result == SendGroupMessageResult.groupDissolved ||
           result == SendGroupMessageResult.unauthorized) {
-        if (mounted) {
-          _removeLocalMessage(messageId);
-        }
+        // 144: a terminal result is durable, not transient. Keep the optimistic
+        // bubble as a non-retryable send_failed row (preserving the typed text /
+        // attachments) and latch the composer read-only — instead of deleting
+        // the row and flashing a 4s snackbar. saveMessage upserts, so even a
+        // plain-text row that was never pre-persisted survives a reopen.
+        final failedMessage = optimisticMessage.copyWith(
+          status: GroupMessage.statusSendFailed,
+        );
         try {
-          await widget.mediaAttachmentRepo?.deleteAttachmentsForMessage(
-            messageId,
-          );
+          await widget.msgRepo.saveMessage(failedMessage);
         } catch (_) {}
-        try {
-          await widget.mediaFileManager?.deletePendingUploadDir(messageId);
-        } catch (_) {}
-        try {
-          if (prePersistedOrdinaryMediaRow) {
-            await widget.msgRepo.deleteMessage(messageId);
-          }
-        } catch (_) {}
+        _updateLocalMessageStatus(messageId, GroupMessage.statusSendFailed);
         if (result == SendGroupMessageResult.groupDissolved) {
+          // Refreshes the rest of the group UI. The read-only override below is
+          // what actually flips the banner: the row is NOT marked dissolved in
+          // the empty-membership case, so a membership refresh fails open.
           await _refreshVisibleGroup();
-          if (mounted) {
-            _showFloatingSnackBar(
-              AppLocalizations.of(context)!.group_dissolved_snackbar,
-            );
-          }
-        } else if (mounted && result == SendGroupMessageResult.unauthorized) {
-          _showFloatingSnackBar(
-            AppLocalizations.of(context)!.group_send_permission_lost,
-          );
-        } else if (mounted && result == SendGroupMessageResult.groupNotFound) {
-          _showFloatingSnackBar(
-            AppLocalizations.of(context)!.group_unavailable_snackbar,
-          );
         }
+        _setTerminalSendReadOnly(_terminalReadOnlyForSendResult(result));
       } else if (message == null) {
         await _restoreComposerSnapshotWithoutFailure(
           composerSnapshot,
@@ -3882,36 +3896,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           } else if (result == SendGroupMessageResult.groupNotFound ||
               result == SendGroupMessageResult.groupDissolved ||
               result == SendGroupMessageResult.unauthorized) {
+            // 144: keep the voice bubble + recorded audio as a durable,
+            // non-retryable send_failed row and latch the composer read-only
+            // (the row + attachment were already persisted above). Previously
+            // this unconditionally deleted both and flashed a snackbar.
             _clearRestoredVoiceContinuationTracking(messageId: messageId);
-            if (mounted) {
-              _removeLocalMessage(messageId);
-            }
-            try {
-              await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
-            } catch (_) {}
-            try {
-              await mediaFileManager.deletePendingUploadDir(messageId);
-            } catch (_) {}
-            await widget.msgRepo.deleteMessage(messageId);
+            _updateLocalMessageStatus(messageId, GroupMessage.statusSendFailed);
+            await _persistMessageStatus(
+              messageId,
+              GroupMessage.statusSendFailed,
+            );
             _restoreActiveQuoteIfNeeded(quotedMessageId);
             if (result == SendGroupMessageResult.groupDissolved) {
               await _refreshVisibleGroup();
-              if (mounted) {
-                _showFloatingSnackBar(
-                  AppLocalizations.of(context)!.group_dissolved_snackbar,
-                );
-              }
-            } else if (mounted &&
-                result == SendGroupMessageResult.unauthorized) {
-              _showFloatingSnackBar(
-                AppLocalizations.of(context)!.group_send_permission_lost,
-              );
-            } else if (mounted &&
-                result == SendGroupMessageResult.groupNotFound) {
-              _showFloatingSnackBar(
-                AppLocalizations.of(context)!.group_unavailable_snackbar,
-              );
             }
+            _setTerminalSendReadOnly(_terminalReadOnlyForSendResult(result));
           } else {
             _updateLocalMessageStatus(messageId, 'failed');
             await _persistMessageStatus(messageId, 'failed');
@@ -4269,6 +4268,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   String get _readOnlyBannerText {
     final l10n = AppLocalizations.of(context)!;
+    switch (_terminalSendReadOnly) {
+      case _TerminalReadOnly.dissolved:
+        return l10n.group_read_only_dissolved;
+      case _TerminalReadOnly.removed:
+        return l10n.group_read_only_not_active;
+      case _TerminalReadOnly.unavailable:
+        return l10n.group_read_only_unavailable;
+      case _TerminalReadOnly.none:
+        break;
+    }
     if (_group.isDissolved) {
       return l10n.group_read_only_dissolved;
     }
@@ -4282,6 +4291,164 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return l10n.group_read_only_waiting_identity;
     }
     return l10n.group_read_only_admin_only;
+  }
+
+  /// The per-message "Couldn't send — …" reason for a terminal `send_failed`
+  /// bubble. Null while no terminal send/reaction failure is latched, so a
+  /// retry-exhausted `send_failed` row in a still-writable group never shows a
+  /// terminal reason (144 INV-4).
+  String? get _terminalSendFailedReasonText {
+    final l10n = AppLocalizations.of(context)!;
+    switch (_terminalSendReadOnly) {
+      case _TerminalReadOnly.none:
+        return null;
+      case _TerminalReadOnly.dissolved:
+        return l10n.group_send_failed_dissolved;
+      case _TerminalReadOnly.removed:
+        return l10n.group_send_failed_removed;
+      case _TerminalReadOnly.unavailable:
+        return l10n.group_send_failed_unavailable;
+    }
+  }
+
+  _TerminalReadOnly _terminalReadOnlyForSendResult(
+    SendGroupMessageResult result,
+  ) {
+    switch (result) {
+      case SendGroupMessageResult.groupDissolved:
+        return _TerminalReadOnly.dissolved;
+      case SendGroupMessageResult.unauthorized:
+        return _TerminalReadOnly.removed;
+      case SendGroupMessageResult.groupNotFound:
+        return _TerminalReadOnly.unavailable;
+      default:
+        return _TerminalReadOnly.none;
+    }
+  }
+
+  void _setTerminalSendReadOnly(_TerminalReadOnly value) {
+    if (_terminalSendReadOnly == value) return;
+    final hadWriteAccess = _canWrite;
+    if (mounted) {
+      setState(() => _terminalSendReadOnly = value);
+    } else {
+      _terminalSendReadOnly = value;
+    }
+    if (hadWriteAccess && !_canWrite) {
+      _forceCancelActiveRecording();
+    }
+  }
+
+  /// 144: self-heal a `removed`/`unavailable` terminal read-only latch when the
+  /// divergence that caused it has demonstrably resolved IN PLACE — so the
+  /// composer reappears without leaving the conversation (parity with the live
+  /// membership self-heal).
+  ///
+  /// `removed` clears only on a POSITIVE re-add (members non-empty AND includes
+  /// self) and only when the group is otherwise writable — never the fails-open
+  /// empty-members read that produced the divergence, which would defeat the
+  /// latch. `unavailable` clears when a fresh group read returns the row again.
+  /// `dissolved` never self-heals (a dissolved group does not un-dissolve;
+  /// `_canWriteForGroup`'s isDissolved check keeps it read-only regardless).
+  void _maybeReleaseRecoveredTerminalReadOnly({
+    List<GroupMember>? members,
+    bool groupReappeared = false,
+  }) {
+    switch (_terminalSendReadOnly) {
+      case _TerminalReadOnly.removed:
+        final ownPeerId = _ownPeerId;
+        final positivelyAMember =
+            members != null &&
+            ownPeerId != null &&
+            members.isNotEmpty &&
+            members.any((member) => member.peerId == ownPeerId);
+        if (positivelyAMember && _canWriteForGroup(_group)) {
+          _setTerminalSendReadOnly(_TerminalReadOnly.none);
+        }
+      case _TerminalReadOnly.unavailable:
+        if (groupReappeared) {
+          _setTerminalSendReadOnly(_TerminalReadOnly.none);
+        }
+      case _TerminalReadOnly.dissolved:
+      case _TerminalReadOnly.none:
+        break;
+    }
+  }
+
+  bool _hasOwnTerminalSendFailedRow() {
+    final ownPeerId = _ownPeerId;
+    if (ownPeerId == null) return false;
+    return _messages.any(
+      (message) =>
+          !message.isIncoming &&
+          message.senderPeerId == ownPeerId &&
+          message.status == GroupMessage.statusSendFailed,
+    );
+  }
+
+  /// 144 finding: reconstruct the terminal read-only latch on a fresh mount /
+  /// reopen so a persisted `send_failed` bubble keeps its "Couldn't send — …"
+  /// reason + Delete and the composer stays read-only — the in-memory latch set
+  /// during the original send does not survive a rebuild.
+  ///
+  /// Only acts when the latch is unset (never overrides a live send/reaction
+  /// latch nor a just-released self-heal) AND there is an own persisted terminal
+  /// row to explain (so a healthy group, a brand-new group, or the startup
+  /// window is untouched — this keeps INV-4: a retry-exhausted `send_failed` row
+  /// in a still-writable group reconstructs NOTHING because self is present).
+  ///
+  /// `removed` (not `dissolved`) is used for the membership-empty/excludes-self
+  /// case because it self-heals on a later positive re-add via
+  /// [_maybeReleaseRecoveredTerminalReadOnly]; a transiently-empty read can
+  /// never strand the composer permanently. `dissolved` is reserved for a row
+  /// the group itself marks dissolved (which cannot un-dissolve).
+  void _hydrateTerminalReadOnlyFromState() {
+    if (_terminalSendReadOnly != _TerminalReadOnly.none) return;
+    if (_ownPeerId == null) return;
+    if (!_hasOwnTerminalSendFailedRow()) return;
+    if (_group.isDissolved) {
+      _setTerminalSendReadOnly(_TerminalReadOnly.dissolved);
+      return;
+    }
+    // Membership-based reconstruction needs a completed security load — before
+    // that _membersByPeerId is empty for the startup window, not a removal.
+    if (!_securityStatusLoaded) return;
+    final selfPresent = _membersByPeerId.containsKey(_ownPeerId);
+    if (!selfPresent) {
+      _setTerminalSendReadOnly(_TerminalReadOnly.removed);
+    }
+  }
+
+  /// Clears a terminal `send_failed` bubble (and any durable artifacts) when the
+  /// user taps Delete. Stays reachable even while the composer is read-only so a
+  /// stuck bubble in a dead group can always be removed (144).
+  Future<void> _onDeleteFailedTerminalMessage(String messageId) async {
+    _clearRestoredVoiceContinuationTracking(messageId: messageId);
+    // 144 finding: a terminal media/voice send keeps a `done` attachment that
+    // was already relocated to the durable owned location (media/<groupId>/...),
+    // which deletePendingUploadDir below does NOT cover. Unlink those files
+    // BEFORE the attachment rows are dropped (the file paths live on the rows),
+    // or the durable media orphans on disk.
+    try {
+      final attachments =
+          await widget.mediaAttachmentRepo?.getAttachmentsForMessage(
+            messageId,
+          ) ??
+          const <MediaAttachment>[];
+      for (final attachment in attachments) {
+        await _deleteUnsafeLocalMediaFile(attachment);
+      }
+    } catch (_) {}
+    try {
+      await widget.mediaAttachmentRepo?.deleteAttachmentsForMessage(messageId);
+    } catch (_) {}
+    try {
+      await widget.mediaFileManager?.deletePendingUploadDir(messageId);
+    } catch (_) {}
+    try {
+      await widget.msgRepo.deleteMessage(messageId);
+    } catch (_) {}
+    _removeLocalMessage(messageId);
   }
 
   bool _canWriteForSnapshot({
@@ -4349,6 +4516,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (hadWriteAccess && !_canWrite) {
       _forceCancelActiveRecording();
     }
+    _maybeReleaseRecoveredTerminalReadOnly(members: members);
     return _canWriteForSnapshot(
       group: _group,
       isCurrentUserActiveMember: isCurrentUserActiveMember,
@@ -4401,9 +4569,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     return false;
   }
 
-  bool get _canWrite => _canWriteForGroup(_group);
+  bool get _canWrite =>
+      _terminalSendReadOnly == _TerminalReadOnly.none &&
+      _canWriteForGroup(_group);
 
   bool get _canMutateReactions =>
+      // 144 finding: a terminal send/reaction read-only latch must also disable
+      // the long-press reaction picker (mirrors _canWrite). Otherwise the banner
+      // reads read-only while reactions stay tappable, and each tap re-hits the
+      // terminal result and silently reverts. Rides the F1 self-heal release.
+      _terminalSendReadOnly == _TerminalReadOnly.none &&
       _isCurrentUserActiveMember &&
       !_group.isDissolved &&
       widget.reactionRepo != null &&
@@ -4425,6 +4600,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (hadWriteAccess && !_canWrite) {
       _forceCancelActiveRecording();
     }
+    // The group row exists again (the early-return above guards null), so a
+    // latched `unavailable` terminal read-only can self-heal in place (144).
+    _maybeReleaseRecoveredTerminalReadOnly(groupReappeared: true);
   }
 
   Future<void> _refreshAfterInfoRoute() async {
@@ -4596,6 +4774,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
       if (result == RemoveGroupReactionResult.groupDissolved) {
         await _restoreReactionStateAfterDissolve(messageId, previousReactions);
+      } else if (result == RemoveGroupReactionResult.notMember) {
+        // 144: keep the remove direction's terminal feedback symmetric with the
+        // add direction — silent revert + durable read-only banner.
+        _restoreReactionState(messageId, previousReactions);
+        _setTerminalSendReadOnly(_TerminalReadOnly.removed);
+      } else if (result == RemoveGroupReactionResult.groupNotFound) {
+        _restoreReactionState(messageId, previousReactions);
+        _setTerminalSendReadOnly(_TerminalReadOnly.unavailable);
       } else {
         _restoreReactionState(messageId, previousReactions);
       }
@@ -4657,6 +4843,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       });
     } else if (result == SendGroupReactionResult.groupDissolved) {
       await _restoreReactionStateAfterDissolve(messageId, previousReactions);
+    } else if (result == SendGroupReactionResult.notMember) {
+      // 144: a reaction into a group we are no longer a member of is terminal.
+      // Keep the silent revert (a failed-reaction bubble would need a schema
+      // change — out of scope) but flip the composer read-only so the user gets
+      // durable feedback instead of a silent no-op.
+      _restoreReactionState(messageId, previousReactions);
+      _setTerminalSendReadOnly(_TerminalReadOnly.removed);
+    } else if (result == SendGroupReactionResult.groupNotFound) {
+      _restoreReactionState(messageId, previousReactions);
+      _setTerminalSendReadOnly(_TerminalReadOnly.unavailable);
     } else {
       _restoreReactionState(messageId, previousReactions);
     }
@@ -4682,9 +4878,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       });
     }
     await _refreshVisibleGroup();
-    _showFloatingSnackBar(
-      AppLocalizations.of(context)!.group_dissolved_snackbar,
-    );
+    // 144 INV-5: the durable read-only banner is the terminal feedback now, not
+    // a transient snackbar. The override flips the banner even when the group
+    // row has not been marked dissolved locally yet.
+    _setTerminalSendReadOnly(_TerminalReadOnly.dissolved);
   }
 
   Future<void> _onReactionTap(String messageId, String emoji) async {
@@ -4841,6 +5038,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                     widget.mediaFileManager != null
                 ? _onDeleteFailedMedia
                 : null,
+            // 144: terminal send_failed bubbles. The reason text is null unless
+            // a terminal failure is latched, and Delete is intentionally NOT
+            // gated by _canWrite so a stuck bubble stays clearable in a dead
+            // group.
+            failedTerminalReasonText: _terminalSendFailedReasonText,
+            onDeleteFailedTerminalMessage: _onDeleteFailedTerminalMessage,
             activeQuoteText: activeQuoteText,
             isActiveQuoteUnavailable: isActiveQuoteUnavailable,
             onClearQuote: _canWrite ? _onClearQuote : null,

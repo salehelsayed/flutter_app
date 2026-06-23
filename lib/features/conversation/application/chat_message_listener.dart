@@ -393,10 +393,17 @@ class ChatMessageListener {
         _ensureAvatarDownloaded(senderContact);
       }
 
-      final ownSecretKey = getOwnMlKemSecretKey != null
+      // 147: on a prefetch HIT (predecryptedText already supplied by the
+      // inbox-drain fan-out) the handler skips its own decrypt, so the ML-KEM
+      // secret + ring it would consult are unused — don't pay the serial
+      // keystore reads on the drain hot path. Null on every live path keeps the
+      // legacy decrypt behaviour.
+      final hasPredecryptedText = message.predecryptedText != null;
+      final ownSecretKey = (!hasPredecryptedText && getOwnMlKemSecretKey != null)
           ? await getOwnMlKemSecretKey!()
           : null;
-      final ownSecretKeyRing = getOwnMlKemSecretKeyRing != null
+      final ownSecretKeyRing =
+          (!hasPredecryptedText && getOwnMlKemSecretKeyRing != null)
           ? await getOwnMlKemSecretKeyRing!()
           : null;
 
@@ -411,6 +418,10 @@ class ChatMessageListener {
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
         fallbackMlKemSecretKeys: ownSecretKeyRing,
+        // 147: if the inbox-drain prefetch already decrypted this message's
+        // envelope (concurrently, ahead of the serial commit loop), use that
+        // plaintext and skip the bridge decrypt. Null on every live path.
+        predecryptedText: message.predecryptedText,
         mediaAttachmentRepo: mediaAttachmentRepo,
         mediaFileManager: mediaFileManager,
         transport: message.transport,

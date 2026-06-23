@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -73,6 +74,15 @@ handleIncomingChatMessage({
   // encrypted to a pre-restore key (P0-B). Never consulted on transient
   // failures.
   List<String>? fallbackMlKemSecretKeys,
+  // 147: when non-null, the inbox-drain decrypt-prefetch pass already decrypted
+  // this message's v2 envelope (concurrently, ahead of the serial commit loop)
+  // and supplies the inner plaintext JSON here. The handler then SKIPS its own
+  // bridge decrypt + ML-KEM fallback ring and uses this verbatim. When null (the
+  // live default + every gate-off path) the handler decrypts itself, byte-
+  // identically to before. A prefetch that failed/omitted an entry leaves this
+  // null, so the entry simply falls back to the in-handler decrypt (never
+  // dropped, never mis-disposed).
+  String? predecryptedText,
   MediaAttachmentRepository? mediaAttachmentRepo,
   // Used by the duplicate-replay media repair to invalidate staged
   // artifacts left behind by a previous key/nonce (112 Phase 1).
@@ -112,18 +122,32 @@ handleIncomingChatMessage({
       );
       return;
     }
-    try {
-      await sendDeliveryReceipt(messageId);
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'DELIVERY_RECEIPT_HOOK_ERROR',
-        details: {
-          'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
-          'error': e.toString(),
-        },
-      );
-    }
+    // 146: detach the per-message receipt SEND from the replay/critical path.
+    // The message is already durably persisted (saveMessage, above) and the
+    // receipt is custody confirmation TO THE SENDER — the receiving user gains
+    // nothing by waiting for it. Awaiting it here serialized N relay round-trips
+    // into the inbox-drain loop (p2p_service_impl `_replayStagedInboxEntries`),
+    // blocking the screen reload on every notif-tap. Fire-and-forget: the mint
+    // DECISION above stays synchronous and per-message; only the network send is
+    // deferred (never dropped — the 132 confirmatory receipt still goes out, and
+    // it is idempotent on the sender, so reordering is harmless). The
+    // `.catchError` keeps the now-unawaited future from raising an unhandled
+    // async error and preserves the DELIVERY_RECEIPT_HOOK_ERROR breadcrumb.
+    // `Future.sync` wraps the call so a hook that throws SYNCHRONOUSLY (before
+    // returning a Future) is funnelled into the same `.catchError` — matching
+    // the old `try { await ... } catch` which caught both sync and async throws.
+    unawaited(
+      Future.sync(() => sendDeliveryReceipt(messageId)).catchError((Object e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DELIVERY_RECEIPT_HOOK_ERROR',
+          details: {
+            'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+            'error': e.toString(),
+          },
+        );
+      }),
+    );
   }
 
   emitFlowEvent(
@@ -149,88 +173,65 @@ handleIncomingChatMessage({
   final v2Envelope = MessagePayload.parseEncryptedEnvelope(message.content);
   final envelopeSenderPeerId = v2Envelope?['senderPeerId'] as String?;
   if (v2Envelope != null) {
-    // v2 encrypted message
-    if (bridge == null || ownMlKemSecretKey == null) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_RECEIVE_V2_NO_KEY',
-        details: {},
-      );
-      return (HandleChatMessageResult.missingMlKemSecret, null, null);
-    }
-
-    final encrypted = v2Envelope['encrypted'] as Map<String, dynamic>;
-    try {
-      var decryptResult = await callDecryptMessage(
+    if (predecryptedText != null) {
+      // 147: the inbox-drain prefetch already decrypted this envelope (running
+      // the SAME primary + ML-KEM ring as below, via predecryptIncomingChatEnvelope)
+      // concurrently ahead of the serial commit loop. Use the supplied inner
+      // plaintext verbatim and skip the bridge round-trip entirely.
+      payload = MessagePayload.fromDecryptedJson(predecryptedText);
+    } else {
+      // v2 encrypted message — decrypt in-handler (the live default and the
+      // fallback for any entry the prefetch omitted/failed).
+      final decryptOutcome = await _decryptV2ChatEnvelope(
+        v2Envelope: v2Envelope,
         bridge: bridge,
         ownMlKemSecretKey: ownMlKemSecretKey,
-        kem: encrypted['kem'] as String,
-        ciphertext: encrypted['ciphertext'] as String,
-        nonce: encrypted['nonce'] as String,
+        fallbackMlKemSecretKeys: fallbackMlKemSecretKeys,
       );
-
-      if (decryptResult['ok'] != true) {
-        // BRIDGE_TIMEOUT is synthesized on the Dart side (bridge.dart) when
-        // the native call never answered — the ciphertext was never
-        // evaluated, so the failure is transient, not cryptographic.
-        if (decryptResult['errorCode'] == 'BRIDGE_TIMEOUT') {
+      switch (decryptOutcome.status) {
+        case _V2DecryptStatus.missingKey:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_V2_NO_KEY',
+            details: {},
+          );
+          return (HandleChatMessageResult.missingMlKemSecret, null, null);
+        case _V2DecryptStatus.deferred:
+          // BRIDGE_TIMEOUT is synthesized on the Dart side (bridge.dart) when
+          // the native call never answered — the ciphertext was never
+          // evaluated, so the failure is transient, not cryptographic.
           emitFlowEvent(
             layer: 'FL',
             event: 'CHAT_MSG_RECEIVE_DECRYPT_DEFERRED',
-            details: {'errorCode': decryptResult['errorCode']},
+            details: {'errorCode': decryptOutcome.errorCode},
           );
           return (HandleChatMessageResult.decryptionDeferred, null, null);
-        }
-
-        // Cryptographic failure with the primary secret: the sender may
-        // have encrypted to a pre-restore key — try the ring.
-        for (final fallbackSecret in fallbackMlKemSecretKeys ?? const []) {
-          final fallbackResult = await callDecryptMessage(
-            bridge: bridge,
-            ownMlKemSecretKey: fallbackSecret,
-            kem: encrypted['kem'] as String,
-            ciphertext: encrypted['ciphertext'] as String,
-            nonce: encrypted['nonce'] as String,
+        case _V2DecryptStatus.failed:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_DECRYPT_FAILED',
+            details: {'errorCode': decryptOutcome.errorCode},
           );
-          if (fallbackResult['ok'] == true) {
+          return (HandleChatMessageResult.decryptionFailed, null, null);
+        case _V2DecryptStatus.error:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_DECRYPT_ERROR',
+            details: {'error': decryptOutcome.errorDetail},
+          );
+          return (HandleChatMessageResult.decryptionDeferred, null, null);
+        case _V2DecryptStatus.ok:
+          if (decryptOutcome.ringFallbackUsed) {
+            // Cryptographic failure with the primary secret recovered via a
+            // pre-restore key in the ring (P0-B).
             emitFlowEvent(
               layer: 'FL',
               event: 'MLKEM_RING_FALLBACK_USED',
               details: {},
             );
-            decryptResult = fallbackResult;
-            break;
           }
-          if (fallbackResult['errorCode'] == 'BRIDGE_TIMEOUT') {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'CHAT_MSG_RECEIVE_DECRYPT_DEFERRED',
-              details: {'errorCode': fallbackResult['errorCode']},
-            );
-            return (HandleChatMessageResult.decryptionDeferred, null, null);
-          }
-        }
-
-        if (decryptResult['ok'] != true) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_RECEIVE_DECRYPT_FAILED',
-            details: {'errorCode': decryptResult['errorCode']},
-          );
-          return (HandleChatMessageResult.decryptionFailed, null, null);
-        }
+          payload = MessagePayload.fromDecryptedJson(decryptOutcome.plaintext!);
       }
-
-      payload = MessagePayload.fromDecryptedJson(
-        decryptResult['plaintext'] as String,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_RECEIVE_DECRYPT_ERROR',
-        details: {'error': e.toString()},
-      );
-      return (HandleChatMessageResult.decryptionDeferred, null, null);
     }
   } else {
     // v1 plaintext envelope
@@ -568,6 +569,167 @@ handleIncomingChatMessage({
     return (resultAfterSave, null, updatedContact);
   }
   return (HandleChatMessageResult.chatMessage, hydratedMessage, updatedContact);
+}
+
+/// 147: discriminated result of decrypting a v2 chat envelope. Kept event-free
+/// so the inbox-drain decrypt-prefetch ([predecryptIncomingChatEnvelope]) and
+/// the handler's inline decrypt share ONE copy of the primary + ML-KEM ring
+/// logic; the handler maps these statuses to the existing flow events + return
+/// values, while the prefetch silently keeps only [plaintext].
+enum _V2DecryptStatus { ok, missingKey, deferred, failed, error }
+
+class _V2ChatDecryptOutcome {
+  final _V2DecryptStatus status;
+  final String? plaintext;
+  final bool ringFallbackUsed;
+  final String? errorCode;
+  final String? errorDetail;
+  const _V2ChatDecryptOutcome(
+    this.status, {
+    this.plaintext,
+    this.ringFallbackUsed = false,
+    this.errorCode,
+    this.errorDetail,
+  });
+}
+
+/// Runs the primary ML-KEM decrypt plus the pre-restore fallback ring over a
+/// parsed v2 [v2Envelope]. Pure (no flow events, no persistence); decrypt is a
+/// stateless ML-KEM-768 + AES-GCM operation (go-mknoon/crypto/decrypt.go), so it
+/// is safe to call concurrently / out of order.
+Future<_V2ChatDecryptOutcome> _decryptV2ChatEnvelope({
+  required Map<String, dynamic> v2Envelope,
+  Bridge? bridge,
+  String? ownMlKemSecretKey,
+  List<String>? fallbackMlKemSecretKeys,
+}) async {
+  if (bridge == null || ownMlKemSecretKey == null) {
+    return const _V2ChatDecryptOutcome(_V2DecryptStatus.missingKey);
+  }
+  final encrypted = v2Envelope['encrypted'] as Map<String, dynamic>;
+  try {
+    var decryptResult = await callDecryptMessage(
+      bridge: bridge,
+      ownMlKemSecretKey: ownMlKemSecretKey,
+      kem: encrypted['kem'] as String,
+      ciphertext: encrypted['ciphertext'] as String,
+      nonce: encrypted['nonce'] as String,
+    );
+    var ringFallbackUsed = false;
+
+    if (decryptResult['ok'] != true) {
+      if (decryptResult['errorCode'] == 'BRIDGE_TIMEOUT') {
+        return _V2ChatDecryptOutcome(
+          _V2DecryptStatus.deferred,
+          errorCode: decryptResult['errorCode'] as String?,
+        );
+      }
+
+      for (final fallbackSecret in fallbackMlKemSecretKeys ?? const []) {
+        final fallbackResult = await callDecryptMessage(
+          bridge: bridge,
+          ownMlKemSecretKey: fallbackSecret,
+          kem: encrypted['kem'] as String,
+          ciphertext: encrypted['ciphertext'] as String,
+          nonce: encrypted['nonce'] as String,
+        );
+        if (fallbackResult['ok'] == true) {
+          decryptResult = fallbackResult;
+          ringFallbackUsed = true;
+          break;
+        }
+        if (fallbackResult['errorCode'] == 'BRIDGE_TIMEOUT') {
+          return _V2ChatDecryptOutcome(
+            _V2DecryptStatus.deferred,
+            errorCode: fallbackResult['errorCode'] as String?,
+          );
+        }
+      }
+
+      if (decryptResult['ok'] != true) {
+        return _V2ChatDecryptOutcome(
+          _V2DecryptStatus.failed,
+          errorCode: decryptResult['errorCode'] as String?,
+        );
+      }
+    }
+
+    return _V2ChatDecryptOutcome(
+      _V2DecryptStatus.ok,
+      plaintext: decryptResult['plaintext'] as String,
+      ringFallbackUsed: ringFallbackUsed,
+    );
+  } catch (e) {
+    return _V2ChatDecryptOutcome(
+      _V2DecryptStatus.error,
+      errorDetail: e.toString(),
+    );
+  }
+}
+
+/// 147: decrypt-prefetch entry point for the inbox-drain bounded fan-out
+/// (p2p_service_impl `_predecryptInboxChatEntries`). Returns the inner plaintext
+/// JSON for a v2 chat envelope — running the SAME primary + ring decrypt the
+/// handler uses — or null when [message] is not a v2 envelope, the key material
+/// is unavailable, or decryption fails/defers. A null result is never a dropped
+/// message: the handler re-decrypts (with full disposition) any entry omitted
+/// here. Threaded to [handleIncomingChatMessage] as `predecryptedText`.
+Future<String?> predecryptIncomingChatEnvelope({
+  required ChatMessage message,
+  Bridge? bridge,
+  String? ownMlKemSecretKey,
+  List<String>? fallbackMlKemSecretKeys,
+}) async {
+  final v2Envelope = MessagePayload.parseEncryptedEnvelope(message.content);
+  if (v2Envelope == null) return null;
+  final outcome = await _decryptV2ChatEnvelope(
+    v2Envelope: v2Envelope,
+    bridge: bridge,
+    ownMlKemSecretKey: ownMlKemSecretKey,
+    fallbackMlKemSecretKeys: fallbackMlKemSecretKeys,
+  );
+  if (outcome.ringFallbackUsed) {
+    // 147/P0-B: keep the pre-restore ring-recovery breadcrumb visible even when
+    // the inbox-drain prefetch (not the in-handler decrypt) recovered the
+    // message. On a prefetch HIT the handler skips its own decrypt, so the
+    // handler's MLKEM_RING_FALLBACK_USED at the `ok` case never fires for this
+    // entry — emit it here so the live path and the drained path agree. Fires
+    // exactly once per entry (a ring recovery is always a HIT → no double emit).
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MLKEM_RING_FALLBACK_USED',
+      details: {},
+    );
+  }
+  return outcome.plaintext;
+}
+
+/// 147: orchestrates the inbox-drain decrypt-prefetch for ONE staged chat entry,
+/// honoring the ChatMessageListener's BLOCKED-SENDER policy. The listener rejects
+/// a blocked contact's message BEFORE its own decrypt (chat_message_listener
+/// `processIncomingMessage`), so the prefetch must NOT decrypt a blocked sender's
+/// ciphertext into memory either — it returns null (→ no plaintext; the serial
+/// loop's listener rejects the entry exactly as before, no plaintext ever
+/// materialises). Also short-circuits on a missing local secret. This is the
+/// production wiring helper for P2PServiceImpl.predecryptInboxChatEntry; the pure
+/// envelope decrypt stays in [predecryptIncomingChatEnvelope].
+Future<String?> predecryptStagedInboxChatEntry({
+  required ChatMessage message,
+  required ContactRepository contactRepo,
+  required Bridge bridge,
+  required Future<String?> Function() loadOwnMlKemSecretKey,
+  required Future<List<String>> Function() loadOwnMlKemSecretKeyRing,
+}) async {
+  final contact = await contactRepo.getContact(message.from);
+  if (contact != null && contact.isBlocked) return null;
+  final secret = await loadOwnMlKemSecretKey();
+  if (secret == null) return null;
+  return predecryptIncomingChatEnvelope(
+    message: message,
+    bridge: bridge,
+    ownMlKemSecretKey: secret,
+    fallbackMlKemSecretKeys: await loadOwnMlKemSecretKeyRing(),
+  );
 }
 
 Future<void> _repairDuplicateReplayMedia({

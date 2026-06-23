@@ -109,6 +109,10 @@ class ConversationScreen extends StatefulWidget {
   final bool isLoadingMore;
   final bool hasMoreOlderMessages;
   final bool initialLoadDone;
+  // 145: true while the screen's notification/resume relay drain is in flight,
+  // so a non-intrusive "catching up…" affordance can be shown. Distinct from
+  // [isLoadingMore], which is the older-pagination (scroll-up) spinner.
+  final bool isSyncingNewMessages;
   final VoidCallback? onAttach;
   final List<File> pendingAttachments;
   final bool isUploading;
@@ -173,6 +177,7 @@ class ConversationScreen extends StatefulWidget {
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
     this.initialLoadDone = false,
+    this.isSyncingNewMessages = false,
     this.onAttach,
     this.pendingAttachments = const [],
     this.isUploading = false,
@@ -296,6 +301,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
               state: widget.uploadProgress!,
               onCancel: widget.onCancelUpload,
             ),
+          // 145: "catching up…" affordance shown while the relay drain is in
+          // flight. Outside the message ListView so it never shifts the scroll
+          // position; distinct from the older-pagination spinner.
+          if (widget.isSyncingNewMessages) const _ConversationSyncingBanner(),
           // Body with animated transition
           Expanded(
             child: AnimatedSwitcher(
@@ -971,6 +980,63 @@ class _EditModeBanner extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                   ),
                   child: Text(l10n.conversation_cancel_edit),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 145: thin "catching up…" status row shown while the relay offline-inbox
+/// drain is in flight (notification-tap / app-resume recovery). Matches the
+/// glass-row house style of [_EditModeBanner]. Keyed so tests can assert its
+/// presence/placement independent of copy.
+class _ConversationSyncingBanner extends StatelessWidget {
+  const _ConversationSyncingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return Padding(
+      key: const ValueKey('conversation-syncing-banner'),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color.fromRGBO(18, 20, 28, 0.92),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color.fromRGBO(255, 255, 255, 0.10),
+              ),
+            ),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFF4ECDC4),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    l10n.conversation_catching_up,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color.fromRGBO(255, 255, 255, 0.88),
+                    ),
+                  ),
                 ),
               ],
             ),

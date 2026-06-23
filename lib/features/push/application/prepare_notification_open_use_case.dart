@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -24,6 +26,22 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
   try {
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.conversation:
+        // 145: do NOT block routing on the relay drain. The conversation screen
+        // self-heals via its own notif-tap drain (see ConversationWired), so
+        // awaiting here only delays the screen from appearing on warm resume.
+        // Fire-and-forget with swallowed+logged errors. `Future.sync` captures a
+        // synchronous throw too, so the error never escapes to the awaited-path
+        // catch below.
+        unawaited(
+          Future<void>.sync(drainOfflineInbox).catchError((Object e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'NOTIFICATION_OPEN_CONVERSATION_DRAIN_ERROR',
+              details: {'error': e.toString()},
+            );
+          }),
+        );
+        break;
       case NotificationRouteTargetKind.contactRequest:
       case NotificationRouteTargetKind.intros:
         await drainOfflineInbox();

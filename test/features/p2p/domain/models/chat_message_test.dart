@@ -221,5 +221,55 @@ void main() {
         expect(a.hashCode, equals(b.hashCode));
       });
     });
+
+    // 147: predecryptedText is a TRANSIENT in-memory carrier for the inbox-drain
+    // decrypt-prefetch plaintext. Because it carries DECRYPTED message content it
+    // must never leak to the wire, the DB, equality/dedup, or logs — pin that
+    // contract here so a future refactor can't silently serialize plaintext.
+    group('predecryptedText privacy contract', () {
+      const secret = 'SECRET-DECRYPTED-PLAINTEXT';
+
+      test('fromJson never parses predecryptedText (not a wire field)', () {
+        final msg = ChatMessage.fromJson({
+          'from': 'peer-a',
+          'to': 'peer-b',
+          'content': 'hello',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+          'isIncoming': true,
+          'predecryptedText': secret,
+        });
+        expect(msg.predecryptedText, isNull);
+      });
+
+      test('toJson excludes predecryptedText (never serialized to wire/DB)', () {
+        final tagged = baseMsg.copyWith(predecryptedText: secret);
+        final json = tagged.toJson();
+        expect(json.containsKey('predecryptedText'), isFalse);
+        expect(json.values.contains(secret), isFalse);
+      });
+
+      test('copyWith sets predecryptedText', () {
+        final tagged = baseMsg.copyWith(predecryptedText: secret);
+        expect(tagged.predecryptedText, secret);
+      });
+
+      test('copyWith preserves existing predecryptedText when null passed', () {
+        final tagged = baseMsg.copyWith(predecryptedText: secret);
+        final copy = tagged.copyWith(content: 'updated');
+        expect(copy.predecryptedText, secret);
+      });
+
+      test('equality and hashCode ignore predecryptedText', () {
+        final a = baseMsg.copyWith(predecryptedText: 'pt-a');
+        final b = baseMsg.copyWith(predecryptedText: 'pt-b');
+        expect(a, equals(b));
+        expect(a.hashCode, equals(b.hashCode));
+      });
+
+      test('toString does not leak the predecryptedText plaintext', () {
+        final tagged = baseMsg.copyWith(predecryptedText: secret);
+        expect(tagged.toString().contains(secret), isFalse);
+      });
+    });
   });
 }

@@ -620,6 +620,49 @@ void main() {
     );
 
     test(
+      '147: a prefetch HIT (predecryptedText supplied) skips the listener '
+      'ML-KEM key load and persists from the supplied plaintext',
+      () async {
+        const senderPeerId = 'sender-peer-predecrypt-hit';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        var keyLoads = 0;
+        // A decrypt that would FAIL if it ran — so a green `stored` outcome
+        // proves the handler used the supplied predecryptedText, not the bridge.
+        final bridge = _FakeDecryptBridge(
+          decryptResponse: {'ok': false, 'errorCode': 'DECRYPT_FAILED'},
+        );
+        final listener = createListener(
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async {
+            keyLoads++;
+            return 'own-secret-key';
+          },
+        );
+
+        final inner = jsonEncode({
+          'id': 'msg-prefetch-hit-001',
+          'text': 'prefetched',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        final outcome = await listener.processIncomingMessage(
+          _makeV2EncryptedChatMessage(
+            from: senderPeerId,
+          ).copyWith(predecryptedText: inner),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.stored);
+        expect(
+          keyLoads,
+          0,
+          reason: 'a prefetch hit must not load the ML-KEM secret in the listener',
+        );
+      },
+    );
+
+    test(
       'maps decryptionDeferred result to decryptionDeferred state',
       () async {
         const senderPeerId = 'sender-peer-v2-deferred';

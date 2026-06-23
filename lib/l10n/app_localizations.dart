@@ -982,6 +982,12 @@ abstract class AppLocalizations {
   /// **'Continue...'**
   String get conversation_continue;
 
+  /// No description provided for @conversation_catching_up.
+  ///
+  /// In en, this message translates to:
+  /// **'Catching up...'**
+  String get conversation_catching_up;
+
   /// No description provided for @comment_hint.
   ///
   /// In en, this message translates to:
@@ -1839,6 +1845,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only admins can send messages in this group'**
   String get group_read_only_admin_only;
+
+  /// No description provided for @group_read_only_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This group is no longer available.'**
+  String get group_read_only_unavailable;
+
+  /// No description provided for @group_send_failed_dissolved.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t send — this group was dissolved'**
+  String get group_send_failed_dissolved;
+
+  /// No description provided for @group_send_failed_removed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t send — you\'re no longer in this group'**
+  String get group_send_failed_removed;
+
+  /// No description provided for @group_send_failed_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t send — this group is unavailable'**
+  String get group_send_failed_unavailable;
 
   /// No description provided for @group_removed_snackbar.
   ///

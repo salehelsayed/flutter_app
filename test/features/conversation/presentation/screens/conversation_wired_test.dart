@@ -15,6 +15,7 @@ import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -3519,6 +3520,275 @@ void main() {
           1,
           reason: 'id-keyed upsert dedupes the double-path',
         );
+      },
+    );
+
+    // TC-10 (145): the "catching up" affordance is threaded from the in-flight
+    // drain into the view.
+    testWidgets(
+      'syncing affordance is visible during an in-flight notif-tap drain and '
+      'gone after it completes',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh = makeMsg(
+          id: 'sync-fresh-1',
+          text: 'arrives via the gated drain',
+          isIncoming: true,
+          ts: '2026-05-04T14:05:00.000Z',
+        );
+        final gate = Completer<void>();
+        final p2p = GatedDrainP2PService(repo: messageRepo, pending: [fresh])
+          ..gate = gate;
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+
+        // Drain is in-flight behind the gate → affordance visible.
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('conversation-syncing-banner')),
+          findsOneWidget,
+          reason: 'affordance shows while the notif-tap drain is in flight',
+        );
+
+        // Release the drain → it completes → affordance clears.
+        gate.complete();
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(const ValueKey('conversation-syncing-banner'))
+              .evaluate()
+              .isEmpty,
+        );
+        expect(
+          find.byKey(const ValueKey('conversation-syncing-banner')),
+          findsNothing,
+        );
+      },
+    );
+
+    // TC-12 (145): the post-drain "live render" timing event, emitted exactly
+    // once per notif-tap when the drain surfaces a new incoming message — in
+    // addition to the existing stale-render event.
+    testWidgets(
+      'live-render timing event is emitted exactly once after a notif-tap drain '
+      'surfaces a new message (in addition to the stale-render event)',
+      (tester) async {
+        final captured = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(captured.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh = makeMsg(
+          id: 'live-fresh-1',
+          text: 'surfaced by the drain',
+          isIncoming: true,
+          ts: '2026-05-04T14:05:00.000Z',
+        );
+        final p2p = DrainPersistsP2PService(repo: messageRepo, pending: [fresh]);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'live-fresh-1'),
+        );
+
+        final live = captured
+            .where(
+              (e) => e['event'] == 'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING',
+            )
+            .toList();
+        expect(live, hasLength(1));
+        expect((live.first['details'] as Map)['addedIncoming'], isTrue);
+        expect((live.first['details'] as Map)['milestone'], 'live_render');
+
+        // The live-render event is in ADDITION to the existing stale-render one.
+        final stale = captured
+            .where((e) => e['event'] == 'NOTIFICATION_TAP_TO_MESSAGE_TIMING')
+            .toList();
+        expect(stale, isNotEmpty);
+        expect((stale.first['details'] as Map)['milestone'], 'stale_render');
+      },
+    );
+
+    testWidgets(
+      'live-render timing event is not double-emitted across coalesced drain '
+      'passes',
+      (tester) async {
+        final captured = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(captured.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh1 = makeMsg(
+          id: 'live-co-1',
+          text: 'first backlog',
+          isIncoming: true,
+          ts: '2026-05-04T14:05:00.000Z',
+        );
+        final fresh2 = makeMsg(
+          id: 'live-co-2',
+          text: 'second backlog',
+          isIncoming: true,
+          ts: '2026-05-04T14:06:00.000Z',
+        );
+        final gate = Completer<void>();
+        final p2p = GatedDrainP2PService(
+          repo: messageRepo,
+          pending: [fresh1, fresh2],
+        )..gate = gate;
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+        await tester.pump();
+        // A resume mid-drain coalesces into a second pass behind the gate.
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        gate.complete();
+        await pumpUntil(tester, () => p2p.drainCallCount >= 2);
+
+        final live = captured
+            .where(
+              (e) => e['event'] == 'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING',
+            )
+            .toList();
+        expect(
+          live,
+          hasLength(1),
+          reason: 'one-shot latch prevents double-emit across coalesced passes',
+        );
+      },
+    );
+
+    testWidgets(
+      'plain (orbit) entry emits no live-render timing event',
+      (tester) async {
+        final captured = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(captured.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final p2p = DrainPersistsP2PService(repo: messageRepo, pending: []);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          // No notificationTappedAt — orbit/contact-list open.
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+
+        expect(
+          captured.where(
+            (e) => e['event'] == 'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING',
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    // TC-13 (145): the drain-refetch event carries a numeric per-pass duration.
+    testWidgets(
+      'CONV_FL_NOTIF_DRAIN_REFETCH carries a numeric drainMs',
+      (tester) async {
+        final captured = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(captured.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh = makeMsg(
+          id: 'drainms-1',
+          text: 'surfaced by the drain',
+          isIncoming: true,
+          ts: '2026-05-04T14:05:00.000Z',
+        );
+        final p2p = DrainPersistsP2PService(repo: messageRepo, pending: [fresh]);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'drainms-1'),
+        );
+
+        final refetch = captured
+            .where((e) => e['event'] == 'CONV_FL_NOTIF_DRAIN_REFETCH')
+            .toList();
+        expect(refetch, isNotEmpty);
+        final details = refetch.first['details'] as Map;
+        expect(details['trigger'], 'notif_tap');
+        expect(details['drainMs'], isA<int>());
+        expect(details['drainMs'], greaterThanOrEqualTo(0));
       },
     );
   });
