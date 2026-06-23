@@ -6,7 +6,18 @@ import 'avatar_tier.dart';
 
 /// Default arrangements for the floating avatar canvas. The user can drag freely
 /// afterwards; this is only the template they begin in (and can switch between).
-enum Orbit2LayoutTemplate { innerGravity, nebulaScatter, looseHoneycomb, tieredBands }
+///
+/// [unifiedCircle] is special: it has NO floating canvas at all — every contact
+/// (inner circle + the would-be floating friends & groups) collapses into a
+/// single Inner Circle. The canvas renders that directly and never calls
+/// [layoutPositions] for it.
+enum Orbit2LayoutTemplate {
+  innerGravity,
+  nebulaScatter,
+  looseHoneycomb,
+  tieredBands,
+  unifiedCircle,
+}
 
 /// Minimum gap added on top of the two avatars' radii when spacing them apart.
 const double _kPairGap = 12;
@@ -109,6 +120,10 @@ List<Offset> layoutPositions(
       break;
 
     case Orbit2LayoutTemplate.nebulaScatter:
+    // [unifiedCircle] never reaches here (the canvas renders one Inner Circle
+    // instead of a floating layout); the shared body just keeps the switch
+    // exhaustive with a deterministic fallback.
+    case Orbit2LayoutTemplate.unifiedCircle:
       // Deterministic low-discrepancy scatter (golden-ratio sequences).
       for (var i = 0; i < n; i++) {
         final fx = (i * 0.6180339887498949) % 1.0;

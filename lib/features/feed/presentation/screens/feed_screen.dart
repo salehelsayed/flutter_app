@@ -3,82 +3,89 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
-import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
-import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/introduction_connection_card.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_letter.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_session_reply.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/caught_up_empty_state.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_composer.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_swipe_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/session_divider.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/letter_bubble.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/letter_card_group.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/letter_card_one_to_one.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/letter_card_system.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
-/// Pure UI Feed screen.
+/// Pure UI Feed screen — 134-P5 "letters" pending-reply inbox.
 ///
-/// Displays a fixed header, a responsive feed content area, and a pinned bottom
-/// navigation bar.
-class FeedScreen extends StatelessWidget {
-  static const editModeBannerKey = ValueKey('feed-edit-mode-banner');
-  static const cancelEditKey = ValueKey('feed-cancel-edit-action');
-
+/// Renders the feed as a flat list of letter cards (1:1 / group / system).
+/// Tapping a card FOCUSES it: the focused card stays opaque/expanded while all
+/// other cards collapse + fade out, the screen-level [FeedComposer] appears,
+/// and the feed-local navigation bar fades away (independent of the keyboard).
+class FeedScreen extends StatefulWidget {
+  // ── Identity / header ──────────────────────────────────────────────────
   final String username;
   final Uint8List? userAvatarBytes;
   final String? userPeerId;
+  final ValueChanged<String>? onUsernameChanged;
+  final P2PService? p2pService;
+  final VoidCallback? onAvatarTap;
+
+  // ── Feed data ──────────────────────────────────────────────────────────
   final List<FeedItem> feedItems;
   final ValueListenable<List<FeedItem>>? feedItemsListenable;
   final bool feedLoaded;
-  final ValueChanged<String>? onUsernameChanged;
-  final P2PService? p2pService;
+
+  // ── Shell / nav ────────────────────────────────────────────────────────
   final void Function(String) onSwitchView;
   final String activeTab;
-  final void Function(ConnectionFeedItem)? onSendMessage;
-  final void Function(String contactPeerId)? onReplyToMessage;
   final int totalUnreadCount;
   final ValueListenable<int>? totalUnreadCountListenable;
   final int orbitBadgeCount;
   final ValueListenable<int>? orbitBadgeCountListenable;
-  final String? expandedCardId;
-  final void Function(String)? onToggleExpand;
-  final void Function(String contactPeerId, String text)? onInlineSend;
-  final void Function(String contactPeerId)? onViewFullConversation;
-  final Map<String, String>? draftTexts;
-  final String? activeFocusPeerId;
-  final String? pendingViewportFollowContactPeerId;
-  final int viewportFollowRequestId;
-  final void Function(String contactPeerId, String text)? onDraftChanged;
-  final void Function(String contactPeerId, bool hasFocus)? onInputFocusChanged;
-  final String? editingContactPeerId;
-  final void Function(String contactPeerId, String messageId)? onEditMessage;
-  final void Function(String contactPeerId, String messageId)? onDeleteMessage;
-  final void Function(String contactPeerId)? onCancelEdit;
-  final Map<String, String>? activeQuoteMessageIds;
-  final void Function(String contactPeerId, String messageId)? onQuoteReply;
-  final void Function(String contactPeerId)? onClearQuote;
-  final void Function(String contactPeerId)? onAttach;
-  final VoidCallback? onAvatarTap;
-  final SessionReplyTracker? sessionReplies;
-  final Map<String, List<MessageReaction>> reactions;
-  final ValueListenable<List<MessageReaction>> Function(String messageId)?
-  reactionListenableForMessage;
-  final void Function(String messageId, String emoji)? onReactionSelected;
-  final void Function(GroupThreadFeedItem)? onGroupTap;
-  final void Function(String groupId, String text)? onGroupInlineSend;
-  final void Function(GroupThreadFeedItem)? onGroupAttach;
-  final void Function(String groupId, String messageId, String emoji)?
-  onGroupReactionTap;
-  final void Function(String groupId, String messageId, String emoji)?
-  onGroupReactionSelected;
+
+  // ── Background ─────────────────────────────────────────────────────────
   final BackgroundPreference backgroundPreference;
   final BackgroundReadableTone? readableToneOverride;
+
+  // ── System "tap to say hi" (pre-bound at the call site) ─────────────────
+  final void Function(ConnectionFeedItem)? onSendMessage;
+
+  // ── Open full conversation (1:1 by peerId, group routed by item) ────────
+  final void Function(String contactPeerId)? onOpenFullConversation;
+  final void Function(GroupThreadFeedItem)? onGroupTap;
+
+  // ── Focus + composer (134-P5) ──────────────────────────────────────────
+  /// The focused thread id, or null when nothing is focused. Encodes:
+  /// 1:1 = contactPeerId, group = `group:<groupId>`, system = contactPeerId.
+  final String? focusedId;
+  final void Function(String threadId)? onFocusCard;
+  final VoidCallback? onClearFocus;
+  final void Function(String threadId, String text)? onComposerSend;
+  final void Function(String threadId, String text)? onComposerDraftChanged;
+
+  /// Outgoing replies sent during the current focus session, keyed by the same
+  /// thread id encoding as [focusedId]. Drives the append-stay green bubbles
+  /// and the never-silent retry affordance.
+  final Map<String, List<FeedSessionReply>> sessionReplies;
+
+  /// Re-invokes the send for a failed/pending session reply (TC-30 retry).
+  final void Function(String threadId, FeedSessionReply reply)? onRetrySend;
+
+  // ── Swipe contract (P6 wires the gestures to these) ────────────────────
+  final void Function(String threadId)? onSwipeCommit;
+  final void Function(String threadId)? onSwipeDismiss;
+  final void Function(String threadId)? onUndoDismiss;
+
+  /// 134-P6 gesture arena (TC-35): the feed tells the host (feed_wired) when a
+  /// card swipe is live so the screen-level Feed↔Orbit host swipe yields the
+  /// gesture (true on horizontal drag start, false on settle).
+  final void Function(bool active)? onCardSwipeActive;
 
   const FeedScreen({
     super.key,
@@ -93,58 +100,97 @@ class FeedScreen extends StatelessWidget {
     required this.onSwitchView,
     required this.activeTab,
     this.onSendMessage,
-    this.onReplyToMessage,
     this.totalUnreadCount = 0,
     this.totalUnreadCountListenable,
     this.orbitBadgeCount = 0,
     this.orbitBadgeCountListenable,
-    this.expandedCardId,
-    this.onToggleExpand,
-    this.onInlineSend,
-    this.onViewFullConversation,
-    this.draftTexts,
-    this.activeFocusPeerId,
-    this.pendingViewportFollowContactPeerId,
-    this.viewportFollowRequestId = 0,
-    this.onDraftChanged,
-    this.onInputFocusChanged,
-    this.editingContactPeerId,
-    this.onEditMessage,
-    this.onDeleteMessage,
-    this.onCancelEdit,
-    this.activeQuoteMessageIds,
-    this.onQuoteReply,
-    this.onClearQuote,
-    this.onAttach,
-    this.onAvatarTap,
-    this.sessionReplies,
-    this.reactions = const {},
-    this.reactionListenableForMessage,
-    this.onReactionSelected,
+    this.onOpenFullConversation,
     this.onGroupTap,
-    this.onGroupInlineSend,
-    this.onGroupAttach,
-    this.onGroupReactionTap,
-    this.onGroupReactionSelected,
+    this.onAvatarTap,
+    this.focusedId,
+    this.onFocusCard,
+    this.onClearFocus,
+    this.onComposerSend,
+    this.onComposerDraftChanged,
+    this.sessionReplies = const {},
+    this.onRetrySend,
+    this.onSwipeCommit,
+    this.onSwipeDismiss,
+    this.onUndoDismiss,
+    this.onCardSwipeActive,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.readableToneOverride,
   });
 
   @override
+  State<FeedScreen> createState() => _FeedScreenState();
+}
+
+class _FeedScreenState extends State<FeedScreen> {
+  bool get _isFocused => widget.focusedId != null;
+
+  /// 134 §7 reduced-motion: motion is disabled when the platform requests
+  /// either `disableAnimations` or `accessibleNavigation`. Cached in
+  /// [didChangeDependencies] so [build]/the entry builders read a plain bool.
+  bool _reduceMotion = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final mq = MediaQuery.of(context);
+    _reduceMotion = mq.disableAnimations || mq.accessibleNavigation;
+  }
+
+  /// Collapses a motion [Duration] to zero under reduced motion. Threaded
+  /// through EVERY feed-local animation so each becomes instant (134 §7).
+  Duration _motion(Duration d) => _reduceMotion ? Duration.zero : d;
+
+  /// The thread id for a feed item using the same encoding as [focusedId].
+  String? _threadIdFor(FeedItem item) {
+    if (item is GroupThreadFeedItem) return 'group:${item.groupId}';
+    if (item is ConnectionFeedItem) return item.contactPeerId;
+    if (item is ThreadFeedItem) return item.contactPeerId;
+    return null;
+  }
+
+  /// The human display name for a feed item (used by the Undo SnackBar copy).
+  String _displayNameFor(FeedItem item) {
+    if (item is GroupThreadFeedItem) return item.groupName;
+    if (item is ConnectionFeedItem) return item.contactUsername;
+    if (item is ThreadFeedItem) return item.contactUsername;
+    return '';
+  }
+
+  /// Maps the focused thread id back to its feed item (group "open full
+  /// conversation" routes by item, not by id).
+  FeedItem? _focusedItem(List<FeedItem> items) {
+    final focusedId = widget.focusedId;
+    if (focusedId == null) return null;
+    for (final item in items) {
+      if (_threadIdFor(item) == focusedId) return item;
+    }
+    return null;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
-    final shouldHideNavigationBar = _shouldHideNavigationBar(context);
 
     return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
+      onTap: () {
+        FocusScope.of(context).unfocus();
+        if (_isFocused) widget.onClearFocus?.call();
+      },
       behavior: HitTestBehavior.translucent,
       child: AmbientBackground(
-        preference: backgroundPreference,
+        preference: widget.backgroundPreference,
         isFeedSurface: true,
-        readableToneOverride: readableToneOverride,
+        // 134 §7: under reduced motion the feed-surface ambient entrance must
+        // not run its infinite repeat() — render the static final frame.
+        reduceMotion: _reduceMotion,
+        readableToneOverride: widget.readableToneOverride,
         child: Stack(
           children: [
-            // Main content with top-only SafeArea
             SafeArea(
               bottom: false,
               child: LayoutBuilder(
@@ -163,32 +209,30 @@ class FeedScreen extends StatelessWidget {
                           0,
                         ),
                         child: FeedHeader(
-                          username: username,
-                          avatarBytes: userAvatarBytes,
-                          peerId: userPeerId,
-                          onUsernameChanged: onUsernameChanged,
-                          p2pService: p2pService,
-                          onAvatarTap: onAvatarTap,
+                          username: widget.username,
+                          avatarBytes: widget.userAvatarBytes,
+                          peerId: widget.userPeerId,
+                          onUsernameChanged: widget.onUsernameChanged,
+                          p2pService: widget.p2pService,
+                          onAvatarTap: widget.onAvatarTap,
                         ),
                       ),
                       const SizedBox(height: 10),
                       Expanded(
                         child: LayoutBuilder(
                           builder: (context, contentConstraints) {
-                            final feedItemsListenable =
-                                this.feedItemsListenable;
-                            if (feedItemsListenable == null) {
+                            final listenable = widget.feedItemsListenable;
+                            if (listenable == null) {
                               return _buildFeedContent(
                                 context: context,
                                 horizontalPadding: horizontalPadding,
                                 contentConstraints: contentConstraints,
                                 bottomInset: bottomInset,
-                                items: feedItems,
+                                items: widget.feedItems,
                               );
                             }
-
                             return ValueListenableBuilder<List<FeedItem>>(
-                              valueListenable: feedItemsListenable,
+                              valueListenable: listenable,
                               builder: (context, items, child) =>
                                   _buildFeedContent(
                                     context: context,
@@ -206,23 +250,26 @@ class FeedScreen extends StatelessWidget {
                 },
               ),
             ),
-            // Floating nav bar pinned to bottom
-            if (!shouldHideNavigationBar)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: bottomInset - 14,
-                child: Center(child: _buildNavigationBar()),
+            // Feed-screen-local nav bar — fades out (NOT keyboard-gated) while a
+            // card is focused. AnimatedOpacity(0) still hit-tests, so wrap in
+            // IgnorePointer.
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: bottomInset - 14,
+              child: IgnorePointer(
+                ignoring: _isFocused,
+                child: AnimatedOpacity(
+                  opacity: _isFocused ? 0.0 : 1.0,
+                  duration: _motion(const Duration(milliseconds: 200)),
+                  child: Center(child: _buildNavigationBar()),
+                ),
               ),
+            ),
           ],
         ),
       ),
     );
-  }
-
-  bool _shouldHideNavigationBar(BuildContext context) {
-    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
-    return activeFocusPeerId != null && keyboardVisible;
   }
 
   Widget _buildFeedContent({
@@ -242,26 +289,156 @@ class FeedScreen extends StatelessWidget {
       (contentConstraints.maxWidth - maxFeedWidth) / 2,
     );
 
-    return _FeedScrollableContent(
-      horizontalPadding: centeredHorizontalPadding,
-      bottomInset: bottomInset,
-      entries: _buildFeedEntries(items),
-      loadingSliver: _buildLoadingSliver(),
-      entryBuilder: _buildFeedEntry,
-      pendingViewportFollowContactPeerId: pendingViewportFollowContactPeerId,
-      viewportFollowRequestId: viewportFollowRequestId,
+    final focusedItem = _focusedItem(items);
+
+    return Stack(
+      children: [
+        _FeedScrollableContent(
+          horizontalPadding: centeredHorizontalPadding,
+          bottomInset: bottomInset,
+          entries: _buildFeedEntries(items),
+          loadingSliver: _buildLoadingSliver(),
+          entryBuilder: _buildFeedEntry,
+        ),
+        // Single shared composer — shown ONLY while focused.
+        if (_isFocused && focusedItem != null)
+          Positioned(
+            left: centeredHorizontalPadding,
+            right: centeredHorizontalPadding,
+            bottom: 12 + MediaQuery.viewInsetsOf(context).bottom,
+            child: _buildComposer(context, focusedItem),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildComposer(BuildContext context, FeedItem focusedItem) {
+    final l10n = AppLocalizations.of(context)!;
+    final focusedId = widget.focusedId!;
+
+    String hint;
+    if (focusedItem is GroupThreadFeedItem) {
+      // Decision G: verb + route source from the GROUP, never a sender run.
+      hint = l10n.feed_reply_to_name(focusedItem.groupName);
+    } else if (focusedItem is ConnectionFeedItem) {
+      hint = l10n.feed_message_name(focusedItem.contactUsername);
+    } else if (focusedItem is ThreadFeedItem) {
+      hint = l10n.feed_reply_to_name(focusedItem.contactUsername);
+    } else {
+      hint = l10n.feed_reply_to_name('');
+    }
+
+    return FeedComposer(
+      hintText: hint,
+      addAnotherHint: l10n.feed_add_another,
+      onSend: (text) => widget.onComposerSend?.call(focusedId, text),
+      onDraftChanged: (text) =>
+          widget.onComposerDraftChanged?.call(focusedId, text),
+    );
+  }
+
+  /// Routes the "open full conversation" history entry point for [item]:
+  /// 1:1 / system → the contact conversation (by peerId), group → [onGroupTap]
+  /// (routed by item, never a sender run). Shared by the focused header (B3).
+  VoidCallback? _onOpenConversationFor(FeedItem item) {
+    if (item is GroupThreadFeedItem) {
+      return widget.onGroupTap != null ? () => widget.onGroupTap!(item) : null;
+    }
+    if (item is ConnectionFeedItem) {
+      return widget.onOpenFullConversation != null
+          ? () => widget.onOpenFullConversation!(item.contactPeerId)
+          : null;
+    }
+    if (item is ThreadFeedItem) {
+      return widget.onOpenFullConversation != null
+          ? () => widget.onOpenFullConversation!(item.contactPeerId)
+          : null;
+    }
+    return null;
+  }
+
+  /// Focused-only header (134 §5/§6): a neutral back affordance that returns to
+  /// the feed plus the focused thread's identity. The "open full conversation"
+  /// history entry point is NOT here — it sits at the END of the thread column
+  /// (see [_buildOpenConversationLink]).
+  Widget _buildFocusedHeader(BuildContext context, FeedItem item) {
+    final tokens = context.feedTokens;
+    final name = _displayNameFor(item);
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: tokens.space3 * 0.5),
+      child: Row(
+        children: [
+          IconButton(
+            key: const ValueKey('feed-focused-back'),
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            iconSize: 18,
+            color: tokens.textMeta.color,
+            icon: const Icon(Icons.arrow_back_ios_new),
+            onPressed: () => widget.onClearFocus?.call(),
+          ),
+          if (name.isNotEmpty)
+            Expanded(
+              child: Text(
+                name,
+                style: tokens.textMessage.copyWith(fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis,
+              ),
+            )
+          else
+            const Spacer(),
+        ],
+      ),
+    );
+  }
+
+  /// The "open full conversation" history entry point, rendered CENTERED at the
+  /// END of the focused thread column (below the incoming bubbles and any sent
+  /// session replies). Returns an empty box when the thread has no routable
+  /// conversation target.
+  Widget _buildOpenConversationLink(BuildContext context, FeedItem item) {
+    final onOpen = _onOpenConversationFor(item);
+    if (onOpen == null) return const SizedBox.shrink();
+    final tokens = context.feedTokens;
+    final l10n = AppLocalizations.of(context)!;
+
+    return Padding(
+      padding: EdgeInsets.only(top: tokens.space3),
+      child: Center(
+        child: GestureDetector(
+          key: const ValueKey('feed-open-full-conversation'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onOpen,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  l10n.feed_open_full_conversation,
+                  style: tokens.textMeta.copyWith(color: tokens.teal400),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.north_east, size: 14, color: tokens.teal400),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildNavigationBar() {
-    final unreadCountListenable = totalUnreadCountListenable;
-    final orbitCountListenable = orbitBadgeCountListenable;
+    final unreadCountListenable = widget.totalUnreadCountListenable;
+    final orbitCountListenable = widget.orbitBadgeCountListenable;
     if (unreadCountListenable == null && orbitCountListenable == null) {
       return FeedNavigationBar(
-        activeTab: activeTab,
-        onSwitchView: onSwitchView,
-        feedBadgeCount: totalUnreadCount,
-        orbitBadgeCount: orbitBadgeCount,
+        activeTab: widget.activeTab,
+        onSwitchView: widget.onSwitchView,
+        feedBadgeCount: widget.totalUnreadCount,
+        orbitBadgeCount: widget.orbitBadgeCount,
       );
     }
 
@@ -269,9 +446,9 @@ class FeedScreen extends StatelessWidget {
       return ValueListenableBuilder<int>(
         valueListenable: orbitCountListenable!,
         builder: (context, orbitCount, child) => FeedNavigationBar(
-          activeTab: activeTab,
-          onSwitchView: onSwitchView,
-          feedBadgeCount: totalUnreadCount,
+          activeTab: widget.activeTab,
+          onSwitchView: widget.onSwitchView,
+          feedBadgeCount: widget.totalUnreadCount,
           orbitBadgeCount: orbitCount,
         ),
       );
@@ -281,10 +458,10 @@ class FeedScreen extends StatelessWidget {
       return ValueListenableBuilder<int>(
         valueListenable: unreadCountListenable,
         builder: (context, unreadCount, child) => FeedNavigationBar(
-          activeTab: activeTab,
-          onSwitchView: onSwitchView,
+          activeTab: widget.activeTab,
+          onSwitchView: widget.onSwitchView,
           feedBadgeCount: unreadCount,
-          orbitBadgeCount: orbitBadgeCount,
+          orbitBadgeCount: widget.orbitBadgeCount,
         ),
       );
     }
@@ -294,8 +471,8 @@ class FeedScreen extends StatelessWidget {
       builder: (context, unreadCount, child) => ValueListenableBuilder<int>(
         valueListenable: orbitCountListenable,
         builder: (context, orbitCount, nestedChild) => FeedNavigationBar(
-          activeTab: activeTab,
-          onSwitchView: onSwitchView,
+          activeTab: widget.activeTab,
+          onSwitchView: widget.onSwitchView,
           feedBadgeCount: unreadCount,
           orbitBadgeCount: orbitCount,
         ),
@@ -321,66 +498,20 @@ class FeedScreen extends StatelessWidget {
 
   List<_FeedEntry> _buildFeedEntries(List<FeedItem> items) {
     if (items.isEmpty) {
-      if (!feedLoaded) return const [];
-      return [
-        const _FeedEntry.spacer(height: 12),
-        _FeedEntry.emptyState(username: username),
+      if (!widget.feedLoaded) return const [];
+      return const [
+        _FeedEntry.spacer(height: 12),
+        _FeedEntry.emptyState(),
       ];
     }
 
-    // Partition into above/below divider
-    // Above: unread/active threads only
-    // Below: connections + read/replied threads (sorted by timestamp)
-    final aboveDivider = <FeedItem>[];
-    final belowDivider = <FeedItem>[];
-
-    for (final item in items) {
-      if (item is ConnectionFeedItem) {
-        belowDivider.add(item);
-      } else if (item is GroupThreadFeedItem) {
-        if (item.conversationState == ConversationState.unread ||
-            item.conversationState == ConversationState.active) {
-          aboveDivider.add(item);
-        } else {
-          belowDivider.add(item);
-        }
-      } else if (item is ThreadFeedItem) {
-        if (item.conversationState == ConversationState.unread ||
-            item.conversationState == ConversationState.active) {
-          aboveDivider.add(item);
-        } else {
-          belowDivider.add(item);
-        }
-      }
-    }
-
     final entries = <_FeedEntry>[const _FeedEntry.spacer(height: 16)];
-
-    // Build above-divider cards (unread/active threads)
-    final aboveItems = [...aboveDivider];
-    aboveItems.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-
-    for (var i = 0; i < aboveItems.length; i++) {
-      entries.add(_FeedEntry.item(aboveItems[i]));
-      if (i != aboveItems.length - 1 || belowDivider.isNotEmpty) {
+    for (var i = 0; i < items.length; i++) {
+      entries.add(_FeedEntry.item(items[i]));
+      if (i != items.length - 1) {
         entries.add(const _FeedEntry.spacer(height: 16));
       }
     }
-
-    // Insert session divider when both sections have content
-    if (aboveItems.isNotEmpty && belowDivider.isNotEmpty) {
-      entries.add(const _FeedEntry.sessionDivider());
-    }
-
-    // Build below-divider cards (connections + read/replied threads)
-    belowDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    for (var i = 0; i < belowDivider.length; i++) {
-      entries.add(_FeedEntry.item(belowDivider[i]));
-      if (i != belowDivider.length - 1) {
-        entries.add(const _FeedEntry.spacer(height: 16));
-      }
-    }
-
     entries.add(const _FeedEntry.spacer(height: 20));
     return entries;
   }
@@ -389,441 +520,143 @@ class FeedScreen extends StatelessWidget {
     switch (entry.type) {
       case _FeedEntryType.item:
         return _buildFeedItemWidget(context, entry.item!);
-      case _FeedEntryType.sessionDivider:
-        return const SessionDivider();
       case _FeedEntryType.spacer:
         return SizedBox(height: entry.height);
       case _FeedEntryType.emptyState:
-        return _EmptyFeedStateCard(username: entry.username!);
-    }
-  }
-
-  int? _findFeedEntryIndex(List<_FeedEntry> entries, Key key) {
-    if (key is! ValueKey<String>) {
-      return null;
-    }
-
-    for (var index = 0; index < entries.length; index++) {
-      final entry = entries[index];
-      if (entry.item?.id == key.value) {
-        return index;
-      }
-    }
-    return null;
-  }
-
-  void _showMessageContextOverlay(
-    BuildContext context,
-    ThreadFeedItem thread,
-    ThreadMessage message,
-    BuildContext bubbleContext,
-  ) {
-    final route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent) return;
-
-    final renderObject = bubbleContext.findRenderObject();
-    Rect anchorRect = Rect.fromCenter(
-      center: MediaQuery.of(context).size.center(Offset.zero),
-      width: 0,
-      height: 0,
-    );
-    if (renderObject is RenderBox && renderObject.hasSize) {
-      final topLeft = renderObject.localToGlobal(Offset.zero);
-      anchorRect = topLeft & renderObject.size;
-    }
-
-    final allReactions =
-        reactionListenableForMessage?.call(message.id).value ??
-        reactions[message.id] ??
-        const [];
-    final ownReaction = userPeerId != null
-        ? allReactions.where((r) => r.senderPeerId == userPeerId).firstOrNull
-        : null;
-    final hasCopyAction = !message.isDeleted && message.text.trim().isNotEmpty;
-    final hasEditAction = _canEditMessage(thread, message);
-    final hasDeleteAction = _canDeleteMessage(message);
-
-    showDialog(
-      context: context,
-      useSafeArea: false,
-      barrierColor: Colors.transparent,
-      builder: (dialogContext) => MessageContextOverlay(
-        anchorRect: anchorRect,
-        selectedMessage: _buildOverlaySelectedBubble(
-          context,
-          thread,
-          message,
-          allReactions,
-        ),
-        currentEmoji: ownReaction?.emoji,
-        showCopyAction: hasCopyAction,
-        showEditAction: hasEditAction,
-        showDeleteAction: hasDeleteAction,
-        onDismiss: () => Navigator.of(dialogContext).pop(),
-        onReactionSelected: (emoji) {
-          Navigator.of(dialogContext).pop();
-          onReactionSelected?.call(message.id, emoji);
-        },
-        onPlusTap: () {
-          Navigator.of(dialogContext).pop();
-          _showFullPicker(context, message.id);
-        },
-        onReplyTap: () {
-          Navigator.of(dialogContext).pop();
-          onQuoteReply?.call(thread.contactPeerId, message.id);
-        },
-        onEditTap: hasEditAction
-            ? () {
-                Navigator.of(dialogContext).pop();
-                onEditMessage?.call(thread.contactPeerId, message.id);
-              }
-            : null,
-        onCopyTap: hasCopyAction
-            ? () async {
-                Navigator.of(dialogContext).pop();
-                await _copyMessageText(context, message.text);
-              }
-            : null,
-        onDeleteTap: hasDeleteAction
-            ? () {
-                Navigator.of(dialogContext).pop();
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  onDeleteMessage?.call(thread.contactPeerId, message.id);
-                });
-              }
-            : null,
-      ),
-    );
-  }
-
-  MessageBubble _buildOverlaySelectedBubble(
-    BuildContext context,
-    CardThreadFeedItem thread,
-    ThreadMessage message,
-    List<MessageReaction> reactions,
-  ) {
-    final (quotedText, isQuoteUnavailable) = _resolveQuotedText(
-      thread,
-      message,
-    );
-
-    return MessageBubble(
-      text: message.text,
-      time: message.time,
-      isUnread: message.isUnread,
-      isIncoming: message.isIncoming,
-      isDeleted: message.isDeleted,
-      status: message.status,
-      isEdited: message.isEdited,
-      senderPeerId: message.isIncoming
-          ? (message.senderPeerId ?? thread.displayId)
-          : null,
-      senderLabel: message.isIncoming
-          ? (message.senderUsername ?? thread.displayName)
-          : AppLocalizations.of(context)!.feed_you,
-      quotedText: quotedText,
-      isQuoteUnavailable: isQuoteUnavailable,
-      media: message.media,
-      reactions: message.isDeleted ? const [] : reactions,
-      ownPeerId: userPeerId,
-    );
-  }
-
-  (String?, bool) _resolveQuotedText(
-    CardThreadFeedItem thread,
-    ThreadMessage message,
-  ) {
-    final quotedMessageId = message.quotedMessageId;
-    if (quotedMessageId == null) {
-      return (null, false);
-    }
-
-    final quoted = thread.messages
-        .where((candidate) => candidate.id == quotedMessageId)
-        .firstOrNull;
-    if (quoted == null || quoted.isDeleted) {
-      return ('Message unavailable', true);
-    }
-    if (quoted.text.isNotEmpty) {
-      return (quoted.text, false);
-    }
-    if (quoted.media.isNotEmpty) {
-      return (mediaPreviewText(quoted.media), false);
-    }
-    return ('Message unavailable', true);
-  }
-
-  bool _canEditMessage(ThreadFeedItem thread, ThreadMessage message) {
-    if (onEditMessage == null) return false;
-    if (message.isDeleted) return false;
-    if (message.isIncoming || message.text.trim().isEmpty) return false;
-    return thread.lastSentMessage?.id == message.id;
-  }
-
-  bool _canDeleteMessage(ThreadMessage message) {
-    if (onDeleteMessage == null) return false;
-    return !message.isDeleted;
-  }
-
-  Future<void> _copyMessageText(BuildContext context, String text) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    final copiedLabel = AppLocalizations.of(
-      context,
-    )!.conversation_context_copied;
-    await Clipboard.setData(ClipboardData(text: text));
-    messenger
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(copiedLabel),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-  }
-
-  void _showFullPicker(BuildContext context, String messageId) async {
-    final emoji = await showFullEmojiPicker(context);
-    if (emoji != null) {
-      onReactionSelected?.call(messageId, emoji);
-    }
-  }
-
-  void _showGroupMessageContextOverlay(
-    BuildContext context,
-    GroupThreadFeedItem thread,
-    ThreadMessage message,
-    BuildContext bubbleContext,
-  ) {
-    final route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent) return;
-
-    final renderObject = bubbleContext.findRenderObject();
-    Rect anchorRect = Rect.fromCenter(
-      center: MediaQuery.of(context).size.center(Offset.zero),
-      width: 0,
-      height: 0,
-    );
-    if (renderObject is RenderBox && renderObject.hasSize) {
-      final topLeft = renderObject.localToGlobal(Offset.zero);
-      anchorRect = topLeft & renderObject.size;
-    }
-
-    final allReactions =
-        reactionListenableForMessage?.call(message.id).value ??
-        reactions[message.id] ??
-        const [];
-    final ownReaction = userPeerId != null
-        ? allReactions.where((r) => r.senderPeerId == userPeerId).firstOrNull
-        : null;
-    final showReplyAction = thread.canWrite && onQuoteReply != null;
-    final showCopyAction = message.text.trim().isNotEmpty;
-    final showReactionBar = thread.canReact && onGroupReactionSelected != null;
-    if (!showReplyAction && !showCopyAction && !showReactionBar) {
-      return;
-    }
-
-    showDialog(
-      context: bubbleContext,
-      useSafeArea: false,
-      barrierColor: Colors.transparent,
-      builder: (dialogContext) => MessageContextOverlay(
-        anchorRect: anchorRect,
-        selectedMessage: _buildOverlaySelectedBubble(
-          context,
-          thread,
-          message,
-          allReactions,
-        ),
-        currentEmoji: ownReaction?.emoji,
-        onDismiss: () => Navigator.of(dialogContext).pop(),
-        showReactionBar: showReactionBar,
-        showReplyAction: showReplyAction,
-        showCopyAction: showCopyAction,
-        onReactionSelected: showReactionBar
-            ? (emoji) {
-                Navigator.of(dialogContext).pop();
-                onGroupReactionSelected?.call(
-                  thread.groupId,
-                  message.id,
-                  emoji,
-                );
-              }
-            : null,
-        onPlusTap: showReactionBar
-            ? () {
-                Navigator.of(dialogContext).pop();
-                _showGroupFullPicker(context, thread.groupId, message.id);
-              }
-            : null,
-        onReplyTap: showReplyAction
-            ? () {
-                Navigator.of(dialogContext).pop();
-                onQuoteReply?.call('group:${thread.groupId}', message.id);
-              }
-            : null,
-        onCopyTap: showCopyAction
-            ? () async {
-                Navigator.of(dialogContext).pop();
-                await _copyMessageText(context, message.text);
-              }
-            : null,
-      ),
-    );
-  }
-
-  void _showGroupFullPicker(
-    BuildContext context,
-    String groupId,
-    String messageId,
-  ) async {
-    final emoji = await showFullEmojiPicker(context);
-    if (emoji != null) {
-      onGroupReactionSelected?.call(groupId, messageId, emoji);
+        return const CaughtUpEmptyState();
     }
   }
 
   Widget _buildFeedItemWidget(BuildContext context, FeedItem item) {
-    if (item is GroupThreadFeedItem) {
-      final activeQuoteMessageId =
-          activeQuoteMessageIds?['group:${item.groupId}'];
-      final groupDraftKey = 'group:${item.groupId}';
-      final canWrite = item.canWrite;
-      final canReact = item.canReact;
-      final hasCopyableMessage = item.messages.any(
-        (message) => message.text.trim().isNotEmpty,
-      );
-      return FeedCard(
-        thread: item,
-        canWrite: canWrite,
-        sessionReply: sessionReplies?.get('group:${item.groupId}'),
-        isExpanded: expandedCardId == item.id,
-        onToggleExpand: onToggleExpand != null
-            ? () => onToggleExpand!(item.id)
-            : null,
-        onInlineSend: canWrite && onGroupInlineSend != null
-            ? (text) => onGroupInlineSend!(item.groupId, text)
-            : null,
-        onViewFullConversation: onGroupTap != null
-            ? () => onGroupTap!(item)
-            : null,
-        initialText: draftTexts?[groupDraftKey] ?? '',
-        activeQuoteText: canWrite
-            ? _resolveActiveQuoteText(item, activeQuoteMessageId)
-            : null,
-        onDraftChanged: onDraftChanged != null
-            ? (text) => onDraftChanged!(groupDraftKey, text)
-            : null,
-        onQuoteReply: canWrite && onQuoteReply != null
-            ? (msgId) => onQuoteReply!('group:${item.groupId}', msgId)
-            : null,
-        onClearQuote: canWrite && onClearQuote != null
-            ? () => onClearQuote!('group:${item.groupId}')
-            : null,
-        onAttach: canWrite && onGroupAttach != null
-            ? () => onGroupAttach!(item)
-            : null,
-        reactions: reactions,
-        reactionListenableForMessage: reactionListenableForMessage,
-        ownPeerId: userPeerId,
-        onMessageLongPress:
-            (canReact && onGroupReactionSelected != null) ||
-                (canWrite && onQuoteReply != null) ||
-                hasCopyableMessage
-            ? (message, bubbleContext) => _showGroupMessageContextOverlay(
-                context,
-                item,
-                message,
-                bubbleContext,
-              )
-            : null,
-        onReactionTap: onGroupReactionTap != null
-            ? (msgId, emoji) => onGroupReactionTap!(item.groupId, msgId, emoji)
-            : null,
-      );
-    }
-    if (item is ConnectionFeedItem) {
-      if (item.introducedBy != null && userPeerId != null) {
-        return IntroductionConnectionCard(
-          ownPeerId: userPeerId!,
-          ownUsername: username,
-          contactPeerId: item.contactPeerId,
-          contactUsername: item.contactUsername,
-          introducedBy: item.introducedBy!,
-          introducedByPeerId: item.introducedByPeerId,
-          onSendMessage: onSendMessage != null
-              ? () => onSendMessage!(item)
-              : null,
-          isBlocked: item.isBlocked,
-        );
-      }
-      return ConnectionCard(
-        contactPeerId: item.contactPeerId,
-        contactUsername: item.contactUsername,
-        contactAvatarPath: item.contactAvatarPath,
-        introducedBy: item.introducedBy,
-        onSendMessage: onSendMessage != null
-            ? () => onSendMessage!(item)
-            : null,
-        isBlocked: item.isBlocked,
-      );
-    }
-    if (item is ThreadFeedItem) {
-      final activeQuoteMessageId = activeQuoteMessageIds?[item.contactPeerId];
-      return FeedCard(
-        thread: item,
-        sessionReply: sessionReplies?.get(item.contactPeerId),
-        isExpanded: expandedCardId == item.id,
-        onToggleExpand: onToggleExpand != null
-            ? () => onToggleExpand!(item.id)
-            : null,
-        onInlineSend: onInlineSend != null
-            ? (text) => onInlineSend!(item.contactPeerId, text)
-            : null,
-        onViewFullConversation: onViewFullConversation != null
-            ? () => onViewFullConversation!(item.contactPeerId)
-            : null,
-        initialText: draftTexts?[item.contactPeerId] ?? '',
-        shouldRequestFocus: activeFocusPeerId == item.contactPeerId,
-        onDraftChanged: onDraftChanged != null
-            ? (text) => onDraftChanged!(item.contactPeerId, text)
-            : null,
-        onInputFocusChanged: onInputFocusChanged != null
-            ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
-            : null,
-        isEditingMessage: editingContactPeerId == item.contactPeerId,
-        onCancelEdit:
-            editingContactPeerId == item.contactPeerId && onCancelEdit != null
-            ? () => onCancelEdit!(item.contactPeerId)
-            : null,
-        activeQuoteText: _resolveActiveQuoteText(item, activeQuoteMessageId),
-        onQuoteReply: onQuoteReply != null
-            ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
-            : null,
-        onClearQuote: onClearQuote != null
-            ? () => onClearQuote!(item.contactPeerId)
-            : null,
-        onAttach: onAttach != null ? () => onAttach!(item.contactPeerId) : null,
-        reactions: reactions,
-        reactionListenableForMessage: reactionListenableForMessage,
-        ownPeerId: userPeerId,
-        onMessageLongPress:
-            onReactionSelected != null ||
-                onQuoteReply != null ||
-                onEditMessage != null ||
-                onDeleteMessage != null
-            ? (message, bubbleContext) => _showMessageContextOverlay(
-                context,
-                item,
-                message,
-                bubbleContext,
-              )
-            : null,
-        onReactionTap: onReactionSelected != null
-            ? (msgId, emoji) => onReactionSelected!(msgId, emoji)
-            : null,
+    final threadId = _threadIdFor(item);
+    final isFocused = threadId != null && threadId == widget.focusedId;
+    // Any card is collapsed when SOME other card is focused.
+    final collapsed = _isFocused && !isFocused;
+
+    Widget card = _buildLetterCard(context, item, focused: isFocused);
+
+    // 134-P6: wrap each (un-collapsed) letter card in the swipe host. Removal is
+    // STORE-DRIVEN (markCleared → re-projection drops the item), so FeedSwipeCard
+    // springs back rather than removing the widget itself. Skip the wrapper when
+    // collapsed (the body becomes a 0-height box — nothing to swipe).
+    if (threadId != null && !collapsed) {
+      // A freshly-scanned contact who has messaged renders BOTH a "connection"
+      // system card AND a 1:1 thread card, sharing the same bare peerId. Qualify
+      // the swipe-clear id by kind (connection: vs bare/group:) so the cleared
+      // watermark targets the RIGHT row and only the swiped card disappears.
+      final swipeThreadId = item is ConnectionFeedItem
+          ? 'connection:$threadId'
+          : threadId;
+      card = FeedSwipeCard(
+        key: ValueKey<String>('feed-swipe-$swipeThreadId'),
+        focused: isFocused,
+        reduceMotion: _reduceMotion,
+        onCommit: () => widget.onSwipeCommit?.call(swipeThreadId),
+        onDismissThread: () => _onCardDismiss(swipeThreadId),
+        onSwipeStart: () => widget.onCardSwipeActive?.call(true),
+        onSwipeEnd: () => widget.onCardSwipeActive?.call(false),
+        child: card,
       );
     }
 
+    // Collapse + fade non-focused siblings (134 §8).
+    final body = AnimatedOpacity(
+      opacity: collapsed ? 0.0 : 1.0,
+      duration: _motion(const Duration(milliseconds: 220)),
+      curve: Curves.easeOut,
+      child: AnimatedSize(
+        duration: _motion(const Duration(milliseconds: 220)),
+        curve: Curves.easeOut,
+        alignment: Alignment.topCenter,
+        child: collapsed
+            ? const SizedBox(width: double.infinity, height: 0)
+            : card,
+      ),
+    );
+
+    if (threadId == null) return body;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        if (isFocused) return;
+        widget.onFocusCard?.call(threadId);
+      },
+      child: body,
+    );
+  }
+
+  /// Handles a swipe-LEFT dismiss: marks the thread cleared (read-state
+  /// untouched). Removal is SILENT — no "Removed …" Undo SnackBar (the user
+  /// found it intrusive / sticky). The cleared watermark still hides the card;
+  /// the store-level undo (`clearClearedLocally`) remains available, just no
+  /// longer surfaced via a snackbar.
+  void _onCardDismiss(String threadId) {
+    widget.onSwipeDismiss?.call(threadId);
+  }
+
+  Widget _buildLetterCard(
+    BuildContext context,
+    FeedItem item, {
+    required bool focused,
+  }) {
+    final body = _buildLetterCardBody(context, item, focused: focused);
+    if (!focused) return body;
+    // A focused thread gets a top-of-column header (back affordance + identity)
+    // above its message body, and the "open full conversation" link CENTERED at
+    // the very END of the column (below the bubbles + any sent replies).
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildFocusedHeader(context, item),
+        body,
+        _buildOpenConversationLink(context, item),
+      ],
+    );
+  }
+
+  Widget _buildLetterCardBody(
+    BuildContext context,
+    FeedItem item, {
+    required bool focused,
+  }) {
+    if (item is GroupThreadFeedItem) {
+      return _withSessionReplies(
+        context,
+        threadId: 'group:${item.groupId}',
+        focused: focused,
+        card: LetterCardGroup(
+          letter: GroupLetter.fromThread(item),
+          focused: focused,
+        ),
+      );
+    }
+    if (item is ConnectionFeedItem) {
+      final boundSend = widget.onSendMessage != null
+          ? () => widget.onSendMessage!(item)
+          : null;
+      return _withSessionReplies(
+        context,
+        threadId: item.contactPeerId,
+        focused: focused,
+        card: LetterCardSystem(
+          letter: SystemLetter.fromConnection(item),
+          onSendMessage: boundSend,
+        ),
+      );
+    }
+    if (item is ThreadFeedItem) {
+      return _withSessionReplies(
+        context,
+        threadId: item.contactPeerId,
+        focused: focused,
+        card: LetterCardOneToOne(
+          letter: OneToOneLetter.fromThread(item),
+          focused: focused,
+        ),
+      );
+    }
     throw ArgumentError.value(
       item,
       'item',
@@ -831,20 +664,50 @@ class FeedScreen extends StatelessWidget {
     );
   }
 
-  String? _resolveActiveQuoteText(
-    CardThreadFeedItem item,
-    String? activeQuoteMessageId,
-  ) {
-    if (activeQuoteMessageId == null) return null;
+  /// Appends the current focus session's outgoing replies under [card] as
+  /// green outgoing bubbles (append-stay) and renders a tappable retry
+  /// affordance for any failed/pending one (never-silent send, TC-22 / TC-30).
+  Widget _withSessionReplies(
+    BuildContext context, {
+    required String threadId,
+    required bool focused,
+    required Widget card,
+  }) {
+    final replies = widget.sessionReplies[threadId];
+    if (replies == null || replies.isEmpty) return card;
 
-    final quoted = item.messages
-        .where((message) => message.id == activeQuoteMessageId)
-        .firstOrNull;
-    if (quoted == null) return 'Message unavailable';
-    if (quoted.isDeleted) return 'Message unavailable';
-    if (quoted.text.isNotEmpty) return quoted.text;
-    if (quoted.media.isNotEmpty) return mediaPreviewText(quoted.media);
-    return 'Message unavailable';
+    final tokens = context.feedTokens;
+    final l10n = AppLocalizations.of(context)!;
+    final bubbles = <Widget>[];
+    for (final reply in replies) {
+      bubbles.add(SizedBox(height: tokens.space3 * 0.5));
+      bubbles.add(
+        LetterBubble(text: reply.text, role: LetterBubbleRole.outgoing),
+      );
+      if (reply.failed) {
+        bubbles.add(SizedBox(height: tokens.space3 * 0.25));
+        bubbles.add(
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              key: ValueKey('feed-retry-${reply.messageId}'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () => widget.onRetrySend?.call(threadId, reply),
+              child: Text(
+                l10n.feed_tap_to_retry,
+                style: tokens.textMeta.copyWith(color: tokens.green500),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [card, ...bubbles],
+    );
   }
 }
 
@@ -854,8 +717,6 @@ class _FeedScrollableContent extends StatefulWidget {
   final List<_FeedEntry> entries;
   final Widget loadingSliver;
   final Widget Function(BuildContext context, _FeedEntry entry) entryBuilder;
-  final String? pendingViewportFollowContactPeerId;
-  final int viewportFollowRequestId;
 
   const _FeedScrollableContent({
     required this.horizontalPadding,
@@ -863,8 +724,6 @@ class _FeedScrollableContent extends StatefulWidget {
     required this.entries,
     required this.loadingSliver,
     required this.entryBuilder,
-    this.pendingViewportFollowContactPeerId,
-    this.viewportFollowRequestId = 0,
   });
 
   @override
@@ -873,182 +732,11 @@ class _FeedScrollableContent extends StatefulWidget {
 
 class _FeedScrollableContentState extends State<_FeedScrollableContent> {
   final ScrollController _scrollController = ScrollController();
-  final GlobalKey _viewportKey = GlobalKey();
-  final Map<String, GlobalKey> _threadCardKeys = <String, GlobalKey>{};
-
-  GlobalKey _threadCardKey(String itemId) {
-    return _threadCardKeys.putIfAbsent(
-      itemId,
-      () => GlobalKey(debugLabel: 'feed-thread-$itemId'),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _FeedScrollableContent oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.viewportFollowRequestId == oldWidget.viewportFollowRequestId) {
-      return;
-    }
-    final contactPeerId = widget.pendingViewportFollowContactPeerId;
-    if (contactPeerId == null) {
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _reorientToThreadCard(contactPeerId);
-    });
-  }
-
-  Future<void> _reorientToThreadCard(String contactPeerId) async {
-    final target = _targetThreadForContact(contactPeerId);
-    if (target == null) {
-      return;
-    }
-
-    final directContext = _threadCardKeys[target.id]?.currentContext;
-    if (directContext != null) {
-      await _ensureVisible(directContext);
-      return;
-    }
-
-    if (!_scrollController.hasClients) {
-      return;
-    }
-
-    final estimatedOffset = _estimatedOffsetForIndex(target.index);
-    await _scrollController.animateTo(
-      estimatedOffset,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-    );
-
-    if (!mounted) return;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final mountedContext = _threadCardKeys[target.id]?.currentContext;
-      if (mountedContext == null) {
-        return;
-      }
-      _ensureVisible(mountedContext);
-    });
-  }
-
-  Future<void> _ensureVisible(BuildContext context) {
-    return Scrollable.ensureVisible(
-      context,
-      alignment: 0.18,
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-    );
-  }
-
-  ({String id, int index})? _targetThreadForContact(String contactPeerId) {
-    for (var index = 0; index < widget.entries.length; index++) {
-      final item = widget.entries[index].item;
-      if (item is ThreadFeedItem && item.contactPeerId == contactPeerId) {
-        return (id: item.id, index: index);
-      }
-    }
-    return null;
-  }
-
-  double _estimatedOffsetForIndex(int targetIndex) {
-    final position = _scrollController.position;
-    final anchors = _visibleThreadAnchors();
-    final estimatedEntryExtent = _estimatedEntryExtent(anchors);
-    final nearestAnchor = anchors.isEmpty
-        ? null
-        : anchors.reduce(
-            (best, candidate) =>
-                (candidate.index - targetIndex).abs() <
-                    (best.index - targetIndex).abs()
-                ? candidate
-                : best,
-          );
-    final rawOffset =
-        ((nearestAnchor?.absoluteOffset ?? position.pixels) +
-            ((targetIndex - (nearestAnchor?.index ?? 0)) *
-                estimatedEntryExtent)) -
-        (position.viewportDimension * 0.18);
-    return rawOffset
-        .clamp(position.minScrollExtent, position.maxScrollExtent)
-        .toDouble();
-  }
-
-  List<({int index, double absoluteOffset})> _visibleThreadAnchors() {
-    if (!_scrollController.hasClients) {
-      return const [];
-    }
-    final viewportContext = _viewportKey.currentContext;
-    final viewportRenderObject = viewportContext?.findRenderObject();
-    if (viewportRenderObject is! RenderBox) {
-      return const [];
-    }
-
-    final anchors = <({int index, double absoluteOffset})>[];
-    for (var index = 0; index < widget.entries.length; index++) {
-      final item = widget.entries[index].item;
-      if (item is! ThreadFeedItem) {
-        continue;
-      }
-      final context = _threadCardKeys[item.id]?.currentContext;
-      if (context == null) {
-        continue;
-      }
-      final renderObject = context.findRenderObject();
-      if (renderObject is! RenderBox || !renderObject.hasSize) {
-        continue;
-      }
-      final relativeTop = renderObject.localToGlobal(
-        Offset.zero,
-        ancestor: viewportRenderObject,
-      );
-      anchors.add((
-        index: index,
-        absoluteOffset: _scrollController.position.pixels + relativeTop.dy,
-      ));
-    }
-    anchors.sort((a, b) => a.index.compareTo(b.index));
-    return anchors;
-  }
-
-  double _estimatedEntryExtent(
-    List<({int index, double absoluteOffset})> anchors,
-  ) {
-    if (anchors.length < 2) {
-      return 72;
-    }
-
-    final perIndexExtents = <double>[];
-    for (var index = 1; index < anchors.length; index++) {
-      final previous = anchors[index - 1];
-      final current = anchors[index];
-      final deltaIndex = current.index - previous.index;
-      if (deltaIndex <= 0) {
-        continue;
-      }
-      perIndexExtents.add(
-        (current.absoluteOffset - previous.absoluteOffset) / deltaIndex,
-      );
-    }
-
-    if (perIndexExtents.isEmpty) {
-      return 72;
-    }
-
-    final averageExtent =
-        perIndexExtents.reduce((sum, extent) => sum + extent) /
-        perIndexExtents.length;
-    return averageExtent.clamp(48, 180).toDouble();
-  }
 
   int? _findFeedEntryIndex(Key key) {
     if (key is! ValueKey<String>) {
       return null;
     }
-
     for (var index = 0; index < widget.entries.length; index++) {
       final entry = widget.entries[index];
       if (entry.item?.id == key.value) {
@@ -1064,13 +752,7 @@ class _FeedScrollableContentState extends State<_FeedScrollableContent> {
     if (item == null) {
       return child;
     }
-
-    Widget wrappedChild = child;
-    if (item is ThreadFeedItem) {
-      wrappedChild = SizedBox(key: _threadCardKey(item.id), child: child);
-    }
-
-    return KeyedSubtree(key: ValueKey<String>(item.id), child: wrappedChild);
+    return KeyedSubtree(key: ValueKey<String>(item.id), child: child);
   }
 
   @override
@@ -1092,85 +774,48 @@ class _FeedScrollableContentState extends State<_FeedScrollableContent> {
             ),
           );
 
-    return SizedBox(
-      key: _viewportKey,
-      child: CustomScrollView(
-        key: const PageStorageKey<String>('feed-scroll'),
-        controller: _scrollController,
-        physics: const BouncingScrollPhysics(),
-        cacheExtent: 1200,
-        slivers: [
-          SliverPadding(
-            padding: EdgeInsets.only(
-              left: widget.horizontalPadding,
-              right: widget.horizontalPadding,
-              bottom: 60 + widget.bottomInset,
-            ),
-            sliver: sliver,
+    return CustomScrollView(
+      key: const PageStorageKey<String>('feed-scroll'),
+      controller: _scrollController,
+      physics: const BouncingScrollPhysics(),
+      cacheExtent: 1200,
+      slivers: [
+        SliverPadding(
+          // 134-P5 (TC-19b): clear the floating composer / nav bar so the last
+          // card is never hidden behind them.
+          padding: EdgeInsets.only(
+            left: widget.horizontalPadding,
+            right: widget.horizontalPadding,
+            bottom: 170 + widget.bottomInset,
           ),
-        ],
-      ),
+          sliver: sliver,
+        ),
+      ],
     );
   }
 }
 
-enum _FeedEntryType { item, sessionDivider, spacer, emptyState }
+enum _FeedEntryType { item, spacer, emptyState }
 
 @immutable
 class _FeedEntry {
   final _FeedEntryType type;
   final FeedItem? item;
   final double? height;
-  final String? username;
 
   const _FeedEntry._({
     required this.type,
     this.item,
     this.height,
-    this.username,
   });
 
   const _FeedEntry.item(FeedItem item)
     : this._(type: _FeedEntryType.item, item: item);
 
-  const _FeedEntry.sessionDivider()
-    : this._(type: _FeedEntryType.sessionDivider);
-
   const _FeedEntry.spacer({required double height})
     : this._(type: _FeedEntryType.spacer, height: height);
 
-  const _FeedEntry.emptyState({required String username})
-    : this._(type: _FeedEntryType.emptyState, username: username);
-}
-
-class _EmptyFeedStateCard extends StatelessWidget {
-  final String username;
-
-  const _EmptyFeedStateCard({required this.username});
-
-  @override
-  Widget build(BuildContext context) {
-    final readableColors = context.backgroundReadableColors;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        color: readableColors.surfaceRaised,
-        border: Border.all(color: readableColors.border),
-      ),
-      child: Text(
-        AppLocalizations.of(context)!.feed_ready_for_user(username),
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: readableColors.textSecondary,
-          fontSize: 15,
-          height: 1.35,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
+  const _FeedEntry.emptyState() : this._(type: _FeedEntryType.emptyState);
 }
 
 class _FeedLoadingCard extends StatelessWidget {

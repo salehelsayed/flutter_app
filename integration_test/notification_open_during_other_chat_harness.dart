@@ -374,6 +374,20 @@ Future<void> _handleNotificationRouteTarget({
     case NotificationRouteTargetKind.conversation:
       final peerId = routeTarget.peerId!;
       final label = labels.labelFor(peerId);
+      // 139: mirror production E2's already-active guard. When Alice taps a
+      // fresh notification for a peer whose 1:1 chat is already the active
+      // (backgrounded) screen, production skips the push; replicate it here so
+      // the harness stays faithful. `deps.conversationTracker` is the same
+      // instance ConversationWired keeps current via setActive/clearIfActive,
+      // so this is the real production decision path, not a stub.
+      if (isNotificationRouteTargetAlreadyActive(
+        routeTarget: routeTarget,
+        groupConversationTracker: ActiveConversationTracker(),
+        conversationTracker: deps.conversationTracker,
+      )) {
+        trace.add('conversation-already-active:$label');
+        return;
+      }
       // Mirrors lib/main.dart's `_openConversationForContact`: looks up
       // the contact, then pushes the slide-up route. If the contact is
       // missing, production silently returns — replicated here.
@@ -959,6 +973,94 @@ void _runAlice() {
       };
       _signals.writeJson('alice_cold_start_verdict', coldStartVerdict);
       print('[ALICE-NO] Cold-start verdict: $coldStartVerdict');
+
+      // ── Same-peer no-duplicate variant (Report 139) ───────────────────
+      //
+      // Bug 139: Alice is ALREADY viewing Bob's chat (app backgrounded), Bob
+      // sends, Alice taps Bob's notification. The fix must NOT push a second
+      // Bob conversation — the existing screen stays mounted and re-fetches
+      // the new message on resume. Reuses Bob's already-delivered notification
+      // (no second send needed); the bug is a single, correct tap.
+      print('\n[ALICE-NO] ──── Same-peer no-duplicate variant (139) ────');
+      navigator.popUntil((route) => route.isFirst);
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await tester.pump();
+      }
+
+      // Alice opens BOB's conversation (the peer the notification is for).
+      chatConversationTracker.setActive(bobPeerId);
+      final bobContact = await stack.contactRepo.getContact(bobPeerId);
+      _navigatorKey.currentState!.push(
+        buildConversationRoute<void>(
+          settings: const RouteSettings(name: 'conversation:user-b'),
+          builder: (_) => _LabeledConversationHost(
+            label: 'user-b',
+            contact: bobContact!,
+            deps: convDeps,
+          ),
+        ),
+      );
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await tester.pump();
+      }
+
+      // Count pushes of Bob's route across the whole observer log; only the
+      // delta across the tap matters (cumulative absolute count is fine).
+      int bobPushCount() => _navObserver.events
+          .where(
+            (e) => e['op'] == 'push' && e['route'] == 'conversation:user-b',
+          )
+          .length;
+      final bobPushesBeforeTap = bobPushCount();
+      final traceLenBeforeSamePeerTap = trace.length;
+
+      // Logical background → resume → tap (mirrors the warm path above).
+      await setLogicalLifecycle(AppLifecycleState.inactive);
+      await setLogicalLifecycle(AppLifecycleState.hidden);
+      await setLogicalLifecycle(AppLifecycleState.paused);
+      await setLogicalLifecycle(AppLifecycleState.hidden);
+      await setLogicalLifecycle(AppLifecycleState.inactive);
+      await setLogicalLifecycle(AppLifecycleState.resumed);
+
+      print('[ALICE-NO] Same-peer: tapping Bob notification while in Bob chat');
+      notificationService.onNotificationTap?.call(tapPayload);
+      for (var i = 0; i < 50; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+      }
+
+      final bobPushesAfterTap = bobPushCount();
+      final bobRouteCount = find
+          .byKey(
+            const ValueKey('alice-conversation-user-b'),
+            skipOffstage: false,
+          )
+          .evaluate()
+          .length;
+      final samePeerGuardTrace = trace
+          .sublist(traceLenBeforeSamePeerTap)
+          .where((t) => t.startsWith('conversation-already-active:'))
+          .toList();
+
+      final samePeerVerdict = <String, dynamic>{
+        'phase': 'same-peer-no-duplicate',
+        'bobPushesBeforeTap': bobPushesBeforeTap,
+        'bobPushesAfterTap': bobPushesAfterTap,
+        'bobRouteCount': bobRouteCount,
+        'guardTrace': samePeerGuardTrace,
+        // Expected with the fix: the tap pushes NO second route and leaves
+        // exactly one Bob chat, and the already-active guard fired.
+        'programmaticPass':
+            bobPushesAfterTap == bobPushesBeforeTap &&
+            bobRouteCount == 1 &&
+            samePeerGuardTrace.isNotEmpty,
+        // Bug repro (no guard): the tap stacks a second Bob route.
+        'reproducedBug': bobPushesAfterTap > bobPushesBeforeTap,
+      };
+      _signals.writeJson('alice_same_peer_verdict', samePeerVerdict);
+      print('[ALICE-NO] Same-peer verdict: $samePeerVerdict');
 
       // ── Done ──────────────────────────────────────────────────────────
       await _signals.waitForSignal(

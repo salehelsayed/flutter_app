@@ -235,6 +235,93 @@ void main() {
         isFalse,
       );
     });
+
+    // ── Report 139: 1:1 conversation already-active guard ────────────────
+    // Mirrors the group guard above so a notification tap for a peer whose
+    // conversation is already open does not push a second ConversationWired.
+    test(
+      'active 1:1 conversation route is skipped when its tracker is viewing that peer',
+      () {
+        final conv = ActiveConversationTracker()..setActive('peer-123');
+
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.conversation('peer-123'),
+            groupConversationTracker: ActiveConversationTracker(),
+            conversationTracker: conv,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      '1:1 conversation route is NOT skipped for a different peer or a null tracker',
+      () {
+        final conv = ActiveConversationTracker()..setActive('peer-123');
+
+        // Different peer than the one being viewed → still push (non-vacuity:
+        // proves the GREEN above is peer-specific, not "always true").
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.conversation('peer-999'),
+            groupConversationTracker: ActiveConversationTracker(),
+            conversationTracker: conv,
+          ),
+          isFalse,
+        );
+
+        // Null 1:1 tracker (no conversation open) → push, no crash.
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.conversation('peer-123'),
+            groupConversationTracker: ActiveConversationTracker(),
+            conversationTracker: null,
+          ),
+          isFalse,
+        );
+
+        // Backward-compat: the group-only call (no conversationTracker arg,
+        // as the group case at main.dart still uses) treats a conversation
+        // target as not-active. Keeps every existing caller compiling.
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.conversation('peer-123'),
+            groupConversationTracker: ActiveConversationTracker(),
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'group already-active guard is unchanged when the 1:1 tracker is also supplied',
+      () {
+        final groupTracker = ActiveConversationTracker()
+          ..setActive('group:group-123');
+        final conv = ActiveConversationTracker()..setActive('peer-123');
+
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.group(
+              'group-123',
+              messageId: 'm',
+            ),
+            groupConversationTracker: groupTracker,
+            conversationTracker: conv,
+          ),
+          isTrue,
+        );
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.group('group-456'),
+            groupConversationTracker: groupTracker,
+            conversationTracker: conv,
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 }
 

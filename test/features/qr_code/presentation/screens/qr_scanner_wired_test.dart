@@ -27,6 +27,7 @@ import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_contact_repository.dart';
+import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
@@ -138,6 +139,7 @@ void main() {
         mediaFileManager: mediaFileManager,
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
+        feedClearedRepository: InMemoryFeedClearedRepository(),
         ownPeerId: ownPeerId,
         onMigrationQrScanned: onMigrationQrScanned,
         accountMigrationRunTransfer: accountMigrationRunTransfer,

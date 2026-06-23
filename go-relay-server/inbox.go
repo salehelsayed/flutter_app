@@ -41,6 +41,16 @@ const (
 	groupInvitePushBody        = "Open Mknoon to review"
 	introPushNotificationTitle = "New Introduction"
 	introPushNotificationBody  = "Open Mknoon to review"
+
+	// maxPushDataBytes caps the assembled FCM `data` payload. FCM rejects any
+	// message whose data exceeds 4096 bytes with "Message is too large. The
+	// maximum is 4K (4096 bytes)"; a media envelope's encrypted descriptor
+	// (ciphertext) plus the ~1.4 KB base64 ML-KEM `kem` pushes a silent
+	// ciphertext-only push past that limit, so an offline media recipient gets
+	// NO notification at all. When the assembled data would exceed this budget
+	// we drop the encrypted fields and emit a visible generic fallback instead.
+	// 4000 leaves headroom under FCM's 4096 for SDK/wire overhead.
+	maxPushDataBytes = 4000
 )
 
 func defaultPushRetryDelays() []time.Duration {
@@ -282,6 +292,20 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			data["message_id"] = metadata.MessageID
 		}
 		addChatEncryptedPushData(data, message)
+		if pushDataSize(data) > maxPushDataBytes {
+			// Oversized media envelope: FCM would reject the silent ciphertext-only
+			// push (>4 KB). Drop the encrypted payload, keep only routing, and emit a
+			// visible generic fallback so the offline recipient is still alerted.
+			fallback := map[string]string{
+				"type":                "new_message",
+				"sender_id":           fromPeerId,
+				"preview_unavailable": "1",
+			}
+			if metadata.MessageID != "" {
+				fallback["message_id"] = metadata.MessageID
+			}
+			return buildOversizedFallbackPushMessage(token, fallback, fromPeerId)
+		}
 		return buildCiphertextOnlyPushMessage(token, data, fromPeerId)
 	}
 
@@ -380,6 +404,19 @@ func buildGroupPushMessage(token, groupId, messageID, message string) *messaging
 		data["message_id"] = messageID
 	}
 	addGroupEncryptedPushData(data, message)
+	if pushDataSize(data) > maxPushDataBytes {
+		// Oversized group media envelope: same as the 1:1 path — drop the encrypted
+		// payload, keep only routing, emit a visible generic fallback under budget.
+		fallback := map[string]string{
+			"type":                "group_message",
+			"groupId":             groupId,
+			"preview_unavailable": "1",
+		}
+		if data["message_id"] != "" {
+			fallback["message_id"] = data["message_id"]
+		}
+		return buildOversizedFallbackPushMessage(token, fallback, groupId)
+	}
 
 	return buildCiphertextOnlyPushMessage(token, data, groupId)
 }
@@ -403,6 +440,77 @@ func buildCiphertextOnlyPushMessage(token string, data map[string]string, thread
 		Data:  data,
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
+		},
+		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				"apns-priority":  "10",
+				"apns-push-type": "alert",
+			},
+			Payload: &messaging.APNSPayload{
+				Aps:        aps,
+				CustomData: apnsCustomDataFromPushData(data),
+			},
+		},
+	}
+}
+
+// pushDataSize returns the byte size of the assembled FCM `data` map, counting
+// both keys and values. FCM measures the whole data payload against its 4096
+// byte limit, so the budget check must include keys, not just values.
+func pushDataSize(data map[string]string) int {
+	total := 0
+	for key, value := range data {
+		total += len(key) + len(value)
+	}
+	return total
+}
+
+// buildOversizedFallbackPushMessage builds a VISIBLE, under-budget notification
+// for a push whose encrypted payload would exceed maxPushDataBytes (e.g. a media
+// envelope). The caller has already trimmed `data` down to minimal routing keys
+// (+ preview_unavailable="1"); here we attach generic, content-free copy to the
+// FCM/Android/APNS notification blocks so the offline recipient is alerted and
+// the client fetches the real message from the inbox on open. Unlike the silent
+// ciphertext-only push, there is nothing to decrypt, so MutableContent stays off
+// and the generic alert is shown directly.
+func buildOversizedFallbackPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
+	// Defensive clamp: the routing-only fallback must itself stay under budget.
+	// message_id is copied from the remote-supplied envelope (id/messageId), so a
+	// pathologically large id could keep the fallback oversized and re-trigger the
+	// FCM rejection. Drop it if needed — routing by sender_id/groupId (server-bounded
+	// peer/group identifiers) still alerts the recipient, so INV-1 holds unconditionally.
+	if pushDataSize(data) > maxPushDataBytes {
+		delete(data, "message_id")
+	}
+
+	pushSentCounter.WithLabelValues("oversized_fallback").Inc()
+
+	aps := &messaging.Aps{
+		ContentAvailable: true,
+		Sound:            pushNotificationSound,
+		Alert: &messaging.ApsAlert{
+			Title: pushNotificationTitle,
+			Body:  pushNotificationBody,
+		},
+	}
+	if threadID != "" {
+		aps.ThreadID = threadID
+	}
+
+	return &messaging.Message{
+		Token: token,
+		Notification: &messaging.Notification{
+			Title: pushNotificationTitle,
+			Body:  pushNotificationBody,
+		},
+		Data: data,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+			Notification: &messaging.AndroidNotification{
+				Title:     pushNotificationTitle,
+				Body:      pushNotificationBody,
+				ChannelID: pushNotificationChannelID,
+			},
 		},
 		APNS: &messaging.APNSConfig{
 			Headers: map[string]string{

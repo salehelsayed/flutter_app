@@ -5,9 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/expanded_compose_input.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -46,37 +43,8 @@ void main() {
       );
       expect(quoteText.textDirection, TextDirection.rtl);
 
-      await tester.pumpWidget(
-        wrapScrollable(
-          const MessageBubble(
-            text: rtlMixed,
-            time: '3:00 PM',
-            isIncoming: false,
-            senderLabel: 'You',
-            quotedText: ltrMixed,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      final bubbleRichText = tester.widget<RichText>(
-        find.descendant(
-          of: find.byType(LinkableText),
-          matching: find.byType(RichText),
-        ),
-      );
-      expect(bubbleRichText.textDirection, TextDirection.rtl);
-
-      final bubbleQuoteText = tester
-          .widgetList<Text>(
-            find.descendant(
-              of: find.byType(MessageBubble),
-              matching: find.byType(Text),
-            ),
-          )
-          .firstWhere((textWidget) => textWidget.data == ltrMixed);
-      expect(bubbleQuoteText.textDirection, TextDirection.ltr);
-
+      // 134-P8: the feed's MessageBubble was removed in the feed redesign;
+      // conversation's LetterCard now carries the bidi bubble coverage below.
       await tester.pumpWidget(
         wrapScrollable(
           const LetterCard(
@@ -143,48 +111,8 @@ void main() {
       TextDirection.ltr,
     );
 
-    await tester.pumpWidget(wrapApp(InlineReplyInput(onSend: (_) {})));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextField), rtlMixed);
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).textDirection,
-      TextDirection.rtl,
-    );
-
-    await tester.enterText(find.byType(TextField), ltrMixed);
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).textDirection,
-      TextDirection.ltr,
-    );
-
-    await tester.pumpWidget(
-      wrapApp(
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: 350,
-            child: ExpandedComposeInput(onSend: (_) {}),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextField), rtlMixed);
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).textDirection,
-      TextDirection.rtl,
-    );
-
-    await tester.enterText(find.byType(TextField), ltrMixed);
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).textDirection,
-      TextDirection.ltr,
-    );
+    // 134-P8: the feed's InlineReplyInput / ExpandedComposeInput were removed in
+    // the feed redesign (the single screen-level FeedComposer replaced them).
+    // ComposeArea above retains the live bidi-direction compose coverage.
   });
 }

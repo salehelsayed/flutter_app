@@ -1408,12 +1408,6 @@ abstract class AppLocalizations {
   /// **'You'**
   String get feed_you;
 
-  /// No description provided for @feed_you_replied.
-  ///
-  /// In en, this message translates to:
-  /// **'You replied {time}'**
-  String feed_you_replied(String time);
-
   /// No description provided for @settings_photo_quality.
   ///
   /// In en, this message translates to:
@@ -3440,29 +3434,23 @@ abstract class AppLocalizations {
   /// **'Introduced by {username}'**
   String feed_introduced_by(String username);
 
-  /// No description provided for @feed_previously_seen.
-  ///
-  /// In en, this message translates to:
-  /// **'PREVIOUSLY SEEN'**
-  String get feed_previously_seen;
-
   /// No description provided for @feed_replying_to.
   ///
   /// In en, this message translates to:
   /// **'Replying to'**
   String get feed_replying_to;
 
-  /// No description provided for @feed_view_earlier_messages.
-  ///
-  /// In en, this message translates to:
-  /// **'View earlier messages'**
-  String get feed_view_earlier_messages;
-
   /// No description provided for @feed_ready_for_user.
   ///
   /// In en, this message translates to:
   /// **'Your feed is ready, @{username}. New connections will appear here.'**
   String feed_ready_for_user(String username);
+
+  /// 134 Feed redesign: the caught-up empty state shown when the pending-reply inbox has zero items and the feed has finished loading.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re all caught up'**
+  String get feed_all_caught_up;
 
   /// No description provided for @feed_loading.
   ///
@@ -3475,6 +3463,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your recent threads are still syncing.'**
   String get feed_syncing_threads;
+
+  /// 134 Feed redesign: composer placeholder for replying to a 1:1 or group thread.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply to {name}…'**
+  String feed_reply_to_name(String name);
+
+  /// 134 Feed redesign: composer placeholder for messaging a freshly-connected contact.
+  ///
+  /// In en, this message translates to:
+  /// **'Message {name}…'**
+  String feed_message_name(String name);
+
+  /// 134 Feed redesign: composer placeholder shown after at least one reply has been sent in the current focus session.
+  ///
+  /// In en, this message translates to:
+  /// **'Add another…'**
+  String get feed_add_another;
+
+  /// 134 Feed redesign: affordance above the composer that opens the full conversation for the focused thread.
+  ///
+  /// In en, this message translates to:
+  /// **'Open full conversation'**
+  String get feed_open_full_conversation;
+
+  /// 134 Feed redesign: retry affordance under a failed outgoing session reply (never-silent send).
+  ///
+  /// In en, this message translates to:
+  /// **'tap to retry'**
+  String get feed_tap_to_retry;
+
+  /// 134 Feed redesign: SnackBar body shown when a card is swipe-dismissed, naming the removed thread.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed {name}'**
+  String feed_removed_undo(String name);
+
+  /// 134 Feed redesign: SnackBarAction label that restores a swipe-dismissed card.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get feed_undo;
+
+  /// 134 Feed redesign: bubble copy on a system connection/introduction card inviting the user to start the conversation.
+  ///
+  /// In en, this message translates to:
+  /// **'tap to say hi'**
+  String get feed_tap_to_say_hi;
+
+  /// 134 Feed redesign: muted label on a system card for a plain new connection (vs an introduction).
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get feed_connected;
 
   /// No description provided for @qr_added_to_circle.
   ///
@@ -4100,6 +4142,12 @@ abstract class AppLocalizations {
   /// **'Orbit2'**
   String get nav_orbit2;
 
+  /// No description provided for @nav_orbit3.
+  ///
+  /// In en, this message translates to:
+  /// **'Orbit3'**
+  String get nav_orbit3;
+
   /// No description provided for @orbit2_prototype_chip.
   ///
   /// In en, this message translates to:
@@ -4153,6 +4201,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Tiered'**
   String get orbit2_template_tiered;
+
+  /// No description provided for @orbit2_template_unified.
+  ///
+  /// In en, this message translates to:
+  /// **'One Circle'**
+  String get orbit2_template_unified;
 
   /// No description provided for @orbit2_mock_chat_demo_chip.
   ///

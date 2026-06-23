@@ -779,11 +779,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get feed_you => 'أنت';
 
   @override
-  String feed_you_replied(String time) {
-    return 'رددت $time';
-  }
-
-  @override
   String get settings_photo_quality => 'جودة الصورة';
 
   @override
@@ -2081,13 +2076,7 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get feed_previously_seen => 'شوهد سابقًا';
-
-  @override
   String get feed_replying_to => 'ردًا على';
-
-  @override
-  String get feed_view_earlier_messages => 'عرض الرسائل السابقة';
 
   @override
   String feed_ready_for_user(String username) {
@@ -2095,10 +2084,46 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get feed_all_caught_up => 'أنت على اطلاع بكل الجديد';
+
+  @override
   String get feed_loading => 'جارٍ تحميل الموجز...';
 
   @override
   String get feed_syncing_threads => 'لا تزال محادثاتك الأخيرة قيد المزامنة.';
+
+  @override
+  String feed_reply_to_name(String name) {
+    return 'الرد على $name…';
+  }
+
+  @override
+  String feed_message_name(String name) {
+    return 'مراسلة $name…';
+  }
+
+  @override
+  String get feed_add_another => 'أضف رسالة أخرى…';
+
+  @override
+  String get feed_open_full_conversation => 'فتح المحادثة كاملة';
+
+  @override
+  String get feed_tap_to_retry => 'اضغط لإعادة المحاولة';
+
+  @override
+  String feed_removed_undo(String name) {
+    return 'تمت إزالة $name';
+  }
+
+  @override
+  String get feed_undo => 'تراجع';
+
+  @override
+  String get feed_tap_to_say_hi => 'اضغط للترحيب';
+
+  @override
+  String get feed_connected => 'متصل';
 
   @override
   String get qr_added_to_circle => 'تمت الإضافة إلى دائرتك!';
@@ -2497,6 +2522,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get nav_orbit2 => 'أوربت٢';
 
   @override
+  String get nav_orbit3 => 'أوربت٣';
+
+  @override
   String get orbit2_prototype_chip => 'نموذج · بيانات تجريبية';
 
   @override
@@ -2523,6 +2551,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get orbit2_template_tiered => 'طبقات';
+
+  @override
+  String get orbit2_template_unified => 'دائرة واحدة';
 
   @override
   String get orbit2_mock_chat_demo_chip => 'تجريبي · الرسائل لا تُرسل';

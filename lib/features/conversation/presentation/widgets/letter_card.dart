@@ -10,11 +10,33 @@ import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
+/// Fully-rounded outer corner radius for a bubble (136 Phase 2).
+const double kBubbleRadius = 18.0;
+
+/// Tightened "stacked" corner radius applied to the speaker-edge corners that
+/// join consecutive bubbles in the same run (WhatsApp/Signal grouped look).
+const double kBubbleStackRadius = 6.0;
+
+/// 137 follow-up: in group chats the run avatar renders in a left gutter
+/// OUTSIDE the bubble (WhatsApp/Signal). The gutter is reserved on EVERY
+/// incoming balloon of the run so they share one left edge; the avatar is
+/// painted only on the first balloon (the sender switch).
+const double kBubbleAvatarSize = 32.0;
+const double kBubbleAvatarGutterWidth = 40.0; // avatar (32) + 8px gap
+const double _kBubbleAvatarGutterTopInset = 2.0; // nudge avatar toward the name
+
 /// A full-width glassmorphic letter card for conversation messages.
 ///
 /// Both received and sent messages use the same card layout.
 /// Authorship is distinguished by accent edge (left=received, right=sent),
 /// background opacity, and text brightness.
+///
+/// When [bubbleLayout] is true the card renders as a side-aligned, width-capped
+/// chat balloon with position-aware stacked corner radii and (optionally)
+/// suppressed header chrome — used by the 1:1 and group conversation screens to
+/// group consecutive same-sender messages into a single run (136). All
+/// bubble-layout params are OPTIONAL with defaults that preserve the legacy
+/// full-width card, so existing call sites (incl. Feed wrappers) are untouched.
 class LetterCard extends StatelessWidget {
   final String senderPeerId;
   final String senderName;
@@ -46,6 +68,32 @@ class LetterCard extends StatelessWidget {
   /// groupId) for the render-boundary fallback to the durable owned copy.
   final String? ownedMediaPeerId;
 
+  /// 136 Phase 2: render as a side-aligned chat balloon instead of the legacy
+  /// full-width card. Defaults to false → exact legacy render preserved.
+  final bool bubbleLayout;
+
+  /// Whether this balloon is the FIRST message of its run (affects stacked
+  /// corner radii). Defaults true (a standalone balloon).
+  final bool isFirstInGroup;
+
+  /// Whether this balloon is the LAST message of its run (affects stacked
+  /// corner radii). Defaults true (a standalone balloon).
+  final bool isLastInGroup;
+
+  /// Whether to render the run avatar in the header (bubble layout only).
+  final bool showAvatar;
+
+  /// Whether to render the sender name in the header (bubble layout only).
+  final bool showSenderName;
+
+  /// 137 follow-up (bubble layout only): render the run avatar in a left gutter
+  /// OUTSIDE the bubble (group chats) instead of inside the header. When true a
+  /// fixed-width avatar gutter is reserved on every balloon of the run so they
+  /// share one left edge; the avatar itself is painted only when [showAvatar].
+  /// Defaults false → 1:1 / legacy render unchanged (avatar inside the header
+  /// when [showAvatar], or no avatar at all).
+  final bool avatarOutsideBubble;
+
   const LetterCard({
     super.key,
     required this.senderPeerId,
@@ -74,6 +122,12 @@ class LetterCard extends StatelessWidget {
     this.failedMediaActionKeySuffix,
     this.requireVerifiedContentHash = false,
     this.ownedMediaPeerId,
+    this.bubbleLayout = false,
+    this.isFirstInGroup = true,
+    this.isLastInGroup = true,
+    this.showAvatar = true,
+    this.showSenderName = true,
+    this.avatarOutsideBubble = false,
   });
 
   List<MediaAttachment> get _imageVideoMedia => media
@@ -96,6 +150,10 @@ class LetterCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final readableColors = context.backgroundReadableColors;
+
+    if (bubbleLayout) {
+      return _buildBubble(context, readableColors, l10n);
+    }
 
     return GestureDetector(
       onLongPress: onLongPress,
@@ -190,235 +248,12 @@ class LetterCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Header: avatar, name, transport
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-                      child: Row(
-                        children: [
-                          UserAvatar(peerId: senderPeerId, size: 32),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              senderName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: isIncoming
-                                    ? FontWeight.w600
-                                    : FontWeight.w500,
-                                color: isIncoming
-                                    ? readableColors.textPrimary
-                                    : readableColors.textSecondary,
-                              ),
-                            ),
-                          ),
-                          if (transport != null) ...[
-                            const SizedBox(width: 4),
-                            Icon(
-                              _transportIcon(transport!),
-                              size: 10,
-                              color: readableColors.iconMuted,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    // Quote bar (if quoting another message)
-                    if (quotedText != null || isQuoteUnavailable)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                        child: _buildQuoteBar(readableColors),
-                      ),
-                    // Media grid (images/videos)
-                    if (_imageVideoMedia.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-                        child: MediaGrid(
-                          media: _imageVideoMedia,
-                          onTap: onMediaTap,
-                          onRetryUnavailableMedia:
-                              onRetryUnavailableMedia != null
-                              ? (attachment) =>
-                                    onRetryUnavailableMedia!(attachment.id)
-                              : null,
-                          requireVerifiedContentHash:
-                              requireVerifiedContentHash,
-                          ownedMediaPeerId: ownedMediaPeerId,
-                        ),
-                      ),
-                    // Audio players
-                    for (final audio in _audioMedia)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                        child: AudioPlayerWidget(
-                          key: ValueKey(audio.id),
-                          attachment: audio,
-                          onRetryUnavailableMedia:
-                              onRetryUnavailableMedia != null
-                              ? () => onRetryUnavailableMedia!(audio.id)
-                              : null,
-                          requireVerifiedContentHash:
-                              requireVerifiedContentHash,
-                        ),
-                      ),
-                    // Body text (only if non-empty)
-                    if (text.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        child: isDeleted
-                            ? Text(
-                                text,
-                                textDirection: detectTextDirection(text),
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w400,
-                                  fontStyle: FontStyle.italic,
-                                  color: readableColors.textMuted,
-                                  height: 1.65,
-                                  letterSpacing: 0.2,
-                                ),
-                              )
-                            : LinkableText(
-                                text: text,
-                                textDirection: detectTextDirection(text),
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w400,
-                                  color: isIncoming
-                                      ? readableColors.textPrimary
-                                      : readableColors.textSecondary,
-                                  height: 1.65,
-                                  letterSpacing: 0.2,
-                                ),
-                              ),
-                      )
-                    else if (isDeleted)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        child: Text(
-                          l10n.conversation_message_deleted,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w400,
-                            fontStyle: FontStyle.italic,
-                            color: readableColors.textMuted,
-                            height: 1.65,
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                      )
-                    else if (media.isNotEmpty)
-                      const SizedBox(height: 12),
-                    if (_showsOutgoingMediaPendingNote)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                        child: _buildOutgoingMediaPendingNote(
-                          context,
-                          readableColors,
-                        ),
-                      ),
-                    if (onRetryFailedMessage != null ||
-                        onRetryFailedMedia != null ||
-                        onDeleteFailedMedia != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            if (onRetryFailedMessage != null)
-                              _buildFailedMessageAction(
-                                key: ValueKey(
-                                  'failed-message-retry-${failedMessageActionKeySuffix ?? 'message'}',
-                                ),
-                                icon: Icons.refresh_rounded,
-                                label: l10n.btn_retry,
-                                semanticLabel:
-                                    l10n.failed_message_retry_semantics,
-                                color: const Color(0xFF4ECDC4),
-                                onTap: onRetryFailedMessage!,
-                                enabled: isRetryFailedMessageEnabled,
-                              ),
-                            if (onRetryFailedMedia != null)
-                              _buildFailedMessageAction(
-                                key: ValueKey(
-                                  'failed-media-retry-${failedMediaActionKeySuffix ?? 'message'}',
-                                ),
-                                icon: Icons.refresh_rounded,
-                                label: l10n.btn_retry,
-                                semanticLabel:
-                                    l10n.failed_media_retry_semantics,
-                                color: const Color(0xFF4ECDC4),
-                                onTap: onRetryFailedMedia!,
-                              ),
-                            if (onDeleteFailedMedia != null)
-                              _buildFailedMessageAction(
-                                key: ValueKey(
-                                  'failed-media-delete-${failedMediaActionKeySuffix ?? 'message'}',
-                                ),
-                                icon: Icons.delete_outline_rounded,
-                                label: l10n.conversation_context_delete,
-                                semanticLabel:
-                                    l10n.failed_media_delete_semantics,
-                                color: const Color(0xFFFF8A80),
-                                onTap: onDeleteFailedMedia!,
-                              ),
-                          ],
-                        ),
-                      ),
-                    // Footer: inline reactions + timestamp + delivery status
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Expanded(
-                            child: (reactions.isNotEmpty && ownPeerId != null)
-                                ? Wrap(
-                                    spacing: 6,
-                                    runSpacing: 4,
-                                    children: _buildReactionChipWidgets(
-                                      readableColors,
-                                    ),
-                                  )
-                                : const SizedBox.shrink(),
-                          ),
-                          if (reactions.isNotEmpty && ownPeerId != null)
-                            const SizedBox(width: 8),
-                          Text(
-                            time,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w400,
-                              color: readableColors.textMuted,
-                            ),
-                          ),
-                          if (isEdited) ...[
-                            const SizedBox(width: 6),
-                            Text(
-                              l10n.conversation_edited_indicator,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w400,
-                                color: readableColors.textMuted,
-                              ),
-                            ),
-                          ],
-                          if (!isIncoming && status != null) ...[
-                            const SizedBox(width: 4),
-                            Semantics(
-                              label: l10n.message_status_semantics(
-                                _statusSemantic(context, status!),
-                              ),
-                              child: Icon(
-                                _statusIcon(status!),
-                                size: 14,
-                                color: _statusColor(status!, readableColors),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
+                    _buildHeader(readableColors),
+                    ..._buildBodyChildren(
+                      context,
+                      readableColors,
+                      l10n,
+                      bodyTopPad: 4,
                     ),
                   ],
                 ),
@@ -427,6 +262,533 @@ class LetterCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// The card header (avatar + sender name + transport icon).
+  ///
+  /// When [hug] is true (bubble layout) the header Row shrinks to fit its
+  /// content so the bubble hugs the name instead of stretching to the width
+  /// cap (137). The sender name then flexes LOOSELY (it still ellipsizes when
+  /// it would exceed the cap, but does not force full width). The legacy
+  /// full-width card keeps `hug: false`, where `Flexible(fit: tight)` is
+  /// exactly the prior `Expanded` (so its render is byte-for-byte unchanged).
+  Widget _buildHeader(
+    BackgroundReadableColors readableColors, {
+    bool hug = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      child: Row(
+        mainAxisSize: hug ? MainAxisSize.min : MainAxisSize.max,
+        children: [
+          if (showAvatar) ...[
+            UserAvatar(peerId: senderPeerId, size: kBubbleAvatarSize),
+            const SizedBox(width: 10),
+          ],
+          if (showSenderName)
+            Flexible(
+              fit: hug ? FlexFit.loose : FlexFit.tight,
+              child: Text(
+                senderName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: isIncoming ? FontWeight.w600 : FontWeight.w500,
+                  color: isIncoming
+                      ? readableColors.textPrimary
+                      : readableColors.textSecondary,
+                ),
+              ),
+            ),
+          if (transport != null) ...[
+            if (!showSenderName) const Spacer(),
+            const SizedBox(width: 4),
+            Icon(
+              _transportIcon(transport!),
+              size: 10,
+              color: readableColors.iconMuted,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The shared body content (quote / media / audio / text / failed-actions /
+  /// footer) used by BOTH the legacy card and the bubble layout. [bodyTopPad]
+  /// lets the bubble layout grow the body top inset when the header is hidden.
+  List<Widget> _buildBodyChildren(
+    BuildContext context,
+    BackgroundReadableColors readableColors,
+    AppLocalizations l10n, {
+    required double bodyTopPad,
+    bool inlineFooterMeta = false,
+    bool compact = false,
+  }) {
+    // 137: in bubble mode the timestamp (+edited+status) folds INTO the body
+    // text as a trailing WidgetSpan so it sits on the last text line and wraps
+    // atomically (WhatsApp/Signal). That only works when there is real body
+    // text to host the suffix span — deleted, empty-text, and media-only rows
+    // have no `LinkableText`, so they keep the standalone footer timestamp.
+    final metaInlined = inlineFooterMeta && !isDeleted && text.isNotEmpty;
+    // The group avatar-outside bubble is vertically [compact] (tighter line
+    // height + smaller bottom inset) so balloons aren't tall. The 1:1 bubble
+    // and legacy card keep the looser metrics: shrinking the 1:1 body box
+    // shifts the inline-time WidgetSpan under the `find.text` long-press target
+    // and breaks the overlay hit-test in the conversation-screen tests.
+    final bodyLineHeight = compact ? 1.35 : 1.65;
+    final bodyBottomPad = compact ? 6.0 : 8.0;
+    return [
+      // Quote bar (if quoting another message)
+      if (quotedText != null || isQuoteUnavailable)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: _buildQuoteBar(readableColors),
+        ),
+      // Media grid (images/videos)
+      if (_imageVideoMedia.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+          child: MediaGrid(
+            media: _imageVideoMedia,
+            onTap: onMediaTap,
+            onRetryUnavailableMedia: onRetryUnavailableMedia != null
+                ? (attachment) => onRetryUnavailableMedia!(attachment.id)
+                : null,
+            requireVerifiedContentHash: requireVerifiedContentHash,
+            ownedMediaPeerId: ownedMediaPeerId,
+          ),
+        ),
+      // Audio players
+      for (final audio in _audioMedia)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: AudioPlayerWidget(
+            key: ValueKey(audio.id),
+            attachment: audio,
+            onRetryUnavailableMedia: onRetryUnavailableMedia != null
+                ? () => onRetryUnavailableMedia!(audio.id)
+                : null,
+            requireVerifiedContentHash: requireVerifiedContentHash,
+          ),
+        ),
+      // Body text (only if non-empty)
+      if (text.isNotEmpty)
+        Padding(
+          padding: EdgeInsets.fromLTRB(16, bodyTopPad, 16, bodyBottomPad),
+          child: isDeleted
+              ? Text(
+                  text,
+                  textDirection: detectTextDirection(text),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                    fontStyle: FontStyle.italic,
+                    color: readableColors.textMuted,
+                    height: bodyLineHeight,
+                    letterSpacing: 0.2,
+                  ),
+                )
+              : LinkableText(
+                  text: text,
+                  textDirection: detectTextDirection(text),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                    color: isIncoming
+                        ? readableColors.textPrimary
+                        : readableColors.textSecondary,
+                    height: bodyLineHeight,
+                    letterSpacing: 0.2,
+                  ),
+                  suffixSpans: metaInlined
+                      ? [_buildInlineMetaSpan(context, readableColors, l10n)]
+                      : null,
+                ),
+        )
+      else if (isDeleted)
+        Padding(
+          padding: EdgeInsets.fromLTRB(16, bodyTopPad, 16, bodyBottomPad),
+          child: Text(
+            l10n.conversation_message_deleted,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w400,
+              fontStyle: FontStyle.italic,
+              color: readableColors.textMuted,
+              height: bodyLineHeight,
+              letterSpacing: 0.2,
+            ),
+          ),
+        )
+      else if (media.isNotEmpty)
+        const SizedBox(height: 12),
+      if (_showsOutgoingMediaPendingNote)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: _buildOutgoingMediaPendingNote(context, readableColors),
+        ),
+      if (onRetryFailedMessage != null ||
+          onRetryFailedMedia != null ||
+          onDeleteFailedMedia != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (onRetryFailedMessage != null)
+                _buildFailedMessageAction(
+                  key: ValueKey(
+                    'failed-message-retry-${failedMessageActionKeySuffix ?? 'message'}',
+                  ),
+                  icon: Icons.refresh_rounded,
+                  label: l10n.btn_retry,
+                  semanticLabel: l10n.failed_message_retry_semantics,
+                  color: const Color(0xFF4ECDC4),
+                  onTap: onRetryFailedMessage!,
+                  enabled: isRetryFailedMessageEnabled,
+                ),
+              if (onRetryFailedMedia != null)
+                _buildFailedMessageAction(
+                  key: ValueKey(
+                    'failed-media-retry-${failedMediaActionKeySuffix ?? 'message'}',
+                  ),
+                  icon: Icons.refresh_rounded,
+                  label: l10n.btn_retry,
+                  semanticLabel: l10n.failed_media_retry_semantics,
+                  color: const Color(0xFF4ECDC4),
+                  onTap: onRetryFailedMedia!,
+                ),
+              if (onDeleteFailedMedia != null)
+                _buildFailedMessageAction(
+                  key: ValueKey(
+                    'failed-media-delete-${failedMediaActionKeySuffix ?? 'message'}',
+                  ),
+                  icon: Icons.delete_outline_rounded,
+                  label: l10n.conversation_context_delete,
+                  semanticLabel: l10n.failed_media_delete_semantics,
+                  color: const Color(0xFFFF8A80),
+                  onTap: onDeleteFailedMedia!,
+                ),
+            ],
+          ),
+        ),
+      // Footer.
+      //
+      // When the metadata is inlined into the body text (bubble mode), the
+      // footer carries ONLY reactions and is dropped entirely when there are
+      // none — so the bubble hugs its content (137). Otherwise (legacy card,
+      // and bubble deleted/empty/media-only rows) the footer keeps the inline
+      // reactions + timestamp + delivery status Row unchanged.
+      if (metaInlined) ...[
+        if (reactions.isNotEmpty && ownPeerId != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            // No Align here: the Column's CrossAxisAlignment.start already
+            // start-aligns the Wrap, and the Wrap shrink-wraps its chips — so
+            // the bubble keeps hugging even when reactions are present (INV-2).
+            // (An Align with the default widthFactor:null would expand to the
+            // 0.78 cap and break the hug — see TC-W4.)
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: _buildReactionChipWidgets(readableColors),
+            ),
+          ),
+      ] else
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: (reactions.isNotEmpty && ownPeerId != null)
+                    ? Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: _buildReactionChipWidgets(readableColors),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              if (reactions.isNotEmpty && ownPeerId != null)
+                const SizedBox(width: 8),
+              Text(
+                time,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w400,
+                  color: readableColors.textMuted,
+                ),
+              ),
+              if (isEdited) ...[
+                const SizedBox(width: 6),
+                Text(
+                  l10n.conversation_edited_indicator,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w400,
+                    color: readableColors.textMuted,
+                  ),
+                ),
+              ],
+              if (!isIncoming && status != null) ...[
+                const SizedBox(width: 4),
+                Semantics(
+                  label: l10n.message_status_semantics(
+                    _statusSemantic(context, status!),
+                  ),
+                  child: Icon(
+                    _statusIcon(status!),
+                    size: 14,
+                    color: _statusColor(status!, readableColors),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+    ];
+  }
+
+  /// 137: the trailing inline metadata (timestamp + edited indicator +
+  /// delivery status) folded into the body text as an atomic [WidgetSpan] so
+  /// it sits on the last text line (WhatsApp/Signal) and wraps to a new line
+  /// only when the line is full. Used only in bubble mode with real body text.
+  InlineSpan _buildInlineMetaSpan(
+    BuildContext context,
+    BackgroundReadableColors readableColors,
+    AppLocalizations l10n,
+  ) {
+    return _InlineMetaWidgetSpan(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(width: 6),
+          Text(
+            time,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w400,
+              color: readableColors.textMuted,
+            ),
+          ),
+          if (isEdited) ...[
+            const SizedBox(width: 6),
+            Text(
+              l10n.conversation_edited_indicator,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w400,
+                color: readableColors.textMuted,
+              ),
+            ),
+          ],
+          if (!isIncoming && status != null) ...[
+            const SizedBox(width: 4),
+            Semantics(
+              label: l10n.message_status_semantics(
+                _statusSemantic(context, status!),
+              ),
+              child: Icon(
+                _statusIcon(status!),
+                size: 14,
+                color: _statusColor(status!, readableColors),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 136 Phase 2: side-aligned, width-capped chat balloon with position-aware
+  /// stacked corner radii and optionally-suppressed header chrome.
+  Widget _buildBubble(
+    BuildContext context,
+    BackgroundReadableColors readableColors,
+    AppLocalizations l10n,
+  ) {
+    // In avatar-outside mode the avatar never occupies the header, so the
+    // header is driven purely by the sender name; otherwise the legacy
+    // in-header avatar also keeps the header visible.
+    // In avatar-outside mode the bubble carries NO in-bubble header: the avatar
+    // is in the gutter and the sender name (if any) is a label ABOVE the bubble
+    // (built in the gutter Row below).
+    final headerHidden = avatarOutsideBubble
+        ? true
+        : (!showAvatar && !showSenderName);
+    final radius = _bubbleBorderRadius();
+
+    final bubble = ClipRRect(
+      borderRadius: radius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            color: isIncoming
+                ? readableColors.surfaceRaised
+                : readableColors.surfaceSubtle,
+            border: Border.all(color: readableColors.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!headerHidden) _buildHeader(readableColors, hug: true),
+              ..._buildBodyChildren(
+                context,
+                readableColors,
+                l10n,
+                // No in-bubble header → a little top inset; the group
+                // avatar-outside bubble is more compact than the 1:1 bubble.
+                bodyTopPad: headerHidden ? (avatarOutsideBubble ? 8.0 : 12.0) : 4.0,
+                // Fold the timestamp/status inline and let the bubble hug.
+                inlineFooterMeta: true,
+                compact: avatarOutsideBubble,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    // Attribute the sender to screen readers only when there is no VISIBLE name
+    // (continuation balloons / 1:1). When the name is shown — the in-bubble
+    // header OR the avatar-outside label above the bubble — it is already
+    // announced, so the redundant Semantics wrapper is skipped.
+    final attributed = (headerHidden && !showSenderName)
+        ? Semantics(label: senderName, container: true, child: bubble)
+        : bubble;
+
+    final aligned = Align(
+      alignment: isIncoming ? Alignment.centerLeft : Alignment.centerRight,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Reserve the avatar gutter (group avatar-outside mode) before
+          // capping the bubble width, so the 0.78 cap measures the bubble's own
+          // available space rather than including the gutter.
+          final gutter = avatarOutsideBubble ? kBubbleAvatarGutterWidth : 0.0;
+          final maxWidth = constraints.maxWidth.isFinite
+              ? (constraints.maxWidth - gutter) * 0.78
+              : double.infinity;
+          // 137: every incoming balloon (first-in-run AND continuation) is
+          // flush-left so it shares the recipient's left edge. The `Align`
+          // already left-aligns the bubble; in avatar-outside mode the gutter
+          // (below) keeps that shared edge while moving the avatar outside.
+          final capped = ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: attributed,
+          );
+          if (!avatarOutsideBubble) return capped;
+          // The sender name (first balloon of the run) is a label ABOVE the
+          // bubble, OUTSIDE it; continuation balloons have no name.
+          final rightSide = showSenderName
+              // Pin to LTR (like the gutter Row + physical-left Align) so the
+              // name label and the bubble stay flush to the gutter under RTL
+              // (CrossAxisAlignment.start is direction-relative). The body text
+              // keeps its own explicit `detectTextDirection`, so Arabic message
+              // text still lays out RTL inside the bubble.
+              ? Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(left: 12, bottom: 3),
+                        child: Text(
+                          senderName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: readableColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      capped,
+                    ],
+                  ),
+                )
+              : capped;
+          // The avatar sits in a fixed-width gutter to the LEFT of the bubble
+          // (outside it). Every balloon of the run reserves the gutter so they
+          // share one left edge; the avatar is painted only on the first
+          // balloon (the sender switch), continuations leave it empty.
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            // Pin the gutter leading-on-physical-left to match the physical
+            // `Align.centerLeft` above, so the avatar stays on the bubble's
+            // outer (screen) edge under RTL instead of flipping inward.
+            textDirection: TextDirection.ltr,
+            children: [
+              SizedBox(
+                width: kBubbleAvatarGutterWidth,
+                child: showAvatar
+                    ? Padding(
+                        padding: const EdgeInsets.only(
+                          top: _kBubbleAvatarGutterTopInset,
+                        ),
+                        child: UserAvatar(
+                          peerId: senderPeerId,
+                          size: kBubbleAvatarSize,
+                        ),
+                      )
+                    : null,
+              ),
+              Flexible(child: rightSide),
+            ],
+          );
+        },
+      ),
+    );
+
+    // 137: long-press opens the context overlay anywhere on the message ROW,
+    // not just on the now-hugging bubble. Because the bubble shrinks to fit its
+    // content, a bubble-scoped long-press would be a tiny target; the full-row
+    // gesture matches the full-row swipe-to-reply hit area. `opaque` lets the
+    // empty space beside the bubble register the press; the gesture is omitted
+    // entirely (and hit behavior left as default) when no handler is wired, so
+    // deleted rows and the static lifted snapshot are unchanged.
+    if (onLongPress == null) return aligned;
+    return GestureDetector(
+      onLongPress: onLongPress,
+      behavior: HitTestBehavior.opaque,
+      child: aligned,
+    );
+  }
+
+  /// Position-aware stacked corner radii for the bubble. Outer corners are
+  /// [kBubbleRadius]; the SPEAKER-edge corners that join consecutive bubbles
+  /// collapse to [kBubbleStackRadius] (first squares the bottom speaker corner,
+  /// last squares the top speaker corner, middle squares both, standalone none).
+  /// Speaker edge = LEFT for incoming, RIGHT for outgoing.
+  BorderRadius _bubbleBorderRadius() {
+    const r = Radius.circular(kBubbleRadius);
+    const sq = Radius.circular(kBubbleStackRadius);
+
+    // Speaker-edge corners (top + bottom) for this direction.
+    final topSpeaker = !isFirstInGroup ? sq : r;
+    final bottomSpeaker = !isLastInGroup ? sq : r;
+
+    if (isIncoming) {
+      return BorderRadius.only(
+        topLeft: topSpeaker,
+        bottomLeft: bottomSpeaker,
+        topRight: r,
+        bottomRight: r,
+      );
+    }
+    return BorderRadius.only(
+      topRight: topSpeaker,
+      bottomRight: bottomSpeaker,
+      topLeft: r,
+      bottomLeft: r,
     );
   }
 
@@ -659,5 +1021,30 @@ class LetterCard extends StatelessWidget {
       return l10n.message_status_pending_inbox;
     }
     return status;
+  }
+}
+
+/// 137: a [WidgetSpan] for the inline trailing metadata (timestamp + edited +
+/// delivery status) that contributes NOTHING to the host paragraph's plain
+/// text. A normal [WidgetSpan] injects an object-replacement character (U+FFFC)
+/// into `toPlainText()`, which would pollute the message body's text and break
+/// exact-string finders / screen-reader text extraction (e.g. `find.text(body)`
+/// across the conversation + group screen suites). Suppressing the placeholder
+/// here keeps the body text matchable by its exact string while leaving layout
+/// and semantics untouched (paragraph layout uses placeholder *dimensions*, and
+/// the child renders its own semantics node — neither reads the plain-text
+/// buffer).
+class _InlineMetaWidgetSpan extends WidgetSpan {
+  const _InlineMetaWidgetSpan({required super.child})
+    : super(alignment: PlaceholderAlignment.middle);
+
+  @override
+  void computeToPlainText(
+    StringBuffer buffer, {
+    bool includeSemanticsLabels = true,
+    bool includePlaceholders = true,
+  }) {
+    // Deliberately a no-op: inline metadata must not appear in the host
+    // paragraph's plain-text representation.
   }
 }

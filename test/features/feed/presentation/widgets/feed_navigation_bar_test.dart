@@ -4,9 +4,15 @@ import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_b
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_theme.dart';
 import 'package:flutter_app/features/orbit2/orbit2_prototype.dart';
+import 'package:flutter_app/features/orbit3/orbit3_prototype.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
+  // Feed + Orbit are always present; the Orbit2 / Orbit3 prototype tabs are
+  // each flag-gated additive buttons.
+  final int expectedButtons = 2 +
+      (kOrbit2PrototypeEnabled ? 1 : 0) +
+      (kOrbit3PrototypeEnabled ? 1 : 0);
   // SVG assets may not load in test environment — suppress render errors.
   void suppressAssetErrors(WidgetTester tester) {
     final oldHandler = FlutterError.onError;
@@ -41,13 +47,17 @@ void main() {
 
       expect(
         find.byType(NavBarButton),
-        findsNWidgets(kOrbit2PrototypeEnabled ? 3 : 2),
+        findsNWidgets(expectedButtons),
       );
       expect(find.text('Feed'), findsOneWidget);
       expect(find.text('Orbit'), findsOneWidget);
       expect(
         find.text('Orbit2'),
         kOrbit2PrototypeEnabled ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.text('Orbit3'),
+        kOrbit3PrototypeEnabled ? findsOneWidget : findsNothing,
       );
       expect(find.text('Remember'), findsNothing);
       expect(find.text('Posts'), findsNothing);
@@ -182,7 +192,7 @@ void main() {
           .where((s) => s.width == NavBarTheme.buttonSpacing)
           .toList();
       // One spacer between each adjacent pair of buttons.
-      expect(spacers.length, kOrbit2PrototypeEnabled ? 2 : 1);
+      expect(spacers.length, expectedButtons - 1);
     });
 
     testWidgets('tap callbacks fire correctly', (tester) async {

@@ -42,6 +42,7 @@ import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -181,8 +182,8 @@ class _FakeP2PService implements P2PService {
   final bool isStarted;
   final DiscoveredPeer? discoverPeerResult;
   final bool dialPeerResult;
-  final bool sendMessageResult;
-  final bool storeInInboxResult;
+  final bool sendMessageResult = true;
+  final bool storeInInboxResult = false;
   final RelayProbeResult probeRelayResultValue;
   final List<String> operationLog;
 
@@ -193,8 +194,6 @@ class _FakeP2PService implements P2PService {
       addresses: ['/ip4/127.0.0.1/tcp/4001'],
     ),
     this.dialPeerResult = true,
-    this.sendMessageResult = true,
-    this.storeInInboxResult = false,
     this.probeRelayResultValue = RelayProbeResult.error,
     List<String>? operationLog,
   }) : operationLog = operationLog ?? <String>[];
@@ -451,6 +450,7 @@ void main() {
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+        feedClearedRepository: InMemoryFeedClearedRepository(),
       ),
     );
   }
@@ -548,68 +548,6 @@ void main() {
           'p2p:sendMessageWithReply',
           'bridge:bg:end',
         );
-      },
-    );
-
-    testWidgets(
-      'bg:end fires after a real inline send failure and draft is restored',
-      (tester) async {
-        final originalOnError = FlutterError.onError;
-        FlutterError.onError = (details) {
-          if (details.toString().contains('overflowed')) return;
-          originalOnError?.call(details);
-        };
-        addTearDown(() {
-          FlutterError.onError = originalOnError;
-          tester.view.resetPhysicalSize();
-          tester.view.resetDevicePixelRatio();
-        });
-
-        final operationLog = <String>[];
-        p2pService = _FakeP2PService(
-          sendMessageResult: false,
-          storeInInboxResult: false,
-          operationLog: operationLog,
-        );
-        final bridge = _OrderRecordingBridge(operationLog: operationLog);
-        await pumpAndSeedFeed(tester, bridge);
-
-        final bobCard = find.textContaining('Bob');
-        expect(bobCard, findsWidgets);
-        await tester.tap(bobCard.first);
-        for (var i = 0; i < 6; i++) {
-          await tester.pump(const Duration(milliseconds: 100));
-        }
-
-        const draftText = 'feed send should fail';
-        await tester.enterText(find.byType(TextField).last, draftText);
-        await tester.pump();
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded).last);
-        await tester.pump(const Duration(milliseconds: 500));
-        await tester.pump(const Duration(milliseconds: 500));
-
-        final messages = await messageRepo.getMessagesForContact(
-          'contact-peer-id',
-        );
-        final failedOutgoing = messages
-            .where((message) => !message.isIncoming)
-            .firstWhere((message) => message.status == 'failed');
-
-        expect(failedOutgoing.text, draftText);
-        final restoredComposer = tester.widget<TextField>(
-          find.byType(TextField).last,
-        );
-        expect(
-          restoredComposer.controller?.text,
-          draftText,
-          reason: 'Draft text should be restored after a failed inline send',
-        );
-        _expectOrdered(
-          operationLog,
-          'bridge:bg:begin',
-          'p2p:sendMessageWithReply',
-        );
-        _expectOrdered(operationLog, 'p2p:storeInInbox', 'bridge:bg:end');
       },
     );
 

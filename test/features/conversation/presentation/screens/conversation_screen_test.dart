@@ -14,6 +14,8 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
@@ -426,25 +428,29 @@ void main() {
       expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
     });
 
-    testWidgets('does not wrap outgoing messages with swipe to quote', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        buildTestWidget(
-          messages: [
-            makeMessage(
-              id: 'outgoing-1',
-              isIncoming: false,
-              text: 'Do not swipe me',
-            ),
-          ],
-          onQuoteReply: (_) {},
-        ),
-      );
-      await pumpFrames(tester);
+    testWidgets(
+      'wraps outgoing messages with swipe to quote (136 Phase 3 both '
+      'directions)',
+      (tester) async {
+        // 136 Phase 3 behavior change: swipe-to-reply is now enabled on EVERY
+        // balloon in BOTH directions (previously incoming-only).
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'outgoing-1',
+                isIncoming: false,
+                text: 'Swipe me too',
+              ),
+            ],
+            onQuoteReply: (_) {},
+          ),
+        );
+        await pumpFrames(tester);
 
-      expect(find.byType(SwipeToQuoteBubble), findsNothing);
-    });
+        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+      },
+    );
 
     testWidgets('does not wrap deleted messages with swipe to quote', (
       tester,
@@ -1372,6 +1378,16 @@ void main() {
     );
 
     testWidgets('media-only long-press hides copy action', (tester) async {
+      // 136 Phase 3: the long-press snapshot now mirrors the live balloon
+      // (a width-capped media bubble), which is taller than the legacy
+      // full-width card. The default 800x600 test surface is too short to fit
+      // reaction bar + tall media snapshot + menu; use a realistic phone-sized
+      // surface (production devices have the room).
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       await tester.pumpWidget(
         buildTestWidget(
           messages: [
@@ -2152,6 +2168,277 @@ void main() {
           find.text('viewer-all:$visual1,$visual2,$visual3'),
           findsOneWidget,
         );
+      },
+    );
+  });
+
+  // 136 Phase 3: wire bubble grouping into the 1:1 conversation screen.
+  group('ConversationScreen bubble grouping (136 Phase 3)', () {
+    // The live LetterCard for [messageId] (the one rendered inside the
+    // per-message ValueKey('msg-<id>') padding, NOT a long-press snapshot).
+    LetterCard liveLetterCard(WidgetTester tester, String messageId) {
+      return tester.widget<LetterCard>(
+        find.descendant(
+          of: find.byKey(ValueKey('msg-$messageId')),
+          matching: find.byType(LetterCard),
+        ),
+      );
+    }
+
+    testWidgets(
+      'TC-17 1:1 consecutive same-sender incoming messages render no avatar on '
+      'any balloon',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'in-1',
+                isIncoming: true,
+                text: 'First incoming',
+                timestamp: '2026-02-09T15:30:00.000Z',
+              ),
+              makeMessage(
+                id: 'in-2',
+                isIncoming: true,
+                text: 'Second incoming',
+                timestamp: '2026-02-09T15:31:00.000Z',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        // 1:1 drops avatars entirely — no UserAvatar on any balloon inside the
+        // message list (the contact avatar in the header is unrelated).
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('messages')),
+            matching: find.byType(UserAvatar),
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-18 1:1 own consecutive messages group (second balloon not '
+      'first-in-run)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'out-1',
+                isIncoming: false,
+                text: 'My first',
+                timestamp: '2026-02-09T15:30:00.000Z',
+              ),
+              makeMessage(
+                id: 'out-2',
+                isIncoming: false,
+                text: 'My second',
+                timestamp: '2026-02-09T15:31:00.000Z',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        // First outgoing balloon starts the run.
+        expect(liveLetterCard(tester, 'out-1').isFirstInGroup, isTrue);
+        // Second outgoing balloon continues the run (grouped).
+        expect(liveLetterCard(tester, 'out-2').isFirstInGroup, isFalse);
+        // Both render as bubbles (side-aligned chat balloons).
+        expect(liveLetterCard(tester, 'out-1').bubbleLayout, isTrue);
+        expect(liveLetterCard(tester, 'out-2').bubbleLayout, isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-19 1:1 outgoing balloon is swipe-to-reply enabled and quotes the '
+      'correct id',
+      (tester) async {
+        String? quotedId;
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'swipe-out-1',
+                isIncoming: false,
+                text: 'Swipe my outgoing',
+              ),
+            ],
+            initialLoadDone: true,
+            onQuoteReply: (id) => quotedId = id,
+          ),
+        );
+        await pumpFrames(tester);
+
+        // Outgoing message is now wrapped in SwipeToQuoteBubble.
+        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+
+        // Swiping the outgoing balloon triggers a quote-reply with its id.
+        await tester.drag(
+          find.byType(SwipeToQuoteBubble),
+          const Offset(80, 0),
+        );
+        await tester.pump();
+
+        expect(quotedId, 'swipe-out-1');
+      },
+    );
+
+    testWidgets(
+      'TC-20 1:1 system message breaks the run (message after system is '
+      'first-in-run)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'before-sys',
+                isIncoming: false,
+                text: 'Before system',
+                timestamp: '2026-02-09T15:30:00.000Z',
+              ),
+              makeMessage(
+                id: 'the-sys',
+                isIncoming: false,
+                text: 'Connected through Noor',
+                timestamp: '2026-02-09T15:30:30.000Z',
+                transport: 'system',
+              ),
+              makeMessage(
+                id: 'after-sys',
+                isIncoming: false,
+                text: 'After system',
+                timestamp: '2026-02-09T15:31:00.000Z',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        // The system row renders through IntroSystemMessage (run-break).
+        expect(find.byType(IntroSystemMessage), findsOneWidget);
+        // The same-sender message after the system row starts a fresh run,
+        // even though before/after share senderPeerId within the gap.
+        expect(liveLetterCard(tester, 'after-sys').isFirstInGroup, isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-21 1:1 date separator breaks the run (first message after a new day '
+      'is first-in-run)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'day1-msg',
+                isIncoming: false,
+                text: 'Day one message',
+                timestamp: '2026-02-09T15:30:00.000Z',
+              ),
+              makeMessage(
+                id: 'day2-msg',
+                isIncoming: false,
+                text: 'Day two message',
+                timestamp: '2026-02-10T15:30:00.000Z',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        // A date separator intervenes between the two messages.
+        expect(find.byType(DateSeparator), findsWidgets);
+        // The first message of the new day starts a fresh run.
+        expect(liveLetterCard(tester, 'day2-msg').isFirstInGroup, isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-22 1:1 per-message ValueKey(msg-<id>) preserved (sentinel)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'key-a',
+                isIncoming: true,
+                text: 'Keyed A',
+                timestamp: '2026-02-09T15:30:00.000Z',
+              ),
+              makeMessage(
+                id: 'key-b',
+                isIncoming: true,
+                text: 'Keyed B',
+                timestamp: '2026-02-09T15:31:00.000Z',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        // Per-message keys remain at the balloon level (not hoisted to a run).
+        expect(find.byKey(const ValueKey('msg-key-a')), findsOneWidget);
+        expect(find.byKey(const ValueKey('msg-key-b')), findsOneWidget);
+      },
+    );
+  });
+
+  group('run-aware spacing (137 follow-up)', () {
+    testWidgets(
+      'mid-run message gets a tight gap; the run end gets the separation gap',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            initialLoadDone: true,
+            messages: [
+              makeMessage(
+                id: 'r1',
+                text: 'one',
+                isIncoming: true,
+                timestamp: '2026-02-09T15:30:00.000Z',
+              ),
+              makeMessage(
+                id: 'r2',
+                text: 'two',
+                isIncoming: true,
+                timestamp: '2026-02-09T15:31:00.000Z',
+              ),
+              makeMessage(
+                id: 'r3',
+                text: 'three',
+                isIncoming: true,
+                // >5 min after r2 → starts a new run.
+                timestamp: '2026-02-09T15:40:00.000Z',
+              ),
+            ],
+          ),
+        );
+        await pumpFrames(tester);
+
+        double bottomOf(String id) {
+          final pad = tester.widget<Padding>(
+            find.byKey(ValueKey('msg-$id')),
+          );
+          return pad.padding.resolve(TextDirection.ltr).bottom;
+        }
+
+        // r1 is mid-run (r2 continues it) → tight gap.
+        expect(bottomOf('r1'), lessThan(8));
+        // r2 is the last of its run (r3 starts a new run) → separation gap.
+        expect(bottomOf('r2'), greaterThan(10));
+        // r3 is the final message → separation gap.
+        expect(bottomOf('r3'), greaterThan(10));
       },
     );
   });

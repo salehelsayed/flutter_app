@@ -31,6 +31,7 @@ import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_contact_presence_snapshot_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
@@ -165,6 +166,7 @@ void main() {
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+        feedClearedRepository: InMemoryFeedClearedRepository(),
         contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
         nearbyLocationService: nearbyLocationService,
         accountMigrationRunTransfer: accountMigrationRunTransfer,

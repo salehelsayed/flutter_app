@@ -88,6 +88,7 @@ import 'package:flutter_app/core/database/migrations/088_group_rejoin_state.dart
 import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
 import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
 import 'package:flutter_app/core/database/migrations/091_pending_group_invites_inviter_mlkem.dart';
+import 'package:flutter_app/core/database/migrations/092_feed_cleared_threads.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
@@ -142,6 +143,7 @@ import 'package:flutter_app/core/database/helpers/post_origin_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_passes_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pins_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_privacy_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/feed_cleared_threads_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_upload_recovery_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_pending_child_events_db_helpers.dart';
@@ -329,6 +331,8 @@ import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_c
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository_impl.dart';
+import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
+import 'package:flutter_app/features/feed/data/feed_cleared_repository_impl.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -526,6 +530,7 @@ void main() async {
       await runMediaAttachmentDownloadRetryColumnMigration(db);
       await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
       await runPendingGroupInvitesInviterMlKemMigration(db);
+      await runFeedClearedThreadsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -808,6 +813,11 @@ void main() async {
       // pending invite so a decline-ack can reach a non-contact inviter.
       if (oldVersion < 91) {
         await runPendingGroupInvitesInviterMlKemMigration(db);
+      }
+      // 134 (decision 2): feed-only `feed_cleared_threads` table for the
+      // pending-reply inbox (dismiss/commit watermarks; INV-2 isolation).
+      if (oldVersion < 92) {
+        await runFeedClearedThreadsMigration(db);
       }
     },
   );
@@ -1126,6 +1136,16 @@ void main() async {
   final postsPrivacySettingsRepository = PostsPrivacySettingsRepositoryImpl(
     dbLoadPostPrivacyState: () => dbLoadPostPrivacyState(db),
     dbUpsertPostPrivacyState: (row) => dbUpsertPostPrivacyState(db, row),
+  );
+
+  // 134 (decision 2): persistence for the Feed pending-reply "cleared"
+  // watermarks (the `feed_cleared_threads` table, migration 092).
+  final FeedClearedRepository feedClearedRepository = FeedClearedRepositoryImpl(
+    dbMarkFeedClearedThread: (kind, id, ms) =>
+        dbMarkFeedClearedThread(db, kind, id, ms),
+    dbClearFeedClearedThread: (kind, id) =>
+        dbClearFeedClearedThread(db, kind, id),
+    dbLoadFeedClearedThreads: () => dbLoadFeedClearedThreads(db),
   );
   late final NearbyLocationService nearbyLocationService;
   final contactPresenceSnapshotRepository =
@@ -3059,6 +3079,7 @@ void main() async {
       messageRepository: messageRepository,
       postRepository: postRepository,
       postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+      feedClearedRepository: feedClearedRepository,
       contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
       nearbyLocationService: nearbyLocationService,
       mediaAttachmentRepository: mediaAttachmentRepository,
@@ -3264,6 +3285,7 @@ class MyApp extends StatefulWidget {
   final MessageRepositoryImpl messageRepository;
   final PostRepositoryImpl postRepository;
   final PostsPrivacySettingsRepositoryImpl postsPrivacySettingsRepository;
+  final FeedClearedRepository feedClearedRepository;
   final ContactPresenceSnapshotRepositoryImpl contactPresenceSnapshotRepository;
   final NearbyLocationService nearbyLocationService;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
@@ -3352,6 +3374,7 @@ class MyApp extends StatefulWidget {
     required this.messageRepository,
     required this.postRepository,
     required this.postsPrivacySettingsRepository,
+    required this.feedClearedRepository,
     required this.contactPresenceSnapshotRepository,
     required this.nearbyLocationService,
     required this.mediaAttachmentRepository,
@@ -3906,6 +3929,30 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
         return;
       case NotificationRouteTargetKind.conversation:
+        // 139: mirror the group already-active guard. When the user taps a
+        // fresh notification for a peer whose 1:1 conversation is already the
+        // active (backgrounded) screen, do NOT push a second ConversationWired
+        // — the mounted screen re-fetches the new message on resume
+        // (conversation_wired.dart didChangeAppLifecycleState). Decided before
+        // the contact lookup so suppression is a pure routing decision; when
+        // `isViewing` is true the contact necessarily exists.
+        if (isNotificationRouteTargetAlreadyActive(
+          routeTarget: routeTarget,
+          groupConversationTracker: widget.groupConversationTracker,
+          conversationTracker: widget.conversationTracker,
+        )) {
+          _notificationTappedAt = null;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONVERSATION_NOTIFICATION_ROUTE_ALREADY_ACTIVE',
+            details: {
+              'peerId': routeTarget.peerId!.length > 8
+                  ? routeTarget.peerId!.substring(0, 8)
+                  : routeTarget.peerId!,
+            },
+          );
+          return;
+        }
         final contact = await widget.contactRepository.getContact(
           routeTarget.peerId!,
         );
@@ -3946,6 +3993,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         mediaFileManager: widget.mediaFileManager,
         secureKeyStore: widget.secureKeyStore,
         imageProcessor: widget.imageProcessor,
+        feedClearedRepository: widget.feedClearedRepository,
         conversationTracker: widget.conversationTracker,
         audioRecorderService: widget.audioRecorderService,
         reactionRepository: widget.reactionRepository,
@@ -4531,6 +4579,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         appShellController: widget.appShellController,
         pendingPostTargetStore: widget.pendingPostTargetStore,
         postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+        feedClearedRepository: widget.feedClearedRepository,
         contactPresenceSnapshotRepository:
             widget.contactPresenceSnapshotRepository,
         nearbyLocationService: widget.nearbyLocationService,

@@ -26,6 +26,7 @@ import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dar
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
+import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 
 void main() {
   late bool previousDeferredStartupMode;
@@ -143,6 +144,7 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       home: StartupRouter(
         repository: identityRepository,
+        feedClearedRepository: InMemoryFeedClearedRepository(),
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,
@@ -189,7 +191,10 @@ void main() {
     );
     expect(routedTargets.single.peerId, 'peer-request-123');
     expect(p2pService.startNodeCallCount, 1);
-    expect(p2pService.drainOfflineInboxCallCount, 1);
+    // 141: two opportunistic drains now fire — the notif-open prepare drain
+    // (before routing) plus FeedWired's belt-and-suspenders drain when the Feed
+    // home becomes active. Both coalesce/defer in the real P2PService.
+    expect(p2pService.drainOfflineInboxCallCount, 2);
     expect(clearDeliveredNotificationsCount, 1);
     expect(
       contactRequestPresentationGate.shouldSuppress('peer-request-123'),
@@ -209,7 +214,8 @@ void main() {
     expect(routedTargets, hasLength(1));
     expect(routedTargets.single.kind, NotificationRouteTargetKind.intros);
     expect(p2pService.startNodeCallCount, 1);
-    expect(p2pService.drainOfflineInboxCallCount, 1);
+    // 141: notif-open prepare drain + FeedWired belt-and-suspenders drain.
+    expect(p2pService.drainOfflineInboxCallCount, 2);
     expect(clearDeliveredNotificationsCount, 1);
   });
 
@@ -226,7 +232,8 @@ void main() {
     expect(p2pService.startNodeCallCount, 1);
     expect(
       p2pService.drainOfflineInboxCallCount,
-      1,
+      2,
+      // 141: startup recovery drain + FeedWired belt-and-suspenders drain.
       reason: 'missing initial pushes should still trigger inbox recovery',
     );
     expect(clearDeliveredNotificationsCount, 0);

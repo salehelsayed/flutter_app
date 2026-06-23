@@ -1084,4 +1084,39 @@ void main() {
       expect(retryCount, 1);
     },
   );
+
+  testWidgets(
+    '143: done image cell passes a non-null sized placeholder to '
+    'MediaThumbnailImage (wiring lock)',
+    (tester) async {
+      // Preservation lock for the empty-while-decoding fix: that fix renders
+      // `MediaThumbnailImage.placeholder` during image decode, so the cell MUST
+      // keep supplying a non-null sized placeholder for done image cells. If a
+      // future change nulled it, the fix would render SizedBox.shrink (empty)
+      // again — this test fails first.
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 120,
+            height: 120,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: 'img-ph-wiring',
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'done',
+                localPath: jpgFile.path,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final mti = tester.widget<MediaThumbnailImage>(
+        find.byType(MediaThumbnailImage),
+      );
+      expect(mti.placeholder, isNotNull);
+    },
+  );
 }

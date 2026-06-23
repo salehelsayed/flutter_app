@@ -374,14 +374,6 @@
   "feed_collapse": "طي",
   "feed_tap_expand": "اضغط للتوسيع",
   "feed_you": "أنت",
-  "feed_you_replied": "رددت {time}",
-  "@feed_you_replied": {
-    "placeholders": {
-      "time": {
-        "type": "String"
-      }
-    }
-  },
   "settings_photo_quality": "جودة الصورة",
   "settings_share_nearby": "مشاركة القريبين منك",
   "settings_share_nearby_on": "مفعّل",
@@ -1146,9 +1138,7 @@
       }
     }
   },
-  "feed_previously_seen": "شوهد سابقًا",
   "feed_replying_to": "ردًا على",
-  "feed_view_earlier_messages": "عرض الرسائل السابقة",
   "feed_ready_for_user": "موجزك جاهز، @{username}. ستظهر الاتصالات الجديدة هنا.",
   "@feed_ready_for_user": {
     "placeholders": {
@@ -1157,8 +1147,18 @@
       }
     }
   },
+  "feed_all_caught_up": "أنت على اطلاع بكل الجديد",
   "feed_loading": "جارٍ تحميل الموجز...",
   "feed_syncing_threads": "لا تزال محادثاتك الأخيرة قيد المزامنة.",
+  "feed_reply_to_name": "الرد على {name}…",
+  "feed_message_name": "مراسلة {name}…",
+  "feed_add_another": "أضف رسالة أخرى…",
+  "feed_open_full_conversation": "فتح المحادثة كاملة",
+  "feed_tap_to_retry": "اضغط لإعادة المحاولة",
+  "feed_removed_undo": "تمت إزالة {name}",
+  "feed_undo": "تراجع",
+  "feed_tap_to_say_hi": "اضغط للترحيب",
+  "feed_connected": "متصل",
   "qr_added_to_circle": "تمت الإضافة إلى دائرتك!",
   "btn_ok": "حسنًا",
   "qr_already_in_circle": "موجود بالفعل في دائرتك!",
@@ -1325,6 +1325,7 @@
   "contact_profile_introduced_by_label": "عرّفك به",
   "contact_profile_message_button": "مراسلة",
   "nav_orbit2": "أوربت٢",
+  "nav_orbit3": "أوربت٣",
   "orbit2_prototype_chip": "نموذج · بيانات تجريبية",
   "orbit2_size_legend": "الأكبر = الأقرب · انقر للمحادثة · اسحب لإعادة الترتيب",
   "orbit2_simulate": "محاكاة",
@@ -1334,6 +1335,7 @@
   "orbit2_template_nebula": "سديم",
   "orbit2_template_honeycomb": "خلية",
   "orbit2_template_tiered": "طبقات",
+  "orbit2_template_unified": "دائرة واحدة",
   "orbit2_mock_chat_demo_chip": "تجريبي · الرسائل لا تُرسل",
   "orbit2_mock_chat_send_disabled": "الإرسال معطّل في هذه المعاينة",
   "orbit2_mock_chat_composer_hint": "رسالة",

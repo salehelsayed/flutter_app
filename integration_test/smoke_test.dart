@@ -41,6 +41,7 @@ import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_post_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '_support/fake_secure_key_store.dart';
+import '../test/shared/fakes/in_memory_feed_cleared_repository.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -267,6 +268,7 @@ void main() {
         supportedLocales: AppLocalizations.supportedLocales,
         home: StartupRouter(
           repository: repository,
+          feedClearedRepository: InMemoryFeedClearedRepository(),
           contactRepository: contactRepository,
           contactRequestRepository: contactRequestRepository,
           contactRequestListener: contactRequestListener,

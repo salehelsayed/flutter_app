@@ -166,4 +166,56 @@ void main() {
           closeTo(RingAvatarConstants.glowLuminance / 100.0, 0.02));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // accentColorForPeerId (TC-08, §4) — feed-local identity accent.
+  // ---------------------------------------------------------------------------
+  group('accentColorForPeerId', () {
+    test('is deterministic for the same peerId', () {
+      final c1 = RingAvatarGenerator.accentColorForPeerId('Mara');
+      final c2 = RingAvatarGenerator.accentColorForPeerId('Mara');
+      expect(c1, equals(c2));
+    });
+
+    test('uses hsl(hue, 72%, 67%) with hue == (djb2(peerId) >> 16) % 360', () {
+      // Locks the EXACT construction: djb2 hue + saturation 0.72 + lightness
+      // 0.67. A mutation to 0.70 changes the expected color → red.
+      for (final peerId in ['Mara', 'Bob', '12D3KooWAbc']) {
+        final expectedHue =
+            ((RingAvatarGenerator.djb2Hash(peerId) >> 16) % 360).toDouble();
+        final expected =
+            HSLColor.fromAHSL(1.0, expectedHue, 0.72, 0.67).toColor();
+        expect(
+          RingAvatarGenerator.accentColorForPeerId(peerId),
+          equals(expected),
+          reason: 'accent must be hsl($expectedHue, 72%, 67%) for $peerId',
+        );
+      }
+    });
+
+    test('saturation 0.72 / lightness 0.67 read back from the color', () {
+      final hsl = HSLColor.fromColor(
+        RingAvatarGenerator.accentColorForPeerId('Mara'),
+      );
+      expect(hsl.saturation, closeTo(0.72, 0.01));
+      expect(hsl.lightness, closeTo(0.67, 0.01));
+    });
+
+    test('differs from glowColorForPeerId (NOT the 70/50 glow helper)', () {
+      // Same hue, different saturation/lightness → different color.
+      expect(
+        RingAvatarGenerator.accentColorForPeerId('Mara'),
+        isNot(equals(RingAvatarGenerator.glowColorForPeerId('Mara'))),
+      );
+    });
+
+    test('different peerIds usually produce different accents', () {
+      expect(
+        RingAvatarGenerator.accentColorForPeerId('peerA_1234567890'),
+        isNot(equals(
+          RingAvatarGenerator.accentColorForPeerId('peerB_1234567890'),
+        )),
+      );
+    });
+  });
 }

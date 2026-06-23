@@ -236,6 +236,41 @@ void main() {
     expect(find.text('Gravity'), findsNothing);
   });
 
+  testWidgets(
+      'One Circle: every member joins the inner circle; no scatter, no overflow',
+      (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await settle(tester);
+
+    // Baseline: floating scatter + groups exist, inner circle is collapsed.
+    expect(find.byType(FloatingAvatar), findsNWidgets(10));
+    expect(find.byType(Orbit2GroupNode), findsNWidgets(2));
+
+    // Switch to the "One Circle" template via the layout dropdown.
+    await tester.tap(find.text('Gravity')); // collapsed pill → expand menu
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('One Circle'));
+    // Build the unified tree FIRST (a zero pump), then advance long enough to
+    // drain every OrbitalAvatar's staggered entrance timer (globalIndex * 40ms;
+    // up to ~26 avatars now orbit the circle) so none stay pending at teardown.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1200));
+
+    // The pill reflects the new template; the inner circle is still the surface.
+    expect(find.text('One Circle'), findsWidgets);
+    expect(find.byType(Orbit2InnerCircle), findsOneWidget);
+
+    // No scattered avatars or floating group nodes remain.
+    expect(find.byType(FloatingAvatar), findsNothing);
+    expect(find.byType(Orbit2GroupNode), findsNothing);
+
+    // EVERY friend (16 inner + 10 canvas) now orbits inside the circle — no
+    // "+N" overflow node hides anyone.
+    expect(find.byType(OrbitalAvatar), findsNWidgets(26));
+    expect(find.byKey(const ValueKey('inner-expand-toggle')), findsNothing);
+  });
+
   // ----- #1 — the "+N" node lives ON the outer orbit ring -----
 
   Finder innerMembers() => find.descendant(

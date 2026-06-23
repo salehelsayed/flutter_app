@@ -374,14 +374,6 @@
   "feed_collapse": "Collapse",
   "feed_tap_expand": "Tap to expand",
   "feed_you": "You",
-  "feed_you_replied": "You replied {time}",
-  "@feed_you_replied": {
-    "placeholders": {
-      "time": {
-        "type": "String"
-      }
-    }
-  },
   "settings_photo_quality": "Photo Quality",
   "settings_share_nearby": "Share People Nearby",
   "settings_share_nearby_on": "On",
@@ -1153,9 +1145,7 @@
       }
     }
   },
-  "feed_previously_seen": "PREVIOUSLY SEEN",
   "feed_replying_to": "Replying to",
-  "feed_view_earlier_messages": "View earlier messages",
   "feed_ready_for_user": "Your feed is ready, @{username}. New connections will appear here.",
   "@feed_ready_for_user": {
     "placeholders": {
@@ -1164,8 +1154,63 @@
       }
     }
   },
+  "feed_all_caught_up": "You're all caught up",
+  "@feed_all_caught_up": {
+    "description": "134 Feed redesign: the caught-up empty state shown when the pending-reply inbox has zero items and the feed has finished loading."
+  },
   "feed_loading": "Loading Feed...",
   "feed_syncing_threads": "Your recent threads are still syncing.",
+  "feed_reply_to_name": "Reply to {name}…",
+  "@feed_reply_to_name": {
+    "description": "134 Feed redesign: composer placeholder for replying to a 1:1 or group thread.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_message_name": "Message {name}…",
+  "@feed_message_name": {
+    "description": "134 Feed redesign: composer placeholder for messaging a freshly-connected contact.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_add_another": "Add another…",
+  "@feed_add_another": {
+    "description": "134 Feed redesign: composer placeholder shown after at least one reply has been sent in the current focus session."
+  },
+  "feed_open_full_conversation": "Open full conversation",
+  "@feed_open_full_conversation": {
+    "description": "134 Feed redesign: affordance above the composer that opens the full conversation for the focused thread."
+  },
+  "feed_tap_to_retry": "tap to retry",
+  "@feed_tap_to_retry": {
+    "description": "134 Feed redesign: retry affordance under a failed outgoing session reply (never-silent send)."
+  },
+  "feed_removed_undo": "Removed {name}",
+  "@feed_removed_undo": {
+    "description": "134 Feed redesign: SnackBar body shown when a card is swipe-dismissed, naming the removed thread.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "feed_undo": "Undo",
+  "@feed_undo": {
+    "description": "134 Feed redesign: SnackBarAction label that restores a swipe-dismissed card."
+  },
+  "feed_tap_to_say_hi": "tap to say hi",
+  "@feed_tap_to_say_hi": {
+    "description": "134 Feed redesign: bubble copy on a system connection/introduction card inviting the user to start the conversation."
+  },
+  "feed_connected": "Connected",
+  "@feed_connected": {
+    "description": "134 Feed redesign: muted label on a system card for a plain new connection (vs an introduction)."
+  },
   "qr_added_to_circle": "Added to your circle!",
   "btn_ok": "OK",
   "qr_already_in_circle": "Already in your circle!",
@@ -1353,6 +1398,7 @@
   "contact_profile_introduced_by_label": "Introduced by",
   "contact_profile_message_button": "Message",
   "nav_orbit2": "Orbit2",
+  "nav_orbit3": "Orbit3",
   "orbit2_prototype_chip": "Prototype · sample data",
   "orbit2_size_legend": "Bigger = closer · tap to chat · drag to rearrange",
   "orbit2_simulate": "Simulate",
@@ -1362,6 +1408,7 @@
   "orbit2_template_nebula": "Nebula",
   "orbit2_template_honeycomb": "Honeycomb",
   "orbit2_template_tiered": "Tiered",
+  "orbit2_template_unified": "One Circle",
   "orbit2_mock_chat_demo_chip": "Demo · messages aren't sent",
   "orbit2_mock_chat_send_disabled": "Sending is disabled in this preview",
   "orbit2_mock_chat_composer_hint": "Message",

@@ -84,6 +84,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -108,6 +109,11 @@ class OrbitWired extends StatefulWidget {
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
   final ImageProcessor imageProcessor;
+
+  /// 135 B6: threaded through to the embedded [FeedWired] (scan → Feed handoff)
+  /// AND the [QRScannerWired] it constructs, which requires it before it can
+  /// navigate to the Feed after a successful contact scan.
+  final FeedClearedRepository feedClearedRepository;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepository;
@@ -156,6 +162,7 @@ class OrbitWired extends StatefulWidget {
     required this.mediaFileManager,
     required this.secureKeyStore,
     required this.imageProcessor,
+    required this.feedClearedRepository,
     this.conversationTracker,
     this.audioRecorderService,
     this.reactionRepository,
@@ -1839,6 +1846,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               mediaFileManager: widget.mediaFileManager,
               secureKeyStore: widget.secureKeyStore,
               imageProcessor: widget.imageProcessor,
+              feedClearedRepository: widget.feedClearedRepository,
               ownPeerId: _identity?.peerId ?? '',
               conversationTracker: widget.conversationTracker,
               audioRecorderService: widget.audioRecorderService,

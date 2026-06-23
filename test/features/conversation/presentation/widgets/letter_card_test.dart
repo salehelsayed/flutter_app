@@ -6,6 +6,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
@@ -1022,6 +1023,993 @@ void main() {
         },
       );
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bubble layout (136 Phase 2) — TC-08..16. New OPTIONAL params on LetterCard.
+  // Defaults preserve the legacy full-width card (TC-13 preservation sentinel).
+  // ---------------------------------------------------------------------------
+  group('bubble layout (136 Phase 2)', () {
+    Widget buildBubble({
+      double width = 400,
+      bool isIncoming = true,
+      bool bubbleLayout = true,
+      bool isFirstInGroup = true,
+      bool isLastInGroup = true,
+      bool showAvatar = true,
+      bool showSenderName = true,
+      bool avatarOutsideBubble = false,
+      bool isDeleted = false,
+      bool isEdited = false,
+      String senderName = 'Alice',
+      String text = 'Hello, this is a test message.',
+      String time = '3:30 PM',
+      String? status,
+      List<MessageReaction> reactions = const [],
+      String? ownPeerId,
+      VoidCallback? onLongPress,
+      void Function(String emoji)? onReactionTap,
+    }) {
+      return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: ThemeData(
+          extensions: <ThemeExtension<dynamic>>[
+            BackgroundReadableColors.dark,
+          ],
+        ),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: width,
+              child: SingleChildScrollView(
+                child: LetterCard(
+                  senderPeerId: '12D3KooWTestPeerId1234567890',
+                  senderName: senderName,
+                  text: text,
+                  time: time,
+                  isIncoming: isIncoming,
+                  status: status,
+                  isDeleted: isDeleted,
+                  isEdited: isEdited,
+                  reactions: reactions,
+                  ownPeerId: ownPeerId,
+                  onLongPress: onLongPress,
+                  onReactionTap: onReactionTap,
+                  bubbleLayout: bubbleLayout,
+                  isFirstInGroup: isFirstInGroup,
+                  isLastInGroup: isLastInGroup,
+                  showAvatar: showAvatar,
+                  showSenderName: showSenderName,
+                  avatarOutsideBubble: avatarOutsideBubble,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Returns the Align that directly wraps the card chrome in bubble mode.
+    Align bubbleAlign(WidgetTester tester) {
+      return tester.widget<Align>(
+        find.ancestor(
+          of: find.byType(ClipRRect),
+          matching: find.byType(Align),
+        ).first,
+      );
+    }
+
+    // The Container that paints the bubble fill (carries the position-aware
+    // BorderRadius) — the descendant of the ClipRRect with a BoxDecoration.
+    BorderRadius bubbleRadius(WidgetTester tester) {
+      final container = tester
+          .widgetList<Container>(
+            find.descendant(
+              of: find.byType(ClipRRect),
+              matching: find.byType(Container),
+            ),
+          )
+          .firstWhere((c) {
+        final d = c.decoration;
+        return d is BoxDecoration && d.borderRadius != null;
+      });
+      return (container.decoration as BoxDecoration).borderRadius!
+          as BorderRadius;
+    }
+
+    // The painted bubble width = the outer bubble ClipRRect's laid-out width.
+    // The LetterCard's outer ClipRRect is an ancestor of any nested (avatar /
+    // media) ClipRRect, so it is `.first` in depth-first order. Use a plain-text
+    // bubble for geometry tests (a single ClipRRect) to avoid ambiguity.
+    double bubbleWidth(WidgetTester tester) =>
+        tester.getSize(find.byType(ClipRRect).first).width;
+
+    // The painted bubble's left edge (outer ClipRRect top-left dx).
+    double bubbleLeft(WidgetTester tester) =>
+        tester.getTopLeft(find.byType(ClipRRect).first).dx;
+
+    // TC-08
+    testWidgets('aligns incoming left and outgoing right', (tester) async {
+      await tester.pumpWidget(buildBubble(isIncoming: true));
+      expect(bubbleAlign(tester).alignment, Alignment.centerLeft);
+
+      await tester.pumpWidget(buildBubble(isIncoming: false));
+      expect(bubbleAlign(tester).alignment, Alignment.centerRight);
+    });
+
+    // TC-09
+    testWidgets('constrains bubble max width to ~78% of available width', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildBubble(width: 400));
+
+      final constrained = tester.widgetList<ConstrainedBox>(
+        find.descendant(
+          of: find.byType(Align),
+          matching: find.byType(ConstrainedBox),
+        ),
+      );
+      // A ConstrainedBox with a finite maxWidth <= ~78% of the 400px slot.
+      final hasCap = constrained.any(
+        (c) =>
+            c.constraints.maxWidth.isFinite &&
+            c.constraints.maxWidth <= 400 * 0.78 + 0.5 &&
+            c.constraints.maxWidth >= 400 * 0.50,
+      );
+      expect(
+        hasCap,
+        isTrue,
+        reason: 'Bubble should be wrapped in a ConstrainedBox capping maxWidth '
+            'around 78% of the available width.',
+      );
+    });
+
+    // TC-10 — corner radii stack by first/middle/last per side (WhatsApp look).
+    // Speaker edge = LEFT for incoming, RIGHT for outgoing.
+    // first-in-run (not last): squares the BOTTOM speaker-edge corner.
+    // last-in-run (not first): squares the TOP speaker-edge corner.
+    // middle (neither first nor last): squares BOTH speaker-edge corners.
+    // first&last (standalone): fully kBubbleRadius (no squaring).
+    testWidgets('corner radii stack by first/middle/last per side', (
+      tester,
+    ) async {
+      const r = Radius.circular(kBubbleRadius);
+      const sq = Radius.circular(kBubbleStackRadius);
+
+      // Incoming first-in-run (not last): bottom-left squared.
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          isFirstInGroup: true,
+          isLastInGroup: false,
+          showAvatar: false,
+          showSenderName: false,
+        ),
+      );
+      var radius = bubbleRadius(tester);
+      expect(radius.bottomLeft, sq, reason: 'incoming first squares bottom-left');
+      expect(radius.topLeft, r);
+      expect(radius.topRight, r);
+      expect(radius.bottomRight, r);
+
+      // Incoming middle (neither first nor last): top-left + bottom-left squared.
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          isFirstInGroup: false,
+          isLastInGroup: false,
+          showAvatar: false,
+          showSenderName: false,
+        ),
+      );
+      radius = bubbleRadius(tester);
+      expect(radius.topLeft, sq);
+      expect(radius.bottomLeft, sq);
+      expect(radius.topRight, r);
+      expect(radius.bottomRight, r);
+
+      // Incoming last-in-run (not first): top-left squared.
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          isFirstInGroup: false,
+          isLastInGroup: true,
+          showAvatar: false,
+          showSenderName: false,
+        ),
+      );
+      radius = bubbleRadius(tester);
+      expect(radius.topLeft, sq);
+      expect(radius.bottomLeft, r);
+      expect(radius.topRight, r);
+      expect(radius.bottomRight, r);
+
+      // Standalone (first & last): fully rounded.
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          isFirstInGroup: true,
+          isLastInGroup: true,
+          showAvatar: false,
+          showSenderName: false,
+        ),
+      );
+      radius = bubbleRadius(tester);
+      expect(radius.topLeft, r);
+      expect(radius.bottomLeft, r);
+      expect(radius.topRight, r);
+      expect(radius.bottomRight, r);
+
+      // Outgoing mirrors on the RIGHT edge: first-in-run squares bottom-right.
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: false,
+          isFirstInGroup: true,
+          isLastInGroup: false,
+          showAvatar: false,
+          showSenderName: false,
+        ),
+      );
+      radius = bubbleRadius(tester);
+      expect(radius.bottomRight, sq, reason: 'outgoing first squares bottom-right');
+      expect(radius.topRight, r);
+      expect(radius.topLeft, r);
+      expect(radius.bottomLeft, r);
+    });
+
+    // TC-11
+    testWidgets(
+      'showAvatar=false & showSenderName=false hides header and grows body '
+      'top padding',
+      (tester) async {
+        // Baseline: header shown -> capture body top padding.
+        await tester.pumpWidget(
+          buildBubble(showAvatar: true, showSenderName: true, text: 'Hello'),
+        );
+        final headerPadding = tester
+            .widgetList<Padding>(
+              find.ancestor(
+                of: find.byType(LinkableText),
+                matching: find.byType(Padding),
+              ),
+            )
+            .first
+            .padding
+            .resolve(TextDirection.ltr);
+        final headerTop = headerPadding.top;
+
+        // Chrome hidden: no avatar, no sender-name text, bigger body top pad.
+        await tester.pumpWidget(
+          buildBubble(showAvatar: false, showSenderName: false, text: 'Hello'),
+        );
+        expect(find.byType(UserAvatar), findsNothing);
+        expect(find.text('Alice'), findsNothing);
+
+        final hiddenPadding = tester
+            .widgetList<Padding>(
+              find.ancestor(
+                of: find.byType(LinkableText),
+                matching: find.byType(Padding),
+              ),
+            )
+            .first
+            .padding
+            .resolve(TextDirection.ltr);
+        expect(
+          hiddenPadding.top,
+          greaterThan(headerTop),
+          reason: 'Body top padding should grow when the header is hidden.',
+        );
+      },
+    );
+
+    // TC-12 (INVERTED, 137) — continuation incoming balloons must be flush-left
+    // (no ~42px avatar gutter). 136 indented continuations under the avatar;
+    // 137 reverses that so every incoming balloon shares the recipient's left
+    // edge (group screenshot bug #1).
+    testWidgets(
+      'continuation incoming balloon has NO ~42px leading avatar gutter',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: false,
+            showSenderName: false,
+            isFirstInGroup: false,
+            isLastInGroup: true,
+          ),
+        );
+
+        final gutters = tester.widgetList<SizedBox>(find.byType(SizedBox));
+        final hasGutter = gutters.any(
+          (sb) => sb.width != null && sb.width! >= 40 && sb.width! <= 46,
+        );
+        expect(
+          hasGutter,
+          isFalse,
+          reason: 'Continuation incoming bubble must NOT keep a ~42px leading '
+              'gutter — it should be flush-left like the first balloon.',
+        );
+      },
+    );
+
+    // TC-14
+    testWidgets('bubble balloon still fires onLongPress', (tester) async {
+      var pressed = false;
+      await tester.pumpWidget(
+        buildBubble(
+          text: 'Hello',
+          showAvatar: false,
+          showSenderName: false,
+          onLongPress: () => pressed = true,
+        ),
+      );
+      await tester.longPress(find.text('Hello'));
+      expect(pressed, isTrue);
+    });
+
+    // TC-15
+    testWidgets('bubble balloon still fires onReactionTap for its message', (
+      tester,
+    ) async {
+      String? tapped;
+      await tester.pumpWidget(
+        buildBubble(
+          text: 'Hello',
+          showAvatar: false,
+          showSenderName: false,
+          ownPeerId: 'my-peer',
+          reactions: const [
+            MessageReaction(
+              id: 'r1',
+              messageId: 'msg-1',
+              emoji: '👍',
+              senderPeerId: 'sender-1',
+              timestamp: '2026-02-27T10:00:00.000Z',
+              createdAt: '2026-02-27T10:00:01.000Z',
+            ),
+          ],
+          onReactionTap: (emoji) => tapped = emoji,
+        ),
+      );
+      await tester.tap(find.text('👍'));
+      expect(tapped, '👍');
+    });
+
+    // TC-16
+    testWidgets(
+      'chrome-hidden bubble exposes a continuation Semantics label naming the '
+      'sender',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            senderName: 'Alice',
+            showAvatar: false,
+            showSenderName: false,
+          ),
+        );
+        // No visible sender-name Text, but the sender stays attributable via
+        // a Semantics label carrying the sender name.
+        expect(find.text('Alice'), findsNothing);
+        expect(find.bySemanticsLabel(RegExp('Alice')), findsWidgets);
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // 137 — alignment / content-hug / inline timestamp (1:1 + group).
+    // -----------------------------------------------------------------------
+
+    // TC-A1 — every incoming balloon shares the same left edge (INV-1).
+    testWidgets(
+      'TC-A1 incoming first and continuation balloons share the same left edge',
+      (tester) async {
+        // First-in-run balloon (header: avatar + name).
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: true,
+            showSenderName: true,
+            isFirstInGroup: true,
+            isLastInGroup: false,
+            text: 'same text',
+          ),
+        );
+        final firstLeft = bubbleLeft(tester);
+
+        // Continuation balloon (chrome hidden) with identical text/width.
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: false,
+            showSenderName: false,
+            isFirstInGroup: false,
+            isLastInGroup: false,
+            text: 'same text',
+          ),
+        );
+        final continuationLeft = bubbleLeft(tester);
+
+        expect(
+          continuationLeft,
+          closeTo(firstLeft, 1.0),
+          reason: 'Continuation incoming balloon must be flush-left with the '
+              'first balloon (no avatar gutter drift).',
+        );
+      },
+    );
+
+    // TC-W1 — group first-in-run headered bubble hugs short text (header
+    // Row+Expanded driver, INV-2).
+    testWidgets('TC-W1 group first-in-run headered bubble hugs short text', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          width: 400,
+          isIncoming: true,
+          showAvatar: true,
+          showSenderName: true,
+          text: 'bbb',
+        ),
+      );
+
+      expect(
+        bubbleWidth(tester),
+        lessThan(200),
+        reason: 'A headered bubble with short text must hug name+text, not '
+            'stretch to the 0.78 cap (~312 at a 400px slot).',
+      );
+    });
+
+    // TC-W2 — continuation / 1:1 incoming bubble hugs short text (footer
+    // Row+Expanded driver, INV-2).
+    testWidgets('TC-W2 continuation incoming bubble hugs short text', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          width: 400,
+          isIncoming: true,
+          showAvatar: false,
+          showSenderName: false,
+          text: 'bbb',
+        ),
+      );
+
+      expect(
+        bubbleWidth(tester),
+        lessThan(200),
+        reason: 'A chrome-hidden bubble with short text must hug its content.',
+      );
+    });
+
+    // TC-W3 — outgoing 1:1 bubble hugs short text and stays right-aligned.
+    testWidgets(
+      'TC-W3 outgoing bubble hugs short text and stays right-aligned',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            width: 400,
+            isIncoming: false,
+            showAvatar: false,
+            showSenderName: false,
+            text: 'ok',
+            status: 'sent',
+          ),
+        );
+
+        expect(
+          bubbleWidth(tester),
+          lessThan(200),
+          reason: 'An outgoing bubble with short text must hug its content.',
+        );
+        expect(bubbleAlign(tester).alignment, Alignment.centerRight);
+      },
+    );
+
+    // TC-T1 — incoming inline timestamp folds into the body text (INV-3, no
+    // double-render).
+    testWidgets(
+      'TC-T1 timestamp renders inline within the body text (incoming)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: false,
+            showSenderName: false,
+            text: 'bbb',
+            time: '9:57 AM',
+          ),
+        );
+
+        // The time Text is a DESCENDANT of the body LinkableText (a trailing
+        // WidgetSpan), not a standalone footer Text.
+        expect(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.text('9:57 AM'),
+          ),
+          findsOneWidget,
+        );
+        // And it is not double-rendered.
+        expect(find.text('9:57 AM'), findsOneWidget);
+      },
+    );
+
+    // TC-T2 — outgoing inline timestamp keeps the status tick adjacent in the
+    // body (INV-3).
+    testWidgets(
+      'TC-T2 outgoing inline timestamp keeps the status tick in the body',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: false,
+            showAvatar: false,
+            showSenderName: false,
+            text: 'ok',
+            time: '9:57 AM',
+            status: 'sent',
+          ),
+        );
+
+        expect(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.text('9:57 AM'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.byIcon(Icons.done_rounded),
+          ),
+          findsOneWidget,
+        );
+
+        // Deviation A (the computeToPlainText no-op on _InlineMetaWidgetSpan)
+        // must NOT strip the inline status a11y label — semantics travels the
+        // independent computeSemanticsInformation path, not the plain-text one.
+        final handle = tester.ensureSemantics();
+        expect(find.bySemanticsLabel(RegExp('Message status')), findsOneWidget);
+        handle.dispose();
+      },
+    );
+
+    // TC-W4 — a short bubble WITH reactions must STILL hug (INV-2 "hugs on
+    // every code path"; plan §Risks "verify a reactions+inline-time bubble
+    // still hugs"). Guards against the inline-footer reactions Wrap expanding
+    // to the 0.78 width cap.
+    testWidgets('TC-W4 short bubble with reactions still hugs', (tester) async {
+      await tester.pumpWidget(
+        buildBubble(
+          width: 400,
+          isIncoming: true,
+          showAvatar: false,
+          showSenderName: false,
+          text: 'bbb',
+          ownPeerId: 'my-peer',
+          reactions: const [
+            MessageReaction(
+              id: 'r1',
+              messageId: 'msg-1',
+              emoji: '👍',
+              senderPeerId: 'sender-1',
+              timestamp: '2026-02-27T10:00:00.000Z',
+              createdAt: '2026-02-27T10:00:01.000Z',
+            ),
+          ],
+        ),
+      );
+
+      expect(
+        bubbleWidth(tester),
+        lessThan(200),
+        reason: 'A short bubble that also shows reactions must hug its content, '
+            'not stretch to the 0.78 cap.',
+      );
+    });
+
+    // TC-T5 (guard) — an empty-text (e.g. media-only) non-deleted bubble has no
+    // body LinkableText to host the inline suffix, so it KEEPS the footer
+    // timestamp (INV-4: metaInlined requires text.isNotEmpty).
+    testWidgets('TC-T5 empty-text bubble keeps the footer timestamp', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          showAvatar: false,
+          showSenderName: false,
+          text: '',
+          time: '9:57 AM',
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('9:57 AM'), findsOneWidget);
+      expect(find.byType(LinkableText), findsNothing);
+    });
+
+    // TC-T3 (guard) — a near-full line wraps the inline timestamp atomically,
+    // never overflowing (INV-3 "wraps when no room").
+    testWidgets('TC-T3 long text wraps the inline timestamp without overflow', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          width: 240,
+          isIncoming: true,
+          showAvatar: false,
+          showSenderName: false,
+          text: 'Supercalifragilisticexpialidocious',
+          time: '9:57 AM',
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('9:57 AM'), findsOneWidget);
+    });
+
+    // TC-T4 (guard) — deleted bubbles have no body LinkableText to host the
+    // suffix span, so they KEEP the footer timestamp (INV-4 / RC-3 caveat).
+    testWidgets('TC-T4 deleted bubble keeps the footer timestamp', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          showAvatar: false,
+          showSenderName: false,
+          isDeleted: true,
+          text: 'This message was deleted',
+          time: '9:57 AM',
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('9:57 AM'), findsOneWidget);
+      // Not inlined — the deleted body is a plain Text (no LinkableText).
+      expect(
+        find.descendant(
+          of: find.byType(LinkableText),
+          matching: find.text('9:57 AM'),
+        ),
+        findsNothing,
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // 137 follow-up — group run avatar rendered OUTSIDE the bubble.
+    // -----------------------------------------------------------------------
+
+    // TC-AV1 — with avatarOutsideBubble the run avatar is rendered but NOT
+    // inside the bubble balloon (it lives in a left gutter beside it).
+    testWidgets(
+      'TC-AV1 avatarOutsideBubble renders the avatar outside the bubble',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: true,
+            showSenderName: true,
+            avatarOutsideBubble: true,
+            text: 'hi',
+          ),
+        );
+
+        // The avatar is still rendered...
+        expect(find.byType(UserAvatar), findsOneWidget);
+        // ...but NOT as a descendant of the bubble balloon (its ClipRRect).
+        // (UserAvatar clips with ClipOval, so the only ClipRRect is the bubble.)
+        expect(
+          find.descendant(
+            of: find.byType(ClipRRect).first,
+            matching: find.byType(UserAvatar),
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    // TC-AV2 — first-in-run (avatar painted) and continuation (empty gutter)
+    // incoming balloons share the SAME bubble left edge, both indented past the
+    // reserved gutter.
+    testWidgets(
+      'TC-AV2 avatarOutsideBubble keeps run balloons aligned past the gutter',
+      (tester) async {
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: true,
+            showSenderName: true,
+            isFirstInGroup: true,
+            isLastInGroup: false,
+            avatarOutsideBubble: true,
+            text: 'same text',
+          ),
+        );
+        final firstLeft = bubbleLeft(tester);
+        final firstAvatarCount = find.byType(UserAvatar).evaluate().length;
+
+        await tester.pumpWidget(
+          buildBubble(
+            isIncoming: true,
+            showAvatar: false,
+            showSenderName: false,
+            isFirstInGroup: false,
+            isLastInGroup: false,
+            avatarOutsideBubble: true,
+            text: 'same text',
+          ),
+        );
+        final continuationLeft = bubbleLeft(tester);
+        final continuationAvatarCount = find.byType(UserAvatar).evaluate().length;
+
+        // First balloon paints the avatar; continuation reserves an empty gutter.
+        expect(firstAvatarCount, 1);
+        expect(continuationAvatarCount, 0);
+        // Both share the same bubble left edge (consistent gutter).
+        expect(continuationLeft, closeTo(firstLeft, 1.0));
+      },
+    );
+
+    // TC-AV3 (preservation) — the default (avatarOutsideBubble:false) keeps the
+    // avatar INSIDE the bubble header (136 behavior), so the opt-in is scoped.
+    testWidgets('TC-AV3 default keeps the avatar inside the bubble header', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          showAvatar: true,
+          showSenderName: true,
+          // avatarOutsideBubble defaults false.
+          text: 'hi',
+        ),
+      );
+
+      expect(find.byType(UserAvatar), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(ClipRRect).first,
+          matching: find.byType(UserAvatar),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    // TC-AV4 (RTL) — the incoming bubble is pinned to the PHYSICAL-left edge
+    // (Alignment.centerLeft, not directional), so the run avatar must also stay
+    // on the leading/physical-left side under RTL (Arabic) rather than flipping
+    // to the inner/center-facing side.
+    testWidgets(
+      'TC-AV4 avatar stays on the physical-left of the incoming bubble under RTL',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: ThemeData(
+              extensions: <ThemeExtension<dynamic>>[
+                BackgroundReadableColors.dark,
+              ],
+            ),
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Scaffold(
+                body: Center(
+                  child: SizedBox(
+                    width: 400,
+                    child: SingleChildScrollView(
+                      child: LetterCard(
+                        senderPeerId: '12D3KooWTestPeerId1234567890',
+                        senderName: 'Alice',
+                        text: 'hi',
+                        time: '3:30 PM',
+                        isIncoming: true,
+                        bubbleLayout: true,
+                        showAvatar: true,
+                        showSenderName: true,
+                        avatarOutsideBubble: true,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final avatarRight = tester.getTopRight(find.byType(UserAvatar)).dx;
+        final bubbleLeftEdge = tester
+            .getTopLeft(find.byType(ClipRRect).first)
+            .dx;
+        expect(
+          avatarRight,
+          lessThanOrEqualTo(bubbleLeftEdge + 1.0),
+          reason: 'Under RTL the avatar must remain on the leading (physical-'
+              'left) side of the incoming bubble, matching the physical-left '
+              'Align — not flip to the inner side.',
+        );
+      },
+    );
+
+    // TC-AV5 — in avatar-outside (group) mode the sender name renders ABOVE the
+    // bubble (outside it), not inside the bubble's header.
+    testWidgets('TC-AV5 sender name renders above the bubble, not inside it', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          showAvatar: true,
+          showSenderName: true,
+          avatarOutsideBubble: true,
+          senderName: 'Bob',
+          text: 'b',
+        ),
+      );
+
+      expect(find.text('Bob'), findsOneWidget);
+      // The name is NOT inside the bubble balloon (its ClipRRect)...
+      expect(
+        find.descendant(
+          of: find.byType(ClipRRect).first,
+          matching: find.text('Bob'),
+        ),
+        findsNothing,
+      );
+      // ...and it sits ABOVE the bubble.
+      final nameTop = tester.getTopLeft(find.text('Bob')).dy;
+      final bubbleTop = tester.getTopLeft(find.byType(ClipRRect).first).dy;
+      expect(nameTop, lessThan(bubbleTop));
+    });
+
+    // TC-H1 — the group avatar-outside bubble body is vertically compact:
+    // smaller body padding and a tighter line height than the 1:1/legacy card
+    // (which keep 1.65, so their find.text long-press target stays stable).
+    testWidgets('TC-H1 group avatar-outside bubble body is vertically compact', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildBubble(
+          isIncoming: true,
+          showAvatar: false,
+          showSenderName: false,
+          avatarOutsideBubble: true,
+          text: 'hi',
+        ),
+      );
+
+      final bodyPad = tester
+          .widgetList<Padding>(
+            find.ancestor(
+              of: find.byType(LinkableText),
+              matching: find.byType(Padding),
+            ),
+          )
+          .first
+          .padding
+          .resolve(TextDirection.ltr);
+      // Compact: top 8 + bottom 6 = 14 (vs the looser 12 + 8 = 20).
+      expect(bodyPad.top + bodyPad.bottom, lessThanOrEqualTo(14));
+
+      final body = tester.widget<LinkableText>(find.byType(LinkableText));
+      expect(body.style!.height, lessThan(1.65));
+    });
+
+    // TC-AV6 (RTL) — a WIDE sender name must not push the bubble off the gutter
+    // under RTL: the name-above Column is pinned LTR like the gutter, so the
+    // bubble stays flush just right of the avatar.
+    testWidgets(
+      'TC-AV6 name-above bubble stays flush to the gutter under RTL',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: ThemeData(
+              extensions: <ThemeExtension<dynamic>>[
+                BackgroundReadableColors.dark,
+              ],
+            ),
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Scaffold(
+                body: Center(
+                  child: SizedBox(
+                    width: 400,
+                    child: SingleChildScrollView(
+                      child: LetterCard(
+                        senderPeerId: '12D3KooWTestPeerId1234567890',
+                        senderName: 'A very long sender display name indeed',
+                        text: 'a',
+                        time: '3:30 PM',
+                        isIncoming: true,
+                        bubbleLayout: true,
+                        showAvatar: true,
+                        showSenderName: true,
+                        avatarOutsideBubble: true,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final bubbleLeft = tester.getTopLeft(find.byType(ClipRRect).first).dx;
+        final avatarRight = tester.getTopRight(find.byType(UserAvatar)).dx;
+        // The bubble sits just right of the avatar gutter (small gap), not
+        // pushed far right by the wide name.
+        expect(bubbleLeft - avatarRight, lessThan(16));
+      },
+    );
+  });
+
+  // TC-13 preservation sentinel: the flag-less default render is unchanged.
+  group('bubble layout preservation (TC-13)', () {
+    testWidgets(
+      'default (no new flags) renders unchanged full-width card',
+      (tester) async {
+        await tester.pumpWidget(buildTestWidget(isIncoming: true));
+
+        // Header avatar + sender name present (legacy full-width card).
+        expect(find.byType(UserAvatar), findsOneWidget);
+        expect(find.text('Alice'), findsOneWidget);
+
+        // No bubble Align wraps the card in default mode.
+        expect(
+          find.ancestor(
+            of: find.byType(ClipRRect),
+            matching: find.byType(Align),
+          ),
+          findsNothing,
+        );
+
+        // BorderRadius.circular(24) intact on the ClipRRect.
+        final clip = tester.widget<ClipRRect>(find.byType(ClipRRect).first);
+        expect(clip.borderRadius, BorderRadius.circular(24));
+      },
+    );
+
+    // TC-P1 (137 NEW preservation) — the legacy full-width card must NOT pick
+    // up the bubble-mode hug / inline-timestamp scoping (INV-5). Guards against
+    // a `mainAxisSize.min` / `Flexible` / inline-time change leaking into the
+    // shared `_buildHeader` / `_buildBodyChildren` unconditionally.
+    testWidgets(
+      'TC-P1 legacy full-width card still fills width & keeps footer time',
+      (tester) async {
+        await tester.pumpWidget(buildTestWidget(isIncoming: true, text: 'bbb'));
+
+        // Fills the available width (legacy full-width card), not hugging 'bbb'.
+        final cardWidth =
+            tester.getSize(find.byType(ClipRRect).first).width;
+        expect(
+          cardWidth,
+          greaterThan(600),
+          reason: 'Legacy card must keep filling width; if bubble hug leaked it '
+              'would shrink to hug the short text.',
+        );
+
+        // The footer timestamp stays in the footer Row (NOT folded into the
+        // body LinkableText as a bubble-mode suffix span).
+        expect(find.text('3:30 PM'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(LinkableText),
+            matching: find.text('3:30 PM'),
+          ),
+          findsNothing,
+        );
+      },
+    );
   });
 
   group('terminal send_failed status (Finding 05 Phase 4)', () {

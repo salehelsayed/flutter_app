@@ -6,9 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
@@ -112,15 +109,15 @@ class _FeedTestHarness extends StatefulWidget {
 }
 
 class _FeedTestHarnessState extends State<_FeedTestHarness> {
-  String? expandedCardId;
-  final Map<String, String> draftTexts = {};
-  final Map<String, String> activeQuoteMessageIds = {};
-  String? activeFocusPeerId;
+  // 134-P5: the per-card composer/quote/focus state was removed from the
+  // FeedScreen contract; the redesigned screen drives a single focusedId.
+  // (Full TC-36 perf-fixture re-author with the letter-card model is P8.)
+  String? focusedId;
 
   @override
   void initState() {
     super.initState();
-    expandedCardId = widget.initialExpandedCardId;
+    focusedId = widget.initialExpandedCardId;
   }
 
   @override
@@ -132,32 +129,9 @@ class _FeedTestHarnessState extends State<_FeedTestHarness> {
         backgroundPreference: widget.backgroundPreference,
         onSwitchView: (_) {},
         activeTab: 'feed',
-        expandedCardId: expandedCardId,
-        onToggleExpand: (id) => setState(() {
-          expandedCardId = expandedCardId == id ? null : id;
-        }),
-        onInlineSend: (_, _) {},
-        draftTexts: draftTexts,
-        // Match FeedWired: draft text updates are stored for later restoration
-        // without rebuilding the whole feed on every keystroke.
-        onDraftChanged: (peerId, text) {
-          if (text.isEmpty) {
-            draftTexts.remove(peerId);
-          } else {
-            draftTexts[peerId] = text;
-          }
-        },
-        activeQuoteMessageIds: activeQuoteMessageIds,
-        onQuoteReply: (peerId, msgId) => setState(() {
-          activeQuoteMessageIds[peerId] = msgId;
-        }),
-        onClearQuote: (peerId) => setState(() {
-          activeQuoteMessageIds.remove(peerId);
-        }),
-        activeFocusPeerId: activeFocusPeerId,
-        onInputFocusChanged: (peerId, hasFocus) => setState(() {
-          activeFocusPeerId = hasFocus ? peerId : null;
-        }),
+        focusedId: focusedId,
+        onFocusCard: (id) => setState(() => focusedId = id),
+        onClearFocus: () => setState(() => focusedId = null),
       ),
     );
   }
@@ -188,19 +162,6 @@ Future<void> _pumpFeedScreen(
   for (var i = 0; i < 50; i++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
-}
-
-FeedCard? _nextBuiltCollapsedCard(
-  WidgetTester tester,
-  Set<String> exercisedThreadIds,
-) {
-  for (final card in tester.widgetList<FeedCard>(find.byType(FeedCard))) {
-    if (!card.thread.isOpenMode &&
-        !exercisedThreadIds.contains(card.thread.id)) {
-      return card;
-    }
-  }
-  return null;
 }
 
 // ─── Frame Timing Collector ───────────────────────────────────────────────────
@@ -413,152 +374,18 @@ void registerFeedPerf() {
     );
   });
 
-  // 2. Card expand/collapse performance
-  testWidgets('FEED 2', (tester) async {
-    await _pumpFeedScreen(tester, items);
-
-    final collector = _FrameTimingCollector()..start();
-
-    final scrollable = find.byType(CustomScrollView);
-    final exercisedThreadIds = <String>{};
-
-    for (var attempts = 0; exercisedThreadIds.length < 3; attempts++) {
-      final nextCard = _nextBuiltCollapsedCard(tester, exercisedThreadIds);
-      if (nextCard == null) {
-        expect(
-          attempts,
-          lessThan(20),
-          reason: 'Could not find three collapsed feed cards to exercise',
-        );
-        await tester.drag(scrollable, const Offset(0, -300));
-        await tester.pump(const Duration(milliseconds: 16));
-        continue;
-      }
-
-      final card = find.byKey(ValueKey(nextCard.thread.id));
-      final headerLabel = find.descendant(
-        of: card,
-        matching: find.text(nextCard.thread.displayName),
-      );
-
-      await tester.ensureVisible(headerLabel);
-      await tester.pump(const Duration(milliseconds: 16));
-
-      // Expand via the tappable collapsed header instead of the full card body.
-      await tester.tap(headerLabel);
-      await _pumpFrames(tester, count: 25);
-
-      final collapseHint = find.descendant(
-        of: card,
-        matching: find.text(
-          AppLocalizations.of(tester.element(card))!.feed_collapse,
-        ),
-      );
-
-      await tester.ensureVisible(collapseHint);
-      await tester.pump(const Duration(milliseconds: 16));
-
-      await tester.tap(collapseHint);
-      await _pumpFrames(tester, count: 25);
-
-      exercisedThreadIds.add(nextCard.thread.id);
-    }
-
-    await collector.stop();
-    // Expand triggers first-mount of 6 message bubbles + AnimatedSize +
-    // BackdropFilter recalc. First frame spikes are expected in debug mode;
-    // wider budget catches regressions without false positives.
-    _assertThresholds(
-      collector.stats,
-      'Expand/Collapse',
-      maxAvgMs: 16,
-      maxP99Ms: 64,
-      maxWorstMs: 100,
-    );
-  });
-
-  // 3. Swipe-to-quote gesture performance
-  testWidgets('FEED 3', (tester) async {
-    // Pre-expand thread_0 so SwipeToQuoteBubble widgets are rendered
-    await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
-
-    final swipeable = find.byType(SwipeToQuoteBubble);
-    expect(
-      swipeable,
-      findsWidgets,
-      reason: 'No SwipeToQuoteBubble found — is the card expanded?',
-    );
-
-    final target = swipeable.first;
-    final center = tester.getCenter(target);
-
-    final collector = _FrameTimingCollector()..start();
-
-    // Start drag gesture
-    final gesture = await tester.startGesture(center);
-
-    // Move past touch slop (18px default) to start drag recognition
-    await gesture.moveBy(const Offset(20, 0));
-    await tester.pump(const Duration(milliseconds: 16));
-
-    // Drag right in 8 increments (40px total, well past 36px trigger)
-    for (var i = 0; i < 8; i++) {
-      await gesture.moveBy(const Offset(5, 0));
-      await tester.pump(const Duration(milliseconds: 16));
-    }
-
-    // Release and pump through snap-back animation
-    await gesture.up();
-    await _pumpFrames(tester, count: 15);
-
-    await collector.stop();
-    // Steady-state transform animation: tight budget
-    _assertThresholds(collector.stats, 'Swipe-to-quote');
-  });
-
-  // 4. Compose input performance
-  testWidgets('FEED 4', (tester) async {
-    // Pre-expand thread_0 so the inline reply input is rendered
-    await _pumpFeedScreen(tester, items, expandedCardId: 'thread_0');
-
-    final composeFinder = find.descendant(
-      of: find.byKey(const ValueKey('thread_0')),
-      matching: find.byType(InlineReplyInput),
-    );
-    expect(composeFinder, findsOneWidget);
-
-    final textField = find.descendant(
-      of: composeFinder,
-      matching: find.byType(TextField),
-    );
-    expect(textField, findsOneWidget);
-
-    // Tap to focus
-    await tester.tap(textField);
-    await tester.pump(const Duration(milliseconds: 16));
-
-    final collector = _FrameTimingCollector()..start();
-
-    // Enter text in 10 chunks, each triggering a rebuild
-    const fullText = 'Performance test: typing fifty characters rapidly!';
-    for (var i = 1; i <= 10; i++) {
-      final chunk = fullText.substring(0, min(i * 5, fullText.length));
-      await tester.enterText(textField, chunk);
-      await tester.pump(const Duration(milliseconds: 16));
-    }
-
-    await collector.stop();
-    // enterText replaces full text and exercises InlineReplyInput's local
-    // text/direction/send-button state. The harness stores drafts without
-    // setState to match production FeedWired behavior.
-    _assertThresholds(
-      collector.stats,
-      'Compose input',
-      maxAvgMs: 32,
-      maxP99Ms: 64,
-      maxWorstMs: 100,
-    );
-  });
+  // 2/3/4. Card expand-collapse, swipe-to-quote, and inline-compose perf.
+  //
+  // 134-P8: these three scenarios drove the OLD per-card FeedCard /
+  // InlineReplyInput / in-card SwipeToQuoteBubble model that the feed redesign
+  // removed. The redesigned FeedScreen focuses a card and raises a single
+  // screen-level FeedComposer instead. Re-authoring these perf fixtures to the
+  // letter-card / focus model is device-harness scope (TC-36 follow-up) and is
+  // intentionally left as a documented gap — skipped, not deleted, so the
+  // re-author lands here. (FEED 1/5/6/7 scroll + background perf still run.)
+  testWidgets('FEED 2', (tester) async {}, skip: true);
+  testWidgets('FEED 3', (tester) async {}, skip: true);
+  testWidgets('FEED 4', (tester) async {}, skip: true);
 
   // 5. Cosmic scroll performance
   testWidgets('FEED 5', (tester) async {

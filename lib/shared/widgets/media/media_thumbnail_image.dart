@@ -113,6 +113,16 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
       fit: widget.fit,
       cacheWidth: isGifImage ? null : widget.cacheWidth,
       cacheHeight: isGifImage ? null : widget.cacheHeight,
+      // 143: while the full-resolution photo is being read + decoded + resized
+      // (cacheWidth:400), Flutter paints transparent inside the size-reserved
+      // box — which reads as an empty/failed send. Show the supplied sized
+      // placeholder during decode instead of an empty box; the decoded child
+      // appears the moment a frame is available (or if it loaded synchronously,
+      // e.g. an already-cached image — no placeholder flash).
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
+          (wasSynchronouslyLoaded || frame != null)
+          ? child
+          : (widget.placeholder ?? const SizedBox.shrink()),
       errorBuilder: (context, error, stackTrace) {
         // 117 Session 1: a video whose derived thumbnail JPG fails to decode
         // is NOT unavailable — the underlying video source is still present

@@ -36,6 +36,7 @@ import '../test/shared/fakes/in_memory_media_attachment_repository.dart';
 import '../test/shared/fakes/in_memory_message_repository.dart';
 import '../test/shared/fakes/in_memory_post_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '../test/shared/fakes/in_memory_feed_cleared_repository.dart';
 
 late final IntegrationTestWidgetsFlutterBinding binding;
 
@@ -350,6 +351,7 @@ class _HarnessEnvironment {
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacyRepo,
+        feedClearedRepository: InMemoryFeedClearedRepository(),
       ),
     );
   }

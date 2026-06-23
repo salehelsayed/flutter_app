@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -226,6 +227,179 @@ void main() {
 
       expect(find.text('image unavailable'), findsOneWidget);
       expect(find.text('image fallback'), findsNothing);
+    },
+  );
+
+  // 143: The real Image.file decode runs async I/O that does not complete in
+  // the testWidgets fake-async zone (same constraint the errorBuilder tests
+  // above call out). So we assert the decode-LOADING state deterministically
+  // by invoking the built Image's `frameBuilder` directly — exactly how the
+  // tests above invoke `errorBuilder`. While the first frame is undecoded the
+  // builder must return the supplied placeholder, never a transparent box.
+  testWidgets(
+    'image shows the supplied placeholder while the first frame is undecoded '
+    '(frame == null)',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: jpgFile.path,
+            mediaType: 'image',
+            placeholder: const SizedBox(key: Key('ph-sentinel')),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(
+        image.frameBuilder,
+        isNotNull,
+        reason:
+            '_buildImage must supply a frameBuilder so the decode gap renders '
+            'the sized placeholder instead of a transparent/empty box.',
+      );
+
+      final ctx = tester.element(find.byType(Image));
+      final built = image.frameBuilder!(
+        ctx,
+        const SizedBox(key: Key('child')),
+        null, // first frame not yet decoded
+        false, // not synchronously loaded
+      );
+      expect(
+        built.key,
+        const Key('ph-sentinel'),
+        reason: 'undecoded image must show the placeholder, not the child',
+      );
+      expect(built.key, isNot(const Key('child')));
+    },
+  );
+
+  testWidgets(
+    'image shows the decoded child once a frame is available or synchronously '
+    'loaded',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: jpgFile.path,
+            mediaType: 'image',
+            placeholder: const SizedBox(key: Key('ph-sentinel')),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final image = tester.widget<Image>(find.byType(Image));
+      final ctx = tester.element(find.byType(Image));
+      const child = SizedBox(key: Key('child'));
+
+      // A decoded frame (frame != null) shows the image child.
+      final decoded = image.frameBuilder!(ctx, child, 0, false);
+      expect(decoded.key, const Key('child'));
+
+      // A synchronously-loaded image (frame == null but wasSynchronouslyLoaded)
+      // also shows the child immediately — no placeholder flash.
+      final synchronous = image.frameBuilder!(ctx, child, null, true);
+      expect(synchronous.key, const Key('child'));
+    },
+  );
+
+  testWidgets('null placeholder falls back to SizedBox.shrink (no crash)', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        MediaThumbnailImage(
+          mediaPath: jpgFile.path,
+          mediaType: 'image',
+          // no placeholder supplied
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final image = tester.widget<Image>(find.byType(Image));
+    final ctx = tester.element(find.byType(Image));
+    final built = image.frameBuilder!(
+      ctx,
+      const SizedBox(key: Key('child')),
+      null,
+      false,
+    );
+    expect(built, isA<SizedBox>());
+    expect(built.key, isNot(const Key('child')));
+    final box = built as SizedBox;
+    expect(box.width, 0, reason: 'must degrade to SizedBox.shrink');
+    expect(box.height, 0);
+  });
+
+  testWidgets(
+    'video thumbnail path unchanged (FutureBuilder placeholder while resolving)',
+    (tester) async {
+      // A never-completing resolver pins the video branch in
+      // ConnectionState.waiting. The FutureBuilder must keep showing the
+      // placeholder and build NO Image yet — the _buildImage frameBuilder edit
+      // must not perturb the video waiting state.
+      final pending = Completer<String?>();
+      final videoFile = File('${tempDir.path}/waiting.mp4')
+        ..writeAsBytesSync(_tinyMp4Bytes);
+
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: videoFile.path,
+            mediaType: 'video',
+            placeholder: const SizedBox(key: Key('video-ph')),
+            videoThumbnailResolver: (_) => pending.future,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('video-ph')), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'resolved video thumbnail also gets the decode placeholder (frameBuilder is '
+    'not image-only)',
+    (tester) async {
+      // The resolved-video-thumbnail path flows through _buildImage too (build()
+      // calls _buildImage(thumbnailPath) once the resolver completes), so the
+      // frameBuilder must apply there as well — a future change that scoped it
+      // to mediaType=='image' only would flash a transparent box during
+      // thumbnail decode. Lock it by driving frameBuilder on a video widget.
+      final videoFile = File('${tempDir.path}/clip-thumb.mp4')
+        ..writeAsBytesSync(_tinyMp4Bytes);
+      final thumb = File('${tempDir.path}/clip-thumb.jpg')
+        ..writeAsBytesSync(_tinyJpgBytes);
+
+      await tester.pumpWidget(
+        wrap(
+          MediaThumbnailImage(
+            mediaPath: videoFile.path,
+            mediaType: 'video',
+            placeholder: const SizedBox(key: Key('video-ph')),
+            videoThumbnailResolver: (_) async => thumb.path,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(image.frameBuilder, isNotNull);
+
+      final ctx = tester.element(find.byType(Image));
+      final built = image.frameBuilder!(
+        ctx,
+        const SizedBox(key: Key('child')),
+        null,
+        false,
+      );
+      expect(built.key, const Key('video-ph'));
     },
   );
 }

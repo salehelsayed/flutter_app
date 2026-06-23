@@ -14,6 +14,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -2052,28 +2053,33 @@ void main() {
     expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
   });
 
-  testWidgets('does not wrap outgoing messages with swipe-to-quote', (
-    tester,
-  ) async {
-    final outgoing = [
-      GroupMessage(
-        id: 'msg-out',
-        groupId: 'group-1',
-        senderPeerId: 'peer-1',
-        senderUsername: 'You',
-        text: 'Sent by me',
-        timestamp: DateTime.now().toUtc(),
-        createdAt: DateTime.now().toUtc(),
-        isIncoming: false,
-      ),
-    ];
+  testWidgets(
+    'wraps outgoing messages with swipe-to-quote when writable (136 Phase 4 '
+    'both directions)',
+    (tester) async {
+      // 136 Phase 4 behavior change: swipe-to-reply is now enabled on EVERY
+      // balloon in BOTH directions (outgoing balloons get the gesture too),
+      // still gated by write permission.
+      final outgoing = [
+        GroupMessage(
+          id: 'msg-out',
+          groupId: 'group-1',
+          senderPeerId: 'peer-1',
+          senderUsername: 'You',
+          text: 'Sent by me',
+          timestamp: DateTime.now().toUtc(),
+          createdAt: DateTime.now().toUtc(),
+          isIncoming: false,
+        ),
+      ];
 
-    await tester.pumpWidget(
-      buildTestWidget(messages: outgoing, onQuoteReply: (_) {}),
-    );
+      await tester.pumpWidget(
+        buildTestWidget(messages: outgoing, onQuoteReply: (_) {}),
+      );
 
-    expect(find.byType(SwipeToQuoteBubble), findsNothing);
-  });
+      expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'does not wrap incoming messages with swipe-to-quote for readers',
@@ -2364,5 +2370,496 @@ void main() {
       expect(expected, isNot(contains('14:05')));
       expect(find.textContaining(expected), findsOneWidget);
     });
+  });
+
+  // 136 Phase 4: wire bubble grouping into the group conversation screen.
+  group('GroupConversationScreen bubble grouping (136 Phase 4)', () {
+    GroupMessage groupMsg({
+      required String id,
+      required String senderPeerId,
+      required String senderUsername,
+      required String text,
+      required DateTime timestamp,
+      bool isIncoming = true,
+    }) => GroupMessage(
+      id: id,
+      groupId: 'group-1',
+      senderPeerId: senderPeerId,
+      senderUsername: senderUsername,
+      text: text,
+      timestamp: timestamp,
+      createdAt: timestamp,
+      isIncoming: isIncoming,
+    );
+
+    // The live LetterCard rendered inside the per-message
+    // ValueKey('grp-msg-<id>') padding (NOT a long-press snapshot).
+    LetterCard liveLetterCard(WidgetTester tester, String messageId) {
+      return tester.widget<LetterCard>(
+        find.descendant(
+          of: find.byKey(ValueKey('grp-msg-$messageId')),
+          matching: find.byType(LetterCard),
+        ),
+      );
+    }
+
+    Finder avatarsInList() => find.descendant(
+      of: find.byKey(const ValueKey('group-messages')),
+      matching: find.byType(UserAvatar),
+    );
+
+    testWidgets(
+      'TC-23 group consecutive same-sender incoming messages show avatar+name '
+      'once',
+      (tester) async {
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              groupMsg(
+                id: 'g-in-1',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'First',
+                timestamp: base,
+              ),
+              groupMsg(
+                id: 'g-in-2',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Second',
+                timestamp: base.add(const Duration(minutes: 1)),
+              ),
+              groupMsg(
+                id: 'g-in-3',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Third',
+                timestamp: base.add(const Duration(minutes: 2)),
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await tester.pump();
+
+        // Exactly ONE avatar + ONE sender-name Text for the whole run.
+        expect(avatarsInList(), findsOneWidget);
+        expect(find.text('Alice'), findsOneWidget);
+
+        // The first balloon carries the run chrome; 2 and 3 hide both.
+        expect(liveLetterCard(tester, 'g-in-1').showAvatar, isTrue);
+        expect(liveLetterCard(tester, 'g-in-1').showSenderName, isTrue);
+        expect(liveLetterCard(tester, 'g-in-2').showAvatar, isFalse);
+        expect(liveLetterCard(tester, 'g-in-2').showSenderName, isFalse);
+        expect(liveLetterCard(tester, 'g-in-3').showAvatar, isFalse);
+        expect(liveLetterCard(tester, 'g-in-3').showSenderName, isFalse);
+
+        // All three balloons render in bubble layout.
+        expect(liveLetterCard(tester, 'g-in-1').bubbleLayout, isTrue);
+        expect(liveLetterCard(tester, 'g-in-2').bubbleLayout, isTrue);
+        expect(liveLetterCard(tester, 'g-in-3').bubbleLayout, isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-24 group outgoing run groups and never shows an avatar',
+      (tester) async {
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              groupMsg(
+                id: 'g-out-1',
+                senderPeerId: 'peer-1',
+                senderUsername: 'You',
+                text: 'My first',
+                timestamp: base,
+                isIncoming: false,
+              ),
+              groupMsg(
+                id: 'g-out-2',
+                senderPeerId: 'peer-1',
+                senderUsername: 'You',
+                text: 'My second',
+                timestamp: base.add(const Duration(minutes: 1)),
+                isIncoming: false,
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await tester.pump();
+
+        // Outgoing never shows an avatar in either balloon.
+        expect(avatarsInList(), findsNothing);
+        expect(liveLetterCard(tester, 'g-out-1').showAvatar, isFalse);
+        expect(liveLetterCard(tester, 'g-out-2').showAvatar, isFalse);
+
+        // The run groups: the first is first-in-run, the second continues it.
+        expect(liveLetterCard(tester, 'g-out-1').isFirstInGroup, isTrue);
+        expect(liveLetterCard(tester, 'g-out-2').isFirstInGroup, isFalse);
+      },
+    );
+
+    testWidgets(
+      'TC-25 group system row (sys- prefix) breaks the run and never shows '
+      'run chrome',
+      (tester) async {
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              groupMsg(
+                id: 'g-before-sys',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Before the system row',
+                timestamp: base,
+              ),
+              // System/membership row: ordinary GroupMessage with a sys- id,
+              // sharing senderPeerId with the surrounding text messages.
+              groupMsg(
+                id: 'sys-member_joined:peer-2',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Alice joined the group',
+                timestamp: base.add(const Duration(seconds: 30)),
+              ),
+              groupMsg(
+                id: 'g-after-sys',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'After the system row',
+                timestamp: base.add(const Duration(minutes: 1)),
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await tester.pump();
+
+        // The system row is its own run (first & last) and shows no chrome.
+        final sysCard = liveLetterCard(tester, 'sys-member_joined:peer-2');
+        expect(sysCard.isFirstInGroup, isTrue);
+        expect(sysCard.isLastInGroup, isTrue);
+        expect(sysCard.showAvatar, isFalse);
+        expect(sysCard.showSenderName, isFalse);
+
+        // The same-senderPeerId text message AFTER the system row starts a
+        // fresh run (it must NOT merge with the message before the system row).
+        expect(liveLetterCard(tester, 'g-after-sys').isFirstInGroup, isTrue);
+        expect(liveLetterCard(tester, 'g-after-sys').showAvatar, isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-26 group swipe-to-reply enabled both directions, preserving canWrite '
+      '(present for outgoing+canWrite, absent for outgoing+readonly)',
+      (tester) async {
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        final outgoing = [
+          groupMsg(
+            id: 'g-swipe-out',
+            senderPeerId: 'peer-1',
+            senderUsername: 'You',
+            text: 'Swipe my outgoing',
+            timestamp: base,
+            isIncoming: false,
+          ),
+        ];
+
+        // (isSent:true, canWrite:true) -> swipe PRESENT and quotes the id.
+        String? quotedId;
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: outgoing,
+            canWrite: true,
+            initialLoadDone: true,
+            onQuoteReply: (id) => quotedId = id,
+          ),
+        );
+        await tester.pump();
+
+        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+        await tester.drag(
+          find.byType(SwipeToQuoteBubble),
+          const Offset(80, 0),
+        );
+        await tester.pump();
+        expect(quotedId, 'g-swipe-out');
+
+        // (isSent:true, canWrite:false) -> swipe ABSENT (read-only preserved).
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: outgoing,
+            canWrite: false,
+            initialLoadDone: true,
+            onQuoteReply: (_) {},
+          ),
+        );
+        await tester.pump();
+
+        expect(find.byType(SwipeToQuoteBubble), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'TC-26b group system (sys-) rows are not swipe-to-reply-able even when '
+      'writable (1:1 parity — system rows are not quote-reply targets)',
+      (tester) async {
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              // A real outgoing message IS swipeable (TC-26 both-directions).
+              groupMsg(
+                id: 'g-real-out',
+                senderPeerId: 'peer-1',
+                senderUsername: 'You',
+                text: 'A real message',
+                timestamp: base,
+                isIncoming: false,
+              ),
+              // A system/membership row must NOT be swipeable: quoting a
+              // synthetic sys- id is nonsensical, and the 1:1 surface already
+              // excludes system messages from swipe (IntroSystemMessage
+              // early-return). Group must match for parity.
+              groupMsg(
+                id: 'sys-member_joined:peer-2',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Alice joined the group',
+                timestamp: base.add(const Duration(seconds: 30)),
+              ),
+            ],
+            canWrite: true,
+            initialLoadDone: true,
+            onQuoteReply: (_) {},
+          ),
+        );
+        await tester.pump();
+
+        // Exactly ONE swipe wrapper: the real message. The sys- row is excluded
+        // even though canWrite is true and onQuoteReply is wired.
+        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'TC-27 group run detection uses rendered list adjacency '
+      '(reply-reordered, non-monotonic)',
+      (tester) async {
+        // Simulate orderGroupMessagesForTimeline output: a reply (later
+        // timestamp) is pulled directly under its quoted parent, so the
+        // RENDERED order interleaves senders and is NOT timestamp-monotonic.
+        // Raw-timestamp sort would group the two peer-2 messages together
+        // (and break the run differently); rendered adjacency must win.
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        final messages = [
+          // peer-2 parent (earliest)
+          groupMsg(
+            id: 'nm-parent',
+            senderPeerId: 'peer-2',
+            senderUsername: 'Alice',
+            text: 'Parent from Alice',
+            timestamp: base,
+          ),
+          // peer-3 reply pulled under the parent — LATER timestamp than the
+          // peer-2 message that follows it in render order.
+          groupMsg(
+            id: 'nm-reply',
+            senderPeerId: 'peer-3',
+            senderUsername: 'Bob',
+            text: 'Reply from Bob',
+            timestamp: base.add(const Duration(minutes: 10)),
+          ),
+          // peer-2 again, EARLIER timestamp than the reply above it.
+          groupMsg(
+            id: 'nm-alice-2',
+            senderPeerId: 'peer-2',
+            senderUsername: 'Alice',
+            text: 'Second from Alice',
+            timestamp: base.add(const Duration(minutes: 2)),
+          ),
+        ];
+
+        await tester.pumpWidget(
+          buildTestWidget(messages: messages, initialLoadDone: true),
+        );
+        await tester.pump();
+
+        // All three balloons must render in bubble layout (RED on HEAD where
+        // bubbleLayout is never passed).
+        expect(liveLetterCard(tester, 'nm-parent').bubbleLayout, isTrue);
+        expect(liveLetterCard(tester, 'nm-reply').bubbleLayout, isTrue);
+        expect(liveLetterCard(tester, 'nm-alice-2').bubbleLayout, isTrue);
+
+        // Run flags are computed on adjacency-as-rendered. The peer-3 reply
+        // sits between two peer-2 messages, so EACH of the three balloons is
+        // first-in-run by position (the neighbor differs by sender).
+        expect(liveLetterCard(tester, 'nm-parent').isFirstInGroup, isTrue);
+        expect(liveLetterCard(tester, 'nm-reply').isFirstInGroup, isTrue);
+        expect(liveLetterCard(tester, 'nm-alice-2').isFirstInGroup, isTrue);
+
+        // Discriminator vs the re-sort mutation: with rendered adjacency the
+        // second Alice message is a FRESH incoming run head, so it shows run
+        // chrome. If detection re-sorted by timestamp, the two peer-2 messages
+        // would be adjacent and this balloon would lose its chrome
+        // (isFirstInGroup:false, showSenderName:false).
+        expect(liveLetterCard(tester, 'nm-alice-2').showSenderName, isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-28 group per-message ValueKey(grp-msg-<id>) + scroll-to-highlight '
+      'anchor preserved (sentinel)',
+      (tester) async {
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              groupMsg(
+                id: 'key-a',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Keyed A',
+                timestamp: base,
+              ),
+              groupMsg(
+                id: 'key-b',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Keyed B',
+                timestamp: base.add(const Duration(minutes: 1)),
+              ),
+            ],
+            highlightedMessageId: 'key-b',
+            initialLoadDone: true,
+          ),
+        );
+        await tester.pump();
+
+        // Per-message keys remain at the balloon level (not hoisted to a run).
+        expect(find.byKey(const ValueKey('grp-msg-key-a')), findsOneWidget);
+        expect(find.byKey(const ValueKey('grp-msg-key-b')), findsOneWidget);
+
+        // The scroll-to-highlight cue still targets the highlighted message.
+        expectSingleRowFocusCue(tester, 'key-b');
+      },
+    );
+
+    testWidgets(
+      'TC-29 group long-press lifted snapshot built with matching grouping '
+      'flags',
+      (tester) async {
+        final base = DateTime.utc(2026, 2, 9, 15, 30);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              groupMsg(
+                id: 'snap-1',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Run head',
+                timestamp: base,
+              ),
+              groupMsg(
+                id: 'snap-2',
+                senderPeerId: 'peer-2',
+                senderUsername: 'Alice',
+                text: 'Continuation balloon',
+                timestamp: base.add(const Duration(minutes: 1)),
+              ),
+            ],
+            onQuoteReply: (_) {},
+            onReactionSelected: (_, _) {},
+            initialLoadDone: true,
+          ),
+        );
+        await tester.pump();
+
+        // The live continuation balloon (snap-2) hides its chrome.
+        final liveContinuation = liveLetterCard(tester, 'snap-2');
+        expect(liveContinuation.showAvatar, isFalse);
+        expect(liveContinuation.isFirstInGroup, isFalse);
+
+        // Long-press the continuation balloon to lift the context overlay.
+        await tester.longPress(find.text('Continuation balloon'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        // The lifted snapshot LetterCard must carry the SAME grouping flags as
+        // the live balloon — no avatar pop-in / corner-radius jump.
+        final snapshotCard = tester.widget<LetterCard>(
+          find.descendant(
+            of: find.byKey(MessageContextOverlay.selectedMessageKey),
+            matching: find.byType(LetterCard),
+          ),
+        );
+        expect(snapshotCard.showAvatar, isFalse);
+        expect(snapshotCard.showSenderName, isFalse);
+        expect(snapshotCard.isFirstInGroup, isFalse);
+        expect(snapshotCard.bubbleLayout, isTrue);
+      },
+    );
+  });
+
+  group('run-aware spacing + avatar outside bubble (137 follow-up)', () {
+    GroupMessage incoming(String id, DateTime ts, String text) => GroupMessage(
+      id: id,
+      groupId: 'group-1',
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: text,
+      timestamp: ts,
+      createdAt: ts,
+      isIncoming: true,
+    );
+
+    testWidgets(
+      'mid-run tight gap, run-end separation, avatar wired outside the bubble',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            initialLoadDone: true,
+            messages: [
+              incoming('g1', DateTime.utc(2026, 2, 9, 15, 30), 'one'),
+              incoming('g2', DateTime.utc(2026, 2, 9, 15, 31), 'two'),
+              // >5 min after g2 → starts a new run.
+              incoming('g3', DateTime.utc(2026, 2, 9, 15, 40), 'three'),
+            ],
+          ),
+        );
+        await tester.pump();
+
+        double bottomOf(String id) {
+          final pad = tester.widget<Padding>(
+            find.byKey(ValueKey('grp-msg-$id')),
+          );
+          return pad.padding.resolve(TextDirection.ltr).bottom;
+        }
+
+        // g1 mid-run (g2 continues) → tight; g2 last of run A, g3 final → sep.
+        expect(bottomOf('g1'), lessThan(8));
+        expect(bottomOf('g2'), greaterThan(8));
+        expect(bottomOf('g3'), greaterThan(8));
+
+        LetterCard cardFor(String id) => tester.widget<LetterCard>(
+          find
+              .descendant(
+                of: find.byKey(ValueKey('grp-msg-$id')),
+                matching: find.byType(LetterCard),
+              )
+              .first,
+        );
+
+        // First-in-run paints the avatar OUTSIDE the bubble (avatarOutsideBubble
+        // + showAvatar); the continuation reserves the gutter but paints none.
+        expect(cardFor('g1').avatarOutsideBubble, isTrue);
+        expect(cardFor('g1').showAvatar, isTrue);
+        expect(cardFor('g2').avatarOutsideBubble, isTrue);
+        expect(cardFor('g2').showAvatar, isFalse);
+      },
+    );
   });
 }

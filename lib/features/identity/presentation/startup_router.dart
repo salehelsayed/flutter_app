@@ -77,6 +77,7 @@ import 'package:flutter_app/features/posts/application/refresh_nearby_on_startup
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 
 /// Router widget that handles app startup navigation.
 ///
@@ -192,6 +193,7 @@ class StartupRouter extends StatefulWidget {
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final FeedClearedRepository feedClearedRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
@@ -251,6 +253,7 @@ class StartupRouter extends StatefulWidget {
     required this.appShellController,
     required this.pendingPostTargetStore,
     required this.postsPrivacySettingsRepository,
+    required this.feedClearedRepository,
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
     this.pushRegistrationCoordinator,
@@ -374,6 +377,7 @@ class _StartupRouterState extends State<StartupRouter> {
             pendingPostTargetStore: widget.pendingPostTargetStore,
             postsPrivacySettingsRepository:
                 widget.postsPrivacySettingsRepository,
+            feedClearedRepository: widget.feedClearedRepository,
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             nearbyLocationService: widget.nearbyLocationService,
@@ -566,6 +570,7 @@ class _StartupRouterState extends State<StartupRouter> {
                       pendingPostTargetStore: widget.pendingPostTargetStore,
                       postsPrivacySettingsRepository:
                           widget.postsPrivacySettingsRepository,
+                      feedClearedRepository: widget.feedClearedRepository,
                       contactPresenceSnapshotRepository:
                           widget.contactPresenceSnapshotRepository,
                       nearbyLocationService: widget.nearbyLocationService,
@@ -947,6 +952,7 @@ class _StartupRouterState extends State<StartupRouter> {
         appShellController: widget.appShellController,
         pendingPostTargetStore: widget.pendingPostTargetStore,
         postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+        feedClearedRepository: widget.feedClearedRepository,
         contactPresenceSnapshotRepository:
             widget.contactPresenceSnapshotRepository,
         nearbyLocationService: widget.nearbyLocationService,
@@ -1096,6 +1102,7 @@ class _StartupRouterState extends State<StartupRouter> {
       appShellController: widget.appShellController,
       pendingPostTargetStore: widget.pendingPostTargetStore,
       postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+      feedClearedRepository: widget.feedClearedRepository,
       contactPresenceSnapshotRepository:
           widget.contactPresenceSnapshotRepository,
       nearbyLocationService: widget.nearbyLocationService,

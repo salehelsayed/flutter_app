@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -36,21 +34,20 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
-import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
-import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
-import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/feed/application/feed_reaction_store.dart';
+import 'package:flutter_app/features/feed/application/feed_pending_projection.dart';
 import 'package:flutter_app/features/feed/application/feed_store.dart';
+import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 import 'package:flutter_app/features/feed/application/group_feed_media_verification.dart';
 import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
@@ -59,15 +56,14 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_session_reply.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
-import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
-import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -82,10 +78,11 @@ import 'package:flutter_app/features/home/application/identity_avatar_resolver.d
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
-import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit2/orbit2_prototype.dart';
 import 'package:flutter_app/features/orbit2/presentation/screens/orbit2_screen.dart';
+import 'package:flutter_app/features/orbit3/orbit3_prototype.dart';
+import 'package:flutter_app/features/orbit3/presentation/screens/orbit3_screen.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
@@ -94,8 +91,6 @@ import 'package:flutter_app/features/posts/domain/repositories/contact_presence_
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'feed_screen.dart';
-
-enum _MediaSource { gallery, camera, videoCamera }
 
 const _uuid = Uuid();
 
@@ -180,6 +175,7 @@ class FeedWired extends StatefulWidget {
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  final FeedClearedRepository feedClearedRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
   final EditChatMessageFn editChatMessageFn;
@@ -221,6 +217,7 @@ class FeedWired extends StatefulWidget {
     required this.appShellController,
     required this.pendingPostTargetStore,
     required this.postsPrivacySettingsRepository,
+    required this.feedClearedRepository,
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
     this.editChatMessageFn = editChatMessage,
@@ -253,16 +250,19 @@ class _FeedWiredState extends State<FeedWired>
       ValueNotifier<FeedRouteChanges?>(null);
   final FeedReactionStore _reactionStore = FeedReactionStore();
   bool _feedLoaded = false;
-  String? _expandedCardId;
+  // 141: one-shot guard for the opportunistic notif-open inbox drain.
+  bool _didOpportunisticDrain = false;
   final Map<String, String> _draftTexts = {};
   final Map<String, String> _activeQuoteMessageIds = {};
   final SessionReplyTracker _sessionReplies = SessionReplyTracker();
+  // 134-P5: focused thread id (1:1=contactPeerId, group='group:<id>',
+  // system=contactPeerId) + the outgoing replies sent during the current focus
+  // session, keyed the same way (drives append-stay + never-silent retry).
+  String? _focusedId;
+  final Map<String, List<FeedSessionReply>> _feedSessionOutgoing = {};
   String? _activeFocusPeerId;
-  String? _pendingViewportFollowContactPeerId;
-  int _viewportFollowRequestId = 0;
   String? _editingContactPeerId;
   String? _editingMessageId;
-  String? _editingOriginalText;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ConversationMessage>? _repoChangeSubscription;
@@ -295,33 +295,11 @@ class _FeedWiredState extends State<FeedWired>
   bool _hostSwipeResolved = false;
   bool _hostSwipeClaimed = false;
   VelocityTracker? _hostSwipeVelocityTracker;
+  // 134-P6 gesture arena (TC-35): true while a card-level swipe is live, so the
+  // screen-level Feed↔Orbit host swipe yields the gesture to the card.
+  bool _feedCardSwipeActive = false;
 
   List<FeedItem> get _feedItems => _feedStore.items;
-  String _groupQuoteKey(String groupId) => 'group:$groupId';
-
-  void _restoreFeedComposerState({
-    required String draftKey,
-    required String? quotedMessageId,
-    required String draftText,
-    required String sessionReplyKey,
-  }) {
-    _sessionReplies.clear(sessionReplyKey);
-    if (draftText.isEmpty) {
-      _draftTexts.remove(draftKey);
-    } else {
-      _draftTexts[draftKey] = draftText;
-    }
-    if (quotedMessageId == null || quotedMessageId.isEmpty) {
-      _activeQuoteMessageIds.remove(draftKey);
-    } else {
-      _activeQuoteMessageIds[draftKey] = quotedMessageId;
-    }
-    if (mounted) setState(() {});
-  }
-
-  bool _isEditingContact(String contactPeerId) =>
-      _editingContactPeerId == contactPeerId && _editingMessageId != null;
-
   void _clearEditState({
     String? contactPeerId,
     bool clearDraft = false,
@@ -338,133 +316,6 @@ class _FeedWiredState extends State<FeedWired>
     }
     _editingContactPeerId = null;
     _editingMessageId = null;
-    _editingOriginalText = null;
-  }
-
-  Future<void> _onEditMessage(String contactPeerId, String messageId) async {
-    final message = await widget.messageRepository.getMessage(messageId);
-    if (!mounted ||
-        message == null ||
-        message.isIncoming ||
-        message.text.trim().isEmpty) {
-      return;
-    }
-
-    FocusManager.instance.primaryFocus?.unfocus();
-
-    setState(() {
-      _sessionReplies.clear(contactPeerId);
-      _activeQuoteMessageIds.remove(contactPeerId);
-      _editingContactPeerId = contactPeerId;
-      _editingMessageId = message.id;
-      _editingOriginalText = message.text;
-      _draftTexts[contactPeerId] = message.text;
-      _activeFocusPeerId = contactPeerId;
-    });
-  }
-
-  void _onCancelEdit(String contactPeerId) {
-    if (!mounted || !_isEditingContact(contactPeerId)) return;
-    setState(() {
-      _clearEditState(
-        contactPeerId: contactPeerId,
-        clearDraft: true,
-        clearFocus: true,
-      );
-    });
-    FocusManager.instance.primaryFocus?.unfocus();
-  }
-
-  Future<void> _onDeleteMessage(String contactPeerId, String messageId) async {
-    if (!mounted) return;
-    final message = await widget.messageRepository.getMessage(messageId);
-    if (message == null || message.isDeleted) return;
-
-    final action = await _showDeleteMessageSheet(
-      canDeleteForEveryone: _canDeleteForEveryone(message),
-    );
-    if (!mounted || action == null || action == _DeleteMessageAction.cancel) {
-      return;
-    }
-
-    setState(() {
-      if (_editingContactPeerId == contactPeerId &&
-          _editingMessageId == messageId) {
-        _clearEditState(
-          contactPeerId: contactPeerId,
-          clearDraft: true,
-          clearFocus: true,
-        );
-      }
-      if (_activeQuoteMessageIds[contactPeerId] == messageId) {
-        _activeQuoteMessageIds.remove(contactPeerId);
-      }
-    });
-    FocusManager.instance.primaryFocus?.unfocus();
-
-    if (action == _DeleteMessageAction.forMe) {
-      final deleted = await widget.deleteMessageForMeFn(
-        message: message,
-        messageRepo: widget.messageRepository,
-        reactionRepo: widget.reactionRepository,
-        mediaAttachmentRepo: widget.mediaAttachmentRepository,
-        mediaFileManager: widget.mediaFileManager,
-      );
-      if (deleted > 0) {
-        await _refreshContactFeedItem(contactPeerId);
-      }
-      return;
-    }
-
-    final contact = await widget.contactRepository.getContact(contactPeerId);
-    final (result, updatedMessage) = await widget.deleteMessageForEveryoneFn(
-      p2pService: widget.p2pService,
-      messageRepo: widget.messageRepository,
-      originalMessage: message,
-      reactionRepo: widget.reactionRepository,
-      mediaAttachmentRepo: widget.mediaAttachmentRepository,
-      mediaFileManager: widget.mediaFileManager,
-      bridge: widget.bridge,
-      recipientMlKemPublicKey: contact?.mlKemPublicKey,
-    );
-
-    if (!mounted) return;
-    if (updatedMessage != null) {
-      await _refreshContactFeedItem(contactPeerId);
-      return;
-    }
-    if (result != SendChatMessageResult.success) {
-      ScaffoldMessenger.maybeOf(context)
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.conversation_delete_failed,
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    }
-  }
-
-  bool _canDeleteForEveryone(ConversationMessage message) {
-    final ownPeerId = _identity?.peerId;
-    if (ownPeerId == null) return false;
-    if (message.isIncoming || message.isDeleted) return false;
-    if (message.senderPeerId != ownPeerId) return false;
-    return message.status == 'delivered';
-  }
-
-  Future<_DeleteMessageAction?> _showDeleteMessageSheet({
-    required bool canDeleteForEveryone,
-  }) {
-    return showModalBottomSheet<_DeleteMessageAction>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (sheetContext) =>
-          _DeleteMessageSheet(canDeleteForEveryone: canDeleteForEveryone),
-    );
   }
 
   void _syncComposerStateForContact(
@@ -519,6 +370,7 @@ class _FeedWiredState extends State<FeedWired>
     _loadBackgroundPreference();
     _loadQualityPreference();
     _loadVideoQualityPreference();
+    _loadClearedWatermarks();
     _loadFeedFromDatabase();
     _loadTotalUnreadCount();
     _startListeningForContactRequests();
@@ -530,6 +382,19 @@ class _FeedWiredState extends State<FeedWired>
     _startListeningForGroupMessages();
     _startListeningForGroupInvites();
     _startListeningForIntroductions();
+    _maybeRequestOpportunisticInboxDrain();
+  }
+
+  /// 141: Belt-and-suspenders for the notif-open inbox-drain race. When Feed
+  /// becomes the active home — including the Android cold-tap path that lands
+  /// on Feed with the conversation route deferred — request one opportunistic
+  /// offline-inbox drain. Idempotent (one per State lifetime, never per frame);
+  /// the P2PService itself defers the drain until the node has started, so this
+  /// is safe to fire eagerly here.
+  void _maybeRequestOpportunisticInboxDrain() {
+    if (_didOpportunisticDrain) return;
+    _didOpportunisticDrain = true;
+    unawaited(widget.p2pService.drainOfflineInbox());
   }
 
   Future<void> _loadIdentity() async {
@@ -581,6 +446,24 @@ class _FeedWiredState extends State<FeedWired>
     );
     if (mounted) {
       widget.appShellController.setBackgroundPreference(pref);
+    }
+  }
+
+  /// 134-P4: hydrate the Feed pending-projection's cleared watermarks from the
+  /// persistent `feed_cleared_threads` table so cleared/dismissed threads are
+  /// filtered out from first paint.
+  Future<void> _loadClearedWatermarks() async {
+    try {
+      final watermarks = await widget.feedClearedRepository
+          .getClearedWatermarks();
+      if (!mounted) return;
+      _feedStore.setClearedWatermarks(watermarks);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_CLEARED_LOAD_ERROR',
+        details: {'error': e.toString()},
+      );
     }
   }
 
@@ -1497,446 +1380,6 @@ class _FeedWiredState extends State<FeedWired>
         });
   }
 
-  Future<void> _onInlineSend(String contactPeerId, String text) async {
-    final identity = _identity;
-    if (identity == null) return;
-    final localizations = AppLocalizations.of(context)!;
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final sanitizedText = sanitizeMessageText(text);
-    final editingMessageId = _isEditingContact(contactPeerId)
-        ? _editingMessageId
-        : null;
-
-    if (editingMessageId != null) {
-      final editingMessage = await widget.messageRepository.getMessage(
-        editingMessageId,
-      );
-      if (!mounted || editingMessage == null || editingMessage.isIncoming) {
-        if (mounted) {
-          setState(() {
-            _clearEditState(
-              contactPeerId: contactPeerId,
-              clearDraft: true,
-              clearFocus: true,
-            );
-          });
-        }
-        return;
-      }
-
-      final originalText = sanitizeMessageText(
-        _editingOriginalText ?? editingMessage.text,
-      );
-      if (sanitizedText == originalText) {
-        if (!mounted) return;
-        setState(() {
-          _clearEditState(
-            contactPeerId: contactPeerId,
-            clearDraft: true,
-            clearFocus: true,
-          );
-        });
-        return;
-      }
-
-      final editSaveFailedText = AppLocalizations.of(context)!.edit_save_failed;
-      final contact = await widget.contactRepository.getContact(contactPeerId);
-      if (contact == null || !mounted) {
-        if (mounted) {
-          setState(() {
-            _clearEditState(
-              contactPeerId: contactPeerId,
-              clearDraft: true,
-              clearFocus: true,
-            );
-          });
-        }
-        return;
-      }
-
-      final bgTaskId = await callBgBegin(widget.bridge);
-      try {
-        final (result, message) = await widget.editChatMessageFn(
-          p2pService: widget.p2pService,
-          messageRepo: widget.messageRepository,
-          originalMessage: editingMessage,
-          updatedText: sanitizedText,
-          senderUsername: identity.username,
-          bridge: widget.bridge,
-          recipientMlKemPublicKey: contact.mlKemPublicKey,
-          mediaAttachmentRepo: widget.mediaAttachmentRepository,
-        );
-
-        if (!mounted) return;
-
-        setState(() {
-          _clearEditState(
-            contactPeerId: contactPeerId,
-            clearDraft: true,
-            clearFocus: true,
-          );
-        });
-
-        if (message != null) {
-          await _applyIncomingContactMessageToFeed(
-            message,
-            refreshUnreadCount: false,
-          );
-        } else {
-          await _refreshContactFeedItem(
-            contactPeerId,
-            refreshUnreadCount: false,
-          );
-        }
-
-        if (result != SendChatMessageResult.success && message == null) {
-          scaffoldMessenger.showSnackBar(
-            SnackBar(
-              content: Text(editSaveFailedText),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'FEED_FL_EDIT_SEND_ERROR',
-          details: {'error': e.toString(), 'contactPeerId': contactPeerId},
-        );
-        if (!mounted) return;
-        setState(() {
-          _clearEditState(
-            contactPeerId: contactPeerId,
-            clearDraft: true,
-            clearFocus: true,
-          );
-        });
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context)!.edit_save_failed),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } finally {
-        await callBgEnd(widget.bridge, bgTaskId);
-      }
-      return;
-    }
-
-    // Optimistic: show session reply immediately before network send.
-    final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
-    final draftText = text;
-    _draftTexts.remove(contactPeerId);
-    _activeQuoteMessageIds.remove(contactPeerId);
-    _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
-    if (mounted) setState(() {});
-    String? bgTaskId;
-    ConversationMessage? optimisticMessage;
-
-    try {
-      final contact = await widget.contactRepository.getContact(contactPeerId);
-      if (contact == null || !mounted) {
-        _restoreFeedComposerState(
-          draftKey: contactPeerId,
-          quotedMessageId: quotedMsgId,
-          draftText: draftText,
-          sessionReplyKey: contactPeerId,
-        );
-        return;
-      }
-
-      final timestamp = DateTime.now().toUtc().toIso8601String();
-      optimisticMessage = ConversationMessage(
-        id: _uuid.v4(),
-        contactPeerId: contactPeerId,
-        senderPeerId: identity.peerId,
-        text: sanitizedText,
-        timestamp: timestamp,
-        status: 'sending',
-        isIncoming: false,
-        createdAt: timestamp,
-        quotedMessageId: quotedMsgId,
-      );
-
-      try {
-        await widget.messageRepository.saveMessage(optimisticMessage);
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'FEED_FL_OPTIMISTIC_SAVE_ERROR',
-          details: {'error': e.toString(), 'contactPeerId': contactPeerId},
-        );
-      }
-
-      // Acquire background task before network send.
-      bgTaskId = await callBgBegin(widget.bridge);
-
-      final (result, message) = await sendChatMessage(
-        p2pService: widget.p2pService,
-        messageRepo: widget.messageRepository,
-        targetPeerId: contactPeerId,
-        text: sanitizedText,
-        senderPeerId: identity.peerId,
-        senderUsername: identity.username,
-        messageId: optimisticMessage.id,
-        timestamp: optimisticMessage.timestamp,
-        bridge: widget.bridge,
-        recipientMlKemPublicKey: contact.mlKemPublicKey,
-        quotedMessageId: quotedMsgId,
-        transportMetrics: widget.transportMetrics,
-      );
-
-      if (!mounted) return;
-
-      if (result == SendChatMessageResult.success) {
-        // Mark as read on successful inline reply
-        await markConversationRead(
-          messageRepo: widget.messageRepository,
-          contactPeerId: contactPeerId,
-        );
-        await _refreshContactFeedItem(contactPeerId, refreshUnreadCount: false);
-        if (mounted) {
-          setState(() {
-            _pendingViewportFollowContactPeerId = contactPeerId;
-            _viewportFollowRequestId++;
-          });
-        }
-        _notifyMountedOrbitContactChange(contactPeerId);
-        await _loadTotalUnreadCount();
-      } else {
-        if (message == null) {
-          await widget.messageRepository.updateMessageStatus(
-            optimisticMessage.id,
-            'failed',
-          );
-        }
-        _restoreFeedComposerState(
-          draftKey: contactPeerId,
-          quotedMessageId: quotedMsgId,
-          draftText: draftText,
-          sessionReplyKey: contactPeerId,
-        );
-        final errorText = result == SendChatMessageResult.encryptionRequired
-            ? 'Cannot send: contact does not support encryption.'
-            : localizations.error_send_message;
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: Text(errorText),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (e) {
-      if (optimisticMessage != null) {
-        await widget.messageRepository.updateMessageStatus(
-          optimisticMessage.id,
-          'failed',
-        );
-      }
-      _restoreFeedComposerState(
-        draftKey: contactPeerId,
-        quotedMessageId: quotedMsgId,
-        draftText: draftText,
-        sessionReplyKey: contactPeerId,
-      );
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'FEED_FL_INLINE_SEND_ERROR',
-        details: {'error': e.toString()},
-      );
-      if (!mounted) return;
-      scaffoldMessenger.showSnackBar(
-        SnackBar(
-          content: Text(localizations.error_send_message),
-          backgroundColor: Colors.red[700],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      await callBgEnd(widget.bridge, bgTaskId);
-    }
-  }
-
-  void _onViewFullConversation(String contactPeerId) {
-    _onReplyToMessage(contactPeerId);
-  }
-
-  void _onAttach(String contactPeerId) {
-    _clearFeedComposerFocus();
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: Text(
-                AppLocalizations.of(context)!.picker_media_library,
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickAndOpenConversation(
-                  contactPeerId,
-                  source: _MediaSource.gallery,
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: Text(
-                AppLocalizations.of(context)!.picker_take_photo,
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickAndOpenConversation(
-                  contactPeerId,
-                  source: _MediaSource.camera,
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.videocam, color: Colors.white),
-              title: Text(
-                AppLocalizations.of(context)!.picker_record_video,
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickAndOpenConversation(
-                  contactPeerId,
-                  source: _MediaSource.videoCamera,
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickAndOpenConversation(
-    String contactPeerId, {
-    required _MediaSource source,
-  }) async {
-    try {
-      final picker = ImagePicker();
-      List<PendingComposerMedia> pendingMedia;
-
-      switch (source) {
-        case _MediaSource.camera:
-          final picked = await picker.pickImage(source: ImageSource.camera);
-          if (picked == null || !mounted) return;
-          final media = await _preparePendingMediaForLaunch(picked.path);
-          pendingMedia = [media];
-        case _MediaSource.videoCamera:
-          final picked = await picker.pickVideo(source: ImageSource.camera);
-          if (picked == null || !mounted) return;
-          _showProcessingSnackBar();
-          final media = await _preparePendingMediaForLaunch(picked.path);
-          if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          pendingMedia = [media];
-        case _MediaSource.gallery:
-          final picked = await picker.pickMultipleMedia();
-          if (picked.isEmpty || !mounted) return;
-          final hasVideo = picked.any(
-            (xf) => widget.imageProcessor.isProcessableVideo(xf.path),
-          );
-          if (hasVideo) _showProcessingSnackBar();
-          final processedFiles = <PendingComposerMedia>[];
-          for (final xf in picked) {
-            processedFiles.add(await _preparePendingMediaForLaunch(xf.path));
-          }
-          if (hasVideo && mounted) {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          }
-          pendingMedia = processedFiles;
-      }
-      final files = pendingMedia
-          .map((media) => media.file)
-          .toList(growable: false);
-
-      final contact = await widget.contactRepository.getContact(contactPeerId);
-      if (contact == null || !mounted) return;
-
-      Navigator.of(context)
-          .push(
-            buildConversationRoute(
-              builder: (_) => ConversationWired(
-                contact: contact,
-                identityRepo: widget.repository,
-                messageRepo: widget.messageRepository,
-                chatMessageListener: widget.chatMessageListener,
-                p2pService: widget.p2pService,
-                bridge: widget.bridge,
-                contactRepo: widget.contactRepository,
-                mediaAttachmentRepo: widget.mediaAttachmentRepository,
-                mediaFileManager: widget.mediaFileManager,
-                initialAttachments: files,
-                initialPendingMedia: pendingMedia,
-                imageProcessor: widget.imageProcessor,
-                qualityPreference: _qualityPreference,
-                videoQualityPreference: _videoQualityPreference,
-                conversationTracker: widget.conversationTracker,
-                audioRecorderService: widget.audioRecorderService,
-                reactionRepo: widget.reactionRepository,
-                reactionListener: widget.reactionListener,
-                introductionRepository: widget.introductionRepository,
-                appShellController: widget.appShellController,
-                transportMetrics: widget.transportMetrics,
-              ),
-            ),
-          )
-          .then((_) {
-            _sessionReplies.clear(contactPeerId);
-            unawaited(_refreshContactFeedItem(contactPeerId));
-          });
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'FEED_FL_PICK_ATTACH_ERROR',
-        details: {'error': e.toString()},
-      );
-    }
-  }
-
-  void _showProcessingSnackBar() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(AppLocalizations.of(context)!.status_processing_video),
-        duration: const Duration(minutes: 5),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  Future<PendingComposerMedia> _preparePendingMediaForLaunch(String path) {
-    return preparePendingComposerMedia(
-      inputPath: path,
-      imageProcessor: widget.imageProcessor,
-      imageQualityPreference: _qualityPreference,
-      videoQualityPreference: _videoQualityPreference,
-    );
-  }
-
   Future<void> _loadReactionsForFeed() async {
     if (widget.reactionRepository == null) return;
     final messageIds = _feedStore.contactMessageIds.toList();
@@ -2134,470 +1577,6 @@ class _FeedWiredState extends State<FeedWired>
     unawaited(_openGroupConversation(groupThread));
   }
 
-  void _onGroupAttach(GroupThreadFeedItem groupThread) {
-    if (!groupThread.canWrite) return;
-    _clearFeedComposerFocus();
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: Text(
-                AppLocalizations.of(context)!.picker_media_library,
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickAndOpenGroupConversation(
-                  groupThread,
-                  source: _MediaSource.gallery,
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: Text(
-                AppLocalizations.of(context)!.picker_take_photo,
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickAndOpenGroupConversation(
-                  groupThread,
-                  source: _MediaSource.camera,
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.videocam, color: Colors.white),
-              title: Text(
-                AppLocalizations.of(context)!.picker_record_video,
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickAndOpenGroupConversation(
-                  groupThread,
-                  source: _MediaSource.videoCamera,
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickAndOpenGroupConversation(
-    GroupThreadFeedItem groupThread, {
-    required _MediaSource source,
-  }) async {
-    try {
-      final picker = ImagePicker();
-      List<PendingComposerMedia> pendingMedia;
-
-      switch (source) {
-        case _MediaSource.camera:
-          final picked = await picker.pickImage(source: ImageSource.camera);
-          if (picked == null || !mounted) return;
-          final media = await _preparePendingMediaForLaunch(picked.path);
-          pendingMedia = [media];
-        case _MediaSource.videoCamera:
-          final picked = await picker.pickVideo(source: ImageSource.camera);
-          if (picked == null || !mounted) return;
-          _showProcessingSnackBar();
-          final media = await _preparePendingMediaForLaunch(picked.path);
-          if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          pendingMedia = [media];
-        case _MediaSource.gallery:
-          final picked = await picker.pickMultipleMedia();
-          if (picked.isEmpty || !mounted) return;
-          final hasVideo = picked.any(
-            (xf) => widget.imageProcessor.isProcessableVideo(xf.path),
-          );
-          if (hasVideo) _showProcessingSnackBar();
-          final processedFiles = <PendingComposerMedia>[];
-          for (final xf in picked) {
-            processedFiles.add(await _preparePendingMediaForLaunch(xf.path));
-          }
-          if (hasVideo && mounted) {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          }
-          pendingMedia = processedFiles;
-      }
-      final files = pendingMedia
-          .map((media) => media.file)
-          .toList(growable: false);
-
-      if (!mounted) return;
-
-      await _openGroupConversation(
-        groupThread,
-        initialPendingMedia: pendingMedia,
-        initialAttachments: files,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'FEED_FL_GROUP_PICK_ATTACH_ERROR',
-        details: {'error': e.toString()},
-      );
-    }
-  }
-
-  Future<void> _onGroupInlineSend(String groupId, String text) async {
-    final identity = _identity;
-    final groupRepo = widget.groupRepository;
-    final msgRepo = widget.groupMessageRepository;
-    if (identity == null || groupRepo == null || msgRepo == null) return;
-
-    // Optimistic: show session reply immediately before network send.
-    final quoteKey = _groupQuoteKey(groupId);
-    final quotedMsgId = _activeQuoteMessageIds[quoteKey];
-    final draftText = text;
-    _draftTexts.remove(quoteKey);
-    _activeQuoteMessageIds.remove(quoteKey);
-    _sessionReplies.track('group:$groupId', SessionReply.justNow(text));
-    if (mounted) setState(() {});
-    String? bgTaskId;
-
-    try {
-      bgTaskId = await callBgBegin(widget.bridge);
-      final senderDeviceId = _currentSenderDeviceId;
-      final (result, message) = await sendGroupMessage(
-        bridge: widget.bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        groupId: groupId,
-        text: text,
-        senderPeerId: identity.peerId,
-        senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey,
-        senderUsername: identity.username,
-        quotedMessageId: quotedMsgId,
-        senderDeviceId: senderDeviceId,
-        senderTransportPeerId: senderDeviceId,
-        inviteDeliveryAttemptRepo: widget.groupInviteDeliveryAttemptRepository,
-      );
-
-      if (!mounted) return;
-
-      if (result == SendGroupMessageResult.success ||
-          result == SendGroupMessageResult.successNoPeers) {
-        await widget.groupMessageRepository?.markAsRead(groupId);
-        await _refreshGroupFeedItem(groupId);
-        await _loadTotalUnreadCount();
-      } else {
-        _restoreFeedComposerState(
-          draftKey: quoteKey,
-          quotedMessageId: quotedMsgId,
-          draftText: draftText,
-          sessionReplyKey: 'group:$groupId',
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context)!.error_send_message),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (e) {
-      _restoreFeedComposerState(
-        draftKey: quoteKey,
-        quotedMessageId: quotedMsgId,
-        draftText: draftText,
-        sessionReplyKey: 'group:$groupId',
-      );
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'FEED_FL_GROUP_INLINE_SEND_ERROR',
-        details: {'error': e.toString()},
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context)!.error_send_message),
-          backgroundColor: Colors.red[700],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      await callBgEnd(widget.bridge, bgTaskId);
-    }
-  }
-
-  Future<void> _onReactionSelected(String messageId, String emoji) async {
-    final identity = _identity;
-    if (identity == null) return;
-
-    final reactionRepo = widget.reactionRepository;
-    if (reactionRepo == null) return;
-
-    // Find which contact this message belongs to
-    final thread = _feedItems
-        .whereType<ThreadFeedItem>()
-        .where((t) => t.messages.any((m) => m.id == messageId))
-        .firstOrNull;
-    if (thread == null) return;
-
-    final contact = await widget.contactRepository.getContact(
-      thread.contactPeerId,
-    );
-    if (contact == null || !mounted) return;
-
-    // Check if toggling (same emoji from same user)
-    final currentReactions = _reactionStore.reactionsForMessage(messageId);
-    final ownReaction = currentReactions
-        .where((r) => r.senderPeerId == identity.peerId)
-        .firstOrNull;
-
-    if (ownReaction != null && ownReaction.emoji == emoji) {
-      // Toggle off: remove reaction optimistically
-      final updated = currentReactions
-          .where((r) => r.senderPeerId != identity.peerId)
-          .toList();
-      _reactionStore.setMessageReactions(messageId, updated);
-
-      await removeReaction(
-        p2pService: widget.p2pService,
-        bridge: widget.bridge,
-        reactionRepo: reactionRepo,
-        targetPeerId: thread.contactPeerId,
-        messageId: messageId,
-        emoji: emoji,
-        senderPeerId: identity.peerId,
-        recipientMlKemPublicKey: contact.mlKemPublicKey ?? '',
-      );
-      return;
-    }
-
-    // Add/replace reaction optimistically
-    final now = DateTime.now().toUtc().toIso8601String();
-    final optimisticReaction = MessageReaction(
-      id: '',
-      messageId: messageId,
-      emoji: emoji,
-      senderPeerId: identity.peerId,
-      timestamp: now,
-      createdAt: now,
-    );
-
-    final updated = List<MessageReaction>.from(currentReactions);
-    final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
-    if (idx >= 0) {
-      updated[idx] = optimisticReaction;
-    } else {
-      updated.add(optimisticReaction);
-    }
-    _reactionStore.setMessageReactions(messageId, updated);
-
-    final (result, reaction) = await sendReaction(
-      p2pService: widget.p2pService,
-      bridge: widget.bridge,
-      reactionRepo: reactionRepo,
-      targetPeerId: thread.contactPeerId,
-      messageId: messageId,
-      emoji: emoji,
-      senderPeerId: identity.peerId,
-      recipientMlKemPublicKey: contact.mlKemPublicKey ?? '',
-    );
-
-    // Update with real reaction on success
-    if (result == SendReactionResult.success && reaction != null && mounted) {
-      final updated = List<MessageReaction>.from(
-        _reactionStore.reactionsForMessage(messageId),
-      );
-      final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
-      if (idx >= 0) {
-        updated[idx] = reaction;
-      }
-      _reactionStore.setMessageReactions(messageId, updated);
-    }
-  }
-
-  Future<void> _onGroupReactionSelected(
-    String groupId,
-    String messageId,
-    String emoji,
-  ) async {
-    final identity = _identity;
-    if (identity == null) return;
-
-    final reactionRepo = widget.reactionRepository;
-    final groupRepo = widget.groupRepository;
-    final msgRepo = widget.groupMessageRepository;
-    final reactionReplayOutboxRepo = widget.groupReactionReplayOutboxRepository;
-    if (reactionRepo == null ||
-        groupRepo == null ||
-        msgRepo == null ||
-        reactionReplayOutboxRepo == null) {
-      return;
-    }
-
-    // Check if toggling (same emoji from same user)
-    final currentReactions = _reactionStore.reactionsForMessage(messageId);
-    final previousReactions = List<MessageReaction>.from(currentReactions);
-    final ownReaction = currentReactions
-        .where((r) => r.senderPeerId == identity.peerId)
-        .firstOrNull;
-
-    if (ownReaction != null && ownReaction.emoji == emoji) {
-      // Toggle off: remove reaction optimistically
-      final updated = currentReactions
-          .where((r) => r.senderPeerId != identity.peerId)
-          .toList();
-      _reactionStore.setMessageReactions(messageId, updated);
-
-      final result = await removeGroupReaction(
-        bridge: widget.bridge,
-        groupRepo: groupRepo,
-        reactionRepo: reactionRepo,
-        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-        groupId: groupId,
-        messageId: messageId,
-        emoji: emoji,
-        senderPeerId: identity.peerId,
-        senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey,
-      );
-      if (result == RemoveGroupReactionResult.groupDissolved) {
-        await _restoreGroupReactionStateAfterDissolve(
-          groupId: groupId,
-          messageId: messageId,
-          previousReactions: previousReactions,
-        );
-      }
-      return;
-    }
-
-    // Add/replace reaction optimistically
-    final now = DateTime.now().toUtc().toIso8601String();
-    final optimisticReaction = MessageReaction(
-      id: '',
-      messageId: messageId,
-      emoji: emoji,
-      senderPeerId: identity.peerId,
-      timestamp: now,
-      createdAt: now,
-    );
-
-    final updated = List<MessageReaction>.from(currentReactions);
-    final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
-    if (idx >= 0) {
-      updated[idx] = optimisticReaction;
-    } else {
-      updated.add(optimisticReaction);
-    }
-    _reactionStore.setMessageReactions(messageId, updated);
-
-    final (result, reaction) = await sendGroupReaction(
-      bridge: widget.bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      reactionRepo: reactionRepo,
-      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-      groupId: groupId,
-      messageId: messageId,
-      emoji: emoji,
-      senderPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-    );
-
-    // Replace the optimistic reaction once local/replay state is queued.
-    if (result == SendGroupReactionResult.success &&
-        reaction != null &&
-        mounted) {
-      final updated = List<MessageReaction>.from(
-        _reactionStore.reactionsForMessage(messageId),
-      );
-      final idx = updated.indexWhere((r) => r.senderPeerId == identity.peerId);
-      if (idx >= 0) {
-        updated[idx] = reaction;
-      }
-      _reactionStore.setMessageReactions(messageId, updated);
-    } else if (result == SendGroupReactionResult.groupDissolved) {
-      await _restoreGroupReactionStateAfterDissolve(
-        groupId: groupId,
-        messageId: messageId,
-        previousReactions: previousReactions,
-      );
-    }
-  }
-
-  Future<void> _restoreGroupReactionStateAfterDissolve({
-    required String groupId,
-    required String messageId,
-    required List<MessageReaction> previousReactions,
-  }) async {
-    _reactionStore.setMessageReactions(messageId, previousReactions);
-    await _refreshGroupFeedItem(groupId);
-    if (!mounted) return;
-
-    final messenger = ScaffoldMessenger.of(context);
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context)!.group_dissolved_snackbar),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-  }
-
-  Future<void> _onGroupReactionTap(
-    String groupId,
-    String messageId,
-    String emoji,
-  ) async {
-    final groupRepo = widget.groupRepository;
-    if (groupRepo == null) return;
-    final msgRepo = widget.groupMessageRepository;
-    final reactions = _reactionStore.reactionsForMessage(messageId);
-    final usernameHintsByPeerId = await loadGroupReactionUsernameHints(
-      peerIds: reactions.map((reaction) => reaction.senderPeerId),
-      contactRepo: widget.contactRepository,
-      groupId: groupId,
-      msgRepo: msgRepo,
-    );
-
-    final participants = buildGroupReactionParticipantEntries(
-      reactions: reactions,
-      emoji: emoji,
-      members: await groupRepo.getMembers(groupId),
-      usernameHintsByPeerId: usernameHintsByPeerId,
-      ownPeerId: _peerId,
-    );
-    if (!mounted || participants.isEmpty) return;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF141A24),
-      showDragHandle: false,
-      builder: (_) =>
-          GroupReactionDetailsSheet(emoji: emoji, participants: participants),
-    );
-  }
-
   void _onAvatarTap() {
     _clearFeedComposerFocus();
     Navigator.of(context)
@@ -2631,32 +1610,397 @@ class _FeedWiredState extends State<FeedWired>
 
   String get _activeTab => widget.appShellController.activeTab;
 
-  String? get _visibleActiveFocusPeerId {
-    final activeFocusPeerId = _activeFocusPeerId;
-    if (activeFocusPeerId == null) {
-      return null;
-    }
-
-    final hasVisibleThread = _feedItems.whereType<ThreadFeedItem>().any(
-      (item) => item.contactPeerId == activeFocusPeerId,
-    );
-    return hasVisibleThread ? activeFocusPeerId : null;
-  }
-
   void _clearFeedComposerFocus({bool notify = true}) {
     FocusManager.instance.primaryFocus?.unfocus();
-    if (_activeFocusPeerId == null) {
+    final hadLegacy = _activeFocusPeerId != null;
+    // 134: leaving the feed surface (host-swipe to Orbit, tab switch, opening a
+    // full conversation) also ENDS the new focus session — retract the shared
+    // composer and unpin the focused thread (else it stays mounted/pinned).
+    final hadNewFocus = _focusedId != null;
+    if (!hadLegacy && !hadNewFocus) {
       return;
     }
 
-    if (!notify || !mounted) {
-      _activeFocusPeerId = null;
-      return;
+    _activeFocusPeerId = null;
+    if (hadNewFocus) {
+      _focusedId = null;
+      _feedSessionOutgoing.clear();
+      _feedStore.setPinnedThread(null);
     }
 
+    if (notify && mounted) {
+      setState(() {});
+    }
+  }
+
+  // ── 134-P5: focus + shared composer ──────────────────────────────────────
+
+  void _onFocusCard(String threadId) {
+    if (_focusedId == threadId) return;
+    setState(() => _focusedId = threadId);
+    // Pin the focused thread so it stays visible after you reply (append-stay):
+    // once answered it leaves the pending set, but the composer keeps appending
+    // under it until focus clears.
+    _feedStore.setPinnedThread(threadId);
+  }
+
+  void _onClearFocus() {
+    final threadId = _focusedId;
+    if (threadId == null) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+    // 135 B2/B4: the in-surface back affordance + tap-outside leave the focused
+    // thread, committing only if a reply was sent (else just defocus). Distinct
+    // from _clearFeedComposerFocus, which ends the session on leaving the WHOLE
+    // feed surface (tab switch / host swipe) and never commits.
+    unawaited(_leaveFocusedThread(threadId));
+  }
+
+  /// Ends the focus session for [threadId] (if it is the focused card) BEFORE a
+  /// commit/dismiss marks it cleared, so the removed card is never re-pinned.
+  void _endFocusSessionForThread(String threadId) {
+    // The swipe id is kind-qualified ('connection:'/'group:'); the focus id is
+    // BARE for 1:1 + connection cards. Normalize so a focused CONNECTION card's
+    // commit/dismiss actually clears focus + pin — otherwise the just-cleared
+    // card is re-pinned by the store (violating "unpin before clear").
+    final focusKey = threadId.startsWith('connection:')
+        ? threadId.substring('connection:'.length)
+        : threadId;
+    if (_focusedId != focusKey) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
-      _activeFocusPeerId = null;
+      _focusedId = null;
+      _feedSessionOutgoing.remove(focusKey);
     });
+    _feedStore.setPinnedThread(null);
+  }
+
+  void _onFeedComposerDraftChanged(String threadId, String text) {
+    if (text.isEmpty) {
+      _draftTexts.remove(threadId);
+    } else {
+      _draftTexts[threadId] = text;
+    }
+  }
+
+  /// 134-P5 (TC-22): append-stay send from the shared composer. Records the
+  /// outgoing reply so the focused card renders a new green bubble immediately
+  /// and KEEPS focus, then routes to the underlying 1:1/group send. A failed or
+  /// stuck send marks the reply `failed` (NOT removed) so a "tap to retry"
+  /// affordance persists (never-silent send, TC-30).
+  Future<void> _onFeedComposerSend(String threadId, String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final reply = FeedSessionReply(messageId: _uuid.v4(), text: trimmed);
+    _appendSessionOutgoing(threadId, reply);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FEED_SEND_APPEND',
+      details: {'threadId': threadId},
+    );
+    await _dispatchFeedComposerSend(threadId, reply);
+  }
+
+  void _appendSessionOutgoing(String threadId, FeedSessionReply reply) {
+    final list = _feedSessionOutgoing.putIfAbsent(threadId, () => []);
+    list.add(reply);
+    if (mounted) setState(() {});
+  }
+
+  void _markSessionOutgoingFailed(String threadId, String messageId) {
+    final list = _feedSessionOutgoing[threadId];
+    if (list == null) return;
+    final idx = list.indexWhere((r) => r.messageId == messageId);
+    if (idx < 0) return;
+    list[idx] = list[idx].copyWith(failed: true);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FEED_SEND_RETRY_SHOWN',
+      details: {'threadId': threadId},
+    );
+    if (mounted) setState(() {});
+  }
+
+  void _clearSessionOutgoingFailed(String threadId, String messageId) {
+    final list = _feedSessionOutgoing[threadId];
+    if (list == null) return;
+    final idx = list.indexWhere((r) => r.messageId == messageId);
+    if (idx < 0) return;
+    list[idx] = list[idx].copyWith(failed: false);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _dispatchFeedComposerSend(
+    String threadId,
+    FeedSessionReply reply,
+  ) async {
+    if (threadId.startsWith('group:')) {
+      final groupId = threadId.substring('group:'.length);
+      final ok = await _sendGroupComposerReply(groupId, reply.text);
+      if (!ok) _markSessionOutgoingFailed(threadId, reply.messageId);
+      return;
+    }
+    // 1:1 / system letters both resolve to a contact send.
+    final ok = await _sendContactComposerReply(threadId, reply.text);
+    if (!ok) _markSessionOutgoingFailed(threadId, reply.messageId);
+  }
+
+  /// Sends a 1:1 reply for the focused composer. Returns false (so the caller
+  /// can surface a retry affordance) on any failure — never silently.
+  Future<bool> _sendContactComposerReply(
+    String contactPeerId,
+    String text,
+  ) async {
+    final identity = _identity;
+    if (identity == null) return false;
+    final sanitizedText = sanitizeMessageText(text);
+    String? bgTaskId;
+    ConversationMessage? optimisticMessage;
+    try {
+      final contact = await widget.contactRepository.getContact(contactPeerId);
+      if (contact == null || !mounted) return false;
+
+      final timestamp = DateTime.now().toUtc().toIso8601String();
+      optimisticMessage = ConversationMessage(
+        id: _uuid.v4(),
+        contactPeerId: contactPeerId,
+        senderPeerId: identity.peerId,
+        text: sanitizedText,
+        timestamp: timestamp,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: timestamp,
+      );
+      try {
+        await widget.messageRepository.saveMessage(optimisticMessage);
+      } catch (_) {}
+
+      bgTaskId = await callBgBegin(widget.bridge);
+      final (result, message) = await sendChatMessage(
+        p2pService: widget.p2pService,
+        messageRepo: widget.messageRepository,
+        targetPeerId: contactPeerId,
+        text: sanitizedText,
+        senderPeerId: identity.peerId,
+        senderUsername: identity.username,
+        messageId: optimisticMessage.id,
+        timestamp: optimisticMessage.timestamp,
+        bridge: widget.bridge,
+        recipientMlKemPublicKey: contact.mlKemPublicKey,
+        transportMetrics: widget.transportMetrics,
+      );
+      if (!mounted) return false;
+
+      if (result == SendChatMessageResult.success) {
+        // B5: do NOT mark the conversation read on send — the incoming bubbles
+        // must stay visible the whole time the user is replying. Read-marking
+        // (and card removal) is deferred to leave-thread (see
+        // _leaveFocusedThread / _onSwipeCommit, 134 REG-INV3).
+        await _refreshContactFeedItem(contactPeerId, refreshUnreadCount: false);
+        await _loadTotalUnreadCount();
+        return true;
+      }
+      // Persist the failure so the optimistic bubble survives a rebuild.
+      if (message == null) {
+        await widget.messageRepository.updateMessageStatus(
+          optimisticMessage.id,
+          'failed',
+        );
+      }
+      return false;
+    } catch (e) {
+      if (optimisticMessage != null) {
+        await widget.messageRepository.updateMessageStatus(
+          optimisticMessage.id,
+          'failed',
+        );
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_COMPOSER_SEND_ERROR',
+        details: {'error': e.toString()},
+      );
+      return false;
+    } finally {
+      await callBgEnd(widget.bridge, bgTaskId);
+    }
+  }
+
+  /// Sends a group reply for the focused composer (Decision G: routed by group
+  /// id, never a sender run peerId). Returns false on any failure.
+  Future<bool> _sendGroupComposerReply(String groupId, String text) async {
+    final identity = _identity;
+    final groupRepo = widget.groupRepository;
+    final msgRepo = widget.groupMessageRepository;
+    if (identity == null || groupRepo == null || msgRepo == null) return false;
+    String? bgTaskId;
+    try {
+      bgTaskId = await callBgBegin(widget.bridge);
+      final senderDeviceId = _currentSenderDeviceId;
+      final (result, message) = await sendGroupMessage(
+        bridge: widget.bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: text,
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        senderDeviceId: senderDeviceId,
+        senderTransportPeerId: senderDeviceId,
+        inviteDeliveryAttemptRepo: widget.groupInviteDeliveryAttemptRepository,
+      );
+      if (!mounted) return false;
+      if (result == SendGroupMessageResult.success ||
+          result == SendGroupMessageResult.successNoPeers) {
+        // B5: defer read-marking to leave-thread (symmetric with the 1:1 path)
+        // — the incoming run must stay visible while replying.
+        await _refreshGroupFeedItem(groupId);
+        await _loadTotalUnreadCount();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_GROUP_COMPOSER_SEND_ERROR',
+        details: {'error': e.toString()},
+      );
+      return false;
+    } finally {
+      await callBgEnd(widget.bridge, bgTaskId);
+    }
+  }
+
+  /// 134-P5 (TC-30): re-invoke the send for a failed/pending session reply.
+  Future<void> _onRetrySend(String threadId, FeedSessionReply reply) async {
+    _clearSessionOutgoingFailed(threadId, reply.messageId);
+    final ok = threadId.startsWith('group:')
+        ? await _sendGroupComposerReply(
+            threadId.substring('group:'.length),
+            reply.text,
+          )
+        : await _sendContactComposerReply(threadId, reply.text);
+    if (!ok) _markSessionOutgoingFailed(threadId, reply.messageId);
+  }
+
+  /// Opens the full conversation for a focused thread id (1:1 / system → the
+  /// contact conversation; group routing is handled separately via onGroupTap).
+  void _onOpenFullConversation(String contactPeerId) {
+    _onReplyToMessage(contactPeerId);
+  }
+
+  // ── 134-P5: swipe contract (P6 wires the gestures to these) ───────────────
+
+  /// 135 B2/B4/B5: the unified leave-thread handler. The back chevron, the
+  /// right-swipe, and the in-surface tap-outside ALL route here. Captures
+  /// whether ANY reply was sent during this focus session BEFORE the session is
+  /// cleared (order trap); if a reply was sent it COMMITS (removes the card and
+  /// marks the conversation read), otherwise it simply DEFOCUSES and the card
+  /// stays. Sending alone never commits/reads — only leaving WITH a reply does.
+  Future<void> _leaveFocusedThread(String threadId) async {
+    // The swipe id is kind-qualified ('connection:'/'group:'); the focus id and
+    // the outgoing session map are keyed by the BARE id for 1:1 + connection
+    // cards. Strip the prefix so repliesSent reads the right session — and
+    // capture it BEFORE _endFocusSessionForThread clears _feedSessionOutgoing.
+    final focusKey = threadId.startsWith('connection:')
+        ? threadId.substring('connection:'.length)
+        : threadId;
+    final repliesSent = _feedSessionOutgoing[focusKey]?.isNotEmpty ?? false;
+
+    _endFocusSessionForThread(threadId);
+
+    // Leave-WITHOUT-reply: return to the feed, the card stays, nothing cleared.
+    if (!repliesSent) return;
+
+    // Leave-WITH-reply: commit — remove the card and mark the thread read.
+    final ms = DateTime.now().millisecondsSinceEpoch;
+    final (kind, id) = _clearedKeyForThreadId(threadId);
+    _feedStore.markClearedLocally(kind, id, ms);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FEED_CLEAR_COMMIT',
+      details: {'kind': kind},
+    );
+    await widget.feedClearedRepository.markCleared(
+      kind,
+      id,
+      ms,
+      markRead: true,
+    );
+    // INV-3: commit marks the underlying conversation READ (not just cleared)
+    // and refreshes the app-wide unread badge. (The cleared row only hides the
+    // card; without this the thread stays unread in the DB and the badge stays
+    // elevated.) A 'connection' letter has no incoming messages to read-mark.
+    if (kind == feedThreadKindGroup) {
+      await widget.groupMessageRepository?.markAsRead(id);
+    } else if (kind == feedThreadKindContact) {
+      await markConversationRead(
+        messageRepo: widget.messageRepository,
+        contactPeerId: id,
+      );
+    }
+    if (mounted) await _loadTotalUnreadCount();
+  }
+
+  Future<void> _onSwipeDismiss(String threadId) async {
+    _endFocusSessionForThread(threadId);
+    final ms = DateTime.now().millisecondsSinceEpoch;
+    final (kind, id) = _clearedKeyForThreadId(threadId);
+    _feedStore.markClearedLocally(kind, id, ms);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FEED_CLEAR_DISMISS',
+      details: {'kind': kind},
+    );
+    await widget.feedClearedRepository.markCleared(
+      kind,
+      id,
+      ms,
+      markRead: false,
+    );
+  }
+
+  Future<void> _onUndoDismiss(String threadId) async {
+    final (kind, id) = _clearedKeyForThreadId(threadId);
+    _feedStore.clearClearedLocally(kind, id);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FEED_CLEAR_UNDO',
+      details: {'kind': kind},
+    );
+    await widget.feedClearedRepository.clearCleared(kind, id);
+  }
+
+  /// 134-P6 gesture arena (TC-35): a card-level swipe toggles the host gate so
+  /// the screen-level Feed↔Orbit host swipe yields the gesture while live. The
+  /// `|| _feedCardSwipeActive` bail in `_onHostPointerMove` is the sole guard —
+  /// the host neither resolves nor translates while a card swipe owns the drag.
+  void _onCardSwipeActive(bool active) {
+    if (_feedCardSwipeActive == active) return;
+    _feedCardSwipeActive = active;
+  }
+
+  /// Maps a swipe/clear thread id to a (kind, id) cleared-watermark key.
+  ///
+  /// 134-P6: the id is kind-qualified by the swipe call site — `group:<id>` for
+  /// groups, `connection:<peerId>` for a "new connection" system card, and a
+  /// bare peerId for a 1:1 contact thread. A contact and its connection card
+  /// share the same peerId, so the explicit `connection:` prefix is what keeps
+  /// a 1:1 dismiss from clearing the connection row instead (and vice-versa).
+  (String, String) _clearedKeyForThreadId(String threadId) {
+    if (threadId.startsWith('group:')) {
+      return (feedThreadKindGroup, threadId.substring('group:'.length));
+    }
+    if (threadId.startsWith('connection:')) {
+      return (
+        feedThreadKindConnection,
+        threadId.substring('connection:'.length),
+      );
+    }
+    return (feedThreadKindContact, threadId);
   }
 
   void _ensureOrbitHostMounted() {
@@ -2738,7 +2082,11 @@ class _FeedWiredState extends State<FeedWired>
           startingTab == AppShellTab.orbit && totalDelta.dx > 0;
       final blockedByOrbitRow =
           startingTab == AppShellTab.orbit && _orbitRowActionOpen;
-      if ((!movingToOrbit && !movingToFeed) || blockedByOrbitRow) {
+      // 134-P6 (TC-35): a live card swipe owns the horizontal gesture — the host
+      // yields (mirror the blockedByOrbitRow bail).
+      if ((!movingToOrbit && !movingToFeed) ||
+          blockedByOrbitRow ||
+          _feedCardSwipeActive) {
         return;
       }
 
@@ -2854,13 +2202,6 @@ class _FeedWiredState extends State<FeedWired>
     unawaited(_applyRouteChanges(changes));
   }
 
-  void _notifyMountedOrbitContactChange(String contactPeerId) {
-    if (!_hasMountedOrbitHost) return;
-    _mountedOrbitRouteChangesNotifier.value = FeedRouteChanges(
-      changedContactPeerIds: {contactPeerId},
-    );
-  }
-
   Widget _buildOrbitHost() {
     return OrbitWired(
       identityRepo: widget.repository,
@@ -2876,6 +2217,7 @@ class _FeedWiredState extends State<FeedWired>
       mediaFileManager: widget.mediaFileManager,
       secureKeyStore: widget.secureKeyStore,
       imageProcessor: widget.imageProcessor,
+      feedClearedRepository: widget.feedClearedRepository,
       conversationTracker: widget.conversationTracker,
       audioRecorderService: widget.audioRecorderService,
       reactionRepository: widget.reactionRepository,
@@ -2957,98 +2299,6 @@ class _FeedWiredState extends State<FeedWired>
     }
   }
 
-  void _onToggleExpand(String cardId) {
-    // Find the card — could be 1:1 or group
-    final cardItem = _feedItems
-        .whereType<CardThreadFeedItem>()
-        .where((t) => t.id == cardId)
-        .firstOrNull;
-
-    // Mark as read when collapsing an unread/active card
-    if (cardItem != null &&
-        _expandedCardId != cardId &&
-        (cardItem.conversationState == ConversationState.unread ||
-            cardItem.conversationState == ConversationState.active)) {
-      if (cardItem is ThreadFeedItem) {
-        markConversationRead(
-          messageRepo: widget.messageRepository,
-          contactPeerId: cardItem.contactPeerId,
-        ).then((_) {
-          if (mounted) {
-            unawaited(_refreshContactFeedItem(cardItem.contactPeerId));
-            _notifyMountedOrbitContactChange(cardItem.contactPeerId);
-          }
-        });
-      } else if (cardItem is GroupThreadFeedItem) {
-        widget.groupMessageRepository?.markAsRead(cardItem.groupId).then((_) {
-          if (mounted) {
-            unawaited(_refreshGroupFeedItem(cardItem.groupId));
-          }
-        });
-      }
-      // Ensure the resulting collapsed card is NOT expanded
-      setState(() {
-        _expandedCardId = null;
-      });
-      return;
-    }
-
-    // Clear active quote when collapsing the current card.
-    if (_expandedCardId == cardId) {
-      if (cardItem is ThreadFeedItem) {
-        _activeQuoteMessageIds.remove(cardItem.contactPeerId);
-      } else if (cardItem is GroupThreadFeedItem) {
-        _activeQuoteMessageIds.remove(_groupQuoteKey(cardItem.groupId));
-      }
-    }
-
-    // Clear session reply when expanding so expanded messages become visible
-    if (_expandedCardId != cardId) {
-      if (cardItem is ThreadFeedItem) {
-        _sessionReplies.clear(cardItem.contactPeerId);
-      } else if (cardItem is GroupThreadFeedItem) {
-        _sessionReplies.clear('group:${cardItem.groupId}');
-      }
-    }
-
-    setState(() {
-      _expandedCardId = _expandedCardId == cardId ? null : cardId;
-    });
-  }
-
-  void _onDraftChanged(String contactPeerId, String text) {
-    if (text.isEmpty) {
-      _draftTexts.remove(contactPeerId);
-    } else {
-      _draftTexts[contactPeerId] = text;
-    }
-  }
-
-  void _onInputFocusChanged(String contactPeerId, bool hasFocus) {
-    setState(() {
-      _activeFocusPeerId = hasFocus ? contactPeerId : null;
-    });
-  }
-
-  void _onQuoteReply(String contactPeerId, String messageId) {
-    setState(() {
-      if (!contactPeerId.startsWith('group:') &&
-          _isEditingContact(contactPeerId)) {
-        _clearEditState(contactPeerId: contactPeerId);
-      }
-      _activeQuoteMessageIds[contactPeerId] = messageId;
-      _activeFocusPeerId = contactPeerId.startsWith('group:')
-          ? null
-          : contactPeerId;
-    });
-  }
-
-  void _onClearQuote(String contactPeerId) {
-    setState(() {
-      _activeQuoteMessageIds.remove(contactPeerId);
-    });
-  }
-
   @override
   void dispose() {
     widget.appShellController.removeListener(_onShellChanged);
@@ -3089,7 +2339,20 @@ class _FeedWiredState extends State<FeedWired>
         ),
       );
     }
-    final activeFocusPeerId = _visibleActiveFocusPeerId;
+    // Temporary Orbit3 "One Circle" visuals prototype — same direct-mount as
+    // Orbit2 (bypasses the 2-pane Feed/Orbit swipe host on purpose).
+    if (kOrbit3PrototypeEnabled && activeTab == AppShellTab.orbit3) {
+      return Scaffold(
+        resizeToAvoidBottomInset: false,
+        body: Orbit3Screen(
+          userPeerId: _peerId,
+          userAvatarBytes: _avatarBytes,
+          backgroundPreference: widget.appShellController.backgroundPreference,
+          activeTab: activeTab,
+          onSwitchView: _onSwitchView,
+        ),
+      );
+    }
     final feedBody = FeedScreen(
       username: _username,
       userAvatarBytes: _avatarBytes,
@@ -3102,36 +2365,22 @@ class _FeedWiredState extends State<FeedWired>
       onSwitchView: _onSwitchView,
       activeTab: activeTab,
       onSendMessage: _onSendMessage,
-      onReplyToMessage: _onReplyToMessage,
       totalUnreadCountListenable: _totalUnreadCountNotifier,
       orbitBadgeCountListenable: _orbitBadgeCountNotifier,
-      expandedCardId: _expandedCardId,
-      onToggleExpand: _onToggleExpand,
-      onInlineSend: _onInlineSend,
-      onViewFullConversation: _onViewFullConversation,
-      draftTexts: _draftTexts,
-      activeFocusPeerId: activeFocusPeerId,
-      pendingViewportFollowContactPeerId: _pendingViewportFollowContactPeerId,
-      viewportFollowRequestId: _viewportFollowRequestId,
-      onDraftChanged: _onDraftChanged,
-      onInputFocusChanged: _onInputFocusChanged,
-      editingContactPeerId: _editingContactPeerId,
-      onEditMessage: _onEditMessage,
-      onDeleteMessage: _onDeleteMessage,
-      onCancelEdit: _onCancelEdit,
-      activeQuoteMessageIds: _activeQuoteMessageIds,
-      onQuoteReply: _onQuoteReply,
-      onClearQuote: _onClearQuote,
-      onAttach: _onAttach,
-      onAvatarTap: _onAvatarTap,
-      sessionReplies: _sessionReplies,
-      reactionListenableForMessage: _reactionStore.listenableForMessage,
-      onReactionSelected: _onReactionSelected,
+      onOpenFullConversation: _onOpenFullConversation,
       onGroupTap: _onGroupTap,
-      onGroupInlineSend: _onGroupInlineSend,
-      onGroupAttach: _onGroupAttach,
-      onGroupReactionTap: _onGroupReactionTap,
-      onGroupReactionSelected: _onGroupReactionSelected,
+      onAvatarTap: _onAvatarTap,
+      focusedId: _focusedId,
+      onFocusCard: _onFocusCard,
+      onClearFocus: _onClearFocus,
+      onComposerSend: _onFeedComposerSend,
+      onComposerDraftChanged: _onFeedComposerDraftChanged,
+      sessionReplies: _feedSessionOutgoing,
+      onRetrySend: _onRetrySend,
+      onSwipeCommit: _leaveFocusedThread,
+      onSwipeDismiss: _onSwipeDismiss,
+      onUndoDismiss: _onUndoDismiss,
+      onCardSwipeActive: _onCardSwipeActive,
       backgroundPreference: widget.appShellController.backgroundPreference,
     );
     final orbitBody = _hasMountedOrbitHost
@@ -3185,158 +2434,5 @@ class _FeedWiredState extends State<FeedWired>
     );
 
     return Scaffold(resizeToAvoidBottomInset: false, body: body);
-  }
-}
-
-enum _DeleteMessageAction { forMe, forEveryone, cancel }
-
-class _DeleteMessageSheet extends StatelessWidget {
-  final bool canDeleteForEveryone;
-
-  const _DeleteMessageSheet({required this.canDeleteForEveryone});
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final maxHeight = MediaQuery.of(context).size.height * 0.72;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(
-              key: FeedWired.deleteSheetKey,
-              decoration: BoxDecoration(
-                color: const Color.fromRGBO(18, 20, 28, 0.96),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(
-                  color: const Color.fromRGBO(255, 255, 255, 0.10),
-                ),
-              ),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: maxHeight),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 42,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: const Color.fromRGBO(255, 255, 255, 0.18),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      Text(
-                        l10n.conversation_delete_message_prompt,
-                        key: FeedWired.deletePromptKey,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Color.fromRGBO(255, 255, 255, 0.94),
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      _DeleteSheetAction(
-                        key: FeedWired.deleteForMeKey,
-                        label: l10n.conversation_delete_for_me,
-                        icon: Icons.delete_outline_rounded,
-                        color: const Color(0xFFFF8A80),
-                        onTap: () => Navigator.of(
-                          context,
-                        ).pop(_DeleteMessageAction.forMe),
-                      ),
-                      if (canDeleteForEveryone) ...[
-                        const SizedBox(height: 10),
-                        _DeleteSheetAction(
-                          key: FeedWired.deleteForEveryoneKey,
-                          label: l10n.conversation_delete_for_everyone,
-                          icon: Icons.person_remove_alt_1_rounded,
-                          color: const Color(0xFFFFB38A),
-                          onTap: () => Navigator.of(
-                            context,
-                          ).pop(_DeleteMessageAction.forEveryone),
-                        ),
-                      ],
-                      const SizedBox(height: 10),
-                      _DeleteSheetAction(
-                        key: FeedWired.deleteCancelKey,
-                        label: l10n.conversation_delete_cancel,
-                        icon: Icons.close_rounded,
-                        color: const Color.fromRGBO(255, 255, 255, 0.72),
-                        onTap: () => Navigator.of(
-                          context,
-                        ).pop(_DeleteMessageAction.cancel),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DeleteSheetAction extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _DeleteSheetAction({
-    super.key,
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            color: const Color.fromRGBO(255, 255, 255, 0.04),
-            border: Border.all(
-              color: const Color.fromRGBO(255, 255, 255, 0.06),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 18, color: color),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                    color: color,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }

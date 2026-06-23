@@ -377,15 +377,16 @@ void main() {
     );
 
     testWidgets(
-      'F5: composer shows a "sending is taking longer" hint past ~1.5s and '
-      'clears it once the send resolves',
+      'F5: a slow send (durable inbox-custody fallback) never surfaces a '
+      '"sending is taking longer" hint — it confuses users',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
 
         await tester.pumpWidget(
           _buildTestWidget(
             messageRepo: messageRepo,
-            // Resolves after 2s — mirrors the helper-capped durable fallback.
+            // Resolves after 2s — mirrors the helper-capped durable fallback,
+            // i.e. a send that "switches to inbox" custody and resolves slowly.
             sendChatMessageFn: _delayedSuccessSend(const Duration(seconds: 2)),
           ),
         );
@@ -400,26 +401,23 @@ void main() {
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
         await tester.pump();
 
-        // Below the ~1.5s threshold: no hint yet.
+        // Below the old ~1.5s threshold: no hint.
         await tester.pump(const Duration(milliseconds: 800));
         expect(find.text(hintText), findsNothing);
 
-        // Past the threshold (~1.6s) but before the 2s resolution: hint shown.
+        // Past the old threshold (~1.6s) but before the 2s resolution, while
+        // still sending: the hint must STILL not appear (it was removed).
         await tester.pump(const Duration(milliseconds: 800));
         expect(
           find.text(hintText),
-          findsOneWidget,
-          reason: 'the "taking longer" hint must appear while still sending',
+          findsNothing,
+          reason: 'the "taking longer" hint must never be shown to the user',
         );
 
-        // Send resolves at 2s → the hint must clear.
+        // Through resolution at 2s: still nothing.
         await tester.pump(const Duration(milliseconds: 700));
         await tester.pump(const Duration(milliseconds: 400));
-        expect(
-          find.text(hintText),
-          findsNothing,
-          reason: 'the hint must clear once the send resolves',
-        );
+        expect(find.text(hintText), findsNothing);
       },
     );
 

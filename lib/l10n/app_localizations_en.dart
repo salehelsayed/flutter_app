@@ -771,11 +771,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get feed_you => 'You';
 
   @override
-  String feed_you_replied(String time) {
-    return 'You replied $time';
-  }
-
-  @override
   String get settings_photo_quality => 'Photo Quality';
 
   @override
@@ -2047,13 +2042,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get feed_previously_seen => 'PREVIOUSLY SEEN';
-
-  @override
   String get feed_replying_to => 'Replying to';
-
-  @override
-  String get feed_view_earlier_messages => 'View earlier messages';
 
   @override
   String feed_ready_for_user(String username) {
@@ -2061,10 +2050,46 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get feed_all_caught_up => 'You\'re all caught up';
+
+  @override
   String get feed_loading => 'Loading Feed...';
 
   @override
   String get feed_syncing_threads => 'Your recent threads are still syncing.';
+
+  @override
+  String feed_reply_to_name(String name) {
+    return 'Reply to $name…';
+  }
+
+  @override
+  String feed_message_name(String name) {
+    return 'Message $name…';
+  }
+
+  @override
+  String get feed_add_another => 'Add another…';
+
+  @override
+  String get feed_open_full_conversation => 'Open full conversation';
+
+  @override
+  String get feed_tap_to_retry => 'tap to retry';
+
+  @override
+  String feed_removed_undo(String name) {
+    return 'Removed $name';
+  }
+
+  @override
+  String get feed_undo => 'Undo';
+
+  @override
+  String get feed_tap_to_say_hi => 'tap to say hi';
+
+  @override
+  String get feed_connected => 'Connected';
 
   @override
   String get qr_added_to_circle => 'Added to your circle!';
@@ -2449,6 +2474,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get nav_orbit2 => 'Orbit2';
 
   @override
+  String get nav_orbit3 => 'Orbit3';
+
+  @override
   String get orbit2_prototype_chip => 'Prototype · sample data';
 
   @override
@@ -2475,6 +2503,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get orbit2_template_tiered => 'Tiered';
+
+  @override
+  String get orbit2_template_unified => 'One Circle';
 
   @override
   String get orbit2_mock_chat_demo_chip => 'Demo · messages aren\'t sent';

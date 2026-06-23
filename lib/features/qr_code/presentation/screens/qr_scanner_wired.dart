@@ -38,6 +38,7 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -90,6 +91,7 @@ class QRScannerWired extends StatelessWidget {
   final AppShellController? appShellController;
   final PendingPostTargetStore? pendingPostTargetStore;
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
+  final FeedClearedRepository? feedClearedRepository;
   final TransportMetrics? transportMetrics;
   final MigrationQrScannedHandler? onMigrationQrScanned;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
@@ -128,6 +130,7 @@ class QRScannerWired extends StatelessWidget {
     this.shareIntentService,
     this.appShellController,
     this.pendingPostTargetStore,
+    this.feedClearedRepository,
     this.postsPrivacySettingsRepository,
     this.transportMetrics,
     this.onMigrationQrScanned,
@@ -418,6 +421,9 @@ class QRScannerWired extends StatelessWidget {
                         postsPrivacySettingsRepository:
                             postsPrivacySettingsRepository ??
                             _missingPostsPrivacySettingsRepository(),
+                        feedClearedRepository:
+                            feedClearedRepository ??
+                            _missingFeedClearedRepository(),
                         transportMetrics: transportMetrics,
                         accountMigrationRunTransfer:
                             accountMigrationRunTransfer,
@@ -568,6 +574,12 @@ class QRScannerWired extends StatelessWidget {
   Never _missingPostsPrivacySettingsRepository() {
     throw StateError(
       'QRScannerWired requires postsPrivacySettingsRepository before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingFeedClearedRepository() {
+    throw StateError(
+      'QRScannerWired requires feedClearedRepository before navigating to FeedWired.',
     );
   }
 }

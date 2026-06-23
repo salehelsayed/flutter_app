@@ -286,15 +286,6 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _initialLoadDone = false;
   bool _isSending = false;
 
-  // F5: a send that has not resolved within ~1.5s (e.g. the helper-capped
-  // boundary-stall path degrading to durable inbox custody) surfaces a
-  // non-blocking "sending is taking longer" hint instead of looking frozen.
-  // Cleared the moment the send settles (success, 'inboxed' fallback, or fail).
-  Timer? _sendingHintTimer;
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
-  _sendingHintController;
-  static const Duration _sendingHintThreshold = Duration(milliseconds: 1500);
-
   List<PendingComposerMedia> _pendingAttachments = [];
   final _composerState = ValueNotifier(const ConversationComposerViewState());
   static const _maxAttachments = 10;
@@ -1809,32 +1800,6 @@ class _ConversationWiredState extends State<ConversationWired>
         );
   }
 
-  /// Starts the "sending is taking longer" hint timer. When the send is still
-  /// in flight past [_sendingHintThreshold] (below the helper's ~2.5s cap), a
-  /// non-blocking SnackBar is shown so the composer does not look frozen. Must
-  /// be paired with [_stopSendingHint] on resolution.
-  void _startSendingHint(ScaffoldMessengerState? messenger) {
-    _sendingHintTimer?.cancel();
-    _sendingHintTimer = Timer(_sendingHintThreshold, () {
-      if (!mounted || !_isSending || messenger == null) return;
-      _sendingHintController = messenger.showSnackBar(
-        SnackBar(
-          content: Text(AppLocalizations.of(context)!.sending_taking_longer),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 30),
-        ),
-      );
-    });
-  }
-
-  /// Cancels the pending hint timer and dismisses the hint SnackBar (if shown).
-  void _stopSendingHint() {
-    _sendingHintTimer?.cancel();
-    _sendingHintTimer = null;
-    _sendingHintController?.close();
-    _sendingHintController = null;
-  }
-
   Future<void> _onSend(String text) async {
     final identity = _identity;
     if (identity == null) return;
@@ -1927,7 +1892,6 @@ class _ConversationWiredState extends State<ConversationWired>
       _clearRestoredFailedDraftTracking();
       _isSending = true;
     });
-    _startSendingHint(messenger);
 
     // 127-Bug-B: blob ids this foreground send is uploading. The background
     // retrier consults `mediaUploadInFlightTracker` and skips these so it can
@@ -2378,7 +2342,6 @@ class _ConversationWiredState extends State<ConversationWired>
       for (final blobId in inFlightUploadIds) {
         mediaUploadInFlightTracker.end(blobId);
       }
-      _stopSendingHint();
       if (mounted) {
         setState(() => _isSending = false);
       } else {
@@ -4021,7 +3984,6 @@ class _ConversationWiredState extends State<ConversationWired>
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
     _mediaUploadProgressSubscription?.cancel();
-    _sendingHintTimer?.cancel();
     _durationSub?.cancel();
     _amplitudeSub?.cancel();
     // Cancel active recording on dispose

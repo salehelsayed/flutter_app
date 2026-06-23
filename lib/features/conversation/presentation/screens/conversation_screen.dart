@@ -7,6 +7,7 @@ import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
@@ -534,6 +535,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 text: displayText,
                 time: _formatTime(message.timestamp),
                 isIncoming: message.isIncoming,
+                // 136 Phase 3: render as a side-aligned chat balloon and group
+                // consecutive same-sender messages into one run. 1:1 NEVER
+                // shows an avatar or a sender name (showAvatar/showSenderName
+                // false in both directions).
+                bubbleLayout: true,
+                isFirstInGroup: item.isFirstInGroup,
+                isLastInGroup: item.isLastInGroup,
+                showAvatar: false,
+                showSenderName: false,
                 status: message.isIncoming ? null : message.status,
                 transport: message.transport,
                 quotedText: quotedText,
@@ -597,9 +607,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   )
                 : letterCard;
 
-            if (message.isIncoming &&
-                !message.isDeleted &&
-                widget.onQuoteReply != null) {
+            // 136 Phase 3: swipe-to-reply is enabled on EVERY balloon in BOTH
+            // directions (outgoing balloons now get the gesture too).
+            if (!message.isDeleted && widget.onQuoteReply != null) {
               bubble = SwipeToQuoteBubble(
                 onQuoteTriggered: () => widget.onQuoteReply!(message.id),
                 child: bubble,
@@ -608,7 +618,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
             return Padding(
               key: ValueKey('msg-${message.id}'),
-              padding: const EdgeInsets.only(bottom: 16),
+              // 137 follow-up: tight gap within a run (so the stacked corner
+              // radii read as one connected group), larger gap between runs.
+              padding: EdgeInsets.only(
+                bottom: messageRunBottomSpacing(
+                  isLastInGroup: item.isLastInGroup,
+                  runSeparation: 16,
+                ),
+              ),
               child: bubble,
             );
         }
@@ -629,8 +646,16 @@ class _ConversationScreenState extends State<ConversationScreen> {
       items.add(_DisplayItem.loadingIndicator());
     }
 
-    // Messages with date separators
+    // Messages with date separators.
+    //
+    // 136 Phase 3: compute run-grouping flags on the FORWARD (chronological)
+    // list, before the final `.reversed`. `prevBreaks` is set whenever a date
+    // separator OR a system row was emitted since the previous message row, so
+    // the next message starts a fresh run regardless of sender/gap.
     String? lastDateLabel;
+    String? prevSenderPeerId;
+    DateTime? prevTimestamp;
+    var prevBreaks = true; // first message always starts a run
     for (var i = 0; i < widget.messages.length; i++) {
       final message = widget.messages[i];
       final dateLabel = _formatDateLabel(message.timestamp);
@@ -638,10 +663,65 @@ class _ConversationScreenState extends State<ConversationScreen> {
       if (dateLabel != lastDateLabel) {
         items.add(_DisplayItem.dateSeparator(dateLabel));
         lastDateLabel = dateLabel;
+        // A date separator splits any in-progress run.
+        prevBreaks = true;
       }
 
+      final isSystemRow = message.transport == 'system';
+      final parsedTs = DateTime.tryParse(message.timestamp);
+      final isFirstInGroup = messageRunStartsNewRun(
+        senderPeerId: message.senderPeerId,
+        // Parse failure → null timestamp → helper fails safe to a run break.
+        timestamp: parsedTs ?? DateTime.fromMillisecondsSinceEpoch(0),
+        isSystemRow: isSystemRow,
+        prevSenderPeerId: prevSenderPeerId,
+        prevTimestamp: prevTimestamp,
+        prevBreaks: prevBreaks,
+      );
+
       final isNew = i == widget.messages.length - 1 && _wasEmpty;
-      items.add(_DisplayItem.message(message, isLastAndWasEmpty: isNew));
+      items.add(
+        _DisplayItem.message(
+          message,
+          isLastAndWasEmpty: isNew,
+          isFirstInGroup: isFirstInGroup,
+          // Finalized by the second pass below.
+          isLastInGroup: true,
+        ),
+      );
+
+      // A system row carries no run chrome (it renders via IntroSystemMessage)
+      // and forces the NEXT message to start a fresh run.
+      if (isSystemRow) {
+        prevBreaks = true;
+        prevSenderPeerId = null;
+        prevTimestamp = null;
+      } else {
+        prevBreaks = false;
+        prevSenderPeerId = message.senderPeerId;
+        prevTimestamp = parsedTs;
+      }
+    }
+
+    // Second pass (forward): a message is last-in-run when the NEXT message row
+    // starts a new run, or when there is no following message row.
+    int? lastMessageIndex;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type != _ItemType.message) continue;
+      if (lastMessageIndex != null) {
+        // The previously seen message is last-in-run iff the current message
+        // starts a new run.
+        items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(
+          items[i].isFirstInGroup,
+        );
+      }
+      lastMessageIndex = i;
+    }
+    if (lastMessageIndex != null) {
+      // The final message row is always last-in-run.
+      items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(
+        true,
+      );
     }
 
     // Reset transition state after build
@@ -987,11 +1067,22 @@ class _DisplayItem {
   final String? dateLabel;
   final bool isLastAndWasEmpty;
 
+  /// 136 Phase 3: whether this message row is the FIRST balloon of its run
+  /// (consecutive same-sender messages within [kMessageRunGapThreshold] that
+  /// are not split by a date separator or a system row). Defaults true so a
+  /// standalone balloon renders with full corner radii.
+  final bool isFirstInGroup;
+
+  /// 136 Phase 3: whether this message row is the LAST balloon of its run.
+  final bool isLastInGroup;
+
   const _DisplayItem._({
     required this.type,
     this.message,
     this.dateLabel,
     this.isLastAndWasEmpty = false,
+    this.isFirstInGroup = true,
+    this.isLastInGroup = true,
   });
 
   factory _DisplayItem.originMarker() =>
@@ -1006,10 +1097,25 @@ class _DisplayItem {
   factory _DisplayItem.message(
     ConversationMessage msg, {
     bool isLastAndWasEmpty = false,
+    bool isFirstInGroup = true,
+    bool isLastInGroup = true,
   }) => _DisplayItem._(
     type: _ItemType.message,
     message: msg,
     isLastAndWasEmpty: isLastAndWasEmpty,
+    isFirstInGroup: isFirstInGroup,
+    isLastInGroup: isLastInGroup,
+  );
+
+  /// Returns a copy of a message item with [isLastInGroup] overridden (used by
+  /// the second-pass lookahead that finalizes run-end flags).
+  _DisplayItem copyWithLastInGroup(bool value) => _DisplayItem._(
+    type: type,
+    message: message,
+    dateLabel: dateLabel,
+    isLastAndWasEmpty: isLastAndWasEmpty,
+    isFirstInGroup: isFirstInGroup,
+    isLastInGroup: value,
   );
 }
 

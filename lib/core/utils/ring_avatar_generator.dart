@@ -210,6 +210,18 @@ class RingAvatarGenerator {
     ).toColor();
   }
 
+  /// Returns the deterministic feed identity accent for a given peerId (134
+  /// §4). Same djb2 hue as [glowColorForPeerId] but the spec's feed
+  /// saturation/lightness (72% / 67%) instead of the avatar glow's 70% / 50%.
+  /// A sender's name accent and its [RingAvatar] derive from THIS color so the
+  /// two always match (INV-6); the global glow helper is intentionally left
+  /// untouched so Orbit/profile/connection screens keep their hue.
+  static Color accentColorForPeerId(String peerId) {
+    final hash = djb2Hash(peerId);
+    final hue = ((hash >> 16) % 360).toDouble();
+    return HSLColor.fromAHSL(1.0, hue, 0.72, 0.67).toColor();
+  }
+
   static GlowData _generateGlow(int hash, double size) {
     // Hue from full spectrum (0-359)
     final hue = ((hash >> 16) % 360).toDouble();

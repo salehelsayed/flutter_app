@@ -25,6 +25,7 @@ import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
+import '../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 
 void main() {
   late bool previousDeferredStartupMode;
@@ -133,6 +134,7 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       home: StartupRouter(
         repository: identityRepository,
+        feedClearedRepository: InMemoryFeedClearedRepository(),
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,

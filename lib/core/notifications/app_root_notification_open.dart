@@ -71,9 +71,23 @@ Future<bool> routeAppRootRemoteNotificationOpenWithResult({
 bool isNotificationRouteTargetAlreadyActive({
   required NotificationRouteTarget routeTarget,
   required ActiveConversationTracker groupConversationTracker,
+  ActiveConversationTracker? conversationTracker,
 }) {
-  if (routeTarget.kind != NotificationRouteTargetKind.group) {
-    return false;
+  switch (routeTarget.kind) {
+    case NotificationRouteTargetKind.group:
+      return groupConversationTracker.isViewing(routeTarget.toPayload());
+    case NotificationRouteTargetKind.conversation:
+      // Report 139: mirror the group guard for 1:1. `toPayload()` for the
+      // conversation kind is the bare peerId, and the 1:1
+      // `conversationTracker` is the same instance `ConversationWired` keeps
+      // current via `setActive`/`clearIfActive`, so this is symmetric with the
+      // group branch. A null tracker (no 1:1 screen wired) falls through to
+      // false → push as before.
+      return conversationTracker?.isViewing(routeTarget.toPayload()) ?? false;
+    case NotificationRouteTargetKind.contactRequest:
+    case NotificationRouteTargetKind.intros:
+    case NotificationRouteTargetKind.post:
+    case NotificationRouteTargetKind.postComment:
+      return false;
   }
-  return groupConversationTracker.isViewing(routeTarget.toPayload());
 }

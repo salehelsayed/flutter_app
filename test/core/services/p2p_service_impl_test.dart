@@ -4612,4 +4612,169 @@ void main() {
       expect(details['totalMs'], greaterThanOrEqualTo(0));
     });
   });
+
+  // 141: A notif-open opportunistic drain requested while the libp2p node has
+  // not yet reached `isStarted` must be DEFERRED (not dropped) and fired once
+  // on the next stopped->started transition — so the just-arrived 1:1 message
+  // surfaces promptly on open instead of only on the next ~30s health tick.
+  group('141 notif-open deferred startup drain', () {
+    test(
+      'drainOfflineInbox defers when node not started and fires on '
+      'started transition',
+      () async {
+        var retrievePendingCount = 0;
+        bridge.whenCommand('inbox:retrieve_pending', (_) {
+          retrievePendingCount++;
+          return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+        });
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+
+        // Phase 1 — node not started: the opportunistic drain must be
+        // DEFERRED (scheduled), neither run nor silently dropped.
+        final scheduledEvents = await _captureFlowEvents(() async {
+          await service.drainOfflineInbox();
+        });
+        expect(
+          retrievePendingCount,
+          0,
+          reason:
+              'no inbox retrieve may be issued while the node is not started',
+        );
+        expect(
+          scheduledEvents.where(
+            (e) => e['event'] == 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_BEGIN',
+          ),
+          isEmpty,
+          reason: 'the drain must not begin while the node is not started',
+        );
+        expect(
+          scheduledEvents.where(
+            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
+          ),
+          isNotEmpty,
+          reason: 'an opportunistic drain requested before the node starts '
+              'must be deferred (scheduled), not dropped',
+        );
+
+        // Phase 2 — drive the stopped->started transition. The deferred drain
+        // must fire exactly once, AFTER the transition (never while stopped).
+        final firedEvents = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          await _waitForCondition(
+            () => retrievePendingCount >= 1,
+            reason: 'the deferred drain should issue an inbox retrieve once '
+                'the node reaches started',
+          );
+        });
+        final fired = firedEvents
+            .where(
+              (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
+            )
+            .toList();
+        expect(
+          fired,
+          hasLength(1),
+          reason: 'the deferred drain fires exactly once on the '
+              'stopped->started transition',
+        );
+        expect(
+          retrievePendingCount,
+          greaterThanOrEqualTo(1),
+          reason: 'the inbox retrieve is issued only after the node started',
+        );
+      },
+    );
+
+    test(
+      'drainOfflineInbox runs immediately when already started '
+      '(no deferral, single fire)',
+      () async {
+        var retrievePendingCount = 0;
+        bridge.whenCommand('inbox:retrieve_pending', (_) {
+          retrievePendingCount++;
+          return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+        });
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand('node:stop', (_) => jsonEncode({'ok': true}));
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        // Ignore any startup-driven retrieves; measure only the explicit drain.
+        retrievePendingCount = 0;
+
+        final events = await _captureFlowEvents(() async {
+          await service.drainOfflineInbox();
+        });
+        expect(
+          retrievePendingCount,
+          1,
+          reason: 'the started-path drain runs immediately and exactly once',
+        );
+        expect(
+          events.where(
+            (e) => e['event'] == 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_BEGIN',
+          ),
+          isNotEmpty,
+          reason: 'the started-path drain begins immediately',
+        );
+        expect(
+          events.where(
+            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
+          ),
+          isEmpty,
+          reason: 'no deferral is scheduled when the node is already started',
+        );
+
+        // The started-path drain must NOT arm the deferral latch. Prove it with
+        // a REAL stop->start cycle (the only thing that drives a
+        // stopped->started edge): a phantom latch wrongly set on the started
+        // path would fire here. (A weaker check via performImmediateHealthCheck
+        // would not — it never crosses the !started->started edge the fire hook
+        // guards on, so it cannot catch an over-latch regression.)
+        final cycleEvents = await _captureFlowEvents(() async {
+          await service.stopNode();
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        });
+        expect(
+          cycleEvents.where(
+            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
+          ),
+          isEmpty,
+          reason: 'the started-path drain must not arm the deferral latch — a '
+              'later stop->start cycle must not fire a phantom deferred drain',
+        );
+      },
+    );
+  });
 }

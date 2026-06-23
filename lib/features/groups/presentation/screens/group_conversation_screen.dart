@@ -9,6 +9,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
@@ -585,6 +586,23 @@ class GroupConversationScreen extends StatelessWidget {
         final canOpenContextOverlay =
             canReplyFromContext || canCopyFromContext || canShowReactionContext;
 
+        // 136 Phase 4: render as side-aligned chat balloons and group
+        // consecutive same-sender messages into one run. Groups show ONE
+        // avatar + sender name per INCOMING run (first balloon only);
+        // outgoing balloons never show an avatar. System/membership rows
+        // (sys- id prefix) are their own run and carry NO run chrome even
+        // though they are incoming + first-in-run. Both the live card and the
+        // long-press lifted snapshot are built from the SAME flags so the
+        // snapshot never visually jumps (TC-29).
+        final isSystemRow = message.id.startsWith('sys-');
+        final runChrome = messageRunChrome(
+          surface: MessageRunSurface.group,
+          isOutgoing: isSent,
+          isFirstInGroup: item.isFirstInGroup,
+        );
+        final showRunAvatar = runChrome.showAvatar && !isSystemRow;
+        final showRunSenderName = runChrome.showSenderName && !isSystemRow;
+
         LetterCard buildLetterCard({VoidCallback? onLongPress}) => LetterCard(
           senderPeerId: message.senderPeerId,
           senderName: isSent
@@ -598,6 +616,16 @@ class GroupConversationScreen extends StatelessWidget {
           text: message.text,
           time: _formatTime(context, message.timestamp),
           isIncoming: !isSent,
+          bubbleLayout: true,
+          isFirstInGroup: item.isFirstInGroup,
+          isLastInGroup: item.isLastInGroup,
+          showAvatar: showRunAvatar,
+          showSenderName: showRunSenderName,
+          // 137 follow-up: render the run avatar in a left gutter OUTSIDE the
+          // bubble. The gutter is reserved on every incoming non-system balloon
+          // so the run shares one left edge; the avatar paints on the first
+          // balloon only (showRunAvatar).
+          avatarOutsideBubble: !isSent && !isSystemRow,
           status: isSent ? message.status : null,
           quotedText: quotedText,
           isQuoteUnavailable: isQuoteUnavailable,
@@ -641,7 +669,13 @@ class GroupConversationScreen extends StatelessWidget {
 
         Widget bubble = Padding(
           key: ValueKey('grp-msg-${message.id}'),
-          padding: const EdgeInsets.only(bottom: 12),
+          // 137 follow-up: tight gap within a run, larger gap between runs.
+          padding: EdgeInsets.only(
+            bottom: messageRunBottomSpacing(
+              isLastInGroup: item.isLastInGroup,
+              runSeparation: 12,
+            ),
+          ),
           child: Builder(
             builder: (cardContext) => buildLetterCard(
               onLongPress: canOpenContextOverlay
@@ -655,7 +689,13 @@ class GroupConversationScreen extends StatelessWidget {
           ),
         );
 
-        if (!isSent && canWrite && onQuoteReply != null) {
+        // 136 Phase 4: swipe-to-reply is enabled on EVERY balloon in BOTH
+        // directions (outgoing balloons now get the gesture too), still gated
+        // by write permission. System/membership rows (sys- ids) are excluded:
+        // they are not quote-reply targets, matching the 1:1 surface where
+        // transport=='system' rows render as IntroSystemMessage before the
+        // swipe wrap.
+        if (!isSystemRow && canWrite && onQuoteReply != null) {
           bubble = SwipeToQuoteBubble(
             onQuoteTriggered: () => onQuoteReply!(message.id),
             child: bubble,
@@ -693,6 +733,17 @@ class GroupConversationScreen extends StatelessWidget {
 
     final items = <_GroupDisplayItem>[];
     final emittedLabels = <String>{};
+
+    // 136 Phase 4: compute run-grouping flags on the RENDERED adjacency of
+    // [messages] (already ordered upstream by orderGroupMessagesForTimeline —
+    // never re-sort here; replies are pulled under their parent, so the order
+    // is intentionally non-monotonic). `prevBreaks` is set whenever a date
+    // separator OR a system/membership row was emitted since the previous
+    // message row, so the next message starts a fresh run regardless of
+    // sender/gap.
+    String? prevSenderPeerId;
+    DateTime? prevTimestamp;
+    var prevBreaks = true; // first message always starts a run
     for (final message in messages) {
       final label = formatDaySeparatorLabel(
         message.timestamp,
@@ -703,9 +754,63 @@ class GroupConversationScreen extends StatelessWidget {
       );
       if (emittedLabels.add(label)) {
         items.add(_GroupDisplayItem.dateSeparator(label));
+        // A date separator splits any in-progress run.
+        prevBreaks = true;
       }
-      items.add(_GroupDisplayItem.message(message));
+
+      // System/membership rows are ordinary GroupMessages with a `sys-` id
+      // prefix; they share senderPeerId with the actor but must never be
+      // absorbed into a run.
+      final isSystemRow = message.id.startsWith('sys-');
+      final isFirstInGroup = messageRunStartsNewRun(
+        senderPeerId: message.senderPeerId,
+        timestamp: message.timestamp,
+        isSystemRow: isSystemRow,
+        prevSenderPeerId: prevSenderPeerId,
+        prevTimestamp: prevTimestamp,
+        prevBreaks: prevBreaks,
+      );
+
+      items.add(
+        _GroupDisplayItem.message(
+          message,
+          isFirstInGroup: isFirstInGroup,
+          // Finalized by the second pass below.
+          isLastInGroup: true,
+        ),
+      );
+
+      // A system row carries no run chrome and forces the NEXT message to
+      // start a fresh run.
+      if (isSystemRow) {
+        prevBreaks = true;
+        prevSenderPeerId = null;
+        prevTimestamp = null;
+      } else {
+        prevBreaks = false;
+        prevSenderPeerId = message.senderPeerId;
+        prevTimestamp = message.timestamp;
+      }
     }
+
+    // Second pass (forward): a message is last-in-run when the NEXT message row
+    // starts a new run, or when there is no following message row.
+    int? lastMessageIndex;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type != _GroupItemType.message) continue;
+      if (lastMessageIndex != null) {
+        items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(
+          items[i].isFirstInGroup,
+        );
+      }
+      lastMessageIndex = i;
+    }
+    if (lastMessageIndex != null) {
+      items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(
+        true,
+      );
+    }
+
     return items.reversed.toList();
   }
 
@@ -1008,11 +1113,44 @@ class _GroupDisplayItem {
   final GroupMessage? message;
   final String? dateLabel;
 
-  const _GroupDisplayItem._({required this.type, this.message, this.dateLabel});
+  /// 136 Phase 4: whether this message row is the FIRST balloon of its run
+  /// (consecutive same-sender messages within [kMessageRunGapThreshold] that
+  /// are not split by a date separator or a system/membership row). Defaults
+  /// true so a standalone balloon renders with full corner radii + chrome.
+  final bool isFirstInGroup;
+
+  /// 136 Phase 4: whether this message row is the LAST balloon of its run.
+  final bool isLastInGroup;
+
+  const _GroupDisplayItem._({
+    required this.type,
+    this.message,
+    this.dateLabel,
+    this.isFirstInGroup = true,
+    this.isLastInGroup = true,
+  });
 
   factory _GroupDisplayItem.dateSeparator(String label) =>
       _GroupDisplayItem._(type: _GroupItemType.dateSeparator, dateLabel: label);
 
-  factory _GroupDisplayItem.message(GroupMessage message) =>
-      _GroupDisplayItem._(type: _GroupItemType.message, message: message);
+  factory _GroupDisplayItem.message(
+    GroupMessage message, {
+    bool isFirstInGroup = true,
+    bool isLastInGroup = true,
+  }) => _GroupDisplayItem._(
+    type: _GroupItemType.message,
+    message: message,
+    isFirstInGroup: isFirstInGroup,
+    isLastInGroup: isLastInGroup,
+  );
+
+  /// Returns a copy of a message item with [isLastInGroup] overridden (used by
+  /// the second-pass lookahead that finalizes run-end flags).
+  _GroupDisplayItem copyWithLastInGroup(bool value) => _GroupDisplayItem._(
+    type: type,
+    message: message,
+    dateLabel: dateLabel,
+    isFirstInGroup: isFirstInGroup,
+    isLastInGroup: value,
+  );
 }

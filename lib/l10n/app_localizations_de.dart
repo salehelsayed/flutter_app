@@ -789,11 +789,6 @@ class AppLocalizationsDe extends AppLocalizations {
   String get feed_you => 'Du';
 
   @override
-  String feed_you_replied(String time) {
-    return 'Du hast $time geantwortet';
-  }
-
-  @override
   String get settings_photo_quality => 'Fotoqualität';
 
   @override
@@ -2095,13 +2090,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get feed_previously_seen => 'BEREITS GESEHEN';
-
-  @override
   String get feed_replying_to => 'Antwort auf';
-
-  @override
-  String get feed_view_earlier_messages => 'Frühere Nachrichten anzeigen';
 
   @override
   String feed_ready_for_user(String username) {
@@ -2109,11 +2098,47 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get feed_all_caught_up => 'Du bist auf dem neuesten Stand';
+
+  @override
   String get feed_loading => 'Feed wird geladen...';
 
   @override
   String get feed_syncing_threads =>
       'Deine letzten Threads werden noch synchronisiert.';
+
+  @override
+  String feed_reply_to_name(String name) {
+    return 'Antworte an $name…';
+  }
+
+  @override
+  String feed_message_name(String name) {
+    return 'Nachricht an $name…';
+  }
+
+  @override
+  String get feed_add_another => 'Weitere senden…';
+
+  @override
+  String get feed_open_full_conversation => 'Vollständige Unterhaltung öffnen';
+
+  @override
+  String get feed_tap_to_retry => 'zum Wiederholen tippen';
+
+  @override
+  String feed_removed_undo(String name) {
+    return '$name entfernt';
+  }
+
+  @override
+  String get feed_undo => 'Rückgängig';
+
+  @override
+  String get feed_tap_to_say_hi => 'tippen, um Hallo zu sagen';
+
+  @override
+  String get feed_connected => 'Verbunden';
 
   @override
   String get qr_added_to_circle => 'Zu deinem Kreis hinzugefügt!';
@@ -2519,6 +2544,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get nav_orbit2 => 'Orbit2';
 
   @override
+  String get nav_orbit3 => 'Orbit3';
+
+  @override
   String get orbit2_prototype_chip => 'Prototyp · Beispieldaten';
 
   @override
@@ -2545,6 +2573,9 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get orbit2_template_tiered => 'Ebenen';
+
+  @override
+  String get orbit2_template_unified => 'Ein Kreis';
 
   @override
   String get orbit2_mock_chat_demo_chip =>

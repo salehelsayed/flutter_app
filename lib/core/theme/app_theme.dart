@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'background_readable_colors.dart';
+import 'feed_tokens.dart';
 
 /// Application theme configuration for Custom1 dark theme.
 class AppTheme {
@@ -31,6 +32,7 @@ class AppTheme {
       ),
       extensions: const <ThemeExtension<dynamic>>[
         BackgroundReadableColors.dark,
+        FeedTokens.dark,
       ],
     );
   }

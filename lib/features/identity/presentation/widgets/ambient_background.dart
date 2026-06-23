@@ -15,12 +15,20 @@ class AmbientBackground extends StatefulWidget {
   final bool isFeedSurface;
   final BackgroundReadableTone? readableToneOverride;
 
+  /// 134 §7 reduced-motion. ONLY honored on the feed surface
+  /// ([isFeedSurface] == true): when true the default-background entrance/ambient
+  /// loop does NOT start its infinite repeat() and the final static glow frame is
+  /// rendered instead. The other ~16 callers never pass this, so their behavior
+  /// is byte-for-byte unchanged (default false → original repeat() path).
+  final bool reduceMotion;
+
   const AmbientBackground({
     super.key,
     required this.child,
     this.preference = BackgroundPreference.defaultBackground,
     this.isFeedSurface = false,
     this.readableToneOverride,
+    this.reduceMotion = false,
   });
 
   @override
@@ -38,7 +46,7 @@ class _AmbientBackgroundState extends State<AmbientBackground>
       vsync: this,
       duration: const Duration(seconds: 8),
     );
-    if (_usesDefaultBackground) {
+    if (_shouldAnimate) {
       _controller.repeat();
     }
   }
@@ -46,9 +54,9 @@ class _AmbientBackgroundState extends State<AmbientBackground>
   @override
   void didUpdateWidget(covariant AmbientBackground oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_usesDefaultBackground && !_controller.isAnimating) {
+    if (_shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
-    } else if (!_usesDefaultBackground && _controller.isAnimating) {
+    } else if (!_shouldAnimate && _controller.isAnimating) {
       _controller.stop();
     }
   }
@@ -98,6 +106,17 @@ class _AmbientBackgroundState extends State<AmbientBackground>
 
   bool get _usesDefaultBackground {
     return widget.preference == BackgroundPreference.defaultBackground;
+  }
+
+  /// The default-background ambient loop runs UNLESS this is the feed surface
+  /// AND reduced motion is requested. Scoped strictly to [isFeedSurface] +
+  /// [reduceMotion] so the other ~16 callers (which never set reduceMotion) keep
+  /// the original `_usesDefaultBackground` behavior. When gated off the
+  /// controller stays at value 0 → the static final glow frame is rendered.
+  bool get _shouldAnimate {
+    if (!_usesDefaultBackground) return false;
+    if (widget.isFeedSurface && widget.reduceMotion) return false;
+    return true;
   }
 }
 

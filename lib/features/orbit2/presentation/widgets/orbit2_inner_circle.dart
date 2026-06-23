@@ -28,6 +28,9 @@ class Orbit2InnerCircle extends StatelessWidget {
   final List<Orbit2InnerItem> items;
   final double size;
   final bool expanded;
+  /// "One Circle" prototype: pack EVERY member into concentric rings that grow
+  /// to fit them all — no "+N" overflow, no expand node, no scattered canvas.
+  final bool unified;
   final bool namesVisible;
   final bool motionEnabled;
   final bool carryActive;
@@ -53,6 +56,7 @@ class Orbit2InnerCircle extends StatelessWidget {
     required this.items,
     this.size = 240,
     this.expanded = false,
+    this.unified = false,
     this.namesVisible = false,
     this.motionEnabled = true,
     this.carryActive = false,
@@ -131,10 +135,13 @@ class Orbit2InnerCircle extends StatelessWidget {
         (tappable && avatarSize < 48) ? 48.0 : avatarSize;
 
     // Returns the avatar Positioned AND (in names mode, or as a one-off "peek"
-    // for the search match) a sibling name label placed radially-outward in the
-    // gap toward the next ring.
+    // for the search match) a sibling name label. By default the label is tucked
+    // radially-outward in the gap toward the next ring; [labelBelow] instead
+    // drops it straight under the avatar (used by One Circle's dense rings, where
+    // radial labels would fan out in every direction and collide).
     List<Widget> slotFor(Orbit2InnerItem it, double sz, int globalIndex,
-        int ringIndex, int ringCount, double ringR, int ring, double border) {
+        int ringIndex, int ringCount, double ringR, int ring, double border,
+        {bool labelBelow = false}) {
       final p = _pos(ringIndex, ringCount, ringR, ring);
       final t = tap(sz);
       final hidden = it.id == carriedOutId;
@@ -245,8 +252,9 @@ class Orbit2InnerCircle extends StatelessWidget {
       ];
 
       if (!hidden && (names || isMatch)) {
-        final labelR = ringR + sz / 2 + 8;
-        final lp = _pos(ringIndex, ringCount, labelR, ring);
+        final lp = labelBelow
+            ? Offset(p.dx, p.dy + sz / 2 + 7)
+            : _pos(ringIndex, ringCount, ringR + sz / 2 + 8, ring);
         out.add(Positioned(
           // Clamp inside the cluster box so an outermost-ring label never runs
           // off the box (and the screen edge) when the ring fills up.
@@ -263,6 +271,127 @@ class Orbit2InnerCircle extends StatelessWidget {
         ));
       }
       return out;
+    }
+
+    // === "One Circle" prototype ============================================
+    // Every member orbits in concentric rings sized to fit ALL of them. No
+    // overflow node, no expand toggle, no scattered canvas — the circle IS the
+    // whole population.
+    if (unified) {
+      final n = items.length;
+      // Ring capacity schedule (grows outward); pick the fewest rings that hold
+      // everyone, then keep adding max-capacity rings for very large crowds.
+      const schedule = [6, 10, 14, 18, 22, 26];
+      var ringCount = 1;
+      var cumulative = 0;
+      for (var k = 0; k < schedule.length; k++) {
+        cumulative += schedule[k];
+        ringCount = k + 1;
+        if (cumulative >= n) break;
+      }
+      while (cumulative < n) {
+        cumulative += schedule.last;
+        ringCount++;
+      }
+      final caps = [
+        for (var k = 0; k < ringCount; k++)
+          k < schedule.length ? schedule[k] : schedule.last,
+      ];
+      final totalCap = caps.fold<int>(0, (a, b) => a + b);
+      // Distribute members across rings proportional to capacity (balanced, so
+      // the outermost ring isn't left sparse), then reconcile rounding to == n.
+      final counts = List<int>.filled(ringCount, 0);
+      if (n > 0) {
+        var assigned = 0;
+        for (var k = 0; k < ringCount; k++) {
+          counts[k] = min(caps[k], (n * caps[k] / totalCap).round());
+          assigned += counts[k];
+        }
+        var k = ringCount - 1;
+        while (assigned < n && k >= 0) {
+          if (counts[k] < caps[k]) {
+            counts[k]++;
+            assigned++;
+          } else {
+            k--;
+          }
+        }
+        k = ringCount - 1;
+        while (assigned > n && k >= 0) {
+          if (counts[k] > 0) {
+            counts[k]--;
+            assigned--;
+          } else {
+            k--;
+          }
+        }
+      }
+      // Ring radii spread evenly from inner to outer. With names on, pull the
+      // outer ring inward so each avatar's below-label has room before the box
+      // edge (and the inner ring in, so labels don't crowd the centre "You").
+      final rMin = size * 0.16;
+      final rMax = size * (names ? 0.40 : 0.46);
+      final radii = [
+        for (var k = 0; k < ringCount; k++)
+          rMin + (rMax - rMin) * (ringCount == 1 ? 0.5 : k / (ringCount - 1)),
+      ];
+      // One uniform avatar size: the largest the densest occupied ring fits
+      // without its avatars overlapping (matches the app's single-size avatars).
+      final maxAv = size * (names ? 0.085 : 0.12);
+      var avUnified = maxAv;
+      for (var k = 0; k < ringCount; k++) {
+        if (counts[k] <= 0) continue;
+        final arc = (2 * pi * radii[k]) / counts[k];
+        avUnified = min(avUnified, arc * 0.72);
+      }
+      avUnified = avUnified.clamp(size * 0.05, maxAv);
+      final centerUnified =
+          min(avUnified * 1.35, rMin * 0.95).clamp(size * 0.06, size * 0.16);
+
+      final children = <Widget>[
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(painter: _Orbit2RingPainter(radii)),
+          ),
+        ),
+        if (userPeerId != null)
+          Positioned(
+            left: c - centerUnified / 2,
+            top: c - centerUnified / 2,
+            child: IgnorePointer(
+              child: UserAvatar(
+                peerId: userPeerId,
+                avatarBytes: userAvatarBytes,
+                size: centerUnified,
+              ),
+            ),
+          ),
+        if (userPeerId != null && names)
+          Positioned(
+            left: c - _kInnerLabelW / 2,
+            top: c + centerUnified / 2 + 3,
+            width: _kInnerLabelW,
+            child: IgnorePointer(
+              child: _InnerNameLabel(name: l10n.orbit2_you, readable: readable),
+            ),
+          ),
+      ];
+      var idx = 0;
+      for (var k = 0; k < ringCount; k++) {
+        final m = counts[k];
+        for (var i = 0; i < m; i++) {
+          children.addAll(
+            slotFor(items[idx], avUnified, idx, i, m, radii[k], k, 1.0,
+                labelBelow: true),
+          );
+          idx++;
+        }
+      }
+      return SizedBox(
+        width: size,
+        height: size,
+        child: Stack(clipBehavior: Clip.none, children: children),
+      );
     }
 
     return AnimatedScale(

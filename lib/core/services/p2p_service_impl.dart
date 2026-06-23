@@ -151,6 +151,21 @@ class P2PServiceImpl
   /// A partial drain cannot satisfy a caller that needs the full guarantee.
   bool _drainInProgressWaitsAllPages = false;
 
+  /// 141: One-shot latch for a notif-open opportunistic drain requested while
+  /// the node had not yet started. The public [drainOfflineInbox] /
+  /// [drainOfflineInboxFully] used to hard-early-return when `!isStarted`,
+  /// silently dropping a notif-open catch-up. Instead the request is now
+  /// DEFERRED here and fired exactly once on the next stopped->started
+  /// transition observed in [_emitState] — mirroring the relay-healthy push-
+  /// token re-register precedent. The account-migration network gate is
+  /// re-checked at fire time (the public entry point is re-run), never bypassed.
+  bool _pendingStartupDrain = false;
+
+  /// Whether the deferred startup drain ([_pendingStartupDrain]) must drain ALL
+  /// backlog pages. The stronger all-pages variant wins if any pending request
+  /// while-stopped needed it.
+  bool _pendingStartupDrainWaitForAllPages = false;
+
   /// Phase 5: Count of consecutive in-place refresh failures.
   /// Reset to 0 on successful recovery.
   int _consecutiveRefreshFailures = 0;
@@ -2640,6 +2655,28 @@ class P2PServiceImpl
       _stateController.add(_currentState);
     }
 
+    // 141: Fire a deferred notif-open drain exactly once when the node reaches
+    // started. Placed before the §24 early-returning branches below so a
+    // cold-start online transition cannot skip it. Re-runs the public entry
+    // point so the account-migration gate is re-checked at fire time and the
+    // started-path drain semantics are reused; the one-shot latch (cleared
+    // here) prevents any double-fire across state flaps.
+    if (!previousState.isStarted &&
+        _currentState.isStarted &&
+        _pendingStartupDrain) {
+      final waitForAllPages = _pendingStartupDrainWaitForAllPages;
+      _pendingStartupDrain = false;
+      _pendingStartupDrainWaitForAllPages = false;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
+        details: {'waitForAllPages': waitForAllPages},
+      );
+      unawaited(
+        waitForAllPages ? drainOfflineInboxFully() : drainOfflineInbox(),
+      );
+    }
+
     final nowOnline = _stateHasHealthyRelay(_currentState);
     final nowSendable = _currentState.usabilityReady;
     final nowRelayReadyBadge =
@@ -3846,7 +3883,13 @@ class P2PServiceImpl
 
   @override
   Future<void> drainOfflineInbox() async {
-    if (!_currentState.isStarted) return;
+    // 141: If the node has not yet started (cold notif-open, or warm where the
+    // node was stopped while backgrounded), do NOT silently drop this
+    // opportunistic catch-up — defer it and fire once on stopped->started.
+    if (!_currentState.isStarted) {
+      _scheduleStartupDrain(waitForAllPages: false);
+      return;
+    }
     if (!await _allowsAccountNetworkSideEffects('p2p_drain_offline_inbox')) {
       return;
     }
@@ -3861,7 +3904,11 @@ class P2PServiceImpl
 
   @override
   Future<void> drainOfflineInboxFully() async {
-    if (!_currentState.isStarted) return;
+    // 141: see [drainOfflineInbox] — defer (don't drop) when not yet started.
+    if (!_currentState.isStarted) {
+      _scheduleStartupDrain(waitForAllPages: true);
+      return;
+    }
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_drain_offline_inbox_full',
     )) {
@@ -3874,6 +3921,28 @@ class P2PServiceImpl
       details: {},
     );
     await _drainOfflineInbox(waitForAllPages: true);
+  }
+
+  /// 141: Defer (do NOT drop) an opportunistic offline-inbox drain requested
+  /// before the node finished starting. The latch fires once on the next
+  /// stopped->started transition in [_emitState]; the account-migration network
+  /// gate is (re-)checked then (the public entry point is re-run), not here. If
+  /// multiple requests arrive while stopped, the stronger all-pages variant
+  /// wins. Setting a bool latch has no network side effect, so it is safe to
+  /// schedule unconditionally — the gate guards the actual drain at fire time.
+  void _scheduleStartupDrain({required bool waitForAllPages}) {
+    final wasScheduled = _pendingStartupDrain;
+    _pendingStartupDrain = true;
+    if (waitForAllPages) {
+      _pendingStartupDrainWaitForAllPages = true;
+    }
+    if (!wasScheduled) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
+        details: {'waitForAllPages': _pendingStartupDrainWaitForAllPages},
+      );
+    }
   }
 
   @override

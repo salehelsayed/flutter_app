@@ -18,6 +18,8 @@ IconData _templateIcon(Orbit2LayoutTemplate t) {
       return Icons.grid_view_rounded;
     case Orbit2LayoutTemplate.tieredBands:
       return Icons.view_agenda_rounded;
+    case Orbit2LayoutTemplate.unifiedCircle:
+      return Icons.radio_button_checked_rounded;
   }
 }
 
@@ -31,6 +33,8 @@ String templateLabel(AppLocalizations l10n, Orbit2LayoutTemplate t) {
       return l10n.orbit2_template_honeycomb;
     case Orbit2LayoutTemplate.tieredBands:
       return l10n.orbit2_template_tiered;
+    case Orbit2LayoutTemplate.unifiedCircle:
+      return l10n.orbit2_template_unified;
   }
 }
 
@@ -62,6 +66,9 @@ class Orbit2Dock extends StatelessWidget {
   Widget build(BuildContext context) {
     // Manage + search apply to the constellation only; hide them in Messages.
     final isConstellation = viewMode == Orbit2ViewMode.constellation;
+    // "One Circle" has no floating canvas, so there's nothing to promote IN —
+    // Manage (add to circle) is meaningless there.
+    final isUnified = template == Orbit2LayoutTemplate.unifiedCircle;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -72,7 +79,7 @@ class Orbit2Dock extends StatelessWidget {
           onReset: onReset,
           onMessagesView: onMessagesView,
         ),
-        if (isConstellation) ...[
+        if (isConstellation && !isUnified) ...[
           const SizedBox(width: 8),
           Orbit2ManagePill(active: manageMode, onTap: onToggleManage),
         ],

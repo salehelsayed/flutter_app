@@ -53,6 +53,7 @@ import 'package:flutter_app/features/posts/application/pending_post_target_store
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 import 'package:flutter_app/features/feed/presentation/navigation/feed_route_transition.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
@@ -94,6 +95,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final AppShellController? appShellController;
   final PendingPostTargetStore? pendingPostTargetStore;
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
+  final FeedClearedRepository? feedClearedRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
   final TransportMetrics? transportMetrics;
@@ -132,6 +134,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.appShellController,
     this.pendingPostTargetStore,
     this.postsPrivacySettingsRepository,
+    this.feedClearedRepository,
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
     this.transportMetrics,
@@ -275,6 +278,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             postsPrivacySettingsRepository:
                 widget.postsPrivacySettingsRepository ??
                 _missingPostsPrivacySettingsRepository(),
+            feedClearedRepository:
+                widget.feedClearedRepository ?? _missingFeedClearedRepository(),
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             nearbyLocationService: widget.nearbyLocationService,
@@ -576,6 +581,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
           appShellController: widget.appShellController,
           pendingPostTargetStore: widget.pendingPostTargetStore,
           postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+          feedClearedRepository: widget.feedClearedRepository,
           transportMetrics: widget.transportMetrics,
           accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
           accountMigrationSizeGate: widget.accountMigrationSizeGate,
@@ -629,6 +635,12 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   Never _missingPostsPrivacySettingsRepository() {
     throw StateError(
       'FirstTimeExperienceWired requires postsPrivacySettingsRepository before navigating to FeedWired.',
+    );
+  }
+
+  Never _missingFeedClearedRepository() {
+    throw StateError(
+      'FirstTimeExperienceWired requires feedClearedRepository before navigating to FeedWired.',
     );
   }
 

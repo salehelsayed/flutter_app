@@ -269,8 +269,10 @@ class _Orbit2ScreenState extends State<Orbit2Screen> {
                 onToggleNames: _toggleNames,
               ),
               // The constellation hint advertises drag/long-press gestures that
-              // the Messages list doesn't have — hide it there.
-              if (_viewMode == Orbit2ViewMode.constellation)
+              // the Messages list doesn't have — hide it there. "One Circle"
+              // has no scatter to drag into either, so hide it there too.
+              if (_viewMode == Orbit2ViewMode.constellation &&
+                  _template != Orbit2LayoutTemplate.unifiedCircle)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 2),
                   child: Text(

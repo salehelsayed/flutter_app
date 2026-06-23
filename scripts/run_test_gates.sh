@@ -57,12 +57,43 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/post_restore_stale_key_recovery_test.dart"
   "test/features/contact_request/application/contact_request_listener_test.dart"
   "test/features/identity/domain/repositories/identity_repository_impl_test.dart"
+  "test/features/conversation/domain/utils/message_run_grouping_test.dart"
+  "test/features/conversation/presentation/widgets/letter_card_test.dart"
+  "test/features/conversation/presentation/screens/conversation_screen_test.dart"
+  "test/features/push/application/prepare_notification_open_use_case_test.dart"
 )
 
 readonly FEED_TESTS=(
-  "test/features/feed/integration/feed_card_flow_test.dart"
-  "test/features/feed/integration/expanded_collapsed_card_test.dart"
-  "test/features/feed/integration/feed_color_smoke_test.dart"
+  # 134 feed redesign — curated surface gate. Old per-card integration tests
+  # were deleted; this is the letter-card / pending-reply-inbox suite.
+  # Domain + projection + store + repo + migration.
+  "test/features/feed/domain/feed_letter_model_test.dart"
+  "test/features/feed/domain/group_sender_runs_test.dart"
+  "test/features/feed/domain/models/feed_item_test.dart"
+  "test/features/feed/domain/models/session_reply_test.dart"
+  "test/features/feed/application/feed_pending_projection_test.dart"
+  "test/features/feed/application/feed_projection_test.dart"
+  "test/features/feed/application/feed_store_test.dart"
+  "test/features/feed/application/load_feed_use_case_test.dart"
+  "test/features/feed/data/feed_cleared_repository_test.dart"
+  "test/core/database/migrations/092_feed_cleared_threads_test.dart"
+  "test/core/theme/feed_tokens_test.dart"
+  # Letter cards / bubble widgets.
+  "test/features/feed/presentation/widgets/letter_bubble_test.dart"
+  "test/features/feed/presentation/widgets/letter_card_group_test.dart"
+  "test/features/feed/presentation/widgets/letter_card_one_to_one_test.dart"
+  "test/features/feed/presentation/widgets/letter_card_system_test.dart"
+  # Screen behaviors: focus/compose, swipe-dismiss, caught-up, reduced-motion.
+  "test/features/feed/presentation/screens/feed_focus_test.dart"
+  "test/features/feed/presentation/screens/feed_swipe_test.dart"
+  "test/features/feed/presentation/screens/feed_caught_up_test.dart"
+  "test/features/feed/presentation/screens/feed_reduced_motion_test.dart"
+  "test/features/feed/presentation/screens/feed_screen_test.dart"
+  "test/features/feed/presentation/screens/feed_wired_test.dart"
+  # 134-P8 additive guards: l10n parity, shared-widget survival, contract.
+  "test/l10n/feed_strings_parity_test.dart"
+  "test/features/feed/presentation/widgets/feed_shared_widget_survival_test.dart"
+  "test/features/feed/presentation/screens/feed_contract_preservation_test.dart"
 )
 
 readonly INTRO_TESTS=(
@@ -93,6 +124,9 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/group_key_repair_request_sender_test.dart"
   "test/features/groups/application/group_key_repair_responder_listener_test.dart"
   "test/features/groups/application/group_key_repair_wiring_test.dart"
+  "test/features/conversation/domain/utils/message_run_grouping_test.dart"
+  "test/features/conversation/presentation/widgets/letter_card_test.dart"
+  "test/features/groups/presentation/group_conversation_screen_test.dart"
 )
 
 readonly POSTS_TESTS=(

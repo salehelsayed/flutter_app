@@ -53,6 +53,7 @@ import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
@@ -262,6 +263,7 @@ void main() {
     VoidCallback? onListBuild,
     Future<void> Function()? waitForGroupMembershipUpdateIdle,
     List<NavigatorObserver>? navigatorObservers,
+    InMemoryFeedClearedRepository? feedClearedRepository,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
     final effectiveMessageRepo = messageRepository ?? messageRepo;
@@ -303,6 +305,8 @@ void main() {
       mediaFileManager: mediaFileManager,
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
+      feedClearedRepository:
+          feedClearedRepository ?? InMemoryFeedClearedRepository(),
       reactionRepository: reactionRepository,
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
@@ -358,6 +362,31 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
   }
+
+  testWidgets(
+    'B6: OrbitWired requires + stores a feedClearedRepository and forwards it '
+    'into the QR scan → Feed handoff (locks the 135 P5 wiring)',
+    (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      identityRepo.seed(testIdentity);
+
+      final clearedRepo = InMemoryFeedClearedRepository();
+      await tester.pumpWidget(
+        buildOrbitWired(feedClearedRepository: clearedRepo),
+      );
+      await pumpOrbitFrames(tester);
+
+      // OrbitWired stores the exact repository it was given — the same instance
+      // it forwards into QRScannerWired (and the FeedWired that the scanner
+      // navigates to after a successful contact scan). Removing the field / the
+      // pass-through breaks the scan → Feed handoff (StateError: QRScannerWired
+      // requires feedClearedRepository), the B6 reproducer in qr_scanner_wired_test.
+      final orbit = tester.widget<OrbitWired>(find.byType(OrbitWired));
+      expect(identical(orbit.feedClearedRepository, clearedRepo), isTrue);
+    },
+  );
 
   group('OrbitWired', () {
     GroupInviteMembershipFreshnessProof makeInviteFreshnessProof({

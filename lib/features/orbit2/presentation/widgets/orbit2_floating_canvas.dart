@@ -293,6 +293,10 @@ class _Orbit2CanvasState extends State<Orbit2Canvas> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
+        // "One Circle": no floating canvas — everyone is one Inner Circle.
+        if (widget.template == Orbit2LayoutTemplate.unifiedCircle) {
+          return _buildUnified(size);
+        }
         final items = _items();
         _ensureLayout(size, items);
         final inner = _innerCenter!;
@@ -372,6 +376,61 @@ class _Orbit2CanvasState extends State<Orbit2Canvas> {
           ],
         );
       },
+    );
+  }
+
+  /// "One Circle" prototype: collapse the inner circle AND every floating
+  /// friend/group into a single, centered Inner Circle that fits everyone in
+  /// auto-sized concentric rings. Non-destructive — the screen still holds the
+  /// original split, so switching back to any scatter template restores it.
+  Widget _buildUnified(Size size) {
+    final seen = <String>{};
+    final all = <Orbit2InnerItem>[];
+    for (final it in widget.innerItems) {
+      if (seen.add(it.id)) all.add(it);
+    }
+    for (final f in widget.floatingFriends) {
+      if (seen.add(f.peerId)) all.add(Orbit2InnerItem.friend(f.friend));
+    }
+    for (final g in widget.floatingGroups) {
+      if (seen.add(g.id)) all.add(Orbit2InnerItem.group(g));
+    }
+
+    // Fit the whole circle in the area above the dock, centered.
+    final availH = size.height - kBottomReserve;
+    final innerSize = min(size.width - 12, availH - 12).toDouble();
+    final center = Offset(size.width / 2, availH / 2);
+
+    return Stack(
+      key: _canvasKey,
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onDoubleTap: widget.onToggleNames,
+            child: const SizedBox.expand(),
+          ),
+        ),
+        Positioned(
+          left: center.dx - innerSize / 2,
+          top: center.dy - innerSize / 2,
+          width: innerSize,
+          height: innerSize,
+          child: Orbit2InnerCircle(
+            userPeerId: widget.userPeerId,
+            userAvatarBytes: widget.userAvatarBytes,
+            items: all,
+            size: innerSize,
+            unified: true,
+            namesVisible: widget.namesVisible,
+            motionEnabled: widget.motionEnabled,
+            searchQuery: widget.searchQuery,
+            onFriendTap: widget.onOpenInnerChat,
+            onGroupTap: widget.onOpenGroup,
+          ),
+        ),
+      ],
     );
   }
 

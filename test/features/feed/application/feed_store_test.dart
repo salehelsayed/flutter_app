@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/feed/application/feed_pending_projection.dart';
 import 'package:flutter_app/features/feed/application/feed_store.dart';
 import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
@@ -221,7 +222,13 @@ void main() {
 
         final fullReload = await loadFullFeed();
 
-        expect(_summaries(store.items), _summaries(fullReload));
+        // store.items is the pending projection; compare against the same
+        // projection of a full reload (134-P4: connection-vs-thread dedup +
+        // pending filter apply to both).
+        expect(
+          _summaries(store.items),
+          _summaries(projectPendingFeed(fullReload, const {})),
+        );
         expect(store.messageIdsForContact('peer-B'), {'msg-b-1'});
       },
     );
@@ -299,9 +306,136 @@ void main() {
 
         final fullReload = await loadFullFeed();
 
-        expect(_summaries(store.items), _summaries(fullReload));
+        // store.items is the pending projection; compare against the same
+        // projection of a full reload (134-P4: connection-vs-thread dedup +
+        // pending filter apply to both).
+        expect(
+          _summaries(store.items),
+          _summaries(projectPendingFeed(fullReload, const {})),
+        );
         expect(store.messageIdsForContact('peer-A'), {'msg-a-1'});
       },
     );
+  });
+
+  group('FeedStore cleared watermarks (134 P4)', () {
+    final int clearWatermarkMs = DateTime.utc(2030).millisecondsSinceEpoch;
+
+    List<String> threadPeers(FeedStore store) => store.items
+        .whereType<ThreadFeedItem>()
+        .map((t) => t.contactPeerId)
+        .toList();
+
+    Future<FeedStore> seedThreeUnreadThreads() async {
+      contactRepo.seed([
+        _contact(
+          peerId: 'peer-A',
+          username: 'Alice',
+          scannedAt: '2026-02-01T09:00:00.000Z',
+        ),
+        _contact(
+          peerId: 'peer-B',
+          username: 'Bob',
+          scannedAt: '2026-02-01T09:05:00.000Z',
+        ),
+        _contact(
+          peerId: 'peer-C',
+          username: 'Cara',
+          scannedAt: '2026-02-01T09:10:00.000Z',
+        ),
+      ]);
+      await messageRepo.saveMessage(_message(
+        id: 'm-a',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'peer-A',
+        text: 'a',
+        timestamp: '2026-02-01T11:00:00.000Z',
+        isIncoming: true,
+      ));
+      await messageRepo.saveMessage(_message(
+        id: 'm-b',
+        contactPeerId: 'peer-B',
+        senderPeerId: 'peer-B',
+        text: 'b',
+        timestamp: '2026-02-01T11:05:00.000Z',
+        isIncoming: true,
+      ));
+      await messageRepo.saveMessage(_message(
+        id: 'm-c',
+        contactPeerId: 'peer-C',
+        senderPeerId: 'peer-C',
+        text: 'c',
+        timestamp: '2026-02-01T11:10:00.000Z',
+        isIncoming: true,
+      ));
+      return FeedStore()..replaceAll(await loadFullFeed());
+    }
+
+    test('setClearedWatermarks hides a thread at/under its watermark', () async {
+      final store = await seedThreeUnreadThreads();
+      expect(threadPeers(store), containsAll(<String>['peer-A']));
+
+      store.setClearedWatermarks(<(String, String), int>{
+        ('contact', 'peer-A'): clearWatermarkMs,
+      });
+
+      expect(threadPeers(store), isNot(contains('peer-A')));
+      // INV-2: a cleared CONTACT thread does not remove the contact's
+      // connection letter (different thread kind).
+      expect(store.clearedWatermarks[('contact', 'peer-A')], clearWatermarkMs);
+    });
+
+    test('markClearedLocally hides; clearClearedLocally re-surfaces in slot',
+        () async {
+      final store = await seedThreeUnreadThreads();
+      // Sorted newest-first by message timestamp: C, B, A.
+      expect(threadPeers(store), <String>['peer-C', 'peer-B', 'peer-A']);
+
+      store.markClearedLocally('contact', 'peer-B', clearWatermarkMs);
+      expect(threadPeers(store), <String>['peer-C', 'peer-A']);
+
+      // Undo: removing the watermark restores B in its natural sorted slot
+      // (index 1) — no positional snapshot needed (TC-25 by re-projection).
+      store.clearClearedLocally('contact', 'peer-B');
+      expect(threadPeers(store), <String>['peer-C', 'peer-B', 'peer-A']);
+    });
+
+    test('setPinnedThread keeps an answered (non-pending) focused thread shown',
+        () async {
+      contactRepo.seed([
+        _contact(
+          peerId: 'peer-A',
+          username: 'Alice',
+          scannedAt: '2026-02-01T09:00:00.000Z',
+        ),
+      ]);
+      await messageRepo.saveMessage(_message(
+        id: 'in',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'peer-A',
+        text: 'hi',
+        timestamp: '2026-02-01T11:00:00.000Z',
+        isIncoming: true,
+      ));
+      // Outgoing AFTER the incoming → "answered since" → not pending.
+      await messageRepo.saveMessage(_message(
+        id: 'out',
+        contactPeerId: 'peer-A',
+        senderPeerId: 'me',
+        text: 'reply',
+        timestamp: '2026-02-01T11:05:00.000Z',
+        isIncoming: false,
+      ));
+      final store = FeedStore()..replaceAll(await loadFullFeed());
+
+      expect(threadPeers(store), isEmpty, reason: 'answered → dropped');
+
+      store.setPinnedThread('peer-A');
+      expect(threadPeers(store), <String>['peer-A'],
+          reason: 'focus pin keeps the answered card visible (append-stay)');
+
+      store.setPinnedThread(null);
+      expect(threadPeers(store), isEmpty, reason: 'defocus drops the card');
+    });
   });
 }

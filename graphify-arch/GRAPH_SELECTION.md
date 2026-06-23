@@ -11,41 +11,41 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 100326 | 40141 | -59.99% |
-| edges | 172649 | 62674 | -63.70% |
-| communities | 4298 | 871 | -79.73% |
-| source files | 5310 | 2059 | -61.22% |
-| avg edges per node | 1.7209 | 1.5613 | -9.27% |
-| avg nodes per community | 23.34 | 46.09 | +97.47% |
-| app-owned ratio | 0.4379 | 0.9618 | +119.64% |
-| noise ratio | 0.2175 | 0.0 | -100.00% |
-| unknown-source ratio | 0.0184 | 0.0382 | +107.61% |
+| nodes | 101910 | 40896 | -59.87% |
+| edges | 174643 | 63742 | -63.50% |
+| communities | 4364 | 905 | -79.26% |
+| source files | 5381 | 2109 | -60.81% |
+| avg edges per node | 1.7137 | 1.5586 | -9.05% |
+| avg nodes per community | 23.35 | 45.19 | +93.53% |
+| app-owned ratio | 0.442 | 0.961 | +117.42% |
+| noise ratio | 0.2141 | 0.0 | -100.00% |
+| unknown-source ratio | 0.019 | 0.039 | +105.26% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
 ## Top Hubs
 Full graph top hubs:
 - `sqlite3.c` (4359 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `sqlite3.c` (4359 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
-- `_` (2054 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
+- `_` (2064 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
 - `SQLITE_PRIVATE` (1036 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `SQLITE_PRIVATE` (1036 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
-- `package:flutter_test/flutter_test.dart` (962 edges, signal) ``
-- `group_multi_party_device_criteria.dart` (690 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
-- `app_localizations.dart` (669 edges, signal) `lib/l10n/app_localizations.dart`
-- `app_localizations_ar.dart` (651 edges, signal) `lib/l10n/app_localizations_ar.dart`
-- `app_localizations_de.dart` (651 edges, signal) `lib/l10n/app_localizations_de.dart`
+- `package:flutter_test/flutter_test.dart` (978 edges, signal) ``
+- `app_localizations.dart` (729 edges, signal) `lib/l10n/app_localizations.dart`
+- `app_localizations_ar.dart` (711 edges, signal) `lib/l10n/app_localizations_ar.dart`
+- `app_localizations_de.dart` (711 edges, signal) `lib/l10n/app_localizations_de.dart`
+- `app_localizations_en.dart` (711 edges, signal) `lib/l10n/app_localizations_en.dart`
 
 Architecture graph top hubs:
-- `group_multi_party_device_real_harness.dart` (2020 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (962 edges, signal) ``
-- `group_multi_party_device_criteria.dart` (683 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
-- `main.dart` (567 edges, signal) `lib/main.dart`
-- `dart:convert` (403 edges, signal) ``
+- `group_multi_party_device_real_harness.dart` (2029 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
+- `package:flutter_test/flutter_test.dart` (978 edges, signal) ``
+- `group_multi_party_device_criteria.dart` (684 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
+- `main.dart` (579 edges, signal) `lib/main.dart`
+- `dart:convert` (405 edges, signal) ``
+- `package:flutter/material.dart` (401 edges, signal) ``
 - `group_multi_party_device_criteria_test.dart` (398 edges, signal) `test/integration/group_multi_party_device_criteria_test.dart`
-- `package:flutter/material.dart` (396 edges, signal) ``
-- `feed_wired.dart` (354 edges, signal) `lib/features/feed/presentation/screens/feed_wired.dart`
 - `group_conversation_wired.dart` (343 edges, signal) `lib/features/groups/presentation/screens/group_conversation_wired.dart`
-- `conversation_wired.dart` (330 edges, signal) `lib/features/conversation/presentation/screens/conversation_wired.dart`
+- `conversation_wired.dart` (337 edges, signal) `lib/features/conversation/presentation/screens/conversation_wired.dart`
+- `feed_wired.dart` (334 edges, signal) `lib/features/feed/presentation/screens/feed_wired.dart`
 
 ## Method
 - Efficiency means fewer nodes, fewer edges, fewer communities, and lower average traversal breadth for the same app-level question.

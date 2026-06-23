@@ -374,14 +374,6 @@
   "feed_collapse": "Einklappen",
   "feed_tap_expand": "Zum Öffnen tippen",
   "feed_you": "Du",
-  "feed_you_replied": "Du hast {time} geantwortet",
-  "@feed_you_replied": {
-    "placeholders": {
-      "time": {
-        "type": "String"
-      }
-    }
-  },
   "settings_photo_quality": "Fotoqualität",
   "settings_share_nearby": "Mit Leuten in der Nähe teilen",
   "settings_share_nearby_on": "An",
@@ -1146,9 +1138,7 @@
       }
     }
   },
-  "feed_previously_seen": "BEREITS GESEHEN",
   "feed_replying_to": "Antwort auf",
-  "feed_view_earlier_messages": "Frühere Nachrichten anzeigen",
   "feed_ready_for_user": "Dein Feed ist bereit, @{username}. Neue Verbindungen erscheinen hier.",
   "@feed_ready_for_user": {
     "placeholders": {
@@ -1157,8 +1147,18 @@
       }
     }
   },
+  "feed_all_caught_up": "Du bist auf dem neuesten Stand",
   "feed_loading": "Feed wird geladen...",
   "feed_syncing_threads": "Deine letzten Threads werden noch synchronisiert.",
+  "feed_reply_to_name": "Antworte an {name}…",
+  "feed_message_name": "Nachricht an {name}…",
+  "feed_add_another": "Weitere senden…",
+  "feed_open_full_conversation": "Vollständige Unterhaltung öffnen",
+  "feed_tap_to_retry": "zum Wiederholen tippen",
+  "feed_removed_undo": "{name} entfernt",
+  "feed_undo": "Rückgängig",
+  "feed_tap_to_say_hi": "tippen, um Hallo zu sagen",
+  "feed_connected": "Verbunden",
   "qr_added_to_circle": "Zu deinem Kreis hinzugefügt!",
   "btn_ok": "OK",
   "qr_already_in_circle": "Bereits in deinem Kreis!",
@@ -1325,6 +1325,7 @@
   "contact_profile_introduced_by_label": "Vorgestellt von",
   "contact_profile_message_button": "Nachricht",
   "nav_orbit2": "Orbit2",
+  "nav_orbit3": "Orbit3",
   "orbit2_prototype_chip": "Prototyp · Beispieldaten",
   "orbit2_size_legend": "Größer = näher · tippen zum Chatten · ziehen zum Umordnen",
   "orbit2_simulate": "Simulieren",
@@ -1334,6 +1335,7 @@
   "orbit2_template_nebula": "Nebel",
   "orbit2_template_honeycomb": "Wabe",
   "orbit2_template_tiered": "Ebenen",
+  "orbit2_template_unified": "Ein Kreis",
   "orbit2_mock_chat_demo_chip": "Demo · Nachrichten werden nicht gesendet",
   "orbit2_mock_chat_send_disabled": "Senden ist in dieser Vorschau deaktiviert",
   "orbit2_mock_chat_composer_hint": "Nachricht",

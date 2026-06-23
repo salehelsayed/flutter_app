@@ -1059,6 +1059,212 @@ func TestGIRD006BuildGroupImagePushMessageUsesCanonicalDataOnlyIdentity(t *testi
 	}
 }
 
+// TC-01: a 1:1 media-scale ciphertext envelope (encrypted media descriptor)
+// exceeds FCM's 4 KB data budget. The relay must rebuild it as a visible,
+// under-budget fallback (ciphertext/kem dropped, Notification present,
+// preview_unavailable="1") so the offline recipient still gets alerted.
+func TestBuildChatPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T) {
+	bigCiphertext := strings.Repeat("c", 5000) // encrypted media descriptor scale
+	bigKem := strings.Repeat("k", 1500)        // base64 ML-KEM scale
+	envelope := fmt.Sprintf(
+		`{"type":"chat_message","version":"2","id":"m-media","senderUsername":"Alice","encrypted":{"kem":%q,"ciphertext":%q,"nonce":"n"}}`,
+		bigKem,
+		bigCiphertext,
+	)
+
+	msg := buildPushMessage("fcm-token", "peer-from", envelope)
+
+	if got := pushDataSize(msg.Data); got > maxPushDataBytes {
+		t.Fatalf("pushDataSize = %d, want <= %d", got, maxPushDataBytes)
+	}
+	if msg.Data["ciphertext"] != "" {
+		t.Fatalf("oversized push must drop ciphertext, got len %d", len(msg.Data["ciphertext"]))
+	}
+	if msg.Data["kem"] != "" {
+		t.Fatalf("oversized push must drop kem, got len %d", len(msg.Data["kem"]))
+	}
+	if msg.Data["nonce"] != "" {
+		t.Fatalf("oversized push must drop nonce, got %q", msg.Data["nonce"])
+	}
+	if msg.Notification == nil {
+		t.Fatal("oversized push must carry a visible top-level FCM Notification")
+	}
+	if msg.Android == nil || msg.Android.Notification == nil {
+		t.Fatal("oversized push must carry a visible Android Notification")
+	}
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil ||
+		msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("oversized push must carry a visible APNS alert")
+	}
+	if msg.Data["preview_unavailable"] != "1" {
+		t.Fatalf("preview_unavailable = %q, want 1", msg.Data["preview_unavailable"])
+	}
+	if msg.Data["type"] != "new_message" {
+		t.Fatalf("type = %q, want new_message", msg.Data["type"])
+	}
+	if msg.Data["sender_id"] != "peer-from" {
+		t.Fatalf("sender_id = %q, want peer-from", msg.Data["sender_id"])
+	}
+	if msg.Data["message_id"] != "m-media" {
+		t.Fatalf("message_id = %q, want m-media", msg.Data["message_id"])
+	}
+	if msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("oversized fallback has no ciphertext to decrypt; MutableContent must stay off")
+	}
+	assertAPNSCustomString(t, msg, "type", "new_message")
+	assertAPNSCustomString(t, msg, "sender_id", "peer-from")
+	assertAPNSCustomString(t, msg, "message_id", "m-media")
+	assertAPNSCustomString(t, msg, "preview_unavailable", "1")
+}
+
+// TC-02: group parity — an oversized group ciphertext also falls back to a
+// visible under-budget notification (ciphertext dropped, Notification set,
+// preview_unavailable="1", groupId/message_id routing kept).
+func TestBuildGroupPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T) {
+	bigCiphertext := strings.Repeat("g", 5000)
+	envelope := fmt.Sprintf(
+		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"g-media","ciphertext":%q,"nonce":"gn"}`,
+		bigCiphertext,
+	)
+
+	msg := buildGroupPushMessage("fcm-token", "group-1", "g-media", envelope)
+
+	if got := pushDataSize(msg.Data); got > maxPushDataBytes {
+		t.Fatalf("pushDataSize = %d, want <= %d", got, maxPushDataBytes)
+	}
+	if msg.Data["ciphertext"] != "" {
+		t.Fatalf("oversized group push must drop ciphertext, got len %d", len(msg.Data["ciphertext"]))
+	}
+	if msg.Data["nonce"] != "" {
+		t.Fatalf("oversized group push must drop nonce, got %q", msg.Data["nonce"])
+	}
+	if msg.Notification == nil {
+		t.Fatal("oversized group push must carry a visible top-level FCM Notification")
+	}
+	if msg.Android == nil || msg.Android.Notification == nil {
+		t.Fatal("oversized group push must carry a visible Android Notification")
+	}
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil ||
+		msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("oversized group push must carry a visible APNS alert")
+	}
+	if msg.Data["preview_unavailable"] != "1" {
+		t.Fatalf("preview_unavailable = %q, want 1", msg.Data["preview_unavailable"])
+	}
+	if msg.Data["type"] != "group_message" {
+		t.Fatalf("type = %q, want group_message", msg.Data["type"])
+	}
+	if msg.Data["groupId"] != "group-1" {
+		t.Fatalf("groupId = %q, want group-1", msg.Data["groupId"])
+	}
+	if msg.Data["message_id"] != "g-media" {
+		t.Fatalf("message_id = %q, want g-media", msg.Data["message_id"])
+	}
+	if msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("oversized group fallback has no ciphertext to decrypt; MutableContent must stay off")
+	}
+	assertAPNSCustomString(t, msg, "type", "group_message")
+	assertAPNSCustomString(t, msg, "groupId", "group-1")
+	assertAPNSCustomString(t, msg, "message_id", "g-media")
+	assertAPNSCustomString(t, msg, "preview_unavailable", "1")
+}
+
+// TC-03 (preservation): a small (text-scale) ciphertext push is UNCHANGED —
+// silent, ciphertext-only, no Notification, no preview_unavailable. Fails if
+// the oversized-fallback fix over-triggers on normal-size messages.
+func TestBuildChatPushMessage_SmallCiphertextStaysCiphertextOnly(t *testing.T) {
+	msg := buildPushMessage(
+		"fcm-token",
+		"peer-from",
+		`{"type":"chat_message","version":"2","id":"msg-small","senderUsername":"Alice","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+	)
+
+	if msg.Data["ciphertext"] != "c" {
+		t.Fatalf("small ciphertext = %q, want c", msg.Data["ciphertext"])
+	}
+	if msg.Data["kem"] != "k" {
+		t.Fatalf("small kem = %q, want k", msg.Data["kem"])
+	}
+	if msg.Data["nonce"] != "n" {
+		t.Fatalf("small nonce = %q, want n", msg.Data["nonce"])
+	}
+	if msg.Notification != nil {
+		t.Fatal("small ciphertext push must stay silent (no top-level Notification)")
+	}
+	if msg.Android != nil && msg.Android.Notification != nil {
+		t.Fatal("small ciphertext push must stay data-only on Android")
+	}
+	if _, ok := msg.Data["preview_unavailable"]; ok {
+		t.Fatal("small ciphertext push must not set preview_unavailable")
+	}
+	if got := pushDataSize(msg.Data); got > maxPushDataBytes {
+		t.Fatalf("small push pushDataSize = %d, want <= %d", got, maxPushDataBytes)
+	}
+}
+
+// TC-04: the budget helper counts key+value bytes and the boundary is exact.
+func TestPushDataSize_BoundaryAtBudget(t *testing.T) {
+	atBudgetValue := strings.Repeat("x", maxPushDataBytes-len("k"))
+	atBudget := map[string]string{"k": atBudgetValue}
+	if got := pushDataSize(atBudget); got != maxPushDataBytes {
+		t.Fatalf("at-budget size = %d, want %d", got, maxPushDataBytes)
+	}
+	if pushDataSize(atBudget) > maxPushDataBytes {
+		t.Fatal("at-budget map must not exceed budget")
+	}
+
+	overBudget := map[string]string{"k": atBudgetValue + "y"}
+	if got := pushDataSize(overBudget); got != maxPushDataBytes+1 {
+		t.Fatalf("over-budget size = %d, want %d", got, maxPushDataBytes+1)
+	}
+	if !(pushDataSize(overBudget) > maxPushDataBytes) {
+		t.Fatal("one byte over budget must exceed the budget")
+	}
+
+	// Counts every key AND every value (not values alone).
+	multi := map[string]string{"ab": "cd", "ef": "g"}
+	if got := pushDataSize(multi); got != len("ab")+len("cd")+len("ef")+len("g") {
+		t.Fatalf("multi-key size = %d, want %d", got, len("ab")+len("cd")+len("ef")+len("g"))
+	}
+}
+
+// TC-06 (defensive clamp): message_id is copied from the REMOTE-supplied envelope,
+// so a pathologically large id could keep even the routing-only fallback over the
+// 4 KB budget and re-trigger the FCM rejection. The fallback must drop message_id to
+// stay under budget while keeping the visible alert + routing (INV-1 unconditional).
+func TestBuildChatPushMessage_OversizedFallbackDropsPathologicalMessageIDUnderBudget(t *testing.T) {
+	hugeID := strings.Repeat("m", maxPushDataBytes+500) // attacker-/bug-supplied id larger than the whole budget
+	bigCiphertext := strings.Repeat("c", 5000)
+	bigKem := strings.Repeat("k", 1500)
+	envelope := fmt.Sprintf(
+		`{"type":"chat_message","version":"2","id":%q,"senderUsername":"Alice","encrypted":{"kem":%q,"ciphertext":%q,"nonce":"n"}}`,
+		hugeID,
+		bigKem,
+		bigCiphertext,
+	)
+
+	msg := buildPushMessage("fcm-token", "peer-from", envelope)
+
+	if got := pushDataSize(msg.Data); got > maxPushDataBytes {
+		t.Fatalf("fallback with pathological message_id pushDataSize = %d, want <= %d", got, maxPushDataBytes)
+	}
+	if msg.Data["message_id"] != "" {
+		t.Fatalf("pathological message_id must be dropped from the fallback, got len %d", len(msg.Data["message_id"]))
+	}
+	if msg.Notification == nil {
+		t.Fatal("fallback must still be a visible notification after dropping message_id")
+	}
+	if msg.Data["preview_unavailable"] != "1" {
+		t.Fatalf("preview_unavailable = %q, want 1", msg.Data["preview_unavailable"])
+	}
+	if msg.Data["type"] != "new_message" {
+		t.Fatalf("type = %q, want new_message", msg.Data["type"])
+	}
+	if msg.Data["sender_id"] != "peer-from" {
+		t.Fatalf("sender_id = %q, want peer-from (routing must survive the clamp)", msg.Data["sender_id"])
+	}
+}
+
 func assertNoDirectPushSchemaVersionKeys(t *testing.T, data map[string]string) {
 	t.Helper()
 
